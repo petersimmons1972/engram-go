@@ -1,0 +1,17 @@
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.0.0
+anthropic>=0.18.0
+psycopg2-binary>=2.9.0
+python-Levenshtein>=0.21.0
+pyyaml>=6.0
+pytest>=7.0.0
+
+# Dashboard dependencies
+streamlit>=1.30.0
+plotly>=5.18.0
+pandas>=2.0.0
+
+# PDF Export dependencies
+reportlab>=4.0.0
+matplotlib>=3.7.0

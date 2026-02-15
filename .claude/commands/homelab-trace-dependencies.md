@@ -1,0 +1,1 @@
+/home/psimmons/projects/homelab-intelligence/skills/homelab-trace-dependencies/SKILL.md

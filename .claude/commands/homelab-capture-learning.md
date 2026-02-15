@@ -1,0 +1,1 @@
+/home/psimmons/projects/homelab-intelligence/skills/homelab-capture-learning/SKILL.md
