@@ -1,6 +1,6 @@
 # Security Intelligence Business Report Generation - Master Prompt
 
-**Version:** 2.7
+**Version:** 2.8
 **Last Updated:** 2026-02-15
 **Accumulated Domain Knowledge:** TCO labor costs, chart layout rules, executive summary standards, citation density (30-40 minimum with niche vendor exceptions), scenario cards, detection parity, TDD validation, company logo visibility, endnote letter badge system with visual indicators, mandatory legal sections
 
@@ -290,27 +290,51 @@ Aspect ratio: 1.5:1 to 2:1 preferred
   - Optimization: Ongoing
 - Total: 3-6 months for full deployment
 
-### Pricing Tier Scope
+### Product and Pricing Tier Scope (CRITICAL)
 
-**Include:**
+**Product Categories - Include:**
+- ✅ EDR (Endpoint Detection and Response) solutions
+- ✅ XDR (Extended Detection and Response) platforms
+- ✅ EDR with included MDR services
+- ✅ Business-focused endpoint security with response capabilities
+
+**Product Categories - Exclude:**
+- ❌ Consumer-grade antivirus (Norton, McAfee, Kaspersky consumer editions)
+- ❌ NGAV-only products (Next-Gen Antivirus without response capabilities)
+- ❌ Traditional antivirus (signature-based only, no behavioral detection)
+- ❌ Free consumer security tools
+- ❌ Personal/Home editions of business products
+
+**Why EDR/XDR only:**
+- Target audience needs **detection AND response** capabilities
+- NGAV-only = just antivirus, no incident response, no threat hunting
+- Consumer-grade = not designed for business networks or management
+- $495 reports focus on business purchasing decisions, not consumer products
+
+**Example exclusions:**
+- ❌ Windows Defender (consumer edition) - free consumer antivirus
+- ❌ Vendor NGAV-only tier - no response capabilities
+- ❌ "Home" or "Personal" editions - consumer-focused
+
+**Pricing Tier Scope - Include:**
 - ✅ Business/Professional tiers (100-1000+ endpoints)
 - ✅ Enterprise tiers (1000-5000+ endpoints)
 - ✅ Volume discount pricing (relevant to target audience)
 - ✅ SMB-specific offerings (500-2500 computer range)
 
-**Exclude:**
+**Pricing Tier Scope - Exclude:**
 - ❌ Homelab tiers (1-10 endpoints for hobbyists)
 - ❌ Personal/Individual licenses (not business relevant)
 - ❌ Developer/Testing tiers (non-production use)
 - ❌ Free trials (temporary, not TCO-relevant)
 
-**Why exclude homelab:**
+**Why exclude homelab/consumer:**
 - Target audience: Small IT teams managing 500-2500 computers
 - Purchase decision: $50K-150K/year commitments
-- Homelab pricing = hobbyist tier, not business purchasing
+- Homelab/consumer = hobbyist tier, not business purchasing
 - Including it dilutes focus on relevant business tiers
 
-**Example:** If Sandfly offers $99/year homelab tier (5 hosts), skip it. Focus on Professional tier ($65K/year for 500 hosts) which matches target audience scale.
+**Example:** If Sandfly offers $99/year homelab tier (5 hosts), skip it. If vendor offers NGAV-only tier without EDR capabilities, skip it. Focus on EDR/XDR Professional tier ($65K/year for 500 hosts) which matches target audience scale and needs.
 
 ---
 
