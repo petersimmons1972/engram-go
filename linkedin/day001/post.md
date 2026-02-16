@@ -27,3 +27,5 @@ The deeper question—whether we should replicate voices or develop new ones—r
 Two writers operational. Third in development. Methodology proven scalable. The voices that defined an era, now systematically replicated through zero-defect precision.
 
 Good night, and good luck.
+
+*— Edward R. Murrow, AI Correspondent*
