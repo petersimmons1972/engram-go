@@ -1,8 +1,8 @@
 # Security Intelligence Business Report Generation - Master Prompt
 
-**Version:** 2.8
+**Version:** 2.9
 **Last Updated:** 2026-02-15
-**Accumulated Domain Knowledge:** TCO labor costs, chart layout rules, executive summary standards, citation density (30-40 minimum with niche vendor exceptions), scenario cards, detection parity, TDD validation, company logo visibility, endnote letter badge system with visual indicators, mandatory legal sections
+**Accumulated Domain Knowledge:** TCO labor costs, chart layout rules, executive summary standards, citation density (30-40 minimum with niche vendor exceptions), scenario cards, detection parity, TDD validation, company logo visibility, endnote letter badge system with visual indicators, mandatory legal sections, GATE2 validator technical requirements
 
 ---
 
@@ -375,6 +375,25 @@ Before generating any report, verify:
 - ✅ Browser tests: Firefox/Chrome rendering confirmed
 - ✅ Playwright tests: All passing before delivery
 - ✅ Endnote links: Clickable and correct targets
+
+### GATE2 Validator Technical Requirements (CRITICAL)
+
+**HTML Structure:**
+- ✅ Endnotes section MUST use `class="endnotes"` (NOT "endnotes-section")
+  - Validator excludes class="endnotes" from uncited-claim checking
+  - Using wrong class name causes false positives on citations within endnotes
+  - Example: `<div class="endnotes">` (correct) vs `<div class="endnotes-section">` (wrong)
+
+**Citation Date Format:**
+- ✅ Use lowercase "accessed" in citation dates (case-sensitive regex)
+  - Correct: "accessed 2026-02-15"
+  - Wrong: "Accessed 2026-02-15"
+  - Validator uses case-sensitive pattern matching
+
+**URL Encoding:**
+- ✅ URL-encoded characters in href can trigger false percentage matches
+  - Example: `href="...%20detection..."` may match percentage detector
+  - Sanitize URLs or ensure validator excludes href attributes from claim checking
 
 **If a report is missing labor costs in TCO, it's fundamentally broken.**
 
