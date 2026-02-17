@@ -1,12 +1,13 @@
 # Learning Index
 
-**Last Updated**: 2026-02-17T05:08:20Z
-**Session**: 20260217-000820
+**Last Updated**: 2026-02-17T17:11:31Z
+**Session**: 20260217-121131
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
+- 2026-02-17: docs: homelab lessons from 2026-02-17 cluster maintenance
 - 2026-02-15: docs: master prompt v2.9 - GATE2 validator technical requirements
 - 2026-02-15: docs: session summary and learning index update
 - 2026-02-15: docs: master prompt v2.8 - EDR/XDR focus, exclude consumer/NGAV-only
@@ -16,7 +17,6 @@
 - 2026-02-15: docs: master prompt v2.4 - citation count minimum + visual badge implementation
 - 2026-02-15: docs: master prompt v2.3 - endnote legend + mandatory legal sections
 - 2026-02-15: docs: Free sample download infrastructure design
-- 2026-02-14: fix: Route Enterprise traffic to service with buy button
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -25,7 +25,7 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  7 modified, 0 staged
+⚠️  5 modified, 0 staged
 
 ---
 
@@ -99,6 +99,9 @@ Quick health check: `~/bin/health-check.sh`
 - (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
 - (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
 - (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
+- (1x) Hanging indent vs container padding: text-indent: -Npx on child requires parent padding-left > N or content bleeds outside background
+- (1x) CSS section card wrapping via regex split: re.split(r'(?=<h2[^>]*>)', html) then wrap each segment in card div
+- (1x) Simple TOC beats complex: WeasyPrint target-counter/toc-parent/toc-child/dotted-leaders = over-engineered; plain ol+a+href is better
 
 ---
 
@@ -125,7 +128,7 @@ Full list: `~/.homelab/config/anti-patterns.yaml`
 - homepage - Dashboard at homepage.petersimmons.com (Production, problematic)
 
 **Development** (3 projects):
-- security-intelligence-business - Business website + LinkedIn automation
+- clearwatch - Security intelligence report pipeline (Active, v018 canonical) — ~/projects/clearwatch
 - job-search-system - Application tracking (Development)
 - gmail-tracker - Email campaign tracking (Development)
 
