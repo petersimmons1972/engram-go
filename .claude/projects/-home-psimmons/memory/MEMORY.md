@@ -1,12 +1,15 @@
 # Learning Index
 
-**Last Updated**: 2026-02-17T17:11:31Z
-**Session**: 20260217-121131
+**Last Updated**: 2026-02-17T18:49:15Z
+**Session**: 20260217-134915
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
+- 2026-02-17: feat: implement legal framework - AI disclosure, disclaimers, compliance gates, entity prep (clearwatch)
+- 2026-02-17: chore: remove misplaced REPORT-GENERATION-PROMPT.md from Pictures/claude
+- 2026-02-17: docs: update MEMORY.md - clearwatch project, 3 new technical lessons
 - 2026-02-17: docs: homelab lessons from 2026-02-17 cluster maintenance
 - 2026-02-15: docs: master prompt v2.9 - GATE2 validator technical requirements
 - 2026-02-15: docs: session summary and learning index update
@@ -14,9 +17,6 @@
 - 2026-02-15: docs: master prompt v2.7 - exclude homelab tier pricing
 - 2026-02-15: docs: master prompt v2.6 - personalize baseball games narrative
 - 2026-02-15: docs: master prompt v2.5 - niche vendor citation exceptions
-- 2026-02-15: docs: master prompt v2.4 - citation count minimum + visual badge implementation
-- 2026-02-15: docs: master prompt v2.3 - endnote legend + mandatory legal sections
-- 2026-02-15: docs: Free sample download infrastructure design
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -25,7 +25,7 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  5 modified, 0 staged
+⚠️  4 modified, 0 staged
 
 ---
 
@@ -99,9 +99,6 @@ Quick health check: `~/bin/health-check.sh`
 - (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
 - (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
 - (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
-- (1x) Hanging indent vs container padding: text-indent: -Npx on child requires parent padding-left > N or content bleeds outside background
-- (1x) CSS section card wrapping via regex split: re.split(r'(?=<h2[^>]*>)', html) then wrap each segment in card div
-- (1x) Simple TOC beats complex: WeasyPrint target-counter/toc-parent/toc-child/dotted-leaders = over-engineered; plain ol+a+href is better
 
 ---
 
@@ -128,7 +125,9 @@ Full list: `~/.homelab/config/anti-patterns.yaml`
 - homepage - Dashboard at homepage.petersimmons.com (Production, problematic)
 
 **Development** (3 projects):
-- clearwatch - Security intelligence report pipeline (Active, v018 canonical) — ~/projects/clearwatch
+- clearwatch - Competitive intelligence reports ($495/report), migrated from security-intelligence-business
+  - Legal framework implemented 2026-02-17: AI disclosure, compliance gates, TOS/Privacy/Purchase drafted
+  - Pending: Georgia LLC formation, attorney review, E&O insurance, WordPress deploy
 - job-search-system - Application tracking (Development)
 - gmail-tracker - Email campaign tracking (Development)
 
