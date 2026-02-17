@@ -345,6 +345,26 @@
   ```
 - **Incident History**:
   - 2026-01-10: Job Search PostgreSQL - switched to emptyDir after 45min troubleshooting
+  - 2026-02-17: job-search fastapi + gmail-tracker ImagePullBackOff (6 days) - images missing from registry, scaled to 0
+
+#### Kubernetes Cluster Maintenance (February 17, 2026)
+- **File**: `/home/psimmons/INCIDENTS/2026-02-17-kubernetes-maintenance.md`
+- **Last Updated**: 2026-02-17
+- **Status**: Partially resolved (image rebuilds deferred)
+- **Topics**: #kubernetes #cleanup #configuration #performance
+- **Issues Found & Fixed**:
+  - 278 empty ReplicaSets deleted; `revisionHistoryLimit: 3` set on all 69 deployments
+  - 3 clearwatch stuck rollouts (uss-constitution/enterprise/tang, 370-547 restarts) rolled back
+  - 3 ImagePullBackOff deployments scaled to 0 (images missing from registry)
+  - searxng HPA created (min 2, max 20 replicas, CPU 70% / memory 80% targets)
+- **Key Lessons**:
+  - Two pods from different RSes for same deployment = stuck rollout → `kubectl rollout undo`
+  - `revisionHistoryLimit` defaults to 10 — always set to 3 in new deployment manifests
+  - ImagePullBackOff >1h means image is missing — verify with `curl -sk https://registry.petersimmons.com/v2/<image>/tags/list`
+  - Stateless multi-replica deployments should always have an HPA
+- **TODO**:
+  - Rebuild `job-search-api`, `gmail-job-tracker`, `proxmox-monitor` images
+  - Investigate why clearwatch uss-* new versions crash on startup
 
 #### Homepage Session Improvements (December 20, 2025)
 - **File**: `/home/psimmons/projects/kubernetes/homepage/SESSION-2025-12-20-IMPROVEMENTS.md`

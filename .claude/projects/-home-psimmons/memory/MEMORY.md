@@ -1,12 +1,14 @@
 # Learning Index
 
-**Last Updated**: 2026-02-16T01:10:58Z
-**Session**: 20260215-201058
+**Last Updated**: 2026-02-17T05:08:20Z
+**Session**: 20260217-000820
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
+- 2026-02-15: docs: master prompt v2.9 - GATE2 validator technical requirements
+- 2026-02-15: docs: session summary and learning index update
 - 2026-02-15: docs: master prompt v2.8 - EDR/XDR focus, exclude consumer/NGAV-only
 - 2026-02-15: docs: master prompt v2.7 - exclude homelab tier pricing
 - 2026-02-15: docs: master prompt v2.6 - personalize baseball games narrative
@@ -15,8 +17,6 @@
 - 2026-02-15: docs: master prompt v2.3 - endnote legend + mandatory legal sections
 - 2026-02-15: docs: Free sample download infrastructure design
 - 2026-02-14: fix: Route Enterprise traffic to service with buy button
-- 2026-02-14: docs: Gordon Ramsay & CISO website verification findings
-- 2026-02-14: docs: generals historical audit design - modern scholarship methodology
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -25,14 +25,14 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  5 modified, 0 staged
+⚠️  7 modified, 0 staged
 
 ---
 
 ## ⚡ Infrastructure Health
 
 **Cluster Status**: ✅ All 9 nodes ready
-**Critical Services**: ⚠️  6 OK, 0 failed, 2 warnings
+**Critical Services**: ⚠️  7 OK, 0 failed, 1 warnings
 **Active Warnings**: None detected
 
 Quick health check: `~/bin/health-check.sh`

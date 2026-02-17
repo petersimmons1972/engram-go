@@ -46,6 +46,10 @@ Known failure patterns with impact (blast radius) and recovery time (MTTR).
 | **Service/Deployment port mismatch** | Pods CrashLoopBackOff, probes fail    | Affected deployment         | 5 min  | 2026-02-14      | Verify containerPort, livenessProbe.port, readinessProbe.port, Service.targetPort all match |
 | **Traefik IngressRoute API version** | `kubectl apply` fails, "no matches for kind" | Deployment blocked     | 2 min  | 2026-02-14      | Use `traefik.io/v1alpha1` not `traefik.containo.us/v1alpha1` |
 | **Conflicting IngressRoute hostnames** | Site serves stale content or 404    | Affected hostname           | 5 min  | 2026-02-14      | Check `kubectl get ingressroute` for duplicates, delete old routes |
+| **Stuck rolling update (CrashLoopBackOff)** | Two pods from different RSes, new one crashing 50-500+ times | Double resource consumption, wasted CPU | 2 min | 2026-02-17 | `kubectl rollout undo -n <ns> deployment/<name>` |
+| **Missing registry image (ImagePullBackOff >1h)** | Pod in ImagePullBackOff, registry returns NAME_UNKNOWN | Service down until image rebuilt | 10 min | 2026-02-17 | Verify image: `curl -sk https://registry.petersimmons.com/v2/<img>/tags/list`; scale to 0 then rebuild |
+| **ReplicaSet bloat (empty RSes)** | 50+ empty ReplicaSets cluster-wide, slow kubectl responses | Etcd bloat, monitoring noise | 10 min | 2026-02-17 | Delete empty RSes; set `revisionHistoryLimit: 3` on all deployments |
+| **Stateless deployment without HPA** | Fixed replica count regardless of load (e.g. 20 replicas at 0% CPU) | Resource waste on idle workloads | 5 min | 2026-02-17 | Create HPA: min replicas, CPU/memory targets, scale-down stabilization window |
 
 ---
 
@@ -71,7 +75,7 @@ Known failure patterns with impact (blast radius) and recovery time (MTTR).
 
 ---
 
-**Last Updated:** 2026-02-12
+**Last Updated:** 2026-02-17
 
 ## Tier 5: Report Generation Failures (Business Intelligence)
 
