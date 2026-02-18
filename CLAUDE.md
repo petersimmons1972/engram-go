@@ -16,8 +16,9 @@
 - Check logs before restarting services
 - Verify end-to-end output, not just code (see `docs/MULTI-STAGE-VERIFICATION.md`)
 - Use skills for procedural work
-- Write service records + commit to GH before shutting down teams
+- Write service records + commit to GH before shutting down teams (`docs/TEAM-MANAGEMENT-WORKFLOW.md`)
 - Use actual generals from `~/projects/generals/profiles/` — never generic agent names (see `~/projects/generals/COMMAND-ROSTER.md`)
+- Model selection: Field Marshal assigns models case-by-case (Haiku/Sonnet/Opus)
 - GitHub = single source of truth; deliverables must be committed
 
 ---
@@ -82,6 +83,8 @@ Service Down?
 - Deep debug → superpowers:systematic-debugging
 - Before claiming done → superpowers:verification-before-completion
 - Before implementing → superpowers:brainstorming
+
+Zero auto-invocation: all skills require explicit context or request.
 
 ---
 
