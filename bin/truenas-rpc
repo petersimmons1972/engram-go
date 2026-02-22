@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""truenas-rpc: JSON-RPC 2.0 WebSocket client for TrueNAS SCALE
+
+Usage:
+  truenas-rpc <method> [params_json] [--wait-job]
+
+Examples:
+  truenas-rpc pool.query
+  truenas-rpc alert.list
+  truenas-rpc system.general.config
+  truenas-rpc certificate.create '[{...}]' --wait-job
+  truenas-rpc system.general.update '[{"ui_certificate": 5}]'
+  truenas-rpc system.general.ui_restart
+
+Reads credentials from ~/.claude/.truenas-credentials (API_TOKEN=, HOST=).
+Returns JSON result to stdout. Errors go to stderr, exits non-zero.
+
+--wait-job: treat the method result as a TrueNAS job ID, poll until
+            SUCCESS/FAILED, and return the job's final result.
+"""
+
+import asyncio
+import json
+import os
+import ssl
+import sys
+
+import websockets
+
+CREDS_FILE = os.path.expanduser("~/.claude/.truenas-credentials")
+POLL_INTERVAL = 2
+
+
+def load_creds():
+    host, token = "trunas.petersimmons.com", None
+    with open(CREDS_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("API_TOKEN="):
+                token = line.split("=", 1)[1]
+            elif line.startswith("HOST="):
+                host = line.split("=", 1)[1]
+    if not token:
+        raise RuntimeError("API_TOKEN not found in credentials file")
+    return host, token
+
+
+def _ssl_ctx():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+async def _auth(ws, token):
+    await ws.send(json.dumps({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "auth.login_with_api_key", "params": [token]
+    }))
+    resp = json.loads(await ws.recv())
+    if not resp.get("result"):
+        raise RuntimeError(f"Authentication failed: {resp}")
+
+
+async def call(host, token, method, params):
+    async with websockets.connect(f"wss://{host}/api/current", ssl=_ssl_ctx()) as ws:
+        await _auth(ws, token)
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0", "id": 2, "method": method, "params": params
+        }))
+        resp = json.loads(await ws.recv())
+        if "error" in resp:
+            raise RuntimeError(f"RPC error in {method}: {resp['error']}")
+        return resp["result"]
+
+
+async def call_and_wait_job(host, token, method, params):
+    """Call method, treat integer result as async job ID, poll until done."""
+    async with websockets.connect(f"wss://{host}/api/current", ssl=_ssl_ctx()) as ws:
+        await _auth(ws, token)
+
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0", "id": 2, "method": method, "params": params
+        }))
+        resp = json.loads(await ws.recv())
+        if "error" in resp:
+            raise RuntimeError(f"RPC error in {method}: {resp['error']}")
+        job_id = resp["result"]
+
+        req_id = 3
+        while True:
+            await ws.send(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "method": "core.get_jobs",
+                "params": [[["id", "=", job_id]]]
+            }))
+            jobs_resp = json.loads(await ws.recv())
+            req_id += 1
+
+            if "error" in jobs_resp:
+                raise RuntimeError(f"core.get_jobs error: {jobs_resp['error']}")
+
+            jobs = jobs_resp["result"]
+            if not jobs:
+                raise RuntimeError(f"Job {job_id} not found")
+
+            state = jobs[0]["state"]
+            if state == "SUCCESS":
+                return jobs[0]["result"]
+            elif state in ("FAILED", "ABORTED"):
+                raise RuntimeError(f"Job {job_id} {state}: {jobs[0].get('error')}")
+            await asyncio.sleep(POLL_INTERVAL)
+
+
+def main():
+    wait_job = "--wait-job" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+
+    if not args:
+        print(__doc__, file=sys.stderr)
+        sys.exit(1)
+
+    method = args[0]
+    params = json.loads(args[1]) if len(args) > 1 else []
+
+    try:
+        host, token = load_creds()
+        if wait_job:
+            result = asyncio.run(call_and_wait_job(host, token, method, params))
+        else:
+            result = asyncio.run(call(host, token, method, params))
+        print(json.dumps(result))
+    except Exception as e:
+        print(f"truenas-rpc: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

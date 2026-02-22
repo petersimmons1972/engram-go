@@ -31,28 +31,21 @@ else
 fi
 
 echo -e "\n=== TruNAS Storage ==="
-TRUENAS_TOKEN=$(grep '^API_TOKEN=' ~/.claude/.truenas-credentials | cut -d= -f2)
-if [ -n "$TRUENAS_TOKEN" ]; then
-  pool=$(curl -sk -H "Authorization: Bearer $TRUENAS_TOKEN" \
-    https://trunas.petersimmons.com/api/v2.0/pool 2>/dev/null | \
-    jq -r '.[] | "\(.name): \(.status) | used: \((.allocated/.size*100)|round)% of \((.size/1099511627776*10|round)/10)TB"' 2>/dev/null)
-  alerts=$(curl -sk -H "Authorization: Bearer $TRUENAS_TOKEN" \
-    https://trunas.petersimmons.com/api/v2.0/alert/list 2>/dev/null | \
-    jq -r '[.[] | select(.dismissed==false and .level!="INFO")] | length' 2>/dev/null)
-  if [ -n "$pool" ]; then
-    while IFS= read -r line; do
-      if echo "$line" | grep -q "ONLINE"; then
-        echo "✅ $line"
-      else
-        echo "❌ $line"
-      fi
-    done <<< "$pool"
-    [ "$alerts" -gt 0 ] 2>/dev/null && echo "⚠️  $alerts active TruNAS alert(s)" || echo "✅ No active TruNAS alerts"
-  else
-    echo "⚠️  Could not reach TruNAS API"
-  fi
+pool=$(truenas-rpc pool.query 2>/dev/null | \
+  jq -r '.[] | "\(.name): \(.status) | used: \((.allocated/.size*100)|round)% of \((.size/1099511627776*10|round)/10)TB"' 2>/dev/null)
+alerts=$(truenas-rpc alert.list 2>/dev/null | \
+  jq -r '[.[] | select(.dismissed==false and .level!="INFO")] | length' 2>/dev/null)
+if [ -n "$pool" ]; then
+  while IFS= read -r line; do
+    if echo "$line" | grep -q "ONLINE"; then
+      echo "✅ $line"
+    else
+      echo "❌ $line"
+    fi
+  done <<< "$pool"
+  [ "$alerts" -gt 0 ] 2>/dev/null && echo "⚠️  $alerts active TruNAS alert(s)" || echo "✅ No active TruNAS alerts"
 else
-  echo "⚠️  TruNAS credentials not found"
+  echo "⚠️  Could not reach TruNAS API"
 fi
 
 echo -e "\n=== Proxmox Storage ==="
