@@ -23,19 +23,52 @@ else
 fi
 
 # Homepage: HTTPS only (no HTTP redirect configured)
-status=$(curl -s -o /dev/null -w "%{http_code}" https://homepage.petersimmons.com)
+status=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" https://homepage.petersimmons.com)
 if [ "$status" = "200" ]; then
   echo "✅ https://homepage.petersimmons.com"
 else
   echo "❌ https://homepage.petersimmons.com ($status)"
 fi
 
-echo -e "\n=== Proxmox Storage ==="
-# Check if we can SSH to Proxmox and query storage
-if ssh -o ConnectTimeout=5 psimmons@192.168.0.100 "command -v pvesm >/dev/null 2>&1" 2>/dev/null; then
-  ssh psimmons@192.168.0.100 "pvesm status" 2>/dev/null | grep zp3 || echo "⚠️  Could not query zp3 storage"
+echo -e "\n=== TruNAS Storage ==="
+TRUENAS_TOKEN=$(grep '^API_TOKEN=' ~/.claude/.truenas-credentials | cut -d= -f2)
+if [ -n "$TRUENAS_TOKEN" ]; then
+  pool=$(curl -sk -H "Authorization: Bearer $TRUENAS_TOKEN" \
+    https://trunas.petersimmons.com/api/v2.0/pool 2>/dev/null | \
+    jq -r '.[] | "\(.name): \(.status) | used: \((.allocated/.size*100)|round)% of \((.size/1099511627776*10|round)/10)TB"' 2>/dev/null)
+  alerts=$(curl -sk -H "Authorization: Bearer $TRUENAS_TOKEN" \
+    https://trunas.petersimmons.com/api/v2.0/alert/list 2>/dev/null | \
+    jq -r '[.[] | select(.dismissed==false and .level!="INFO")] | length' 2>/dev/null)
+  if [ -n "$pool" ]; then
+    while IFS= read -r line; do
+      if echo "$line" | grep -q "ONLINE"; then
+        echo "✅ $line"
+      else
+        echo "❌ $line"
+      fi
+    done <<< "$pool"
+    [ "$alerts" -gt 0 ] 2>/dev/null && echo "⚠️  $alerts active TruNAS alert(s)" || echo "✅ No active TruNAS alerts"
+  else
+    echo "⚠️  Could not reach TruNAS API"
+  fi
 else
-  echo "⚠️  Cannot access Proxmox storage commands (may need to run as root or configure sudo)"
+  echo "⚠️  TruNAS credentials not found"
+fi
+
+echo -e "\n=== Proxmox Storage ==="
+# Use zpool list (works as non-root) instead of pvesm status (requires root)
+zp3_info=$(ssh -o ConnectTimeout=5 psimmons@192.168.0.100 "zpool list zp3 -H -o name,cap,health" 2>/dev/null)
+if [ -n "$zp3_info" ]; then
+  name=$(echo "$zp3_info" | awk '{print $1}')
+  cap=$(echo "$zp3_info" | awk '{print $2}' | tr -d '%')
+  health=$(echo "$zp3_info" | awk '{print $3}')
+  if [ "$cap" -gt 85 ] 2>/dev/null; then
+    echo "⚠️  $name: ${cap}% used (ABOVE 85% threshold) | $health"
+  else
+    echo "✅ $name: ${cap}% used | $health"
+  fi
+else
+  echo "⚠️  Could not SSH to Proxmox to check zp3 storage"
 fi
 
 echo -e "\n=== DNS Servers ==="
@@ -55,7 +88,7 @@ else
 fi
 
 # Check for active ACME challenges that aren't propagating
-pending_challenges=$(kubectl get challenge -A --no-headers 2>/dev/null | grep -c "pending" || echo "0")
+pending_challenges=$(kubectl get challenge -A --no-headers 2>/dev/null | grep -c "pending" 2>/dev/null)
 if [ "$pending_challenges" -gt 0 ]; then
   echo "⚠️  $pending_challenges pending ACME challenge(s) - check DNS propagation"
   kubectl get challenge -A --no-headers 2>/dev/null | grep "pending"
