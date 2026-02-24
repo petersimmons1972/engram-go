@@ -16,13 +16,9 @@
 - Check logs before restarting services
 - Verify end-to-end output, not just code (see `docs/MULTI-STAGE-VERIFICATION.md`)
 - Use skills for procedural work
-- Write service records + commit to GH before shutting down teams (`docs/TEAM-MANAGEMENT-WORKFLOW.md`)
-- **Use named generals ONLY from GitHub source of truth:** https://github.com/petersimmons1972/generals
-  - NEVER use local COMMAND-ROSTER.md — it may be outdated
-  - Each general has profile at `~/projects/generals/profiles/{name}.md` (local working copies)
-  - Deployment stats stored on GitHub → check recent SERVICE-RECORD files for latest XP/competency
-  - Spawn teams with `TeamCreate` and `SendMessage` tools using general names from GitHub
-- Model selection: Field Marshal assigns models case-by-case (Haiku/Sonnet/Opus)
+- **Generals multi-agent system**: See `~/AGENTS.md` for roster, spawn templates, and operational reference
+  - GitHub source of truth: https://github.com/petersimmons1972/generals
+  - Service records + commit to GH before shutting down teams (see AGENTS.md checklist)
 - GitHub = single source of truth; deliverables must be committed
 
 ---
@@ -98,6 +94,7 @@ Zero auto-invocation: all skills require explicit context or request.
 - `PROJECTS-CATALOG.md` — 45+ projects
 - `RUNBOOKS-INDEX.md` — Emergency procedures
 - `FAILURE-MODES-CATALOG.md` — Known failures
+- `AGENTS.md` — Generals roster, spawn templates, service record checklist
 
 ---
 
