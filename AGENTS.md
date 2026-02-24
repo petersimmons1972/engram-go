@@ -239,3 +239,27 @@ Full system: `~/projects/generals/PROGRESSION-SYSTEM.md`
 4. Note new sync date in Section 2 header
 
 **Why staleness is acceptable**: Spawn decisions are specialization-based, not XP-dependent. A commander's specialization doesn't change between syncs. XP only matters for model assignment (high-XP = proven = Opus-worthy), and small XP deltas don't change that calculus.
+
+---
+
+## 9. Team Management Standards (MINIMUM)
+
+### Idle Notification Protocol
+When teammate goes idle:
+1. Immediately send status check (do NOT just wait)
+2. Request: What completed? Current state? Blocked? Next steps?
+3. Response within 1 minute of idle notification
+
+### Field Marshal Responsibilities
+- Monitor all teammate idle notifications
+- Send status checks within 1 minute of idle state
+- Document progress in mission log
+- Escalate blockers immediately
+
+### Anti-patterns (FORBIDDEN)
+- Seeing idle notification and doing nothing
+- Assuming agent will self-report
+- Waiting >5 minutes to check on idle agent
+- Passive "let me know when done" approach
+
+**Success metric:** No agent sits idle >2 minutes without status check.
