@@ -1,0 +1,99 @@
+{
+  "vendor": "Palo Alto Networks",
+  "product": "Cortex XDR",
+  "research_date": "2026-02-24",
+  "queries_executed": 9,
+  "total_data_points_collected": 33,
+  "unique_price_points": 6,
+  "price_statistics": {
+    "minimum_usd": 55.0,
+    "maximum_usd": 261.99,
+    "mean_usd": 139.66,
+    "unit": "per endpoint per year"
+  },
+  "all_prices_found": [
+    55.0,
+    81.0,
+    90.0,
+    100.0,
+    250.0,
+    261.99
+  ],
+  "sample_sources": [
+    {
+      "price": 81.0,
+      "title": "Palo Alto Networks Pricing 2026: Ultimate Guide for Security",
+      "url": "https://underdefense.com/industry-pricings/palo-alto-networks-pricing-ultimate-g"
+    },
+    {
+      "price": 10.18,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 29.48,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 36.0,
+      "title": "Palo Alto XDR Price - Palo Alto Price List 2022",
+      "url": "https://itprice.com/paloalto-price-list/xdr.html"
+    },
+    {
+      "price": 36.0,
+      "title": "Palo Alto CORTEX XDR Price - Palo Alto Price List 2022",
+      "url": "https://itprice.com/paloalto-price-list/cortex%20xdr.html"
+    },
+    {
+      "price": 81.0,
+      "title": "Palo Alto Networks Pricing 2026: Ultimate Guide for Security",
+      "url": "https://underdefense.com/industry-pricings/palo-alto-networks-pricing-ultimate-g"
+    },
+    {
+      "price": 10.18,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 29.48,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 36.0,
+      "title": "Palo Alto XDR Price - Palo Alto Price List 2022",
+      "url": "https://itprice.com/paloalto-price-list/xdr.html"
+    },
+    {
+      "price": 42.0,
+      "title": "Best XDR Solutions 2025: Compare Sophos, Symantec and BitLyf",
+      "url": "https://www.bitlyft.com/resources/comparing-the-most-popular-xdr-solutions-an-ov"
+    },
+    {
+      "price": 81.0,
+      "title": "Palo Alto Networks Pricing 2026: Ultimate Guide for Security",
+      "url": "https://underdefense.com/industry-pricings/palo-alto-networks-pricing-ultimate-g"
+    },
+    {
+      "price": 10.18,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 29.48,
+      "title": "Palo Alto Cortex XDR Pro - License - 1 Endpoint - PCNation",
+      "url": "https://www.pcnation.com/palo-alto-subscriptions-pan-xdr-adv-ep-hb4751"
+    },
+    {
+      "price": 36.0,
+      "title": "Palo Alto CORTEX XDR Price - Palo Alto Price List 2022",
+      "url": "https://itprice.com/paloalto-price-list/cortex%20xdr.html"
+    },
+    {
+      "price": 81.0,
+      "title": "Palo Alto Networks Pricing 2026: Ultimate Guide for Security",
+      "url": "https://underdefense.com/industry-pricings/palo-alto-networks-pricing-ultimate-g"
+    }
+  ]
+}
