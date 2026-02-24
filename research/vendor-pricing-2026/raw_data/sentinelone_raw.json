@@ -1,0 +1,222 @@
+[
+  {
+    "price": 69.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.sentinelone.com/platform-packages/",
+    "source_type": "official",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.sentinelone.com/platform-packages/",
+    "source_type": "official",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 179.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.sentinelone.com/platform-packages/",
+    "source_type": "official",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Control",
+    "source": "https://underdefense.com/blog/sentinelone-pricing-2026-packages-comparison/",
+    "source_type": "community/review",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 69.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Core",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-pricing-packages-core-control-and-complete/",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 69.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.procufly.com/blog/sentinelone-singularity-cybersecurity-platform-procufly-reseller-across-cyprus-the-eu",
+    "source_type": "reseller",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.procufly.com/blog/sentinelone-singularity-cybersecurity-platform-procufly-reseller-across-cyprus-the-eu",
+    "source_type": "reseller",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 159.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.procufly.com/blog/sentinelone-singularity-cybersecurity-platform-procufly-reseller-across-cyprus-the-eu",
+    "source_type": "reseller",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 179.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.capterra.com/p/152564/Endpoint-Protection-Platform/pricing/",
+    "source_type": "community/review",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 229.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.capterra.com/p/152564/Endpoint-Protection-Platform/pricing/",
+    "source_type": "community/review",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 229.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-pricing-packages-core-control-and-complete/",
+    "source_type": "third-party",
+    "confidence": "medium",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 229.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.sentinelone.com/platform-packages/",
+    "source_type": "official",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Core",
+    "source": "https://softwarefinder.com/cybersecurity/sentinelone",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 69.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-vs-crowdstrike-how-to-choose/",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-vs-crowdstrike-how-to-choose/",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 69.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Core",
+    "source": "https://underdefense.com/blog/sentinelone-pricing-2026-packages-comparison/",
+    "source_type": "community/review",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 79.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Commercial",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-pricing-packages-core-control-and-complete/",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 179.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Commercial",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-pricing-packages-core-control-and-complete/",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 87.22,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "Singularity Complete",
+    "source": "https://www.brtgproducts.com/Products/overview/M024017132",
+    "source_type": "third-party",
+    "confidence": "high",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 179.99,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "",
+    "source": "https://www.cynet.com/endpoint-security/sentinelone-pricing-packages-core-control-and-complete/",
+    "source_type": "third-party",
+    "confidence": "medium",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 80.0,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "",
+    "source": "https://underdefense.com/blog/crowdstrike-vs-sentinelone-2025-whos-building-the-better-ai-soc-brain/",
+    "source_type": "third-party",
+    "confidence": "medium",
+    "date_found": "2026-02-24"
+  },
+  {
+    "price": 250.0,
+    "currency": "USD",
+    "unit": "/endpoint/year",
+    "tier": "",
+    "source": "https://underdefense.com/blog/crowdstrike-vs-sentinelone-2025-whos-building-the-better-ai-soc-brain/",
+    "source_type": "third-party",
+    "confidence": "medium",
+    "date_found": "2026-02-24"
+  }
+]
