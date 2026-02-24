@@ -24,6 +24,13 @@ SearXNG: `https://searxng.petersimmons.com/search?q={query}&format=json` | Fallb
 
 ---
 
+## Skills (Universal)
+- Deep debug → superpowers:systematic-debugging
+- Before claiming done → superpowers:verification-before-completion
+- Before implementing → superpowers:brainstorming
+
+---
+
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
 - Pre-approved: logs, kubectl get/describe, health-check, diagnostics
