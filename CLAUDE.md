@@ -4,17 +4,13 @@
 
 **NEVER:**
 - Commit secrets (API keys, passwords, tokens, .env files)
-- Replace Traefik with Nginx
-- Assign static IPs in DHCP range (192.168.0.2-.98)
 - Restart services before checking logs
-- Edit live manifests (edit source, apply source)
 - Perform destructive ops without verified backup
 
 **ALWAYS:**
 - `git diff --staged` before every commit
-- `~/bin/health-check.sh` before troubleshooting
 - Check logs before restarting services
-- Verify end-to-end output, not just code (see `docs/MULTI-STAGE-VERIFICATION.md`)
+- Verify end-to-end output, not just code
 - Use skills for procedural work
 - **Generals multi-agent system**: See `~/AGENTS.md` for roster, spawn templates, and operational reference
   - GitHub source of truth: https://github.com/petersimmons1972/generals
@@ -23,78 +19,8 @@
 
 ---
 
-## Quick Reference
-
-| Service | Address |
-|---------|---------|
-| Proxmox | pve.petersimmons.com:100 |
-| K8s Nodes | 192.168.0.131-139 |
-| DNS | 192.168.0.231, .232 |
-| Nextcloud | 192.168.0.200 |
-| TruNAS | trunas.petersimmons.com (API: `~/.claude/.truenas-credentials`) |
-| Registry | registry.petersimmons.com |
-| SearXNG | searxng.petersimmons.com (`/search?q={query}&format=json`) |
-| Health check | `~/bin/health-check.sh` |
-| Log commands | `LOG-COMMANDS-REFERENCE.md` |
-
-**K8s AI experiments:** Use namespaces (`kubectl create ns ai-experiment-<task>`), clean up when done.
-
----
-
 ## Web Search
-**PRIMARY:** SearXNG `https://searxng.petersimmons.com/search?q={query}&format=json`
-**FALLBACK:** WebSearch tool
-
----
-
-## DNS Management
-Use APIs — never ask user to do it manually.
-- Internal DNS → Unifi API (`~/.claude/.unifi-credentials`)
-- Public domains → Cloudflare (`~/projects/kubernetes/cert-manager/.env`)
-- Monitoring only → Pi-hole (`~/.claude/pihole-api-credentials.md`)
-
-Full examples: `docs/DNS-API-REFERENCE.md`
-
----
-
-## Triage
-```
-Service Down?
-├─ Multiple? → homelab:trace-dependencies
-├─ Single K8s? → homelab:troubleshoot-common-issues
-├─ Homepage? → homelab:troubleshoot-homepage
-├─ Nextcloud? → homelab:troubleshoot-nextcloud
-├─ Hardware? → homelab:troubleshoot-hardware
-└─ Deep debug → superpowers:systematic-debugging
-```
-
----
-
-## Skills
-- Service down → homelab:troubleshoot-common-issues
-- Homepage → homelab:troubleshoot-homepage
-- Nextcloud → homelab:troubleshoot-nextcloud
-- Hardware → homelab:troubleshoot-hardware
-- Trace dependencies → homelab:trace-dependencies
-- Anti-patterns → homelab:check-anti-patterns
-- Predict failures → homelab:predict-failure
-- Log incident → homelab:log-incident
-- Monthly review → homelab:monthly-review
-- Evolve runbook → homelab:evolve-runbook
-- Deep debug → superpowers:systematic-debugging
-- Before claiming done → superpowers:verification-before-completion
-- Before implementing → superpowers:brainstorming
-
-Zero auto-invocation: all skills require explicit context or request.
-
----
-
-## Indexes
-- `KNOWLEDGE-INDEX.md` — Lessons, troubleshooting, sessions
-- `PROJECTS-CATALOG.md` — 45+ projects
-- `RUNBOOKS-INDEX.md` — Emergency procedures
-- `FAILURE-MODES-CATALOG.md` — Known failures
-- `AGENTS.md` — Generals roster, spawn templates, service record checklist
+SearXNG: `https://searxng.petersimmons.com/search?q={query}&format=json` | Fallback: WebSearch tool
 
 ---
 
