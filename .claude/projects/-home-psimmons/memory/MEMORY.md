@@ -1,22 +1,21 @@
 # Learning Index
 
-**Last Updated**: 2026-02-17T18:49:15Z
-**Session**: 20260217-134915
+**Last Updated**: 2026-02-23T21:49:17Z
+**Session**: 20260223-164917
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
-- 2026-02-17: feat: implement legal framework - AI disclosure, disclaimers, compliance gates, entity prep (clearwatch)
+- 2026-02-23: docs: Self-learning system redesign - eliminate 10 silent failures via diagnostics
+- 2026-02-21: feat: migrate TrueNAS scripts to JSON-RPC 2.0 WebSocket API
+- 2026-02-21: fix: health-check.sh - add TruNAS section, fix 3 bugs
+- 2026-02-18: chore: restore 3 behavioral rules to home CLAUDE.md
+- 2026-02-18: chore: optimize CLAUDE.md for token efficiency (~54% reduction)
+- 2026-02-17: docs: update MEMORY.md - clearwatch legal framework session summary
 - 2026-02-17: chore: remove misplaced REPORT-GENERATION-PROMPT.md from Pictures/claude
 - 2026-02-17: docs: update MEMORY.md - clearwatch project, 3 new technical lessons
 - 2026-02-17: docs: homelab lessons from 2026-02-17 cluster maintenance
-- 2026-02-15: docs: master prompt v2.9 - GATE2 validator technical requirements
-- 2026-02-15: docs: session summary and learning index update
-- 2026-02-15: docs: master prompt v2.8 - EDR/XDR focus, exclude consumer/NGAV-only
-- 2026-02-15: docs: master prompt v2.7 - exclude homelab tier pricing
-- 2026-02-15: docs: master prompt v2.6 - personalize baseball games narrative
-- 2026-02-15: docs: master prompt v2.5 - niche vendor citation exceptions
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -25,14 +24,14 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  4 modified, 0 staged
+⚠️  6 modified, 0 staged
 
 ---
 
 ## ⚡ Infrastructure Health
 
 **Cluster Status**: ✅ All 9 nodes ready
-**Critical Services**: ⚠️  7 OK, 0 failed, 1 warnings
+**Critical Services**: ⚠️  9 OK, 0 failed, 1 warnings
 **Active Warnings**: None detected
 
 Quick health check: `~/bin/health-check.sh`
@@ -100,6 +99,15 @@ Quick health check: `~/bin/health-check.sh`
 - (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
 - (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
 
+**Clearwatch Self-Learning System** (2026-02-23):
+- (1x) Lessons captured but injected as abstract advice without examples → "virtual cul de sac" (present but ineffective)
+- (1x) Silent failures hide broken learning system until token budget wasted (400+ docs with same error)
+- (1x) Must detect recurrence BEFORE generation starts (pre-flight health check prevents token waste)
+- (1x) Three provable diagnostics beat prompt engineering: pattern matching (B), effectiveness delta (C), error classification (D)
+- (1x) Lessons need state machine: PROBATION → TESTING (prove helpful) → ACTIVE (prove non-regression) to be trusted
+- (1x) Same root cause manifests differently across documents → pattern matching fails, need semantic error classification
+- (1x) Lessons ordered by dependency but order discarded at injection → topological sort unused, breaking dependent lessons
+
 ---
 
 ## 🚫 Known Anti-Patterns
@@ -125,9 +133,7 @@ Full list: `~/.homelab/config/anti-patterns.yaml`
 - homepage - Dashboard at homepage.petersimmons.com (Production, problematic)
 
 **Development** (3 projects):
-- clearwatch - Competitive intelligence reports ($495/report), migrated from security-intelligence-business
-  - Legal framework implemented 2026-02-17: AI disclosure, compliance gates, TOS/Privacy/Purchase drafted
-  - Pending: Georgia LLC formation, attorney review, E&O insurance, WordPress deploy
+- security-intelligence-business - Business website + LinkedIn automation
 - job-search-system - Application tracking (Development)
 - gmail-tracker - Email campaign tracking (Development)
 
