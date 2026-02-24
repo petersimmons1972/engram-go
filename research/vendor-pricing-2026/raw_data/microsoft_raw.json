@@ -1,0 +1,115 @@
+{
+  "vendor": "Microsoft",
+  "product": "Microsoft 365 Defender E5",
+  "research_date": "2026-02-24",
+  "queries_executed": 6,
+  "total_data_points_collected": 94,
+  "unique_price_points": 22,
+  "price_statistics": {
+    "minimum_usd": 35.0,
+    "maximum_usd": 312.0,
+    "mean_usd": 103.42,
+    "unit": "per user per month"
+  },
+  "all_prices_found": [
+    35.0,
+    36.0,
+    38.0,
+    39.0,
+    40.0,
+    45.6,
+    50.8,
+    53.6,
+    54.75,
+    57.0,
+    57.6,
+    60.0,
+    77.3,
+    85.3,
+    89.28,
+    96.0,
+    144.0,
+    184.0,
+    228.0,
+    240.0,
+    252.0,
+    312.0
+  ],
+  "sample_sources": [
+    {
+      "price": 57.0,
+      "title": "Compare Microsoft 365 Enterprise Pricing and Plans",
+      "url": "https://www.microsoft.com/en-us/microsoft-365/enterprise/microsoft-365-plans-and"
+    },
+    {
+      "price": 10.0,
+      "title": "Compare Office 365 Enterprise Plans and Pricing - Microsoft",
+      "url": "https://www.microsoft.com/en-us/microsoft-365/enterprise/office-365-plans-and-pr"
+    },
+    {
+      "price": 38.0,
+      "title": "Office 365 E5 for enterprise - Microsoft",
+      "url": "https://www.microsoft.com/en-us/microsoft-365/enterprise/office-365-e5"
+    },
+    {
+      "price": 23.0,
+      "title": "Office 365 E5 for enterprise - Microsoft",
+      "url": "https://www.microsoft.com/en-us/microsoft-365/enterprise/office-365-e5"
+    },
+    {
+      "price": 50.8,
+      "title": "Compare Microsoft 365 Enterprise Pricing and Plans",
+      "url": "https://www.microsoft.com/en-ca/microsoft-365/enterprise/microsoft-365-plans-and"
+    },
+    {
+      "price": 77.3,
+      "title": "Compare Microsoft 365 Enterprise Pricing and Plans",
+      "url": "https://www.microsoft.com/en-ca/microsoft-365/enterprise/microsoft-365-plans-and"
+    },
+    {
+      "price": 10.9,
+      "title": "Compare Microsoft 365 Enterprise Pricing and Plans",
+      "url": "https://www.microsoft.com/en-ca/microsoft-365/enterprise/microsoft-365-plans-and"
+    },
+    {
+      "price": 96.0,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 89.28,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 624.15,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 530.53,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 240.0,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 228.0,
+      "title": "Microsoft 365 E5 | Best productivity tool with highest secur",
+      "url": "https://www.idreams.ai/product-page/microsoft-365-e5-no-teams"
+    },
+    {
+      "price": 29.45,
+      "title": "Buy Office 365 E5 License | Volume Discounts | 24/7 Support",
+      "url": "https://365cloudstore.com/product/office-365-e5-subscription-license/"
+    },
+    {
+      "price": 30.0,
+      "title": "Compare Office 365 Enterprise Plans and Pricing - Microsoft",
+      "url": "https://www.microsoft.com/en-us/microsoft-365/enterprise/office-365-plans-and-pr"
+    }
+  ]
+}
