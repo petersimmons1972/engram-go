@@ -17,7 +17,11 @@
 - Verify end-to-end output, not just code (see `docs/MULTI-STAGE-VERIFICATION.md`)
 - Use skills for procedural work
 - Write service records + commit to GH before shutting down teams (`docs/TEAM-MANAGEMENT-WORKFLOW.md`)
-- Use actual generals from `~/projects/generals/profiles/` — never generic agent names (see `~/projects/generals/COMMAND-ROSTER.md`)
+- **Use named generals ONLY from GitHub source of truth:** https://github.com/petersimmons1972/generals
+  - NEVER use local COMMAND-ROSTER.md — it may be outdated
+  - Each general has profile at `~/projects/generals/profiles/{name}.md` (local working copies)
+  - Deployment stats stored on GitHub → check recent SERVICE-RECORD files for latest XP/competency
+  - Spawn teams with `TeamCreate` and `SendMessage` tools using general names from GitHub
 - Model selection: Field Marshal assigns models case-by-case (Haiku/Sonnet/Opus)
 - GitHub = single source of truth; deliverables must be committed
 
@@ -31,6 +35,7 @@
 | K8s Nodes | 192.168.0.131-139 |
 | DNS | 192.168.0.231, .232 |
 | Nextcloud | 192.168.0.200 |
+| TruNAS | trunas.petersimmons.com (API: `~/.claude/.truenas-credentials`) |
 | Registry | registry.petersimmons.com |
 | SearXNG | searxng.petersimmons.com (`/search?q={query}&format=json`) |
 | Health check | `~/bin/health-check.sh` |
@@ -107,6 +112,32 @@ Zero auto-invocation: all skills require explicit context or request.
 - Security mindset, no fabrication, verify live state before trusting docs
 - Challenge wrong categorization; intellectual honesty over harmony
 - Never present broken as complete
+
+## Self-Learning & Quality Automation (NON-NEGOTIABLE)
+
+**NEVER ask permission for:**
+- Bug fixes (any severity: CRITICAL, HIGH, MEDIUM, LOW)
+- Feedback integration and quality improvements
+- Prompt cycle enhancements
+- Self-improvement and system refinement
+
+These are **background automation** that must happen autonomously. When you find bugs:
+1. Fix them immediately
+2. Write tests to validate the fix
+3. Commit the fix
+4. Report what was fixed (after the fact)
+
+**ONLY escalate to user if:**
+- You detect **repeated pattern cycles** — same bugs/patterns appearing multiple times without improvement
+- You're wasting tokens on circular self-learning loops
+- Example: "I've run 5 self-learning cycles and they keep finding the same issue in different files. This suggests a systemic/architectural problem that needs human diagnosis."
+
+**DO ask permission for:**
+- Running reports or generating deliverables (external impact)
+- Resource-intensive operations that require deliberate scheduling
+- Actions with external visibility or side effects
+
+This is non-negotiable. Self-improvement happens in the background, silently and continuously.
 
 ## Visual Output
 - SVG charts over tables; dark cards (navy #0F172A, gold #D4A574, cream #f8fafc)
