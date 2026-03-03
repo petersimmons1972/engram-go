@@ -24,66 +24,39 @@
 
 ## 2. Commander Roster
 
-> **SYNC WARNING**: Last synced from GitHub: 2026-02-24. XP from service record YAMLs + Feb 24 campaign.
+> **SYNC WARNING**: Last synced from GitHub: 2026-03-02. XP from service record YAMLs + Operation Parallel Pipeline.
 > If a commander's XP matters for a decision, verify against `profiles/service-records/{name}.yaml`.
+> Quick cache refresh: `~/.claude/refresh-generals-cache.sh`
 
 ### High-XP Commanders (deployed, proven)
 
 | Name | Branch | Specialization | XP | Model | When to Use |
 |------|--------|---------------|-----|-------|-------------|
 | Rickover | Tech/Eng | Zero-defect standards, technical excellence | 925 | Opus | Quality-critical technical work |
+| Eisenhower | US Army | Workflow analysis, coalition building | 550 | Opus | Multi-team coordination |
+| Spruance | US Navy | Verification, TDD, analytical excellence | 525 | Opus | QA, testing, cost analysis |
 | Montgomery | British Army | Multi-team coordination, intel synthesis | 400 | Opus | Supreme command, large campaigns |
-| Spruance | US Navy | Verification, TDD, analytical excellence | 375 | Opus | QA, testing, cost analysis |
-| Eisenhower | US Army | Workflow analysis, coalition building | 350 | Opus | Multi-team coordination |
-| Bradley | US Army | Methodical execution, state machines | 200 | Opus | Careful implementation, proven patterns |
-| Nimitz | US Navy | Config/manifests, competitive intel | 175 | Sonnet | K8s deployments, research |
-| King | US Navy | Deployment ops, blocker identification | 175 | Sonnet | Deployment execution, diagnostics |
-| Halsey | US Navy | Aggressive action, rapid response | 150 | Sonnet | Fast execution, competitive analysis |
+| Bradley | US Army | Methodical execution, state machines | 350 | Opus | Careful implementation, proven patterns |
+| Nimitz | US Navy | Config/manifests, competitive intel | 325 | Sonnet | K8s deployments, research |
+| Zhukov | Soviet | Workflow visualization | 225 | Sonnet | Process diagrams, flow charts |
+| Halsey | US Navy | Aggressive action, rapid response | 225 | Sonnet | Fast execution, competitive analysis |
 | Ramsay | Validator | Visual quality control | 150 | Sonnet | Chart/visual QA gates |
 | CISO | Validator | Strategic utility, decision support | 150 | Sonnet | Content utility validation |
 | Layton | Tech/Eng | Intelligence analysis, SIGINT, diagnostics | 150 | Opus | Pattern recognition, diagnostics |
+| King | US Navy | Deployment ops, blocker identification | 175 | Sonnet | Deployment execution, diagnostics |
 | Marshall | US Army | Build & logistics, infrastructure | 100 | Sonnet | Large-scale builds |
 | Rommel | Wehrmacht | Rapid tactical execution | 100 | Sonnet | Small-scale rapid ops |
 | Hopper | Tech/Eng | Computing, software development | 100 | Sonnet | Software projects |
 | Mitchell | USAAF | Air power innovation, code review | 100 | Opus | Code review, challenging assumptions |
 | Dowding | RAF | Integrated defense, systems integration | 100 | Opus | Architecture, pipeline integration |
 | Murrow | Journalist | Fact-checking, statistical verification | 100 | Sonnet | Fact-checking, source validation |
-| Zhukov | Soviet | Workflow visualization | 75 | Sonnet | Process diagrams, flow charts |
 | MacArthur | US Army | Strategic positioning, visionary planning | 50 | Opus | Strategy, future-state analysis |
 
 ### Zero-XP Commanders (available, unproven)
 
-| Name | Branch | Specialization | When to Use |
-|------|--------|---------------|-------------|
-| Patton | US Army | Rapid execution, emergency response | Time-critical missions |
-| Slim | British Army | Innovation under constraints | Difficult situations, morale recovery |
-| Orwell | Journalist | Propaganda detection, political analysis | Detecting mythology, ethical assessment |
-| Pyle | Journalist | Humanization, ground-level narrative | Human stories, content drafting |
-| Ogilvy | Validator | Brand standards, voice consistency | Brand alignment, voice validation |
-| Groves | Tech/Eng | Mega-project management | Complex technical projects |
-| Lejeune | USMC | Doctrine, leadership development | Training systems |
-| Butler | USMC | Direct action, anti-corruption | Challenging authority |
-| Puller | USMC | Combat leadership | Front-line operations |
-| Shoup | USMC | Amphibious assault | Complex assault planning |
-| James | USMC | Fighter ops, integration leadership | Breaking barriers |
-| Arnold | USAAF | Strategic air power | Large-scale operations |
-| LeMay | USAAF | Strategic bombing, efficiency | Maximum effectiveness |
-| Spaatz | USAAF | Precision strikes | Strategic campaigns |
-| Portal | RAF | RAF strategic direction | High-level strategy |
-| Slessor | RAF | Maritime air operations | Maritime ops |
-| Harris | RAF | Area bombing | Maximum pressure |
-| Trenchard | RAF | RAF doctrine | Organizational founding |
-| Smith | Tech/Eng | Chief of staff ops, intel | Staff coordination |
-| Moreell | Tech/Eng | Construction, Seabees | Rapid construction |
-| Dornberger | Tech/Eng | Rocket development | Advanced weapons dev |
-| Yamamoto | IJN | Naval aviation | Carrier operations |
-| Nagano | IJN | Authorization/coordination | Approval processes |
-| Raeder | Kriegsmarine | Naval strategy | Naval planning |
-| Doenitz | Kriegsmarine | Submarine warfare | Asymmetric naval |
-| Galland | Luftwaffe | Fighter operations | Air superiority |
-| Moelders | Luftwaffe | Fighter tactics | Tactical innovation |
-| Tukhachevsky | Soviet | Deep operations theory | Military theory |
-| Kulik | Soviet | Incompetent leadership study | Failure analysis |
+Key names: Patton (rapid execution), Slim (constrained innovation), Orwell (propaganda detection), Pyle (narrative drafting), Ogilvy (brand validation), Groves (mega-projects).
+
+Full roster (28 commanders): `~/projects/generals/profiles/` — browse by specialization.
 
 ---
 
@@ -255,6 +228,11 @@ When teammate goes idle:
 - Send status checks within 1 minute of idle state
 - Document progress in mission log
 - Escalate blockers immediately
+- **Worktree merge obligation (NON-NEGOTIABLE)**: If any agent in your campaign
+  works in a git worktree, YOU are responsible for merging all worktree commits
+  back to `main` and pushing to GitHub before declaring the campaign complete.
+  Campaign is not done until `git log origin/main` shows every worktree commit.
+  No orphaned work in `.claude/worktrees/` — ever.
 
 ### Anti-patterns (FORBIDDEN)
 - Seeing idle notification and doing nothing
