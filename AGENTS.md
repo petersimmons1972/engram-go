@@ -52,11 +52,41 @@
 | Murrow | Journalist | Fact-checking, statistical verification | 100 | Sonnet | Fact-checking, source validation |
 | MacArthur | US Army | Strategic positioning, visionary planning | 50 | Opus | Strategy, future-state analysis |
 
-### Zero-XP Commanders (available, unproven)
+### Zero-XP Commanders (available — PREFER for new deployments)
 
-Key names: Patton (rapid execution), Slim (constrained innovation), Orwell (propaganda detection), Pyle (narrative drafting), Ogilvy (brand validation), Groves (mega-projects).
+> **Deployment preference**: When a zero-XP commander's specialization fits the task, **prefer them over higher-XP commanders** to build bench depth. Only use proven commanders when the task is high-risk or time-critical.
 
-Full roster (28 commanders): `~/projects/generals/profiles/` — browse by specialization.
+| Name | Branch | Specialization | When to Use |
+|------|--------|---------------|-------------|
+| Patton | US Army | Rapid execution, emergency response | Time-critical missions |
+| Slim | British Army | Innovation under constraints | Difficult situations, morale recovery |
+| Orwell | Journalist | Propaganda detection, political analysis | Detecting mythology, ethical assessment |
+| Pyle | Journalist | Humanization, ground-level narrative | Human stories, content drafting |
+| Ogilvy | Validator | Brand standards, voice consistency | Brand alignment, voice validation |
+| Groves | Tech/Eng | Mega-project management | Complex technical projects |
+| Lejeune | USMC | Doctrine, leadership development | Training systems |
+| Butler | USMC | Direct action, anti-corruption | Challenging authority |
+| Puller | USMC | Combat leadership | Front-line operations |
+| Shoup | USMC | Amphibious assault | Complex assault planning |
+| James | USMC | Fighter ops, integration leadership | Breaking barriers |
+| Arnold | USAAF | Strategic air power | Large-scale operations |
+| LeMay | USAAF | Strategic bombing, efficiency | Maximum effectiveness |
+| Spaatz | USAAF | Precision strikes | Strategic campaigns |
+| Portal | RAF | RAF strategic direction | High-level strategy |
+| Slessor | RAF | Maritime air operations | Maritime ops |
+| Harris | RAF | Area bombing | Maximum pressure |
+| Trenchard | RAF | RAF doctrine | Organizational founding |
+| Smith | Tech/Eng | Chief of staff ops, intel | Staff coordination |
+| Moreell | Tech/Eng | Construction, Seabees | Rapid construction |
+| Dornberger | Tech/Eng | Rocket development | Advanced weapons dev |
+| Yamamoto | IJN | Naval aviation | Carrier operations |
+| Nagano | IJN | Authorization/coordination | Approval processes |
+| Raeder | Kriegsmarine | Naval strategy | Naval planning |
+| Doenitz | Kriegsmarine | Submarine warfare | Asymmetric naval |
+| Galland | Luftwaffe | Fighter operations | Air superiority |
+| Moelders | Luftwaffe | Fighter tactics | Tactical innovation |
+| Tukhachevsky | Soviet | Deep operations theory | Military theory |
+| Kulik | Soviet | Incompetent leadership study | Failure analysis |
 
 ---
 
@@ -162,7 +192,7 @@ After every team deployment, complete ALL steps before TeamDelete:
 | Coordinator (Eisenhower, Montgomery) | Opus | Never downgrade |
 | Core specialist (complex: state machines, architecture) | Opus | Sonnet if routine/repetitive |
 | Core specialist (routine: config, deployment) | Sonnet | Opus if unexpectedly complex |
-| 0 XP commander (first deployment) | Haiku | Sonnet/Opus if task is complex |
+| 0 XP commander (first deployment) | Sonnet | Opus if task is complex. **Prefer over proven commanders** to build bench depth |
 | Validator (Ramsay, CISO, Ogilvy) | Sonnet | Haiku OK for simple pass/fail |
 | Journalist (Murrow, Orwell, Pyle) | Sonnet | Opus for complex analysis |
 
