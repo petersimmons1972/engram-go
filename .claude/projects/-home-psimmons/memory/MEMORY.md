@@ -1,21 +1,22 @@
 # Learning Index
 
-**Last Updated**: 2026-02-23T21:49:17Z
-**Session**: 20260223-164917
+**Last Updated**: 2026-03-03T04:23:30Z
+**Session**: 20260302-232330
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
-- 2026-02-23: docs: Self-learning system redesign - eliminate 10 silent failures via diagnostics
-- 2026-02-21: feat: migrate TrueNAS scripts to JSON-RPC 2.0 WebSocket API
-- 2026-02-21: fix: health-check.sh - add TruNAS section, fix 3 bugs
-- 2026-02-18: chore: restore 3 behavioral rules to home CLAUDE.md
-- 2026-02-18: chore: optimize CLAUDE.md for token efficiency (~54% reduction)
-- 2026-02-17: docs: update MEMORY.md - clearwatch legal framework session summary
-- 2026-02-17: chore: remove misplaced REPORT-GENERATION-PROMPT.md from Pictures/claude
-- 2026-02-17: docs: update MEMORY.md - clearwatch project, 3 new technical lessons
-- 2026-02-17: docs: homelab lessons from 2026-02-17 cluster maintenance
+- 2026-02-28: fix: remove DOW 30 from SentinelOne bullet in resume DOCX - conversions were McAfee
+- 2026-02-28: docs: rewrite resume with ECO methodology (impact-first bullets)
+- 2026-02-28: docs: rename ATS resume to remove ATS suffix
+- 2026-02-28: docs: rename source resume to include 2025 year
+- 2026-02-28: docs: rename resume DOCXs to remove spaces
+- 2026-02-28: docs: add LinkedIn URL and fix SentinelOne end date in resume files
+- 2026-02-28: docs: add resume files with ATS-optimized DOCX version
+- 2026-02-24: docs: restore universal skills reference to CLAUDE.md
+- 2026-02-24: docs: slim CLAUDE.md to universal rules (148→73 lines)
+- 2026-02-24: docs: add Team Management Standards (Section 9) to AGENTS.md
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -24,14 +25,14 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  6 modified, 0 staged
+⚠️  7 modified, 0 staged
 
 ---
 
 ## ⚡ Infrastructure Health
 
 **Cluster Status**: ✅ All 9 nodes ready
-**Critical Services**: ⚠️  9 OK, 0 failed, 1 warnings
+**Critical Services**: ⚠️  8 OK, 0 failed, 2 warnings
 **Active Warnings**: None detected
 
 Quick health check: `~/bin/health-check.sh`
@@ -98,15 +99,6 @@ Quick health check: `~/bin/health-check.sh`
 - (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
 - (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
 - (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
-
-**Clearwatch Self-Learning System** (2026-02-23):
-- (1x) Lessons captured but injected as abstract advice without examples → "virtual cul de sac" (present but ineffective)
-- (1x) Silent failures hide broken learning system until token budget wasted (400+ docs with same error)
-- (1x) Must detect recurrence BEFORE generation starts (pre-flight health check prevents token waste)
-- (1x) Three provable diagnostics beat prompt engineering: pattern matching (B), effectiveness delta (C), error classification (D)
-- (1x) Lessons need state machine: PROBATION → TESTING (prove helpful) → ACTIVE (prove non-regression) to be trusted
-- (1x) Same root cause manifests differently across documents → pattern matching fails, need semantic error classification
-- (1x) Lessons ordered by dependency but order discarded at injection → topological sort unused, breaking dependent lessons
 
 ---
 

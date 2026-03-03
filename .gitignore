@@ -1,5 +1,12 @@
 .worktrees/
 
+# Claude credentials & sensitive config - never commit
+.claude/.credentials.json
+.claude/.unifi-credentials
+.claude/.truenas-credentials
+.claude/pihole-api-credentials.md
+.claude/edd-license-key.md
+
 # SECRETS - CRITICAL: Never commit these
 *.env
 *.env.local
@@ -65,3 +72,4 @@ tmp/
 .tmp/
 *.bak
 *.temp
+.nextcloud-credentials
