@@ -4,6 +4,7 @@
 
 **NEVER:**
 - Commit secrets (API keys, passwords, tokens, .env files)
+- Create `.env` files with real credentials — use Infisical (`https://infisical.petersimmons.com`); see `kubernetes/CLAUDE.md`
 - Restart services before checking logs
 - Perform destructive ops without verified backup
 
@@ -73,6 +74,7 @@ This is non-negotiable. Self-improvement happens in the background, silently and
 - SVG charts over tables; dark cards (navy #0F172A, gold #D4A574, cream #f8fafc)
 - Namespace SVG IDs; wrap in `<div style="margin: 2rem 0; page-break-inside: avoid;">`
 - Data tables as `<details>` fallback
+- **Tables must be human-readable:** align columns, use consistent spacing, no truncation that loses meaning. If a table is too wide for the terminal, split into multiple tables or use a different format.
 
 ## Learning System
 - Detail → topic file | one-liner → MEMORY.md | behavioral rule → CLAUDE.md
