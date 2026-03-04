@@ -1,22 +1,22 @@
 # Learning Index
 
-**Last Updated**: 2026-03-03T04:23:30Z
-**Session**: 20260302-232330
+**Last Updated**: 2026-03-04T20:27:24Z
+**Session**: 20260304-152724
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
+- 2026-03-02: chore: update MEMORY.md and .gitignore
+- 2026-03-02: docs: add human-readable table requirement to CLAUDE.md
+- 2026-03-02: docs: restore zero-XP roster with deployment preference policy
+- 2026-03-02: docs: trim zero-XP roster to pointer, save 29 lines of context
 - 2026-02-28: fix: remove DOW 30 from SentinelOne bullet in resume DOCX - conversions were McAfee
 - 2026-02-28: docs: rewrite resume with ECO methodology (impact-first bullets)
 - 2026-02-28: docs: rename ATS resume to remove ATS suffix
 - 2026-02-28: docs: rename source resume to include 2025 year
 - 2026-02-28: docs: rename resume DOCXs to remove spaces
 - 2026-02-28: docs: add LinkedIn URL and fix SentinelOne end date in resume files
-- 2026-02-28: docs: add resume files with ATS-optimized DOCX version
-- 2026-02-24: docs: restore universal skills reference to CLAUDE.md
-- 2026-02-24: docs: slim CLAUDE.md to universal rules (148→73 lines)
-- 2026-02-24: docs: add Team Management Standards (Section 9) to AGENTS.md
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -24,8 +24,13 @@
 - SESSION-2026-02-14-14-VARIANT-DEPLOYMENT.md
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
+**Current Work**: Clearwatch Narrative Chart Selection Integration (Session 2026-03-04, continuing)
+- Status: 3-phase fix in progress (Phase 1 starting)
+- Critical Issue: Narrative chart configs exist but Stage 5 formatter doesn't use them
+- Work Items: Tasks #5-11 in task list (see below)
+
 **Uncommitted Changes**:
-⚠️  7 modified, 0 staged
+⚠️  5 modified, 0 staged
 
 ---
 
@@ -111,6 +116,37 @@ Quick health check: `~/bin/health-check.sh`
 5. **Don't assign static IPs in DHCP range** (192.168.0.2-.98) - IP conflicts
 
 Full list: `~/.homelab/config/anti-patterns.yaml`
+
+---
+
+## 🎯 CLEARWATCH CRITICAL WORK (2026-03-04)
+
+**Status**: Multi-phase infrastructure fix in progress (3 phases, 7 work items)
+
+**Problem**: Narrative chart selection system exists but is disconnected from report generation
+- ✅ All 5 Tier 1 pairs have narrative chart configurations (NARRATIVE_CHARTS)
+- ❌ Stage 5 formatter doesn't use them — still uses keyword-based matching
+- ❌ ChartGenerator has no public chart retrieval interface
+- Result: Reports generate with wrong chart sequences, user feedback "all of that needs fixing"
+
+**Solution**: 3-phase implementation
+1. **Phase 1** (Task #5/#9): Create get_chart(name) public interface in ChartGenerator
+   - Critical blocker for all downstream work
+   - Must retrieve both generated methods and static prototypes
+
+2. **Phase 2** (Task #6/#10): Wire narrative selection into Stage 5 formatter
+   - Extract vendor pair from dossier
+   - Use get_narrative_charts() to load narrative config
+   - Call get_chart() for each narrative chart
+   - Fall back to keyword matching if narrative missing
+
+3. **Phase 3** (Task #7/#8/#11): Validation + observability
+   - Integration test for complete Tier 1 report generation
+   - Expose chart registry for debugging and querying
+
+**Task Dependencies**:
+- Task #5 (get_chart) → Task #6 (Stage 5 wiring) → Task #7 (integration tests)
+- All tasks require 2574 unit tests to pass (no regressions)
 
 ---
 
