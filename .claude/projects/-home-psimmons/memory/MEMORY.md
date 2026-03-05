@@ -158,6 +158,26 @@ Service Down?
 
 ---
 
+## 📂 Project-Specific Memory
+
+Each active project maintains isolated context:
+
+- **Clearwatch**: `~/.claude/projects/-home-psimmons-projects-clearwatch/memory/MEMORY.md`
+  - Test baseline, open issues, READY_TO_SELL reports
+  - SVG constraints, fabrication rules, gate validation
+
+- **Security Intelligence Business**: `~/projects/security-intelligence-business/MEMORY.md`
+  - 3-component overview (Clearwatch, Website, LinkedIn)
+  - WordPress reverse proxy config, RWO PVC deployment
+
+- **Homelab Infrastructure**: `~/.homelab/memory/MEMORY.md`
+  - K8s cluster status, warning thresholds, service health
+  - Top fixes by success rate, incident patterns
+
+**Start with**: ACTIVE-PRIORITIES.md to see cross-project work sequencing.
+
+---
+
 ## 🧠 How This System Works
 
 When a lesson is learned:
