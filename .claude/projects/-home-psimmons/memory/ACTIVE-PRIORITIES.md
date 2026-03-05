@@ -14,6 +14,16 @@
 
 ## Recent Completions (2026-03-05)
 
+✅ **Critical Bug Fixes** (COMPLETE)
+- Fixed 3 critical bugs affecting report correctness:
+  - BUG #2: Silent pricing data loss (now logs warnings)
+  - BUG #3: Index crash on empty pricing tiers (bounds check added)
+  - BUG #6: Hardcoded demo data in cost delta chart (now uses dossier values)
+- All fixes tested, 3334 tests passing
+- Pushed to GitHub (commit f7a68a2)
+
+## Recent Completions (Earlier Today)
+
 ✅ **Bug Fixes - Test Suite** (COMPLETE)
 - Fixed 36 failing tests in 12 test files
 - Removed references to 3 retired chart methods
