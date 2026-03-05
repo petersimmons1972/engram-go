@@ -52,9 +52,10 @@ Work scheduled for the next 7 days (2026-03-05 through 2026-03-11).
 
 | Task | Estimate | Status | Dependencies | Priority |
 |------|----------|--------|--------------|----------|
-| ~~Remove Alert Triage Funnel chart~~ (chart doesn't exist / already removed) | — | COMPLETE | Chart audit complete | — |
+| ~~Remove Alert Triage Funnel chart~~ (doesn't exist / already removed) | — | COMPLETE | Chart audit complete | — |
 | **[COMPLETE] Audit all ~60 charts for meaningful vendor differentiation** | 6-8 hours | **DONE 2026-03-05** | None | HIGH |
-| Review & remove 7-20 low-differentiation charts | 4-6 hours | Ready to start | Audit complete | HIGH |
+| **[COMPLETE] Remove 5 non-comparative charts** (readiness_matrix, decision_flowchart, outage_infographic, vendor_concentration_risk, cascade_failure_timeline) | 2-3 hours | **DONE 2026-03-05** | Audit complete | HIGH |
+| Review & remove remaining 10-15 low-differentiation charts (Phase 2) | 3-4 hours | Ready | Phase 1 complete | MEDIUM |
 | Memory System: Complete optimization (Tasks 1-3) | 3-4 hours | Pending | None | MEDIUM |
 | Update MEMORY.md with new ACTIVE-PRIORITIES reference | 30 min | Pending | This file creation | LOW |
 | Review and consolidate lesson files from MEMORY.md | 2 hours | Pending | Memory optimization | MEDIUM |
