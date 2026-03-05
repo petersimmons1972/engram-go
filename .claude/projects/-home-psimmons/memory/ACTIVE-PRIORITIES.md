@@ -13,14 +13,18 @@ Work to tackle in the very next session. These are ready to start or actively bl
 ### 1. Clearwatch #1550 [CRITICAL]
 **Issue**: SentinelOne pricing verification ($179.99 vs $210)
 - **Impact**: Blocking report delivery to client
-- **Time Estimate**: 2-3 hours research + validation
-- **Status**: Research needed
-- **Action Items**:
-  - [ ] Verify latest SentinelOne Singularity Complete pricing from official source
-  - [ ] Cross-reference with competitor quotes (CrowdStrike, Microsoft Defender)
-  - [ ] Update chart with verified pricing
+- **Status**: RESEARCH COMPLETE - Requires decision
+- **Finding**:
+  - ✅ **$179.99 is ACCURATE** — official SentinelOne Singularity Complete tier (current)
+  - ❌ **$210 is QUESTIONABLE** — doesn't match official pricing ($229.99 for Commercial tier)
+  - 📌 Source: Official SentinelOne pricing page + Spendflo analyst guide (conflicting data)
+- **Recommendation**:
+  - [ ] Verify where $210 claim originated (outdated quote? volume tier? error?)
+  - [ ] If Complete→Complete comparison: use $179.99 (both vendors)
+  - [ ] If mixing tiers: clarify which tier each vendor (Complete vs Commercial)
+  - [ ] Add footnote: "List prices as of March 2026; typical discounts 15-25%"
   - [ ] Confirm with client before report release
-- **Next Step**: Start with current SentinelOne pricing documentation search
+- **Next Step**: Review report to identify context of $210 figure, then update/remove
 
 ### 2. Clearwatch #1640 [MEDIUM]
 **Issue**: Reviewer visual defect tracking
