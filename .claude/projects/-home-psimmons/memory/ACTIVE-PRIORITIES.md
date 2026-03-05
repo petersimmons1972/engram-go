@@ -6,6 +6,12 @@
 
 ---
 
+## SCOPE CORRECTION (2026-03-05)
+
+⚠️ **Project Independence Confirmed**: Clearwatch and Security Intelligence Business are now completely separate projects with only historical links. All work must be done in `/home/psimmons/projects/clearwatch` (independent fork). Security Intelligence Business work is out of scope.
+
+---
+
 ## Immediate (Next Session)
 
 Work to tackle in the very next session. These are ready to start or actively blocking deliverables.
@@ -52,10 +58,9 @@ Work scheduled for the next 7 days (2026-03-05 through 2026-03-11).
 
 | Task | Estimate | Status | Dependencies | Priority |
 |------|----------|--------|--------------|----------|
-| ~~Remove Alert Triage Funnel chart~~ (doesn't exist / already removed) | — | COMPLETE | Chart audit complete | — |
-| **[COMPLETE] Audit all ~60 charts for meaningful vendor differentiation** | 6-8 hours | **DONE 2026-03-05** | None | HIGH |
-| **[COMPLETE] Remove 5 non-comparative charts** (readiness_matrix, decision_flowchart, outage_infographic, vendor_concentration_risk, cascade_failure_timeline) | 2-3 hours | **DONE 2026-03-05** | Audit complete | HIGH |
-| Review & remove remaining 10-15 low-differentiation charts (Phase 2) | 3-4 hours | Ready | Phase 1 complete | MEDIUM |
+| **[REVISED] Remove 3 failing charts from Clearwatch fitness audit** (breach_math_scorecard, cost_divergence, red_flag_matrix) | 1-2 hours | Ready to start | None | HIGH |
+| **Fix spec violations in 32 KEEP_FIX_REQUIRED charts** (SVG design violations) | 6-8 hours | Queued | Remove failing charts | HIGH |
+| Monitor 1 VENDOR_SPECIFIC chart (data-dependent) | Ongoing | Queued | None | MEDIUM |
 | Memory System: Complete optimization (Tasks 1-3) | 3-4 hours | Pending | None | MEDIUM |
 | Update MEMORY.md with new ACTIVE-PRIORITIES reference | 30 min | Pending | This file creation | LOW |
 | Review and consolidate lesson files from MEMORY.md | 2 hours | Pending | Memory optimization | MEDIUM |
