@@ -1,12 +1,13 @@
 # Learning Index
 
-**Last Updated**: 2026-03-04T20:27:24Z
-**Session**: 20260304-152724
+**Last Updated**: 2026-03-05T12:32:54Z
+**Session**: 20260305-073254
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
+- 2026-03-04: docs: add Clearwatch narrative chart selection 3-phase plan to memory
 - 2026-03-02: chore: update MEMORY.md and .gitignore
 - 2026-03-02: docs: add human-readable table requirement to CLAUDE.md
 - 2026-03-02: docs: restore zero-XP roster with deployment preference policy
@@ -16,18 +17,12 @@
 - 2026-02-28: docs: rename ATS resume to remove ATS suffix
 - 2026-02-28: docs: rename source resume to include 2025 year
 - 2026-02-28: docs: rename resume DOCXs to remove spaces
-- 2026-02-28: docs: add LinkedIn URL and fix SentinelOne end date in resume files
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
 - SESSION-2026-02-14-GORDON-CISO-VERIFICATION-FINDINGS.md
 - SESSION-2026-02-14-14-VARIANT-DEPLOYMENT.md
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
-
-**Current Work**: Clearwatch Narrative Chart Selection Integration (Session 2026-03-04, continuing)
-- Status: 3-phase fix in progress (Phase 1 starting)
-- Critical Issue: Narrative chart configs exist but Stage 5 formatter doesn't use them
-- Work Items: Tasks #5-11 in task list (see below)
 
 **Uncommitted Changes**:
 ⚠️  5 modified, 0 staged
@@ -80,30 +75,9 @@ Quick health check: `~/bin/health-check.sh`
 
 ## 📖 Key Lessons
 
-**Homelab** (ordered by usage count):
-- (4x) Backup before modifying critical files - design phase IS implementation for docs
-- (2x) MCP config lives in ~/.claude.json - use `claude mcp add`, never create mcp_servers.json
-- (2x) Validate what the customer sees, not intermediate formats
-- (1x) RWO PVCs need Recreate deployment strategy, not RollingUpdate
-- (1x) Chainguard images need fsGroup for PVC write access (non-root UID 65532)
-- (1x) cert-manager pods use 10.42.x.x overlay network, not 192.168.x.x - breaks Cloudflare IP filtering
-- (1x) WordPress behind reverse proxy needs WP_HOME/WP_SITEURL/FORCE_SSL_ADMIN in wp-config.php
-- (1x) CronJob not Deployment for periodic tasks - liveness probes kill sleep loops (exit 137, low memory = not OOM)
-- (1x) Homepage issues are almost always network policy label mismatch
-- (1x) Local DNS CNAME records break cert-manager DNS-01 challenges - use dnsPolicy: None + Cloudflare DNS
+**See detailed lessons**: `memory/lessons-learned.md`
 
-**General**:
-- (2x) BeautifulSoup destroys SVG xmlns attributes (all parsers) - extract SVG first, process HTML, restore SVG after
-- (1x) Every plan needs explicit validation checklist, not just "verify it works"
-- (1x) Cloudflare negative DNS cache lasts 1800s - CDN purge won't help, wait or use different record name
-- (1x) When Cloudflare zone records don't resolve, check TLD NS delegation before debugging the zone
-- (1x) Duplicate Python method definitions: last definition wins, silently overwrites earlier ones
-- (1x) When generated content disappears, trace through ALL post-processing steps - intermediate success ≠ final success
-- (1x) Regex HTML manipulation is fragile - corrupts tags, creates malformed HTML - use BeautifulSoup with SVG extraction instead
-- (1x) TDD with failing test first prevents spec drift - confirms you're testing the right thing before implementation
-- (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
-- (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
-- (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
+**Quick summary**: 31 lessons across homelab infrastructure, deployment patterns, and general programming (7 homelab most-used, 24 general patterns)
 
 ---
 
@@ -116,37 +90,6 @@ Quick health check: `~/bin/health-check.sh`
 5. **Don't assign static IPs in DHCP range** (192.168.0.2-.98) - IP conflicts
 
 Full list: `~/.homelab/config/anti-patterns.yaml`
-
----
-
-## 🎯 CLEARWATCH CRITICAL WORK (2026-03-04)
-
-**Status**: Multi-phase infrastructure fix in progress (3 phases, 7 work items)
-
-**Problem**: Narrative chart selection system exists but is disconnected from report generation
-- ✅ All 5 Tier 1 pairs have narrative chart configurations (NARRATIVE_CHARTS)
-- ❌ Stage 5 formatter doesn't use them — still uses keyword-based matching
-- ❌ ChartGenerator has no public chart retrieval interface
-- Result: Reports generate with wrong chart sequences, user feedback "all of that needs fixing"
-
-**Solution**: 3-phase implementation
-1. **Phase 1** (Task #5/#9): Create get_chart(name) public interface in ChartGenerator
-   - Critical blocker for all downstream work
-   - Must retrieve both generated methods and static prototypes
-
-2. **Phase 2** (Task #6/#10): Wire narrative selection into Stage 5 formatter
-   - Extract vendor pair from dossier
-   - Use get_narrative_charts() to load narrative config
-   - Call get_chart() for each narrative chart
-   - Fall back to keyword matching if narrative missing
-
-3. **Phase 3** (Task #7/#8/#11): Validation + observability
-   - Integration test for complete Tier 1 report generation
-   - Expose chart registry for debugging and querying
-
-**Task Dependencies**:
-- Task #5 (get_chart) → Task #6 (Stage 5 wiring) → Task #7 (integration tests)
-- All tasks require 2574 unit tests to pass (no regressions)
 
 ---
 
