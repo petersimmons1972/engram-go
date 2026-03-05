@@ -1,22 +1,22 @@
 # Learning Index
 
-**Last Updated**: 2026-03-05T12:32:54Z
-**Session**: 20260305-073254
+**Last Updated**: 2026-03-05T16:25:44Z
+**Session**: 20260305-112544
 
 ---
 
 ## 🔥 Recent Activity (Last 7 Days)
 
-- 2026-03-04: docs: add Clearwatch narrative chart selection 3-phase plan to memory
-- 2026-03-02: chore: update MEMORY.md and .gitignore
-- 2026-03-02: docs: add human-readable table requirement to CLAUDE.md
-- 2026-03-02: docs: restore zero-XP roster with deployment preference policy
-- 2026-03-02: docs: trim zero-XP roster to pointer, save 29 lines of context
-- 2026-02-28: fix: remove DOW 30 from SentinelOne bullet in resume DOCX - conversions were McAfee
-- 2026-02-28: docs: rewrite resume with ECO methodology (impact-first bullets)
-- 2026-02-28: docs: rename ATS resume to remove ATS suffix
-- 2026-02-28: docs: rename source resume to include 2025 year
-- 2026-02-28: docs: rename resume DOCXs to remove spaces
+- 2026-03-05: docs: update ACTIVE-PRIORITIES - mark chart spec violations as COMPLETE
+- 2026-03-05: docs: document 3 critical bug fixes (pricing data loss, index crash, hardcoded values)
+- 2026-03-05: docs: document bug fixes completion - 36 test failures fixed, all tests passing (3334/3334)
+- 2026-03-05: docs: update ACTIVE-PRIORITIES - Clearwatch chart cleanup complete (3 failing charts removed)
+- 2026-03-05: docs: refocus on Clearwatch as independent project - remove security-intelligence-business scope
+- 2026-03-05: docs: update ACTIVE-PRIORITIES - Phase 1 chart removal complete (5 charts removed, 907 lines)
+- 2026-03-05: docs: update ACTIVE-PRIORITIES - pricing verified, chart audit complete (34 charts analyzed)
+- 2026-03-05: docs: mark Clearwatch #1550 as investigated - pricing verified correct ($180 vs official $179.99)
+- 2026-03-05: docs: implement per-project memory isolation - clearwatch, sib, homelab namespaces
+- 2026-03-05: docs: create ACTIVE-PRIORITIES.md - single source of truth for project work
 
 **Recent Sessions**:
 - SESSION-CONTEXT-OPTIMIZATION-COMPLETE.md
@@ -25,7 +25,7 @@
 - SESSION-2026-02-13-PLAYWRIGHT-QA-INFRASTRUCTURE.md
 
 **Uncommitted Changes**:
-⚠️  5 modified, 0 staged
+⚠️  6 modified, 0 staged
 
 ---
 
@@ -75,9 +75,30 @@ Quick health check: `~/bin/health-check.sh`
 
 ## 📖 Key Lessons
 
-**See detailed lessons**: `memory/lessons-learned.md`
+**Homelab** (ordered by usage count):
+- (4x) Backup before modifying critical files - design phase IS implementation for docs
+- (2x) MCP config lives in ~/.claude.json - use `claude mcp add`, never create mcp_servers.json
+- (2x) Validate what the customer sees, not intermediate formats
+- (1x) RWO PVCs need Recreate deployment strategy, not RollingUpdate
+- (1x) Chainguard images need fsGroup for PVC write access (non-root UID 65532)
+- (1x) cert-manager pods use 10.42.x.x overlay network, not 192.168.x.x - breaks Cloudflare IP filtering
+- (1x) WordPress behind reverse proxy needs WP_HOME/WP_SITEURL/FORCE_SSL_ADMIN in wp-config.php
+- (1x) CronJob not Deployment for periodic tasks - liveness probes kill sleep loops (exit 137, low memory = not OOM)
+- (1x) Homepage issues are almost always network policy label mismatch
+- (1x) Local DNS CNAME records break cert-manager DNS-01 challenges - use dnsPolicy: None + Cloudflare DNS
 
-**Quick summary**: 31 lessons across homelab infrastructure, deployment patterns, and general programming (7 homelab most-used, 24 general patterns)
+**General**:
+- (2x) BeautifulSoup destroys SVG xmlns attributes (all parsers) - extract SVG first, process HTML, restore SVG after
+- (1x) Every plan needs explicit validation checklist, not just "verify it works"
+- (1x) Cloudflare negative DNS cache lasts 1800s - CDN purge won't help, wait or use different record name
+- (1x) When Cloudflare zone records don't resolve, check TLD NS delegation before debugging the zone
+- (1x) Duplicate Python method definitions: last definition wins, silently overwrites earlier ones
+- (1x) When generated content disappears, trace through ALL post-processing steps - intermediate success ≠ final success
+- (1x) Regex HTML manipulation is fragile - corrupts tags, creates malformed HTML - use BeautifulSoup with SVG extraction instead
+- (1x) TDD with failing test first prevents spec drift - confirms you're testing the right thing before implementation
+- (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
+- (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
+- (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
 
 ---
 
@@ -155,26 +176,6 @@ Service Down?
 - K8s Nodes: 192.168.0.131-139
 - Proxmox: pve.petersimmons.com:100
 - DNS: 192.168.0.231, .232
-
----
-
-## 📂 Project-Specific Memory
-
-Each active project maintains isolated context:
-
-- **Clearwatch**: `~/.claude/projects/-home-psimmons-projects-clearwatch/memory/MEMORY.md`
-  - Test baseline, open issues, READY_TO_SELL reports
-  - SVG constraints, fabrication rules, gate validation
-
-- **Security Intelligence Business**: `~/projects/security-intelligence-business/MEMORY.md`
-  - 3-component overview (Clearwatch, Website, LinkedIn)
-  - WordPress reverse proxy config, RWO PVC deployment
-
-- **Homelab Infrastructure**: `~/.homelab/memory/MEMORY.md`
-  - K8s cluster status, warning thresholds, service health
-  - Top fixes by success rate, incident patterns
-
-**Start with**: ACTIVE-PRIORITIES.md to see cross-project work sequencing.
 
 ---
 
