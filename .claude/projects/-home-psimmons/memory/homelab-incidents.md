@@ -1,3 +1,6 @@
+---
+Category: reference
+---
 # Homelab Incident Summaries
 
 Quick reference for past incidents. Full structured data in `~/.homelab/knowledge/failure-history.yaml`.

@@ -1,3 +1,6 @@
+---
+Category: reference
+---
 # URL Validation Patterns
 
 ## Browser User-Agent Spoofing

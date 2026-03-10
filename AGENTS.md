@@ -52,118 +52,24 @@
 | Murrow | Journalist | Fact-checking, statistical verification | 100 | Sonnet | Fact-checking, source validation |
 | MacArthur | US Army | Strategic positioning, visionary planning | 50 | Opus | Strategy, future-state analysis |
 
-### Zero-XP Commanders (available — PREFER for new deployments)
+### Zero-XP Commanders
 
-> **Deployment preference**: When a zero-XP commander's specialization fits the task, **prefer them over higher-XP commanders** to build bench depth. Only use proven commanders when the task is high-risk or time-critical.
-
-| Name | Branch | Specialization | When to Use |
-|------|--------|---------------|-------------|
-| Patton | US Army | Rapid execution, emergency response | Time-critical missions |
-| Slim | British Army | Innovation under constraints | Difficult situations, morale recovery |
-| Orwell | Journalist | Propaganda detection, political analysis | Detecting mythology, ethical assessment |
-| Pyle | Journalist | Humanization, ground-level narrative | Human stories, content drafting |
-| Ogilvy | Validator | Brand standards, voice consistency | Brand alignment, voice validation |
-| Groves | Tech/Eng | Mega-project management | Complex technical projects |
-| Lejeune | USMC | Doctrine, leadership development | Training systems |
-| Butler | USMC | Direct action, anti-corruption | Challenging authority |
-| Puller | USMC | Combat leadership | Front-line operations |
-| Shoup | USMC | Amphibious assault | Complex assault planning |
-| James | USMC | Fighter ops, integration leadership | Breaking barriers |
-| Arnold | USAAF | Strategic air power | Large-scale operations |
-| LeMay | USAAF | Strategic bombing, efficiency | Maximum effectiveness |
-| Spaatz | USAAF | Precision strikes | Strategic campaigns |
-| Portal | RAF | RAF strategic direction | High-level strategy |
-| Slessor | RAF | Maritime air operations | Maritime ops |
-| Harris | RAF | Area bombing | Maximum pressure |
-| Trenchard | RAF | RAF doctrine | Organizational founding |
-| Smith | Tech/Eng | Chief of staff ops, intel | Staff coordination |
-| Moreell | Tech/Eng | Construction, Seabees | Rapid construction |
-| Dornberger | Tech/Eng | Rocket development | Advanced weapons dev |
-| Yamamoto | IJN | Naval aviation | Carrier operations |
-| Nagano | IJN | Authorization/coordination | Approval processes |
-| Raeder | Kriegsmarine | Naval strategy | Naval planning |
-| Doenitz | Kriegsmarine | Submarine warfare | Asymmetric naval |
-| Galland | Luftwaffe | Fighter operations | Air superiority |
-| Moelders | Luftwaffe | Fighter tactics | Tactical innovation |
-| Tukhachevsky | Soviet | Deep operations theory | Military theory |
-| Kulik | Soviet | Incompetent leadership study | Failure analysis |
+> **MANDATORY**: Before every spawn decision, read `~/projects/generals/bench-roster.md` for the full 29-commander roster. Prefer zero-XP commanders whose specialization fits the task over proven commanders — builds bench depth. Only use high-XP commanders when the task is high-risk or time-critical.
+>
+> **Full roster**: `~/projects/generals/bench-roster.md`
 
 ---
 
 ## 3. Spawn Templates
 
-### Pattern 1: Sequential Pipeline (Content Production)
+> **Full templates with code examples**: `~/projects/generals/spawn-patterns.md`
 
-**When**: Content that flows through draft → edit → validate stages
-**Team size**: 3-5 | **Cost**: Moderate
-
-```
-TeamCreate: team_name="content-pipeline", description="Content production pipeline"
-
-# Stage 1: Draft
-Task: name="pyle", subagent_type="general-purpose", team_name="content-pipeline"
-  prompt: "You are Ernie Pyle. Draft [content] with ground-level narrative..."
-
-# Stage 2: Edit (after Stage 1 completes)
-Task: name="orwell", subagent_type="general-purpose", team_name="content-pipeline"
-  prompt: "You are George Orwell. Review and sharpen [draft]..."
-
-# Stage 3: Validate (parallel after Stage 2)
-Task: name="ramsay", subagent_type="general-purpose", team_name="content-pipeline"
-Task: name="ciso", subagent_type="general-purpose", team_name="content-pipeline"
-Task: name="ogilvy", subagent_type="general-purpose", team_name="content-pipeline"
-```
-
-**Past deployment**: Operation Multi-Variant Deployment (2026-02-09)
-
-### Pattern 2: Parallel Execution with Coordinator
-
-**When**: Multiple independent work streams needing central coordination
-**Team size**: 4-8 | **Cost**: High
-
-```
-TeamCreate: team_name="[operation-name]", description="[objective]"
-
-# Coordinator (Opus always)
-Task: name="eisenhower", subagent_type="general-purpose", team_name="[operation-name]", model="opus"
-  prompt: "You are General Eisenhower, Supreme Commander. Coordinate [N] specialists..."
-
-# Specialists (parallel, model per complexity)
-Task: name="bradley", subagent_type="general-purpose", team_name="[operation-name]", model="opus"
-Task: name="layton", subagent_type="general-purpose", team_name="[operation-name]", model="opus"
-Task: name="mitchell", subagent_type="general-purpose", team_name="[operation-name]", model="opus"
-Task: name="dowding", subagent_type="general-purpose", team_name="[operation-name]", model="opus"
-```
-
-**Past deployment**: Self-Learning Redesign (2026-02-24), Operation Stunning Charts (2026-02-07)
-
-### Pattern 3: Parallel Verification Sweep
-
-**When**: QA across multiple items simultaneously
-**Team size**: 2-4 | **Cost**: Low-Moderate
-
-```
-TeamCreate: team_name="qa-sweep", description="Quality validation sweep"
-
-Task: name="ramsay", subagent_type="general-purpose", team_name="qa-sweep", model="sonnet"
-  prompt: "You are Gordon Ramsay. Validate visual quality of [items]..."
-
-Task: name="ciso", subagent_type="general-purpose", team_name="qa-sweep", model="sonnet"
-  prompt: "You are the CISO Validator. Assess strategic utility of [items]..."
-```
-
-**Past deployment**: Operation Multi-Variant Deployment Phase 4 (2026-02-09)
-
-### Pattern 4: Solo Deep Work
-
-**When**: Single specialist or skill invocation sufficient
-**Team size**: 1 | **Cost**: Low
-
-```
-# No TeamCreate needed - direct Task spawn
-Task: name="patton", subagent_type="general-purpose", model="sonnet"
-  prompt: "You are General Patton. Execute [rapid fix] immediately..."
-```
+| Pattern | When | Team Size | Cost |
+|---------|------|-----------|------|
+| Sequential Pipeline | Content: draft -> edit -> validate | 3-5 | Moderate |
+| Parallel + Coordinator | Independent streams + central coord | 4-8 | High |
+| Verification Sweep | QA across multiple items | 2-4 | Low-Moderate |
+| Solo Deep Work | Single specialist sufficient | 1 | Low |
 
 ---
 
@@ -171,15 +77,9 @@ Task: name="patton", subagent_type="general-purpose", model="sonnet"
 
 After every team deployment, complete ALL steps before TeamDelete:
 
-- [ ] Write service record using template: `~/projects/generals/templates/SERVICE-RECORD-TEMPLATE.md`
-- [ ] Update commander profiles: `~/projects/generals/profiles/{name}.md`
-- [ ] Update service record YAMLs: `~/projects/generals/profiles/service-records/{name}.yaml`
-- [ ] `git add` all changed files in `~/projects/generals/`
-- [ ] `git diff --staged` — verify changes are correct
-- [ ] `git commit -m "docs: [Operation Name] service records"`
-- [ ] `git push origin master`
-- [ ] Verify push succeeded (check for errors)
-- [ ] `TeamDelete` — only after all above steps complete
+1. Write service record (template: `~/projects/generals/templates/SERVICE-RECORD-TEMPLATE.md`), update profiles + service-record YAMLs in `~/projects/generals/`
+2. `git add` changed files, `git diff --staged` to verify, `git commit -m "docs: [Operation Name] service records"`, `git push origin master`, verify push succeeded
+3. `TeamDelete` — only after push confirmed
 
 **Skipping any step = violation of CLAUDE.md ALWAYS rules.**
 
@@ -210,64 +110,20 @@ After every team deployment, complete ALL steps before TeamDelete:
 
 ---
 
-## 7. XP Quick Reference
+## 7. Circuit Breakers
 
-| Task Type | Base XP | Bonus |
-|-----------|---------|-------|
-| Research/Intelligence | 50 | +25 if >10 sources |
-| Visualization/Charts | 75 | +25 if user praises quality |
-| Integration/Pipeline | 100 | +50 if zero bugs |
-| Coordination/Command | 150 | +50 if all subordinates succeed |
-| Troubleshooting | 200 | +100 if root cause <30 min |
-
-| Penalty | XP |
-|---------|-----|
-| Task incomplete | -50 |
-| Major rework needed | -25 |
-| Missed deadline | -25 |
-| Coordination failure | -50 |
-
-Full system: `~/projects/generals/PROGRESSION-SYSTEM.md`
+**Agent-level:** 3 consecutive failures → stop + report | Exceeds 3x time estimate → checkpoint + escalate | Fails validation 2x → halt + human review
+**Campaign-level:** >50% agents lost → halt | Cost exceeds 2x estimate → pause + report to founder | Wake-the-Founder triggered → campaign pauses
+**Recovery:** Coordinator writes incident note (trigger, state, next step) before resuming.
 
 ---
 
-## 8. Sync Protocol
+## 8. Team Management Standards
 
-**When to sync**: After any deployment that changes XP/stats.
-
-**How to sync**:
-1. `cd ~/projects/generals && git pull origin master`
-2. Compare roster XP above against `profiles/service-records/*.yaml`
-3. Update this file's roster table if stale
-4. Note new sync date in Section 2 header
-
-**Why staleness is acceptable**: Spawn decisions are specialization-based, not XP-dependent. A commander's specialization doesn't change between syncs. XP only matters for model assignment (high-XP = proven = Opus-worthy), and small XP deltas don't change that calculus.
+- **Idle protocol**: Immediately send status check when teammate goes idle. Response within 1 minute. Never wait passively.
+- **Worktree merge (NON-NEGOTIABLE)**: Coordinator merges ALL worktree commits to `main` and pushes before declaring campaign complete. No orphaned work.
+- **Escalate blockers immediately** — don't let agents sit idle >2 minutes.
 
 ---
 
-## 9. Team Management Standards (MINIMUM)
-
-### Idle Notification Protocol
-When teammate goes idle:
-1. Immediately send status check (do NOT just wait)
-2. Request: What completed? Current state? Blocked? Next steps?
-3. Response within 1 minute of idle notification
-
-### Field Marshal Responsibilities
-- Monitor all teammate idle notifications
-- Send status checks within 1 minute of idle state
-- Document progress in mission log
-- Escalate blockers immediately
-- **Worktree merge obligation (NON-NEGOTIABLE)**: If any agent in your campaign
-  works in a git worktree, YOU are responsible for merging all worktree commits
-  back to `main` and pushing to GitHub before declaring the campaign complete.
-  Campaign is not done until `git log origin/main` shows every worktree commit.
-  No orphaned work in `.claude/worktrees/` — ever.
-
-### Anti-patterns (FORBIDDEN)
-- Seeing idle notification and doing nothing
-- Assuming agent will self-report
-- Waiting >5 minutes to check on idle agent
-- Passive "let me know when done" approach
-
-**Success metric:** No agent sits idle >2 minutes without status check.
+**Moved to `~/projects/generals/`:** XP Reference → `PROGRESSION-SYSTEM.md` | Sync Protocol → `SYNC-PROTOCOL.md` | Post-Mortem template → `post-mortems/`

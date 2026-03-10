@@ -1,79 +1,21 @@
+---
+Category: reference
+---
 # Cert-Manager Patterns (Homelab)
 
-## Core Concept
+**Core issue**: K8s overlay (10.42.x.x) ≠ homelab IPs (192.168.x.x). Cloudflare API token IP filtering silently blocks cert-manager pods.
 
-Kubernetes overlay network (10.42.x.x/16) differs from homelab external IPs (192.168.x.x). This causes silent failures with Cloudflare API token IP filtering.
+## Key Rules
+- Cloudflare token needs: Zone:Read, DNS:Read, DNS:Edit for petersimmons.com
+- IP filtering: avoid, or whitelist `10.42.0.0/16` (K8s overlay). Without this, challenges show "Presented: true" but DNS records never appear
+- Local DNS CNAMEs break DNS-01 challenges. Fix: `dnsPolicy: None` + nameservers `[1.1.1.1, 1.0.0.1]` on cert-manager deployment
+- Cloudflare caches NXDOMAIN 1800s — CDN purge won't help, wait or use different record name
+- If zone records don't resolve at all: `dig @a.gtld-servers.net <domain> NS` — check TLD NS delegation before debugging Cloudflare
 
-## Cloudflare API Token Setup
-
-- Token name: "Kubernetes - cert-manager"
-- Permissions required: Zone:Zone:Read, Zone:DNS:Read, Zone:DNS:Edit
-- Resources: petersimmons.com
-- IP filtering: AVOID or whitelist `10.42.0.0/16` (K8s overlay network)
-  - Without this, DNS-01 ACME challenges silently fail
-  - Challenge shows "Presented: true" but DNS records never appear
-  - No error in cert-manager logs because Cloudflare returns HTTP 200 at network level
-- DNS01 Configuration: Uses Cloudflare API with fixed nameservers (1.1.1.1, 1.0.0.1)
-
-## Troubleshooting
-
-Certificate stuck in "IncorrectIssuer" or "Ready=False" for >7 days:
+## Quick Troubleshooting
 ```bash
-kubectl describe certificate <name> -n <namespace>
-kubectl describe challenge <name> -n <namespace>
-nslookup _acme-challenge.<domain> 1.1.1.1
+kubectl describe certificate <name> -n <ns>    # Check Ready status
+kubectl describe challenge <name> -n <ns>       # Check Presented/reason
+nslookup _acme-challenge.<domain> 1.1.1.1      # Verify DNS record exists
+kubectl get certificate -A                       # All should show Ready=True
 ```
-
-Challenge shows "Presented: true" but DNS record missing:
-1. API call reached Cloudflare but DNS record wasn't created
-2. Check Cloudflare token IP filtering (is cert-manager pod IP whitelisted?)
-3. Check Cloudflare zone is active and nameservers correct
-4. Fix: Remove IP filtering or add 10.42.0.0/16 to whitelist
-
-cert-manager pod network:
-- Pod IP: 10.42.x.x (Kubernetes ClusterIP range)
-- API calls originate from this range, NOT from homelab IPs
-
-## Split-Horizon DNS Conflict
-
-Local DNS CNAME records (domain.com -> traefik.petersimmons.com) break DNS-01 challenges.
-cert-manager pod uses cluster DNS -> forwards to local DNS -> sees CNAME instead of TXT records.
-
-Fix: Force cert-manager to use Cloudflare public DNS:
-```bash
-kubectl patch deployment cert-manager -n cert-manager --type='json' -p='[
-  {"op": "add", "path": "/spec/template/spec/dnsPolicy", "value": "None"},
-  {"op": "add", "path": "/spec/template/spec/dnsConfig", "value": {
-    "nameservers": ["1.1.1.1", "1.0.0.1"],
-    "searches": ["cert-manager.svc.cluster.local", "svc.cluster.local", "cluster.local"],
-    "options": [{"name": "ndots", "value": "5"}]
-  }}
-]'
-```
-
-Verify: `kubectl get pod -n cert-manager -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].spec.dnsConfig.nameservers}'`
-
-## Cloudflare DNS Cache Gotcha
-
-Cloudflare caches NXDOMAIN responses for up to 1800 seconds (30 minutes). CDN cache purge does NOT clear DNS negative cache. If cert-manager fails initially, subsequent retries hit cached NXDOMAIN.
-
-Diagnosis: Create test record with different name. If it resolves, negative cache is the issue. Wait for cache expiry.
-
-## Registrar-Level DNS Bypass
-
-When Cloudflare zone records don't resolve at all, check TLD-level NS delegation first:
-```bash
-dig @a.gtld-servers.net <domain>.com NS
-```
-If TLD returns CNAME instead of NS records, registrar-level configuration is bypassing Cloudflare entirely. Fix at registrar, not Cloudflare.
-
-## Verification
-
-- `health-check.sh` checks for stuck certificates and pending challenges
-- Certs renew automatically ~30 days before expiry
-- Monitor: `kubectl get certificate -A` should show all Ready=True
-
-## Incidents
-
-- 2026-01-24: DNS CNAME misconfiguration caused 58-day cert failure. Fixed with static DNS servers.
-- 2026-01-25: Cloudflare IP filtering blocked cert-manager pod (10.42.2.247 outside 192.168.x.x whitelist). Silent failure.
