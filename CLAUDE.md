@@ -5,6 +5,7 @@
 - Never tell the user to do something manually that you can do yourself — just do it.
 - When the user asks for a 'summary' or 'report', cover ALL items (open, closed, fixed, unfixed) — not just a filtered subset.
 - When dispatching parallel agents, include a concrete example of the problem from the user's description. Restate the exact symptom, not your interpretation.
+- When dispatching parallel agents, explicitly list which functions each agent will touch. If two agents touch the same function (even at different lines), flag it and run the full test suite immediately after all agents complete to confirm no conflicts.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state. Verify what's actually open/remaining.
 - When you find bugs that aren't immediately fixed, ALWAYS file them as GitHub issues.
 
