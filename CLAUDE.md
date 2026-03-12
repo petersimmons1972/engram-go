@@ -7,7 +7,7 @@
 - When dispatching parallel agents, include a concrete example of the problem from the user's description. Restate the exact symptom, not your interpretation.
 - When dispatching parallel agents, explicitly list which functions each agent will touch. If two agents touch the same function (even at different lines), flag it and run the full test suite immediately after all agents complete to confirm no conflicts.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state. Verify what's actually open/remaining.
-- When you find bugs that aren't immediately fixed, ALWAYS file them as GitHub issues.
+- **See "Bug & Defect Tracking" section below — NON-NEGOTIABLE.**
 
 ## Workflow
 
@@ -21,6 +21,23 @@
 - 100% confident → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
 - Pre-approved: logs, kubectl get/describe, health-check, diagnostics
 - Always ask: delete resources, modify production, data loss risk
+
+## Bug & Defect Tracking — NON-NEGOTIABLE
+
+GitHub Issues ARE the work. If a defect is not in the issue system, it does not exist.
+
+**ZERO EXCEPTIONS:**
+- Found a bug while working on something else? File it before continuing.
+- Fixed a bug inline? Still file it — as closed, with the fix documented.
+- Identified a defect but unsure of the fix? File it. "Unknown fix" is a valid issue body.
+- Deferred something to handle later? File it. "Later" without an issue number means never.
+
+**The continuity test:** If this session ended right now, could the next session pick up every
+open defect from GitHub Issues alone — without reading this conversation? If not, something is unfiled.
+
+**Enforcement:** Before claiming any task complete, scan what was touched for defects.
+File issues FIRST, then report status. A status report that names unfiled defects is
+self-contradicting — the defects should already be in GitHub.
 
 ## Critical Rules
 
