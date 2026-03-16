@@ -3,14 +3,36 @@
 ## Behavioral Rules
 
 - Never tell the user to do something manually that you can do yourself — just do it.
+- **Markdown tables must be human-readable in raw form**: pad columns so they align, use emoji swatches for color/status values (🔵🟡🟢⚫⚪✅❌⚠️), and never leave hex codes or long values unformatted in a table cell.
 - When the user asks for a 'summary' or 'report', cover ALL items (open, closed, fixed, unfixed) — not just a filtered subset.
+- **Parallel agent pre-validation (mandatory):** Before dispatching parallel agents, first use ONE agent to analyze 2–3 sample files and confirm the exact problem definition. Present its findings to the user. Only after the user approves the problem definition, dispatch the remaining agents with that confirmed definition.
 - When dispatching parallel agents, include a concrete example of the problem from the user's description. Restate the exact symptom, not your interpretation.
 - When dispatching parallel agents, explicitly list which functions each agent will touch. If two agents touch the same function (even at different lines), flag it and run the full test suite immediately after all agents complete to confirm no conflicts.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state. Verify what's actually open/remaining.
 - **See "Bug & Defect Tracking" section below — NON-NEGOTIABLE.**
 
+## Pre-Flight Protocol — MANDATORY
+
+Execute this checklist before ANY code changes or git operations. No exceptions.
+
+**1. ENVIRONMENT CHECK**
+Run `git status`, `git branch`, and `pwd` to confirm you're in the correct repo and on the correct branch. If in a worktree, confirm whether changes should land here or on main. Print the result and halt if unexpected.
+
+**2. REQUEST VERIFICATION**
+Before executing multi-step tasks, write a one-paragraph summary of what you understand the user wants — specifically distinguishing between similar-sounding problems (e.g., "text edge overflow" vs "text-on-text overlap"). Wait for confirmation on ambiguous requests.
+
+**3. NO MANUAL DELEGATION**
+Never tell the user to do something manually that you have tool access for. No "you need to create…" — check if you can do it first, then do it.
+
+**4. BUG ACCOUNTABILITY**
+All bugs found during work must be either fixed or filed as GitHub Issues — never leave bugs unreported. (See "Bug & Defect Tracking" section below for full rules.)
+
+**5. BRANCH VERIFICATION ON COMPLETION**
+After completing work, verify the target branch received the commits before reporting success. Run `git log --oneline -3` on the target branch to confirm.
+
 ## Workflow
 
+- **Test after every edit.** After EVERY code edit, immediately run the most relevant test(s) for that change before moving to the next task. If no specific test exists, run the file or verify the output. Never batch multiple untested changes.
 - Plan mode for non-trivial tasks (3+ steps). Re-plan immediately if things go sideways.
 - Use skills for procedural work — they are authoritative over summaries here.
 - For non-trivial changes: pause and ask "is there a more elegant way?" Skip for simple fixes.
