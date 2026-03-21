@@ -9,7 +9,7 @@
 
 | Task Type            | Pattern                   | Lead              | Core Team                              | Validators        |
 |----------------------|---------------------------|-------------------|----------------------------------------|-------------------|
-| Content production   | Sequential Pipeline       | Pyle (draft)      | Orwell (edit), Murrow (fact-check)     | Ramsay, CISO      |
+| Content production   | Sequential Pipeline       | Pyle (draft)      | Orwell (edit), Murrow (fact-check)     | Ramsay      |
 | Competitive intel    | Parallel + Coordinator    | Montgomery        | Nimitz, Halsey, MacArthur              | Spruance          |
 | Code sprint          | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance          |
 | Rapid fix / hotfix   | Solo Deep Work            | Patton or Rommel  | —                                      | —                 |
@@ -17,7 +17,7 @@
 | Security audit       | Parallel + Coordinator    | Rickover          | Hopper, Layton                         | CISO              |
 | Chart production     | Parallel + Coordinator    | Montgomery        | Zhukov, King, Spruance, Halsey         | Ramsay             |
 | Full ClearWatch      | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance, Ramsay  |
-| Review panel         | Multi-perspective         | Spruance (cross)  | Ramsay, CISO + 1-2 zero-XP fresh eyes | —                 |
+| Review panel         | Multi-perspective         | Spruance (cross)  | Ramsay + 1-2 zero-XP fresh eyes | —                 |
 
 ---
 
@@ -40,7 +40,7 @@
 | Halsey     | Aggressive action, rapid response       | 225 | Sonnet |
 | King       | Deployment ops, blocker identification  | 175 | Sonnet |
 | Ramsay     | Visual quality control                  | 150 | Sonnet |
-| CISO       | Strategic utility, decision support     | 150 | Sonnet |
+| ~~CISO~~   | ❌ RETIRED — strategic malpractice      | 50  | —      |
 | Layton     | Intelligence analysis, diagnostics      | 150 | Opus   |
 
 Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
@@ -69,7 +69,7 @@ Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
 | Core specialist (complex)       | Opus    | Sonnet if routine/repetitive     |
 | Core specialist (routine)       | Sonnet  | Opus if unexpectedly complex     |
 | Zero-XP (first deployment)      | Sonnet  | Opus if task is complex          |
-| Validator (Ramsay, CISO)        | Sonnet  | Haiku OK for simple pass/fail    |
+| Validator (Ramsay)        | Sonnet  | Haiku OK for simple pass/fail    |
 
 ---
 
