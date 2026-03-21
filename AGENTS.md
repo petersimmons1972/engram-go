@@ -1,62 +1,49 @@
 # Generals Operational Reference
 
 > **GitHub source of truth**: https://github.com/petersimmons1972/generals
-> Local roster is for spawn decisions (specialization-based). GitHub profiles are authoritative for XP/stats.
+> Local roster is for spawn decisions. GitHub profiles are authoritative for XP/stats.
 
 ---
 
 ## 1. Task-to-Team Quick Lookup
 
-| Task Type | Pattern | Lead | Core Team | Validators |
-|-----------|---------|------|-----------|------------|
-| Content production | Sequential Pipeline | Pyle (draft) | Orwell (edit), Murrow (fact-check) | Ramsay, CISO, Ogilvy |
-| Competitive intel | Parallel + Coordinator | Montgomery | Nimitz, Halsey, MacArthur | Spruance |
-| Code sprint | Parallel + Coordinator | Eisenhower | Bradley, Layton, Mitchell, Dowding | Spruance, Murrow |
-| Rapid fix / hotfix | Solo Deep Work | Patton or Rommel | — | — |
-| K8s deployment | Solo + Skills | Nimitz or King | — | — |
-| Security audit | Parallel + Coordinator | Rickover | Hopper, Layton | CISO |
-| Chart production | Parallel + Coordinator | Montgomery | Zhukov, King, Spruance, Halsey | Ramsay |
-| Strategic positioning | Solo Deep Work | MacArthur | — | CISO |
-| Full ClearWatch sprint | Parallel + Coordinator | Eisenhower | Bradley, Layton, Mitchell, Dowding, Nimitz | Spruance, Ramsay |
-| LinkedIn / writing | Sequential Pipeline | Pyle | Orwell | Ogilvy |
+| Task Type            | Pattern                   | Lead              | Core Team                              | Validators        |
+|----------------------|---------------------------|-------------------|----------------------------------------|-------------------|
+| Content production   | Sequential Pipeline       | Pyle (draft)      | Orwell (edit), Murrow (fact-check)     | Ramsay, CISO      |
+| Competitive intel    | Parallel + Coordinator    | Montgomery        | Nimitz, Halsey, MacArthur              | Spruance          |
+| Code sprint          | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance          |
+| Rapid fix / hotfix   | Solo Deep Work            | Patton or Rommel  | —                                      | —                 |
+| K8s deployment       | Solo + Skills             | Nimitz or King    | —                                      | —                 |
+| Security audit       | Parallel + Coordinator    | Rickover          | Hopper, Layton                         | CISO              |
+| Chart production     | Parallel + Coordinator    | Montgomery        | Zhukov, King, Spruance, Halsey         | Ramsay             |
+| Full ClearWatch      | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance, Ramsay  |
+| Review panel         | Multi-perspective         | Spruance (cross)  | Ramsay, CISO + 1-2 zero-XP fresh eyes | —                 |
 
 ---
 
 ## 2. Commander Roster
 
-> **SYNC WARNING**: Last synced from GitHub: 2026-03-02. XP from service record YAMLs + Operation Parallel Pipeline.
-> If a commander's XP matters for a decision, verify against `profiles/service-records/{name}.yaml`.
-> Quick cache refresh: `~/.claude/refresh-generals-cache.sh`
+> **XP VERIFICATION**: Before any spawn decision where XP matters, check GitHub repo `petersimmons1972/generals`. Never trust local cache alone.
+> **MANDATORY**: Check `~/projects/generals/bench-roster.md` for the full 29-commander roster. **Prefer zero-XP commanders whose specialization fits** over proven ones — builds bench depth.
 
-### High-XP Commanders (deployed, proven)
+### High-XP Commanders
 
-| Name | Branch | Specialization | XP | Model | When to Use |
-|------|--------|---------------|-----|-------|-------------|
-| Rickover | Tech/Eng | Zero-defect standards, technical excellence | 925 | Opus | Quality-critical technical work |
-| Eisenhower | US Army | Workflow analysis, coalition building | 550 | Opus | Multi-team coordination |
-| Spruance | US Navy | Verification, TDD, analytical excellence | 525 | Opus | QA, testing, cost analysis |
-| Montgomery | British Army | Multi-team coordination, intel synthesis | 400 | Opus | Supreme command, large campaigns |
-| Bradley | US Army | Methodical execution, state machines | 350 | Opus | Careful implementation, proven patterns |
-| Nimitz | US Navy | Config/manifests, competitive intel | 325 | Sonnet | K8s deployments, research |
-| Zhukov | Soviet | Workflow visualization | 225 | Sonnet | Process diagrams, flow charts |
-| Halsey | US Navy | Aggressive action, rapid response | 225 | Sonnet | Fast execution, competitive analysis |
-| Ramsay | Validator | Visual quality control | 150 | Sonnet | Chart/visual QA gates |
-| CISO | Validator | Strategic utility, decision support | 150 | Sonnet | Content utility validation |
-| Layton | Tech/Eng | Intelligence analysis, SIGINT, diagnostics | 150 | Opus | Pattern recognition, diagnostics |
-| King | US Navy | Deployment ops, blocker identification | 175 | Sonnet | Deployment execution, diagnostics |
-| Marshall | US Army | Build & logistics, infrastructure | 100 | Sonnet | Large-scale builds |
-| Rommel | Wehrmacht | Rapid tactical execution | 100 | Sonnet | Small-scale rapid ops |
-| Hopper | Tech/Eng | Computing, software development | 100 | Sonnet | Software projects |
-| Mitchell | USAAF | Air power innovation, code review | 100 | Opus | Code review, challenging assumptions |
-| Dowding | RAF | Integrated defense, systems integration | 100 | Opus | Architecture, pipeline integration |
-| Murrow | Journalist | Fact-checking, statistical verification | 100 | Sonnet | Fact-checking, source validation |
-| MacArthur | US Army | Strategic positioning, visionary planning | 50 | Opus | Strategy, future-state analysis |
+| Name       | Specialization                          | XP  | Model  |
+|------------|-----------------------------------------|-----|--------|
+| Rickover   | Zero-defect standards, technical excellence | 925 | Opus   |
+| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   |
+| Spruance   | Verification, TDD, analytical cross-check | 525 | Opus   |
+| Montgomery | Multi-team coordination, intel synthesis | 400 | Opus   |
+| Bradley    | Methodical execution, state machines    | 350 | Opus   |
+| Nimitz     | Config/manifests, competitive intel     | 325 | Sonnet |
+| Zhukov     | Workflow visualization                  | 225 | Sonnet |
+| Halsey     | Aggressive action, rapid response       | 225 | Sonnet |
+| King       | Deployment ops, blocker identification  | 175 | Sonnet |
+| Ramsay     | Visual quality control                  | 150 | Sonnet |
+| CISO       | Strategic utility, decision support     | 150 | Sonnet |
+| Layton     | Intelligence analysis, diagnostics      | 150 | Opus   |
 
-### Zero-XP Commanders
-
-> **MANDATORY**: Before every spawn decision, read `~/projects/generals/bench-roster.md` for the full 29-commander roster. Prefer zero-XP commanders whose specialization fits the task over proven commanders — builds bench depth. Only use high-XP commanders when the task is high-risk or time-critical.
->
-> **Full roster**: `~/projects/generals/bench-roster.md`
+Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
 
 ---
 
@@ -64,66 +51,43 @@
 
 > **Full templates with code examples**: `~/projects/generals/spawn-patterns.md`
 
-| Pattern | When | Team Size | Cost |
-|---------|------|-----------|------|
-| Sequential Pipeline | Content: draft -> edit -> validate | 3-5 | Moderate |
-| Parallel + Coordinator | Independent streams + central coord | 4-8 | High |
-| Verification Sweep | QA across multiple items | 2-4 | Low-Moderate |
-| Solo Deep Work | Single specialist sufficient | 1 | Low |
+| Pattern              | When                                    | Team Size | Cost     |
+|----------------------|-----------------------------------------|-----------|----------|
+| Sequential Pipeline  | Content: draft → edit → validate        | 3-5       | Moderate |
+| Parallel + Coord     | Independent streams + central coord     | 4-8       | High     |
+| Verification Sweep   | QA across multiple items                | 2-4       | Low-Med  |
+| Solo Deep Work       | Single specialist sufficient            | 1         | Low      |
+| Multi-perspective    | Review panel with fresh-eyes zero-XP    | 3-5       | Moderate |
 
 ---
 
-## 4. Service Record Checklist (NON-NEGOTIABLE)
+## 4. Model Assignment
 
-After every team deployment, complete ALL steps before TeamDelete:
+| Role                            | Default | Override When                    |
+|---------------------------------|---------|----------------------------------|
+| Coordinator                     | Opus    | Never downgrade                  |
+| Core specialist (complex)       | Opus    | Sonnet if routine/repetitive     |
+| Core specialist (routine)       | Sonnet  | Opus if unexpectedly complex     |
+| Zero-XP (first deployment)      | Sonnet  | Opus if task is complex          |
+| Validator (Ramsay, CISO)        | Sonnet  | Haiku OK for simple pass/fail    |
 
-1. Write service record (template: `~/projects/generals/templates/SERVICE-RECORD-TEMPLATE.md`), update profiles + service-record YAMLs in `~/projects/generals/`
-2. `git add` changed files, `git diff --staged` to verify, `git commit -m "docs: [Operation Name] service records"`, `git push origin master`, verify push succeeded
+---
+
+## 5. Service Record Checklist (NON-NEGOTIABLE)
+
+After every team deployment, before TeamDelete:
+1. Write service record → update profiles + YAMLs in `~/projects/generals/`
+2. `git add`, `git diff --staged`, commit, push, verify push
 3. `TeamDelete` — only after push confirmed
 
-**Skipping any step = violation of CLAUDE.md ALWAYS rules.**
+---
+
+## 6. Circuit Breakers
+
+**Agent:** 3 consecutive failures → stop + report | Exceeds 3x time → checkpoint + escalate | Fails validation 2x → halt + human review
+**Campaign:** >50% agents lost → halt | Cost >2x estimate → pause + report | Wake-the-Founder → pause
+**Recovery:** Coordinator writes incident note before resuming.
 
 ---
 
-## 5. Model Assignment Guide
-
-| Role | Default | Override When |
-|------|---------|--------------|
-| Coordinator (Eisenhower, Montgomery) | Opus | Never downgrade |
-| Core specialist (complex: state machines, architecture) | Opus | Sonnet if routine/repetitive |
-| Core specialist (routine: config, deployment) | Sonnet | Opus if unexpectedly complex |
-| 0 XP commander (first deployment) | Sonnet | Opus if task is complex. **Prefer over proven commanders** to build bench depth |
-| Validator (Ramsay, CISO, Ogilvy) | Sonnet | Haiku OK for simple pass/fail |
-| Journalist (Murrow, Orwell, Pyle) | Sonnet | Opus for complex analysis |
-
----
-
-## 6. Active Project Contexts
-
-**ClearWatch** (`~/projects/clearwatch/`): Most agent-intensive project. Typical team: Eisenhower + 4-6 specialists. Recent campaign: self-learning redesign (6 commanders, 707 tests).
-
-**Writers/LinkedIn** (`~/linkedin/`): Content pipeline pattern. Start with Pyle for draft, Orwell for sharpening. See `~/projects/generals/profiles/` for journalist selection guide.
-
-**Homelab/K8s**: Mostly solo with homelab skills. Nimitz or King for K8s manifest work. Rarely needs full team.
-
-**Security Intelligence Business** (`~/projects/security-intelligence-business/`): Chart-heavy reports. Montgomery coordinates, specialists produce charts (Zhukov, King, Spruance, Halsey). Ramsay + CISO validate.
-
----
-
-## 7. Circuit Breakers
-
-**Agent-level:** 3 consecutive failures → stop + report | Exceeds 3x time estimate → checkpoint + escalate | Fails validation 2x → halt + human review
-**Campaign-level:** >50% agents lost → halt | Cost exceeds 2x estimate → pause + report to founder | Wake-the-Founder triggered → campaign pauses
-**Recovery:** Coordinator writes incident note (trigger, state, next step) before resuming.
-
----
-
-## 8. Team Management Standards
-
-- **Idle protocol**: Immediately send status check when teammate goes idle. Response within 1 minute. Never wait passively.
-- **Worktree merge (NON-NEGOTIABLE)**: Coordinator merges ALL worktree commits to `main` and pushes before declaring campaign complete. No orphaned work.
-- **Escalate blockers immediately** — don't let agents sit idle >2 minutes.
-
----
-
-**Moved to `~/projects/generals/`:** XP Reference → `PROGRESSION-SYSTEM.md` | Sync Protocol → `SYNC-PROTOCOL.md` | Post-Mortem template → `post-mortems/`
+**Detailed docs moved to `~/projects/generals/`:** XP Reference → `PROGRESSION-SYSTEM.md` | Sync Protocol → `SYNC-PROTOCOL.md` | Post-Mortems → `post-mortems/`

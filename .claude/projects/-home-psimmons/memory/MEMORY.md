@@ -1,31 +1,23 @@
 # Learning Index
 
-**Last Updated**: 2026-03-10T16:46:08Z
-**Session**: 20260310-124608
+**Last Updated**: 2026-03-21T00:49:40Z
+**Session**: 20260320-204940
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-03-10: feat: add 3 TDD-validated skills for operational efficiency
-- 2026-03-05: docs: update skills validation week 1 data (2026-03-05)
-- 2026-03-05: docs: update ACTIVE-PRIORITIES.md and MEMORY.md - complete chart restoration
-- 2026-03-05: docs: update ACTIVE-PRIORITIES - mark chart spec violations as COMPLETE
-- 2026-03-05: docs: document 3 critical bug fixes (pricing data loss, index crash, hardcoded values)
-- 2026-03-05: docs: document bug fixes completion - 36 test failures fixed, all tests passing (3334/3334)
-- 2026-03-05: docs: update ACTIVE-PRIORITIES - Clearwatch chart cleanup complete (3 failing charts removed)
-- 2026-03-05: docs: refocus on Clearwatch as independent project - remove security-intelligence-business scope
-- 2026-03-05: docs: update ACTIVE-PRIORITIES - Phase 1 chart removal complete (5 charts removed, 907 lines)
-- 2026-03-05: docs: update ACTIVE-PRIORITIES - pricing verified, chart audit complete (34 charts analyzed)
+- 2026-03-20: Implemented reviewer complaint dedup fix, Gates 33-35, wired EffectivenessTracker
+- 2026-03-15: docs: add pre-flight protocol, test-after-edit rule, and /status skill
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  23 modified, 0 staged
+**Uncommitted**: ⚠️  10 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  9 OK, 0 failed, 1 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: ✅ All critical services healthy (10 checked)
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20T14:32:00Z | service: homepage
@@ -48,30 +40,38 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 - (1x) Homepage issues are almost always network policy label mismatch
 - (1x) Local DNS CNAME records break cert-manager DNS-01 challenges - use dnsPolicy: None + Cloudflare DNS
 
+**Clearwatch**:
+- (1x) LLM prompt rules need deterministic gate backstops - prompts are suggestions, code gates are guarantees
+- (1x) Structured prefixes poison tokenization dedup - strip prefix, normalize entities before comparing
+- (1x) "Architecturally complete but operationally dead" - verify feedback loops close end-to-end
+- (1x) Multi-layer pipeline bugs must fix in dependency order - downstream bugs hide behind upstream
+
 **General**:
-- (2x) BeautifulSoup destroys SVG xmlns attributes (all parsers) - extract SVG first, process HTML, restore SVG after
+- (2x) BeautifulSoup destroys SVG xmlns attributes - extract SVG first, process HTML, restore after
 - (1x) Every plan needs explicit validation checklist, not just "verify it works"
 - (1x) Cloudflare negative DNS cache lasts 1800s - CDN purge won't help, wait or use different record name
-- (1x) When Cloudflare zone records don't resolve, check TLD NS delegation before debugging the zone
-- (1x) Duplicate Python method definitions: last definition wins, silently overwrites earlier ones
-- (1x) When generated content disappears, trace through ALL post-processing steps - intermediate success ≠ final success
-- (1x) Regex HTML manipulation is fragile - corrupts tags, creates malformed HTML - use BeautifulSoup with SVG extraction instead
-- (1x) TDD with failing test first prevents spec drift - confirms you're testing the right thing before implementation
-- (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
-- (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
-- (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
+- (1x) TDD with failing test first prevents spec drift
+- (1x) Fresh subagent per task prevents context pollution
+- (1x) URL validation: mimic browser headers to avoid 403 from legitimate sites
 
 ---
 
 ## Topic Files
 
-- Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
-- cert-manager patterns → memory/homelab-cert-manager.md
-- K8s deployment patterns → memory/homelab-k8s-patterns.md
-- Incident summaries → memory/homelab-incidents.md
+- Full lessons with context → memory/lessons-learned.md
+- Active priorities and action items → memory/ACTIVE-PRIORITIES.md
+- Clearwatch learning system architecture → memory/clearwatch-github-issues-work.md
+- Clearwatch marketing content locations → memory/clearwatch-marketing-content.md
+- Operation Triple Crown intel → memory/operation-triple-crown.md
+- Homelab quick reference (triage, fixes, IPs, anti-patterns) → memory/homelab-quick-reference.md
+- Homelab cert-manager patterns → memory/homelab-cert-manager.md
+- Homelab K8s deployment patterns → memory/homelab-k8s-patterns.md
 - URL validation patterns → memory/url-validation-patterns.md
-- Chart regression analysis → memory/chart-regression-2026-02-06.md
-- HTML processing patterns → memory/html-processing-patterns.md
+- Chart regression case study (3 compounding bugs) → memory/chart-regression-2026-02-06.md
+- HTML/SVG processing pattern → memory/html-processing-patterns.md
+- LinkedIn API hard lessons → memory/linkedin-api-lessons.md
+- Cloudflare Workers fetch capabilities → memory/cloudflare-workers-web-fetch.md
+- Autoresearch reference (Karpathy patterns) → memory/autoresearch-reference.md
 - Projects catalog → [PROJECTS-CATALOG.md](/home/psimmons/PROJECTS-CATALOG.md)
 
 ---
