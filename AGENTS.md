@@ -31,7 +31,7 @@
 | Name       | Specialization                          | XP    | Model  |
 |------------|-----------------------------------------|-------|--------|
 | Rickover   | Zero-defect standards, technical excellence | 1,920 | Opus   |
-| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   | ⚠️ COORDINATOR ONLY — see §8 |
+| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   | ⚠️ COORDINATOR ONLY — structurally scoped, see §8 |
 | Spruance   | Verification, TDD, analytical cross-check | 640 | Opus   |
 | Montgomery | Multi-team coordination, intel synthesis | 525 | Opus   |
 | Bradley    | Methodical execution, state machines    | 405 | Opus   |
@@ -53,13 +53,17 @@ Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
 
 > **Full templates with code examples**: `~/projects/generals/spawn-patterns.md`
 
+> **COORDINATOR TOOL RESTRICTION (Phase 2B):** All coordinators (Eisenhower, Montgomery, Bedell-Smith, Pyle, Rickover) are structurally scoped to `Agent | Read | Grep | Glob | SendMessage`. No Bash, Write, or Edit. Coordinators route all implementation through specialists. Agent files in `~/.claude/agents/` enforce this structurally. See `generals-evolution/phase-2-synthesis.md` for rationale.
+
 | Pattern              | When                                    | Team Size | Cost     |
 |----------------------|-----------------------------------------|-----------|----------|
+| Pattern 0            | Pre-campaign J-2 intelligence check     | —         | None     |
 | Sequential Pipeline  | Content: draft → edit → validate        | 3-5       | Moderate |
 | Parallel + Coord     | Independent streams + central coord     | 4-8       | High     |
 | Verification Sweep   | QA across multiple items                | 2-4       | Low-Med  |
 | Solo Deep Work       | Single specialist sufficient            | 1         | Low      |
 | Multi-perspective    | Review panel with fresh-eyes zero-XP    | 3-5       | Moderate |
+| Emergency Override   | Crisis: blocked campaign or 3+ failures | 1         | Variable |
 
 ---
 
