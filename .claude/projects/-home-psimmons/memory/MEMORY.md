@@ -1,12 +1,17 @@
 # Learning Index
 
-**Last Updated**: 2026-03-25T06:02:43Z
-**Session**: 20260325-020243
+**Last Updated**: 2026-03-25T14:57:00Z
+**Session**: 20260325-105700
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-03-25: docs(phase-2b): coordinator tool restriction doctrine in AGENTS.md §3
+- 2026-03-25: docs: add global art direction rule to behavioral rules section
+- 2026-03-25: docs: add Section 9 Designated Art Direction Team to AGENTS.md with full rule integration
+- 2026-03-25: docs: test first — write failing test before implementation
+- 2026-03-25: docs: post-campaign handoff and memory index update
 - 2026-03-25: docs: mandate worktree before implementation in CLAUDE.md
 - 2026-03-24: docs: add Rochefort to AGENTS.md — Layton's signals intelligence counterpart
 - 2026-03-22: docs: add Eisenhower Precedent and accountability system to AGENTS.md
@@ -14,13 +19,13 @@
 - 2026-03-20: chore: update memory files, CLAUDE.md priorities, and AGENTS.md
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  5 modified, 0 staged
+**Uncommitted**: ⚠️  8 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  9 OK, 0 failed, 1 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: ✅ All critical services healthy (10 checked)
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20T14:32:00Z | service: homepage
@@ -29,7 +34,7 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 
 **Generals Accountability**: Malus: Eisenhower 160.0 (WARNING) | 1 commander(s) tracked
 
-**J-2 Intelligence**: J-2: No estimate available
+**J-2 Intelligence**: J-2 INTEL [2026-03-25T10:00]: Pods In Error State (WARNING, 1 patrol(s))
 
 ---
 
@@ -64,7 +69,6 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 
 ## Topic Files
 
-- Design Campaign Completion & Post-Campaign Art Direction Research → memory/design-campaign-completion-2026-03-25.md
 - Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
 - cert-manager patterns → memory/homelab-cert-manager.md
 - K8s deployment patterns → memory/homelab-k8s-patterns.md

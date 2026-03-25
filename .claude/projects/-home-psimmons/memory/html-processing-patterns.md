@@ -1,4 +1,7 @@
 ---
+name: html-processing-patterns
+description: SVG-safe HTML processing — extract-process-restore pattern with code example
+type: reference
 Category: reference
 ---
 # HTML Processing Patterns - SVG Preservation

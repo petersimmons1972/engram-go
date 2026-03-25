@@ -2,6 +2,7 @@
 name: lessons-learned
 description: Non-obvious lessons from past work — only items NOT already in CLAUDE.md or derivable from code
 type: feedback
+Category: reference
 ---
 # Lessons Learned
 
@@ -44,8 +45,13 @@ type: feedback
 - (1x) Fresh subagent per task prevents context pollution
 - (1x) URL validation: mimic browser headers to avoid 403 — see memory/url-validation-patterns.md
 
+## Security Posture
+
+- (1x) **"Minimal change / accept risk" security is how breaches happen** — CISO fired for recommending acceptance of flat network + deferred RBAC as "structural debt." This is exactly the Home Depot breach pattern (2014): accepted risk on network segmentation + vendor access = 56M cards stolen. NetworkPolicies, RBAC, and supply chain integrity are non-negotiable foundations, never deferrable.
+
 ## Agent Operations
 
+- (1x) **Always verify issue count matches reality before deploying agents** — `gh issue list` with label filters undercounts. Run unfiltered `--json number --jq 'length'` and confirm with the founder before proceeding. A campaign scoped to 30 issues when 79 exist wastes the analysis.
 - (1x) **Zero-XP commanders perform well on READ-ONLY audits** — 9 zero-XP generals delivered 112 issues. Code audits are ideal first-deployment tasks.
 - (1x) **9-wide parallel audit with zone isolation: <3% duplication** — READ-ONLY + different audit angles minimizes duplication without coordinator.
 - (1x) **Parallel agents can safely touch different lines of same function** — But flag shared functions and run full test suite after.

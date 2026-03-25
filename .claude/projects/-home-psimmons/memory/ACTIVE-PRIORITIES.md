@@ -2,6 +2,7 @@
 name: active-priorities
 description: Current work focus and pending action items
 type: project
+Category: active-work
 ---
 # Active Priorities
 

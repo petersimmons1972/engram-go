@@ -2,6 +2,7 @@
 name: url-validation-patterns
 description: Browser spoofing for URL validation — principle and code pointer
 type: reference
+Category: reference
 ---
 # URL Validation Patterns
 

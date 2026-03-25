@@ -2,6 +2,7 @@
 name: Design Campaign Completion & Post-Campaign Art Direction Research Initiated
 description: Design system 1950s Madison Ave campaign complete; post-campaign research project on 6 artist commanders deployed with 6 background researchers
 type: context
+Category: context
 ---
 
 # Design Campaign Completion & Post-Campaign Initialization
