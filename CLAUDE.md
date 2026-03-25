@@ -27,8 +27,10 @@ Execute before ANY code changes or git operations. No exceptions.
 ## Workflow
 
 - **Test after every edit.** After EVERY code edit, immediately run the most relevant test(s) before moving to the next task. Never batch untested changes.
-- Plan mode for non-trivial tasks (3+ steps). Re-plan immediately if things go sideways.
+- Plan mode for non-trivial tasks (3+ steps). If things go sideways: **preserve the error state** (logs, failing output, broken branch), then re-plan. Never push through errors you didn't predict.
+- **Worktree before implementation — MANDATORY.** Before executing any approved plan (whether from plan mode, brainstorming, or operational order), create an isolated git worktree via `superpowers:using-git-worktrees`. No exceptions. This applies regardless of how the plan was created — plan mode bypasses the brainstorming skill chain and does not automatically create a worktree.
 - Use skills for procedural work — they are authoritative over summaries here.
+- **Stay in scope.** Tangential issues found during work that would take >15 minutes → file as GitHub Issue, don't fix inline. Quick fixes (<15 min) are fine — initiative is rewarded.
 - `superpowers:verification-before-completion` before claiming done.
 
 ## Project Lifecycle
@@ -58,6 +60,7 @@ All files must live in a subdirectory. Loose files at `~/projects/` root → mov
 - 100% confident → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
 - Pre-approved: logs, kubectl get/describe, health-check, diagnostics
 - Always ask: delete resources, modify production, data loss risk
+- **When blocked, ask one focused question.** Include your recommended default and what changes based on the answer. Make embedded assumptions explicit — never hide decisions inside a "should I proceed?" question.
 
 ## Bug & Defect Tracking — NON-NEGOTIABLE
 
