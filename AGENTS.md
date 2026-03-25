@@ -13,6 +13,7 @@
 | Competitive intel    | Parallel + Coordinator    | Montgomery        | Nimitz, Halsey, MacArthur              | Spruance          |
 | Code sprint          | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance          |
 | Rapid fix / hotfix   | Solo Deep Work            | Patton or Rommel  | —                                      | —                 |
+| Emergency override   | Pattern 5 (pre-auth req)  | Patton (force) or Rommel (cunning) | — | Spruance or Ramsay (post-deployment) |
 | K8s deployment       | Solo + Skills             | Nimitz or King    | —                                      | —                 |
 | Security audit       | Parallel + Coordinator    | Rickover          | Hopper, Layton                         | CISO              |
 | Chart production     | Parallel + Coordinator    | Montgomery        | Zhukov, King, Spruance, Halsey         | Ramsay             |
