@@ -26,7 +26,7 @@ Execute before ANY code changes or git operations. No exceptions.
 
 ## Workflow
 
-- **Test after every edit.** After EVERY code edit, immediately run the most relevant test(s) before moving to the next task. Never batch untested changes.
+- **Test first.** Write the failing test before the first line of implementation. After EVERY code edit, immediately run the most relevant test(s) before moving to the next task. Never batch untested changes.
 - Plan mode for non-trivial tasks (3+ steps). If things go sideways: **preserve the error state** (logs, failing output, broken branch), then re-plan. Never push through errors you didn't predict.
 - **Worktree before implementation — MANDATORY.** Before executing any approved plan (whether from plan mode, brainstorming, or operational order), create an isolated git worktree via `superpowers:using-git-worktrees`. No exceptions. This applies regardless of how the plan was created — plan mode bypasses the brainstorming skill chain and does not automatically create a worktree.
 - Use skills for procedural work — they are authoritative over summaries here.
