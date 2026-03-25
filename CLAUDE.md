@@ -6,6 +6,7 @@
 - **Markdown tables must be human-readable in raw form**: pad columns so they align, use emoji swatches for color/status values (🔵🟡🟢⚫⚪✅❌⚠️), and never leave hex codes or long values unformatted in a table cell.
 - When the user asks for a 'summary' or 'report', cover ALL items (open, closed, fixed, unfixed) — not just a filtered subset.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state. Verify what's actually open/remaining.
+- **When art direction or graphics are needed, use the Designated Art Direction Team** — See AGENTS.md Section 9. Dispatch one of the 6 artists (Mucha, Toulouse-Lautrec, Cassandre, Savignac, Rand, Greiman) based on aesthetic requirements. Full selection guide at `~/projects/art-direction-research/ART-DIRECTION-RULE.md`. No generic AI design tools without explicit artist direction.
 - **See "Bug & Defect Tracking" section below — NON-NEGOTIABLE.**
 
 ## Parallel Agent Rules
