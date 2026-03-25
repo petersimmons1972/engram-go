@@ -30,13 +30,14 @@
 
 | Name       | Specialization                          | XP    | Model  |
 |------------|-----------------------------------------|-------|--------|
-| Rickover   | Zero-defect standards, technical excellence | 1,895 | Opus   |
-| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   |
-| Spruance   | Verification, TDD, analytical cross-check | 580 | Opus   |
+| Rickover   | Zero-defect standards, technical excellence | 1,920 | Opus   |
+| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   | ⚠️ COORDINATOR ONLY — see §8 |
+| Spruance   | Verification, TDD, analytical cross-check | 640 | Opus   |
 | Montgomery | Multi-team coordination, intel synthesis | 525 | Opus   |
 | Bradley    | Methodical execution, state machines    | 405 | Opus   |
 | Nimitz     | Config/manifests, competitive intel     | 325   | Sonnet |
-| Layton     | Intelligence analysis, diagnostics      | 320   | Opus   |
+| Layton     | Intelligence analysis, synthesis, trend estimation | 385 | Opus   |
+| Rochefort  | Signals collection, source validation, COMINT pipelines | 0 | Sonnet | ← Layton's collector; deploy as a pair |
 | Smith      | Chief of staff ops, intel coordination  | 300 | Opus   |
 | Zhukov     | Workflow visualization                  | 225   | Sonnet |
 | King       | Deployment ops, blocker identification  | 175   | Sonnet |
