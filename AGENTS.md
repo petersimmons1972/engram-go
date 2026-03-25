@@ -118,6 +118,18 @@ After every team deployment, before TeamDelete:
 
 **Consequence:** Strategic blunders, operational failures, and insubordination have career consequences. XP penalties, malus accumulation, demotion, or permanent retirement from the roster. The CISO was retired for strategic malpractice. Eisenhower faces career review for operational malpractice. No exceptions.
 
+### Spawn Eligibility (machine-enforceable)
+
+Run before every spawn: `python ~/projects/generals/bin/check-general-eligibility.py <name> <role>`
+
+| Effective Malus | coordinator | emergency_reserve | specialist | validator |
+|----------------|-------------|-------------------|------------|-----------|
+| 0 – 99         | ✅          | ✅                | ✅         | ✅        |
+| 100 – 199      | ❌          | ⚠️ founder approval | ✅       | ✅        |
+| 200 – 299      | ❌          | ❌                | ✅ + review | ✅      |
+| 300 – 399      | ❌          | ❌                | ✅ + escalate | ✅    |
+| 400+           | ❌          | ❌                | ❌         | ❌        |
+
 ---
 
 ## 8. Initiative & Standards
