@@ -9,7 +9,7 @@
 
 | Task Type            | Pattern                   | Lead              | Core Team                              | Validators        |
 |----------------------|---------------------------|-------------------|----------------------------------------|-------------------|
-| Content production   | Sequential Pipeline       | Pyle (draft)      | Orwell (edit), Murrow (fact-check)     | Ramsay      |
+| Content production   | Sequential Pipeline       | Groves (coord)    | Pyle (draft), Orwell (edit), Murrow (fact-check) | Ramsay |
 | Competitive intel    | Parallel + Coordinator    | Montgomery        | Nimitz, Halsey, MacArthur              | Spruance          |
 | Code sprint          | Parallel + Coordinator    | Eisenhower        | Bradley, Layton, Mitchell, Dowding     | Spruance          |
 | Rapid fix / hotfix   | Solo Deep Work            | Patton or Rommel  | —                                      | —                 |
