@@ -1,12 +1,13 @@
 # Learning Index
 
-**Last Updated**: 2026-03-26T17:50:14Z
-**Session**: 20260326-135014
+**Last Updated**: 2026-03-26T18:34:46Z
+**Session**: 20260326-143446
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-03-26: docs: add global to-do list and database incident memory
 - 2026-03-25: docs: Phase 2E — spawn eligibility table in AGENTS.md §7
 - 2026-03-25: fix: add memory: project to gordon-ramsay agent frontmatter
 - 2026-03-25: docs: add Emergency Override row to task-to-team lookup
@@ -16,10 +17,9 @@
 - 2026-03-25: docs: add global art direction rule to behavioral rules section
 - 2026-03-25: docs: add Section 9 Designated Art Direction Team to AGENTS.md with full rule integration
 - 2026-03-25: docs: test first — write failing test before implementation
-- 2026-03-25: docs: post-campaign handoff and memory index update
 
-**Sessions**: 2026-03-26 database protection incident + resolution
-**Uncommitted**: ⚠️  0 modified, 0 staged
+**Sessions**: - No recent session files found
+**Uncommitted**: ⚠️  1 modified, 0 staged
 
 ---
 
@@ -69,7 +69,7 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 
 ## Topic Files
 
-- **Global To-Do List** → memory/global-todo-list.md (ask for this periodically)
+- DNS: use Cloudflare API for *.petersimmons.com, not Pi-hole/SSH → memory/feedback-dns-use-cloudflare.md
 - Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
 - cert-manager patterns → memory/homelab-cert-manager.md
 - K8s deployment patterns → memory/homelab-k8s-patterns.md
