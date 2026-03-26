@@ -1,31 +1,31 @@
 # Learning Index
 
-**Last Updated**: 2026-03-25T14:57:00Z
-**Session**: 20260325-105700
+**Last Updated**: 2026-03-26T17:50:14Z
+**Session**: 20260326-135014
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-03-25: docs: Phase 2E — spawn eligibility table in AGENTS.md §7
+- 2026-03-25: fix: add memory: project to gordon-ramsay agent frontmatter
+- 2026-03-25: docs: add Emergency Override row to task-to-team lookup
+- 2026-03-25: chore: update memory files and analyzing-companies skill
+- 2026-03-25: docs: Groves leads content production pipeline
 - 2026-03-25: docs(phase-2b): coordinator tool restriction doctrine in AGENTS.md §3
 - 2026-03-25: docs: add global art direction rule to behavioral rules section
 - 2026-03-25: docs: add Section 9 Designated Art Direction Team to AGENTS.md with full rule integration
 - 2026-03-25: docs: test first — write failing test before implementation
 - 2026-03-25: docs: post-campaign handoff and memory index update
-- 2026-03-25: docs: mandate worktree before implementation in CLAUDE.md
-- 2026-03-24: docs: add Rochefort to AGENTS.md — Layton's signals intelligence counterpart
-- 2026-03-22: docs: add Eisenhower Precedent and accountability system to AGENTS.md
-- 2026-03-20: docs: remove CISO from active roster — retired after strategic malpractice
-- 2026-03-20: chore: update memory files, CLAUDE.md priorities, and AGENTS.md
 
-**Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  8 modified, 0 staged
+**Sessions**: 2026-03-26 database protection incident + resolution
+**Uncommitted**: ⚠️  0 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ✅ All critical services healthy (10 checked)
+**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  9 OK, 0 failed, 1 warnings
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20T14:32:00Z | service: homepage
@@ -34,7 +34,7 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 
 **Generals Accountability**: Malus: Eisenhower 160.0 (WARNING) | 1 commander(s) tracked
 
-**J-2 Intelligence**: J-2 INTEL [2026-03-25T10:00]: Pods In Error State (WARNING, 1 patrol(s))
+**J-2 Intelligence**: J-2 INTEL [2026-03-26T16:00]: Pods In Error State (WARNING, 5 patrol(s))
 
 ---
 
@@ -69,6 +69,7 @@ Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20
 
 ## Topic Files
 
+- **Global To-Do List** → memory/global-todo-list.md (ask for this periodically)
 - Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
 - cert-manager patterns → memory/homelab-cert-manager.md
 - K8s deployment patterns → memory/homelab-k8s-patterns.md
