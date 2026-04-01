@@ -19,6 +19,29 @@ Execute before ANY code changes or git operations. No exceptions.
 3. **BUG ACCOUNTABILITY** — All bugs found must be fixed or filed as GitHub Issues.
 4. **BRANCH VERIFICATION** — `git log --oneline -3` on target branch to confirm commits landed.
 
+## Engram Memory — MANDATORY
+
+Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts cold — Engram is how context survives.
+
+**Session start — do this before anything else:**
+1. `memory_recall("current project status recent work", project="global")` — what was happening
+2. `memory_recall("<topic of the request>", project="<relevant project>")` — targeted context
+   - Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
+   - When in doubt, also recall from `global`
+
+**During work — recall before deciding, not after:**
+- Before a technical decision: `memory_recall("<decision topic>", project="<project>")`
+- Before touching infrastructure: `memory_recall("infrastructure patterns lessons", project="homelab")`
+- Before a Clearwatch change: `memory_recall("<feature area>", project="clearwatch")`
+
+**After completing meaningful work — store it:**
+- Decisions made and why → `memory_store(content, memory_type="decision", project="<project>")`
+- Bugs fixed and root cause → `memory_store(content, memory_type="error", project="<project>")`
+- Patterns established → `memory_store(content, memory_type="pattern", project="<project>")`
+- Session summary at end → `memory_store(content, memory_type="context", project="global", importance=1)`
+
+**Fallback only:** If Engram is unreachable, fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
+
 ## Workflow
 - **Test first.** Failing test before first line of implementation. Run tests after EVERY edit. Never batch untested changes.
 - Plan mode for non-trivial tasks (3+ steps). Preserve error state if things go sideways — never push through unpredicted errors.
@@ -26,7 +49,6 @@ Execute before ANY code changes or git operations. No exceptions.
 - Use skills for procedural work — authoritative over summaries here.
 - **Stay in scope.** >15 min tangent → file GitHub Issue, keep moving. <15 min → fix and note it.
 - `superpowers:verification-before-completion` before claiming done.
-- **Engram supplements files, never replaces them.** `memory_recall()` when available; fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth.
 
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
