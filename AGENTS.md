@@ -164,41 +164,12 @@ If you are a zero-XP commander on your first deployment: this is your chance to 
 
 ## 9. Designated Art Direction Team
 
-**Authority:** Global rule established 2026-03-25 via deep research on 6 artist commanders. See `~/projects/art-direction-research/ART-DIRECTION-RULE.md` for full selection guide and enforcement.
+Six designated artists for all visual work: Mucha, Toulouse-Lautrec, Cassandre, Savignac, Rand, Greiman.
 
-### The 6 Designated Artists
+**Full selection guide and enforcement rules:** `~/projects/art-direction-research/ART-DIRECTION-RULE.md`
+**Artist profiles (1500–2000 words each):** `~/projects/art-direction-research/profiles/{artist}-profile.md`
 
-When any project requires visual design, graphics creation, brand development, or aesthetic direction, dispatch one of these zero-XP commanders based on project aesthetic requirements:
-
-| Artist | Specialization | When to Use | Key Techniques |
-|--------|----------------|-------------|-----------------|
-| **Mucha** | Organic luxury branding, cultural identity | Flowing, human-centered design; wellness/luxury brands | Botanical integration, decorative framing, sophisticated palettes |
-| **Toulouse-Lautrec** | Entertainment/event marketing, bold advertising | Striking visual campaigns, posters, nightlife branding | High-contrast silhouettes, dynamic composition, integrated typography |
-| **Cassandre** | Geometric systems, transportation/infrastructure, period design | Systematic design systems, modernist elegance | Geometric abstraction, streamline curves, architectural precision |
-| **Savignac** | Humor-driven design, character branding, accessible infographics | Consumer marketing, warmth/approachability required | Anthropomorphism, visual puns, simplified expressive forms |
-| **Rand** | Minimalist logo design, brand systems, corporate identity | Timeless elegance, professional branding, design systems | Geometric reduction, mark-based identity, modular systems |
-| **Greiman** | Digital-era design, complex hierarchies, experimental typography | Contemporary UI/UX, data visualization, web design | Layered complexity, grid-based navigation, integrated media |
-
-### How to Invoke
-
-1. **Identify aesthetic goal** — What feeling should the design convey?
-2. **Match to artist** — Use guide above and full profiles at `~/projects/art-direction-research/profiles/`
-3. **Deploy commander** — Use Generals agent spawning system (zero-XP specialist)
-4. **Reference the rule** — Link to `~/projects/art-direction-research/ART-DIRECTION-RULE.md`
-
-### No Exceptions
-
-- ❌ Do NOT use generic AI design tools without artist direction
-- ❌ Do NOT mix multiple artists on single project (except under strict coordinator approval)
-- ❌ Do NOT skip this rule for "quick" design work
-- ✅ DO use this rule for ALL visual/graphic work
-- ✅ DO apply signature techniques deliberately
-
-### Full Documentation
-
-- **Comprehensive rule & selection guide:** `~/projects/art-direction-research/ART-DIRECTION-RULE.md`
-- **Individual artist profiles (1500-2000 words each):** `~/projects/art-direction-research/profiles/{artist}-profile.md`
-- **Research documentation:** `~/projects/art-direction-research/research/{artist}.md`
+❌ Do NOT use generic AI design tools without artist direction. ❌ Do NOT mix artists on a single project.
 
 ---
 

@@ -31,9 +31,25 @@ Category: reference
 
 - (1x) **LLM prompt rules need deterministic backstops** — CONTENT-RULES.md rules sometimes ignored under token pressure. Patterns with programmatic gates stopped recurring; patterns without gates came back across 10+ versions. **Fix: Gates 33-35 added 2026-03-20.**
 - (1x) **Structured prefixes poison tokenization dedup** — Dedup on formatted strings wastes overlap budget on prefix tokens. Strip structural prefix and normalize entity names first. **Fix: extract_complaint() added 2026-03-20.**
-- (1x) **"Architecturally complete but operationally dead"** — EffectivenessTracker was fully coded but never called. 1,666 lessons at runs_applied=0. Verify feedback loops close end-to-end, not just that each component exists.
+- (2x) **"Architecturally complete but operationally dead"** — EffectivenessTracker was fully coded but never called (2026-03-20). Then the A/B skip was disabled with a comment but the promotion criterion that required it was never updated (2026-03-30) — delta was always 0, nothing could promote. Pattern: when you disable a mechanism, grep for all code that depends on that mechanism's output and update it. Verify feedback loops close end-to-end, not just that each component exists.
+- (1x) **Diagnose dead signals before debugging logic** — When a state machine produces no transitions, check whether the signal it requires is actually being computed before reading the transition rules. Here: `delta > 0.1` required, `avg_score_without` was always 0, delta always 0. The bug was two levels above the transition logic. Read the data first (`grep "delta > 0"` on the actual YAML), then trace backward to where the signal is written.
 - (1x) **Multi-layer pipeline bugs must fix in dependency order** — Gate 27: 7 bugs in chain. Downstream bugs only reveal after upstream fixes.
 - (1x) **Research goes in K8s PostgreSQL, not just git** — Use `ResearchStore` or direct DB insert. Git files are a materialized view.
+- (1x) **Most pipeline failures are stochastic, not bugs** — 3 of 4 "failing" reports in 2026-03-30 run resolved on re-run (703-char paragraph, citation-only paragraph, pricing framing). Always re-run once before modifying pipeline code. Only fix deterministic failures.
+- (1x) **Contradictory rules across files cause LLM to generate malformed output** — CONTENT-RULES.md said "3 key-insight divs minimum" with raw HTML format; stage_3.py said "one verdict callout maximum." LLM satisfied both by generating empty shells. Pattern: when you have multiple rule files the LLM reads (domain-knowledge/ + stage prompts), grep for overlapping concepts and verify they don't contradict. The symptom was downstream blocking, not obvious at the rule layer.
+- (1x) **Blocking gates should not block on recoverable structural warnings** — Stage 5.8 blocked the entire pipeline on empty `<div class="key-insight">` elements. The right call: warn and continue (Stage 6 and Stage 7 still evaluate quality). Reserve hard blocks for fatal structural failures (missing sections, broken encoding). Over-blocking gates cause version churn (v117→v120) trying to satisfy an artificial gate.
+- (1x) **CLAUDE.md rules are invisible to Stage 3 LLM** — Stage 3 reads `domain-knowledge/*.md` only. Any founder rule that should affect report prose MUST be mirrored in domain-knowledge/. A rule that lives only in CLAUDE.md will never reach the LLM generating the report. (This is documented in CLAUDE.md itself but worth repeating — it's easy to forget when fixing rules.)
+- (1x) **Structural data gaps don't resolve on re-run** — MicrosoftE5 dossier missing vendor base pricing fields → 12/13 charts suppressed. Pipeline works correctly; dossier needs enrichment. Re-runs are wasted compute. Identify structural vs stochastic failures first.
+- (1x) **Contention retry must select different resource** — PID-based pod selection (os.getpid() % N) collides under N+1 concurrent callers. Retry must pass `exclude=failing_resource` to selector. See visual_tester.py fix (commit b2dbf3a).
+- (1x) **Regen cycle anti-pattern: regen → feedback → individual fix → regen never closes tickets** — The cycle burns tokens because structural root causes (rule contradictions, missing prompt sections) regenerate the same Stage 7 feedback on every run. Fix: categorize ALL open issues as (a) must-fix-before-regen (structural/rule issues that will repeat), (b) already-fixed (dossier corrections done), or (c) regen-only (prose issues). Fix every category-a issue FIRST, then batch one regen per pair. Trying to fix issues one-at-a-time between regens wastes >10x the compute.
+- (1x) **Stage 6 gates are pure Python on saved artifacts — replay in 60s not 60min** — Stage 6 runs ~30 quality gates against HTML/PDF/markdown/JSON artifacts already on disk. No LLM calls. Gate replay harness (`bin/gate_replay_lib.py`, `bin/validate-existing.py`, `bin/validate-all-existing.py`, `tests/regression/test_gate_regression.py`) can validate gate state in ~60 seconds. Workflow: fix issue → validate-existing → pytest regression → only then regen. DEGRADED_GATES = {"10","15","16","18","28","31"} cannot run at full fidelity (missing artifacts: claims_manifest, full_dossier, chart_purposes).
+
+## Hardware / 3D Printing
+
+- (1x) Bambu P1S: multiple unrelated HMS errors escalating = shared signal path (FPC cable or Extruder Connection Board), not individual component failures
+- (1x) Bambu P1S: FPC ribbon cables tolerate zero misalignment — 1mm off causes intermittent failures that worsen with thermal cycling
+- (1x) Bambu P1S: log files are AES encrypted — only Bambu support can read them, but file metadata (size, gaps, timestamps) reveals crash/restart patterns
+- (1x) Bambu P1S: firmware update timing vs error onset — check log metadata to confirm whether errors predate the update before blaming firmware
 
 ## General Patterns
 
@@ -48,6 +64,11 @@ Category: reference
 ## Security Posture
 
 - (1x) **"Minimal change / accept risk" security is how breaches happen** — CISO fired for recommending acceptance of flat network + deferred RBAC as "structural debt." This is exactly the Home Depot breach pattern (2014): accepted risk on network segmentation + vendor access = 56M cards stolen. NetworkPolicies, RBAC, and supply chain integrity are non-negotiable foundations, never deferrable.
+
+## Analysis Methodology
+
+- (1x) **Use competitor code as a lens, not a blueprint** — Synapptic analysis (Operation Synapse) found 3 novel compositions in 6,600 LOC, but the real value was the analytical framework revealing pre-existing problems in our own projects: engram's hash-only dedup is a ticking bomb, armies' profiles have never been empirically validated, clearwatch's gate bypass was a process failure not a gate failure, clearwatch's learning system had a 97.98% deprecation rate with 0 graduated lessons. The competitor's code didn't cause these — it provided the vocabulary to see them.
+- (1x) **Prescriptive vs. descriptive profiling are fundamentally different problems** — Armies profiles are prescriptive (tell the agent what to do). Synapptic profiles are descriptive (observe what the user does). Automating armies from session logs would profile "Claude pretending to be Eisenhower," not Eisenhower's decision patterns. Don't merge them.
 
 ## Agent Operations
 
