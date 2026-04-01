@@ -168,16 +168,19 @@ Migrate in three passes to avoid data loss:
 - Engram phase completion docs
 - Delete source files after confirming Engram recall works
 
+**Pre-deletion backup:** Before any files are deleted, create `~/archive/memory-pre-refactor-2026-04-01.zip` containing the full `~/.claude/projects/-home-psimmons/memory/` directory snapshot.
+
 **Validation after each pass:** Run memory_recall() for 3 representative queries and confirm results before deleting source files.
 
 ---
 
 ## Success Criteria
 
+- [ ] `~/archive/memory-pre-refactor-2026-04-01.zip` exists before any deletions
 - [ ] Root CLAUDE.md ≤ 60 lines, zero project-specific rules
 - [ ] MEMORY.md ≤ 50 lines, recovery-map format only
 - [ ] Memory file count ≤ 12 (only the keep-on-disk list above)
 - [ ] memory_recall() returns useful results for 5 representative queries across global/clearwatch/homelab
 - [ ] clearwatch/CLAUDE.md exists and contains all moved rules
-- [ ] homelab/CLAUDE.md exists and contains all moved rules
+- [ ] Homelab rules ingested in Engram project="homelab" (no ~/projects/homelab/ directory exists — Engram is the store)
 - [ ] No rule lost — every removed rule either lives in a project CLAUDE.md or Engram
