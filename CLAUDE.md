@@ -11,6 +11,7 @@
 - **Pre-validation:** ONE agent analyzes 2–3 samples first. Present findings. Only then dispatch remaining agents with the confirmed problem definition.
 - List which functions each agent will touch. Two agents on the same function → flag it, run full test suite after.
 - **Always include one zero-context reviewer** — receives only raw inputs, no prior findings.
+- **Review mode — judge against the reference, not the current file:** When dispatching generals for adversarial review, include: "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
 
 ## Pre-Flight Protocol — MANDATORY
 Execute before ANY code changes or git operations. No exceptions.
@@ -42,6 +43,8 @@ Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts c
 
 **Fallback only:** If Engram is unreachable, fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
 
+**Dispute tracking:** Before Eisenhower adjudicates any dispute, recall from Engram: `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do not adjudicate — escalate to founder. Store each adjudication as: `content="DISPUTE: <description> | VERDICT: <summary> | COUNT: N | LAST: <date>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
+
 ## Workflow
 - **Test first.** Failing test before first line of implementation. Run tests after EVERY edit. Never batch untested changes.
 - Plan mode for non-trivial tasks (3+ steps). Preserve error state if things go sideways — never push through unpredicted errors.
@@ -49,6 +52,7 @@ Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts c
 - Use skills for procedural work — authoritative over summaries here.
 - **Stay in scope.** >15 min tangent → file GitHub Issue, keep moving. <15 min → fix and note it.
 - `superpowers:verification-before-completion` before claiming done.
+- **Graceful degradation:** For research-heavy dispatches (multi-tool, expected >8 turns), add to the dispatch brief: "If you reach turn 8 of 10 without a complete answer, stop tool calls and return a partial summary labeled `PARTIAL:` with what you have gathered. Do not wait for perfect information."
 
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
@@ -61,6 +65,7 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 - Found a bug → file it before continuing. Fixed inline → file it as closed. Deferred → file it.
 - **Continuity test:** Could the next session pick up every open defect from GitHub Issues alone?
 - File issues FIRST, then report status.
+- **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
 
 ## Critical Rules
 **NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup

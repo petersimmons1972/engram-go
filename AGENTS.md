@@ -1,6 +1,6 @@
 # Generals Operational Reference
 
-> **GitHub source of truth**: https://github.com/petersimmons1972/generals
+> **GitHub source of truth**: https://github.com/petersimmons1972/camp-david
 > Local roster is for spawn decisions. GitHub profiles are authoritative for XP/stats.
 
 ---
@@ -24,35 +24,35 @@
 
 ## 2. Commander Roster
 
-> **XP VERIFICATION**: Before any spawn decision where XP matters, check GitHub repo `petersimmons1972/generals`. Never trust local cache alone.
-> **MANDATORY**: Check `~/projects/generals/bench-roster.md` for the full 29-commander roster. **Prefer zero-XP commanders whose specialization fits** over proven ones — builds bench depth.
+> **XP VERIFICATION**: Before any spawn decision where XP matters, check GitHub repo `petersimmons1972/camp-david`. Never trust local cache alone.
+> **MANDATORY**: Check `~/.armies/bench-roster.md` for the full roster. **Prefer zero-XP commanders whose specialization fits** over proven ones — builds bench depth.
 
 ### High-XP Commanders
 
 | Name       | Specialization                          | XP    | Model  |
 |------------|-----------------------------------------|-------|--------|
-| Rickover   | Zero-defect standards, technical excellence | 1,920 | Opus   |
-| Eisenhower | Workflow analysis, coalition building   | 550 | Opus   | ⚠️ COORDINATOR ONLY — structurally scoped, see §8 |
-| Spruance   | Verification, TDD, analytical cross-check | 640 | Opus   |
-| Montgomery | Multi-team coordination, intel synthesis | 525 | Opus   |
-| Bradley    | Methodical execution, state machines    | 405 | Opus   |
+| Rickover   | Zero-defect standards, technical excellence | 850 | Opus   |
+| Eisenhower | Workflow analysis, coalition building   | 0 | Opus   | ⚠️ COORDINATOR ONLY — structurally scoped, see §8 |
+| Spruance   | Verification, TDD, analytical cross-check | 900 | Opus   |
+| Montgomery | Multi-team coordination, intel synthesis | 1,000 | Opus   |
+| Bradley    | Methodical execution, state machines    | 0 | Opus   |
 | Nimitz     | Config/manifests, competitive intel     | 325   | Sonnet |
 | Layton     | Intelligence analysis, synthesis, trend estimation | 385 | Opus   |
 | Rochefort  | Signals collection, source validation, COMINT pipelines | 0 | Sonnet | ← Layton's collector; deploy as a pair |
-| Smith      | Chief of staff ops, intel coordination  | 300 | Opus   |
+| Smith      | Chief of staff ops, intel coordination  | 900 | Opus   |
 | Zhukov     | Workflow visualization                  | 225   | Sonnet |
 | King       | Deployment ops, blocker identification  | 175   | Sonnet |
 | Halsey     | Aggressive action, rapid response       | 150   | Sonnet |
-| Ramsay     | Visual quality control                  | 150   | Sonnet |
+| Ramsay     | Visual quality control                  | 0 | Sonnet |
 | ~~CISO~~   | ❌ RETIRED — strategic malpractice      | 50    | —      |
 
-Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
+Full roster including zero-XP bench: `~/.armies/bench-roster.md`
 
 ---
 
 ## 3. Spawn Templates
 
-> **Full templates with code examples**: `~/projects/generals/spawn-patterns.md`
+> **Full templates with code examples**: `~/.armies/spawn-patterns.md`
 
 > **COORDINATOR TOOL RESTRICTION (Phase 2B):** All coordinators (Eisenhower, Montgomery, Bedell-Smith, Pyle, Rickover) are structurally scoped to `Agent | Read | Grep | Glob | SendMessage`. No Bash, Write, or Edit. Coordinators route all implementation through specialists. Agent files in `~/.claude/agents/` enforce this structurally. See `generals-evolution/phase-2-synthesis.md` for rationale.
 
@@ -65,6 +65,8 @@ Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
 | Solo Deep Work       | Single specialist sufficient            | 1         | Low      |
 | Multi-perspective    | Review panel with fresh-eyes zero-XP    | 3-5       | Moderate |
 | Emergency Override   | Crisis: blocked campaign or 3+ failures | 1         | Variable |
+
+> **Research-heavy dispatches:** Include graceful degradation instruction — "If you reach turn 8 of 10 without a complete answer, stop tool calls and return a partial summary labeled `PARTIAL:` with what you have gathered." See CLAUDE.md §Workflow.
 
 ---
 
@@ -83,7 +85,7 @@ Full roster including zero-XP bench: `~/projects/generals/bench-roster.md`
 ## 5. Service Record Checklist (NON-NEGOTIABLE)
 
 After every team deployment, before TeamDelete:
-1. Write service record → update profiles + YAMLs in `~/projects/generals/`
+1. Write service record → update profiles + YAMLs in `~/.armies/`
 1b. Verify Attribution section is complete (operation name, files touched, team roles with coordinator/implementer/designer/reviewer/observer designations)
 2. `git add`, `git diff --staged`, commit, push, verify push
 3. `TeamDelete` — only after push confirmed
@@ -114,13 +116,13 @@ After every team deployment, before TeamDelete:
 3. Insubordination (violating direct founder instructions) → compounds with other offenses
 4. Role violation (operating outside mandate) is a separate offense from the errors it produces
 
-**Accountability System:** All bug attributions, malus points, and escalation thresholds are tracked in `~/projects/generals/accountability/`. See `PROGRESSION-SYSTEM.md` Sections 10-12 for full rules.
+**Accountability System:** All bug attributions, malus points, and escalation thresholds are tracked in `~/.armies/accountability/`. See `~/.armies/bin/malus-report.py` for full rules.
 
 **Consequence:** Strategic blunders, operational failures, and insubordination have career consequences. XP penalties, malus accumulation, demotion, or permanent retirement from the roster. The CISO was retired for strategic malpractice. Eisenhower faces career review for operational malpractice. No exceptions.
 
 ### Spawn Eligibility (machine-enforceable)
 
-Run before every spawn: `python ~/projects/generals/bin/check-general-eligibility.py <name> <role>`
+Run before every spawn: `python ~/.armies/bin/check-general-eligibility.py <name> <role>`
 
 | Effective Malus | coordinator | emergency_reserve | specialist | validator |
 |----------------|-------------|-------------------|------------|-----------|
@@ -173,4 +175,50 @@ Six designated artists for all visual work: Mucha, Toulouse-Lautrec, Cassandre, 
 
 ---
 
-**Detailed docs moved to `~/projects/generals/`:** XP Reference → `PROGRESSION-SYSTEM.md` | Sync Protocol → `SYNC-PROTOCOL.md` | Post-Mortems → `post-mortems/`
+**Detailed docs:** XP Reference → `~/.armies/bin/malus-report.py` | Spawn Patterns → `~/.armies/spawn-patterns.md` | How it works → `~/.armies/docs/how-it-really-works.md`
+
+---
+
+## 10. Adversarial Review Protocols
+
+### Structured Output Schema
+
+All review-mode generals return structured JSON. Eisenhower reads JSON, not free-form markdown. Include in every adversarial review dispatch: *"Return findings as JSON matching the schema below. Do not return free-form markdown."*
+
+```json
+{
+  "findings": [
+    {
+      "location": "file:line or section description",
+      "description": "specific problem statement",
+      "severity": "critical|high|medium|low",
+      "correction": "what fix is required",
+      "confidence": "high|medium|low",
+      "blocking": true
+    }
+  ],
+  "summary": "one paragraph",
+  "verdict": "HOLD|SHIP"
+}
+```
+
+### Dissent Mode
+
+When a review general's finding is overruled by coordinator adjudication:
+1. The overruled general writes a minority opinion (2–4 sentences): specific passage/location, what they would have required, whether this should be treated as a precedent concern.
+2. Eisenhower posts this as a GitHub Issue comment tagged `[DISSENT]`, attributed by general name.
+3. Dissent opinions are not re-opened. They are the permanent record of the minority view.
+
+**Format:** `[DISSENT — {general name}] {specific location}: {what I required} | {precedent concern: yes/no — reason}`
+
+### Stall Detection (Eisenhower Dispatch Rule)
+
+Before adjudicating any dispute, Eisenhower recalls from Engram: `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do not adjudicate — escalate to founder. Stalled = no new information since last round. See CLAUDE.md §Engram Memory for storage format.
+
+### Arbitration Locking
+
+After Eisenhower adjudicates a dispute, store in Engram:
+- `memory_type="decision"`, `tags=["adjudicated", "immutable", "<project>"]`
+- `content="ARBITRATION: <issue> | DECISION: <summary> | DATE: <date>"`
+
+On recall: if a memory has tag `immutable`, report the prior decision — do not re-adjudicate. Escalate to founder if the locked decision is challenged.
