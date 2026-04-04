@@ -136,7 +136,7 @@ Replicating cache data 3x across nodes via Longhorn is wasteful. `emptyDir` is t
 
 **Why:** Longhorn provides snapshots today. Moving to NFS eliminates that. ZFS snapshots on TrueNAS/Proxmox are the natural replacement. democratic-csi exposes ZFS snapshots as K8s VolumeSnapshots for seamless integration.
 
-**Configuration:** Hourly snapshots, retain 24. Verify restore works before first migration.
+**Configuration:** Hourly snapshots, retain 24 (24 hours of rollback). Verify restore works before first migration.
 
 ## Phase A: Longhorn → TrueNAS NFS Migration
 
@@ -148,7 +148,7 @@ Replicating cache data 3x across nodes via Longhorn is wasteful. `emptyDir` is t
 4. **NFS failure test:** Kill TrueNAS NFS export mid-operation, observe pod behavior. Document recovery time and behavior.
 5. **Prometheus baseline:** Export 7-day historical metrics to `reports/baseline/`. Metrics: host CPU, per-node CPU, iowait, disk IOPS, network TX/RX, Longhorn instance-manager CPU, Longhorn volume IOPS.
 
-### A.1 — Green Tier Migration (60 Gi)
+### A.1 — Green Tier Migration (80 Gi)
 
 **Candidates:**
 
@@ -158,8 +158,7 @@ Replicating cache data 3x across nodes via Longhorn is wasteful. `emptyDir` is t
 | wordpress | clearwatch | wordpress-content | 10 Gi |
 | plex | plex | plex-config-pvc | 20 Gi |
 | security-reports | security-intelligence-business | reports-pvc | 20 Gi |
-
-Also migrate: Qdrant PVC (20 Gi) to NFS.
+| qdrant | content-cache | qdrant-storage-pvc | 20 Gi |
 
 **Per-workload procedure:**
 1. Snapshot Longhorn volume
@@ -212,7 +211,7 @@ Swap infisical-redis and open-webui-redis PVCs to `emptyDir`. One-line manifest 
    - ZFS snapshot of backup dataset
 2. **Database audit:** Connect to all 8 Postgres instances. Catalog: version, extensions, schemas, table count, total size, connection strings. Map application → database dependencies.
 3. **TrueNAS Postgres install:**
-   - Install via TrueNAS App API (`cgr.dev/chainguard/postgres:latest`)
+   - Install via TrueNAS App API — verify whether the app allows specifying `cgr.dev/chainguard/postgres:latest` as a custom image, or if it uses its own bundled image. If the TrueNAS App is too opinionated, fall back to a raw Docker Compose on TrueNAS.
    - Dedicated ZFS dataset: `recordsize=8K`, `sync=standard`, `dedup=off`, `compression=lz4`
    - Tune: `shared_buffers` (25% allocated RAM), `work_mem`, `effective_cache_size`, `statement_timeout`
    - Per-database roles with connection limits
