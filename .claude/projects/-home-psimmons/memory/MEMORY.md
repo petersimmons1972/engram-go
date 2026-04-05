@@ -1,74 +1,55 @@
 # Learning Index
 
-**Last Updated**: 2026-04-01T14:25:42Z
-**Session**: 20260401-102542
+**Last Updated**: 2026-04-05T04:15:53Z
+**Session**: 20260405-001553
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-04-01: feat: CLAUDE.md + Engram memory refactor complete
-- 2026-04-01: docs: implementation plan for CLAUDE.md + Engram refactor
-- 2026-04-01: docs: design spec for CLAUDE.md + Engram memory refactor
-- 2026-03-29: agents: full bench sync — 64 stock agents with deep biographical profiles
-- 2026-03-29: agents: add deeply researched stock agent profiles for all generals
-- 2026-03-27: profiles(gordon-ramsay): replace stub with deeply researched Base Persona
-- 2026-03-26: chore: update memory — DNS split-horizon rule and Cloudflare index
-- 2026-03-26: docs: add global to-do list and database incident memory
-- 2026-03-25: docs: Phase 2E — spawn eligibility table in AGENTS.md §7
-- 2026-03-25: fix: add memory: project to gordon-ramsay agent frontmatter
+- 2026-04-05: ops: archive 15 more generals — 42→28 active agents
+- 2026-04-04: ops: archive 14 more generals — 56→42 active agents
+- 2026-04-04: ops: archive 8 redundant generals — 64→56 active agents
+- 2026-04-03: docs: implementation plan for longhorn-nfs migration — 11 tasks across 3 phases
+- 2026-04-03: docs: spec self-review fixes — Qdrant in A.1 table, TrueNAS image note, snapshot retention clarity
+- 2026-04-03: docs: longhorn-nfs migration design spec — Longhorn→NFS + DB consolidation
+- 2026-04-03: ops: calypso15 integration — adversarial review protocols and stall detection
+- 2026-04-01: ops: make Engram recall mandatory — dedicated section with explicit triggers
+- 2026-04-01: chore: remove stale memory topic file references — homelab files now in Engram
+- 2026-04-01: chore: sync local skills — add 5 new, remove 3 stale, broaden adversarial-source-check
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  4 modified, 0 staged
+**Uncommitted**: ⚠️  3 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ⚠️  1/9 nodes not ready | **Services**: ⚠️  8 OK, 0 failed, 2 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  8 OK, 0 failed, 2 warnings
 **Warnings**: None detected
 
-Health check: `~/bin/health-check.sh` | Recent failures: - timestamp: 2025-12-20T14:32:00Z | service: homepage
-- timestamp: 2025-12-20T14:34:00Z
-- timestamp: 2025-12-20T14:36:00Z
+Health check: `~/bin/health-check.sh`
 
-**Generals Accountability**: Malus: Eisenhower 160.0 (WARNING) | 1 commander(s) tracked
-
-**J-2 Intelligence**: J-2 INTEL [2026-04-01T10:00]: Pods In Error State (WARNING, 28 patrol(s)); Storage High (WARNING, 6 patrol(s))
+**J-2 Intelligence**: J-2 INTEL [2026-04-05T04:00]: Pods In Error State (WARNING, 43 patrol(s))
 
 ---
 
 ## Key Lessons
 
-**Homelab** (ordered by usage count):
-- (4x) Backup before modifying critical files - design phase IS implementation for docs
-- (2x) MCP config lives in ~/.claude.json - use `claude mcp add`, never create mcp_servers.json
-- (2x) Validate what the customer sees, not intermediate formats
-- (1x) RWO PVCs need Recreate deployment strategy, not RollingUpdate
-- (1x) Chainguard images need fsGroup for PVC write access (non-root UID 65532)
-- (1x) cert-manager pods use 10.42.x.x overlay network, not 192.168.x.x - breaks Cloudflare IP filtering
-- (1x) WordPress behind reverse proxy needs WP_HOME/WP_SITEURL/FORCE_SSL_ADMIN in wp-config.php
-- (1x) CronJob not Deployment for periodic tasks - liveness probes kill sleep loops (exit 137, low memory = not OOM)
-- (1x) Homepage issues are almost always network policy label mismatch
-- (1x) Local DNS CNAME records break cert-manager DNS-01 challenges - use dnsPolicy: None + Cloudflare DNS
+Stored in Engram. Recall:
+- Homelab patterns: `memory_recall("<topic>", project="homelab")`
+- General patterns: `memory_recall("<topic>", project="global")`
 
-**General**:
-- (2x) BeautifulSoup destroys SVG xmlns attributes (all parsers) - extract SVG first, process HTML, restore SVG after
-- (1x) Every plan needs explicit validation checklist, not just "verify it works"
-- (1x) Cloudflare negative DNS cache lasts 1800s - CDN purge won't help, wait or use different record name
-- (1x) When Cloudflare zone records don't resolve, check TLD NS delegation before debugging the zone
-- (1x) Duplicate Python method definitions: last definition wins, silently overwrites earlier ones
-- (1x) When generated content disappears, trace through ALL post-processing steps - intermediate success ≠ final success
-- (1x) Regex HTML manipulation is fragile - corrupts tags, creates malformed HTML - use BeautifulSoup with SVG extraction instead
-- (1x) TDD with failing test first prevents spec drift - confirms you're testing the right thing before implementation
-- (1x) Two-stage review (spec compliance first, code quality second) catches both functional and implementation issues
-- (1x) Fresh subagent per task prevents context pollution - clean slate for each independent unit of work
-- (1x) URL validation: mimic Windows 11 + Chrome (current stable) user-agent to avoid 403 from legitimate sites - update monthly
+Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing
 
 ---
 
 ## Topic Files
 
+- Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
+- cert-manager patterns → memory/homelab-cert-manager.md
+- K8s deployment patterns → memory/homelab-k8s-patterns.md
+- Incident summaries → memory/homelab-incidents.md
 - URL validation patterns → memory/url-validation-patterns.md
 - Chart regression analysis → memory/chart-regression-2026-02-06.md
 - HTML processing patterns → memory/html-processing-patterns.md

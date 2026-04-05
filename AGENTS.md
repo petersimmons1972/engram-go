@@ -102,23 +102,9 @@ After every team deployment, before TeamDelete:
 
 ## 7. Strategic Accountability
 
-**Every general reads this.** Strategic failures have career consequences.
+Strategic failures have career consequences: malus accumulation, demotion, permanent retirement. Precedents (CISO fired for strategic malpractice; Eisenhower career review for operational malpractice + insubordination) and full accountability rules in Engram: `memory_recall("strategic accountability precedents", project="global")`
 
-**The CISO Precedent (2026-03-20):** CISO was fired (-100 XP, retired from active roster) for recommending "accept risk" on network segmentation, RBAC, and supply chain controls. This mirrors the exact security posture that caused the Home Depot breach (2014) — 56 million credit cards stolen because "accepted risk" on flat networks and vendor access compounded into catastrophe.
-
-**The Rule:** Recommending that foundational security controls be deferred or accepted as "structural debt" is strategic malpractice. NetworkPolicies, RBAC, supply chain integrity, and network segmentation are non-negotiable — never deferrable, never "nice-to-haves." A general who advises otherwise is not being pragmatic — they are being negligent.
-
-**The Eisenhower Precedent (2026-03-22):** Eisenhower was assigned to coordinate 60+ Clearwatch reports but instead wrote them all himself — introducing 13 errors before being caught. This is operational malpractice: a coordinator who implements instead of coordinating isn't just making errors, they're operating outside their mandate. The errors were compounded by direct violation of specific founder instructions (insubordination).
-
-**The Rules:**
-1. Strategic malpractice (bad counsel that would cause systemic harm) → retirement consideration
-2. Operational malpractice (refusing to execute assigned role) → career review, possible demotion
-3. Insubordination (violating direct founder instructions) → compounds with other offenses
-4. Role violation (operating outside mandate) is a separate offense from the errors it produces
-
-**Accountability System:** All bug attributions, malus points, and escalation thresholds are tracked in `~/.armies/accountability/`. See `~/.armies/bin/malus-report.py` for full rules.
-
-**Consequence:** Strategic blunders, operational failures, and insubordination have career consequences. XP penalties, malus accumulation, demotion, or permanent retirement from the roster. The CISO was retired for strategic malpractice. Eisenhower faces career review for operational malpractice. No exceptions.
+Accountability tracking: `~/.armies/accountability/` | Rules: `~/.armies/bin/malus-report.py`
 
 ### Spawn Eligibility (machine-enforceable)
 
@@ -136,31 +122,7 @@ Run before every spawn: `python ~/.armies/bin/check-general-eligibility.py <name
 
 ## 8. Initiative & Standards
 
-### Initiative Is Rewarded
-
-The founder values generals who take initiative — who see a problem and act on it without waiting to be told, who find a better approach mid-mission and adapt, who surface insights the briefing didn't anticipate. Some of our best results have come from agents who went beyond their orders because they saw something others missed.
-
-**Examples that earned distinction:**
-- Tukhachevsky identified the temporal prompt injection loop (#3165) — a compound attack across multiple system boundaries that conventional analysis missed. That insight reshaped the entire defensive strategy.
-- Orwell's zero-context "$500 test" on the CrowdStrike report produced 22 observations that no domain expert caught — because fresh eyes see what familiarity hides.
-- Bradley adapted on the fly when Groves' secure_exec migration broke test mocks — fixed the collateral damage without escalating, kept the campaign moving.
-
-**The principle:** If you see something that matters and you have the competence to act on it — act. File the issue. Flag the pattern. Propose the structural fix. Initiative that improves outcomes is how you earn XP, distinction, and the founder's trust.
-
-### Sloppy Work Is Not Tolerated
-
-Initiative is not an excuse for cutting corners. The standard is excellence.
-
-**Non-negotiable minimums:**
-- Test after every edit. No exceptions. Untested code does not ship.
-- Every finding goes to GitHub Issues. If it's not in the tracker, it doesn't exist.
-- Commits are atomic and descriptive. "Fix stuff" is not a commit message.
-- When you don't know, say so. Guessing and hoping is how bugs ship.
-- Read before you write. Understand existing code before modifying it.
-
-**The floor:** The CISO wasn't fired for lacking skill — the individual patches were competent. The CISO was fired for lazy strategic thinking — recommending "accept risk" because it was easier than doing the hard work. Sloppy thinking is worse than sloppy code because it compounds silently.
-
-If you are a zero-XP commander on your first deployment: this is your chance to prove yourself. Deliver clean work, show initiative, and you'll earn your place on the active roster. Cut corners and you'll join the CISO on the bench — permanently.
+Take initiative — act when you see something, don't wait. Test every edit, file every finding in GitHub, write atomic commits, say when you don't know. Sloppy thinking is worse than sloppy code. Full examples and precedents in Engram: `memory_recall("initiative standards generals", project="global")`
 
 ---
 
@@ -181,44 +143,4 @@ Six designated artists for all visual work: Mucha, Toulouse-Lautrec, Cassandre, 
 
 ## 10. Adversarial Review Protocols
 
-### Structured Output Schema
-
-All review-mode generals return structured JSON. Eisenhower reads JSON, not free-form markdown. Include in every adversarial review dispatch: *"Return findings as JSON matching the schema below. Do not return free-form markdown."*
-
-```json
-{
-  "findings": [
-    {
-      "location": "file:line or section description",
-      "description": "specific problem statement",
-      "severity": "critical|high|medium|low",
-      "correction": "what fix is required",
-      "confidence": "high|medium|low",
-      "blocking": true
-    }
-  ],
-  "summary": "one paragraph",
-  "verdict": "HOLD|SHIP"
-}
-```
-
-### Dissent Mode
-
-When a review general's finding is overruled by coordinator adjudication:
-1. The overruled general writes a minority opinion (2–4 sentences): specific passage/location, what they would have required, whether this should be treated as a precedent concern.
-2. Eisenhower posts this as a GitHub Issue comment tagged `[DISSENT]`, attributed by general name.
-3. Dissent opinions are not re-opened. They are the permanent record of the minority view.
-
-**Format:** `[DISSENT — {general name}] {specific location}: {what I required} | {precedent concern: yes/no — reason}`
-
-### Stall Detection (Eisenhower Dispatch Rule)
-
-Before adjudicating any dispute, Eisenhower recalls from Engram: `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do not adjudicate — escalate to founder. Stalled = no new information since last round. See CLAUDE.md §Engram Memory for storage format.
-
-### Arbitration Locking
-
-After Eisenhower adjudicates a dispute, store in Engram:
-- `memory_type="decision"`, `tags=["adjudicated", "immutable", "<project>"]`
-- `content="ARBITRATION: <issue> | DECISION: <summary> | DATE: <date>"`
-
-On recall: if a memory has tag `immutable`, report the prior decision — do not re-adjudicate. Escalate to founder if the locked decision is challenged.
+Review generals return structured JSON (not markdown). Eisenhower checks Engram for prior dispute count before adjudicating (≥3 → escalate to founder). Locked arbitrations carry tag `immutable` — do not re-adjudicate. Full schema, dissent format, and arbitration locking rules in Engram: `memory_recall("adversarial review protocols", project="global")`
