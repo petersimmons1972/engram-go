@@ -148,7 +148,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	for i, c := range candidates {
 		hash := chunk.ChunkHash(c.Text)
 
-		exists, err := e.backend.ChunkHashExists(ctx, hash, e.project)
+		exists, err := e.backend.ChunkHashExists(ctx, hash, m.ID)
 		if err != nil {
 			return fmt.Errorf("check chunk hash: %w", err)
 		}

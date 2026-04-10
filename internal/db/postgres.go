@@ -604,14 +604,13 @@ func (b *PostgresBackend) GetChunksForMemories(ctx context.Context, memoryIDs []
 	return pgx.CollectRows(rows, rowToChunk)
 }
 
-func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, project string) (bool, error) {
+func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, memoryID string) (bool, error) {
 	var exists bool
 	err := b.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM chunks
-			WHERE chunk_hash=$1
-			AND memory_id IN (SELECT id FROM memories WHERE project=$2)
-		)`, chunkHash, project,
+			WHERE chunk_hash=$1 AND memory_id=$2
+		)`, chunkHash, memoryID,
 	).Scan(&exists)
 	return exists, err
 }
