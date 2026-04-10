@@ -13,6 +13,12 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 )
 
+// ClaudeCompleter is the subset of claude.Client used for summarization.
+type ClaudeCompleter interface {
+	Complete(ctx context.Context, system, prompt, execModel, advModel string,
+		advisorMaxUses, maxTokens int) (string, error)
+}
+
 const (
 	pollInterval = 30 * time.Second
 	batchSize    = 10
@@ -88,15 +94,51 @@ func SummarizeOne(ctx context.Context, backend db.Backend, memoryID, ollamaURL, 
 	return backend.StoreSummary(ctx, memoryID, summary)
 }
 
+// ClaudeSummarize summarizes content using the Anthropic Messages API via client.
+// Content is truncated to maxContent bytes before being sent.
+func ClaudeSummarize(ctx context.Context, content string, client ClaudeCompleter) (string, error) {
+	if len(content) > maxContent {
+		content = content[:maxContent]
+	}
+	system := "You are a memory summarizer. Respond only with a 1-2 sentence summary of the key fact or decision. No preamble."
+	result, err := client.Complete(ctx, system, content,
+		"claude-sonnet-4-6", "claude-opus-4-6", 2, 256)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result), nil
+}
+
+// SummarizeOneWithClaude immediately summarizes a single memory by ID using the
+// Claude API and stores the result. Returns nil if the memory is already summarized.
+func SummarizeOneWithClaude(ctx context.Context, backend db.Backend, memoryID string, client ClaudeCompleter) error {
+	mem, err := backend.GetMemory(ctx, memoryID)
+	if err != nil {
+		return fmt.Errorf("get memory %s: %w", memoryID, err)
+	}
+	if mem == nil {
+		return fmt.Errorf("memory %s not found", memoryID)
+	}
+	if mem.Summary != nil {
+		return nil // already summarized
+	}
+	summary, err := ClaudeSummarize(ctx, mem.Content, client)
+	if err != nil {
+		return err
+	}
+	return backend.StoreSummary(ctx, memoryID, summary)
+}
+
 // Worker is a background goroutine that fills summary IS NULL rows.
 type Worker struct {
-	backend   db.Backend
-	project   string
-	ollamaURL string
-	model     string
-	enabled   bool
-	cancel    context.CancelFunc
-	done      chan struct{}
+	backend      db.Backend
+	project      string
+	ollamaURL    string
+	model        string
+	enabled      bool
+	claudeClient ClaudeCompleter
+	cancel       context.CancelFunc
+	done         chan struct{}
 }
 
 // NewWorker creates a Worker. enabled=false makes Start a no-op.
@@ -109,6 +151,14 @@ func NewWorker(backend db.Backend, project, ollamaURL, model string, enabled boo
 		enabled:   enabled,
 		done:      make(chan struct{}),
 	}
+}
+
+// NewWorkerWithClaude creates a Worker that uses the Claude API for summarization
+// when claudeClient is non-nil. Falls back to Ollama otherwise.
+func NewWorkerWithClaude(backend db.Backend, project, ollamaURL, model string, enabled bool, claudeClient ClaudeCompleter) *Worker {
+	w := NewWorker(backend, project, ollamaURL, model, enabled)
+	w.claudeClient = claudeClient
+	return w
 }
 
 // Start launches the background goroutine. Safe to call if disabled.
@@ -163,7 +213,13 @@ func (w *Worker) runOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		summary, err := SummarizeContent(ctx, row.Content, w.ollamaURL, w.model)
+		var summary string
+		var err error
+		if w.claudeClient != nil {
+			summary, err = ClaudeSummarize(ctx, row.Content, w.claudeClient)
+		} else {
+			summary, err = SummarizeContent(ctx, row.Content, w.ollamaURL, w.model)
+		}
 		if err != nil {
 			slog.Warn("summarize failed", "id", row.ID, "err", err)
 			continue
