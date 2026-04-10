@@ -50,7 +50,8 @@ func newTestEngine(t *testing.T, project string) *search.SearchEngine {
 	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	return search.New(ctx, backend, &fakeClient{dims: 768}, project)
+	return search.New(ctx, backend, &fakeClient{dims: 768}, project,
+		"http://ollama:11434", "llama3.2", false)
 }
 
 func TestSearchEngine_Store(t *testing.T) {

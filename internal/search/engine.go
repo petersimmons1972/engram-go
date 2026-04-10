@@ -10,27 +10,49 @@ import (
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/reembed"
+	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend  db.Backend
-	embedder embed.Client
-	project  string
-	cancel   context.CancelFunc
+	backend    db.Backend
+	embedder   embed.Client
+	project    string
+	cancel     context.CancelFunc
+	summarizer *summarize.Worker
+	reembedder *reembed.Worker
 }
 
-// New constructs a SearchEngine. Background workers are wired in Task 8; for now
-// only the cancel context is established.
-func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string) *SearchEngine {
+// New constructs a SearchEngine and starts background summarize and reembed workers.
+func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
+	ollamaURL, summarizeModel string, summarizeEnabled bool) *SearchEngine {
 	_, cancel := context.WithCancel(ctx)
-	return &SearchEngine{backend: backend, embedder: embedder, project: project, cancel: cancel}
+
+	sum := summarize.NewWorker(backend, project, ollamaURL, summarizeModel, summarizeEnabled)
+	sum.Start()
+
+	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)
+	reb.Start()
+
+	return &SearchEngine{
+		backend:    backend,
+		embedder:   embedder,
+		project:    project,
+		cancel:     cancel,
+		summarizer: sum,
+		reembedder: reb,
+	}
 }
 
-// Close shuts down the engine and signals any background goroutines.
-func (e *SearchEngine) Close() { e.cancel() }
+// Close shuts down the engine and stops all background workers.
+func (e *SearchEngine) Close() {
+	e.cancel()
+	e.summarizer.Stop()
+	e.reembedder.Stop()
+}
 
 // Backend exposes the underlying db.Backend for callers that need direct access
 // (e.g. EnginePool, MCP tool handlers).
