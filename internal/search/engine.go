@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"time"
@@ -381,9 +382,19 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
+	// Fetch relationships only for the final topK results, not for every
+	// candidate. This reduces DB round-trips from up to topK*6 to exactly topK.
+	for i := range results {
+		if rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID); err == nil {
+			results[i].Connected = toConnectedMemories(rels, results[i].Memory.ID)
+		}
+	}
+
 	// Update access timestamps.
 	for _, r := range results {
-		_ = e.backend.TouchMemory(ctx, r.Memory.ID)
+		if err := e.backend.TouchMemory(ctx, r.Memory.ID); err != nil {
+			slog.Warn("touch memory failed", "id", r.Memory.ID, "err", err)
+		}
 		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
 			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}
@@ -436,6 +447,25 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 
 func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
+}
+
+// toConnectedMemories converts raw relationship rows into ConnectedMemory values
+// relative to the given memory ID. ConnectedMemory.Memory is intentionally left
+// nil to avoid a second DB round-trip per relationship.
+func toConnectedMemories(rels []types.Relationship, memID string) []types.ConnectedMemory {
+	out := make([]types.ConnectedMemory, 0, len(rels))
+	for _, r := range rels {
+		dir := "outgoing"
+		if r.TargetID == memID {
+			dir = "incoming"
+		}
+		out = append(out, types.ConnectedMemory{
+			RelType:   r.RelType,
+			Direction: dir,
+			Strength:  r.Strength,
+		})
+	}
+	return out
 }
 
 // sortResults sorts descending by composite score.

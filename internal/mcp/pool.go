@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/search"
@@ -25,16 +26,18 @@ type EngineHandle struct {
 type EngineFactory func(ctx context.Context, project string) (*EngineHandle, error)
 
 // engineEntry holds a handle plus its last-access timestamp for LRU eviction.
+// lastAccess stores UnixNano as an atomic int64 so the fast path (RLock) can
+// update it without a data race.
 type engineEntry struct {
 	handle     *EngineHandle
-	lastAccess time.Time
+	lastAccess atomic.Int64 // UnixNano; use Load/Store only
 }
 
 // EnginePool lazily creates and caches one SearchEngine per project.
 // It enforces a maximum pool size by evicting the least-recently-used engine
 // when the cap is reached. Safe for concurrent use.
 type EnginePool struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	engines map[string]*engineEntry
 	factory EngineFactory
 }
@@ -49,28 +52,50 @@ func NewEnginePool(factory EngineFactory) *EnginePool {
 
 // Get returns the cached engine for project, creating one via factory if needed.
 // If the pool is at capacity, the least-recently-used engine is evicted first.
+//
+// Uses double-checked locking so the slow factory path (PostgreSQL connection +
+// migrations) runs outside the mutex, preventing contention across projects (#31).
 func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, error) {
 	if len(project) > 128 {
 		return nil, fmt.Errorf("project name too long (%d chars, max 128)", len(project))
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
+	// Fast path: read lock is sufficient when the engine already exists.
+	// lastAccess is updated atomically so multiple goroutines can safely
+	// record their access time while holding only RLock.
+	p.mu.RLock()
 	if e, ok := p.engines[project]; ok {
-		e.lastAccess = time.Now()
+		e.lastAccess.Store(time.Now().UnixNano())
+		p.mu.RUnlock()
 		return e.handle, nil
 	}
+	p.mu.RUnlock()
 
-	// Evict LRU entry if at capacity.
-	if len(p.engines) >= maxPoolSize {
-		p.evictLRULocked()
-	}
-
+	// Slow path: create engine OUTSIDE the lock so other projects are not blocked
+	// during the PostgreSQL connection + migration phase.
 	h, err := p.factory(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	p.engines[project] = &engineEntry{handle: h, lastAccess: time.Now()}
+
+	// Write lock only to insert. Check again in case a concurrent caller already
+	// created this project's engine while we were in factory.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e, ok := p.engines[project]; ok {
+		// Race: another goroutine won — discard the engine we just created.
+		if h != nil && h.Engine != nil {
+			h.Engine.Close()
+		}
+		e.lastAccess.Store(time.Now().UnixNano())
+		return e.handle, nil
+	}
+	if len(p.engines) >= maxPoolSize {
+		p.evictLRULocked()
+	}
+	entry := &engineEntry{handle: h}
+	entry.lastAccess.Store(time.Now().UnixNano())
+	p.engines[project] = entry
 	return h, nil
 }
 
@@ -78,12 +103,13 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 // Caller must hold p.mu.
 func (p *EnginePool) evictLRULocked() {
 	var lruKey string
-	var lruTime time.Time
+	var lruNano int64
 	first := true
 	for k, e := range p.engines {
-		if first || e.lastAccess.Before(lruTime) {
+		nano := e.lastAccess.Load()
+		if first || nano < lruNano {
 			lruKey = k
-			lruTime = e.lastAccess
+			lruNano = nano
 			first = false
 		}
 	}

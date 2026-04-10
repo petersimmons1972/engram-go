@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -57,7 +58,15 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	slog.Info("connecting to Ollama", "url", *ollamaURL, "model", *embedModel)
+	// Validate and sanitize ollamaURL (#4 SSRF, #27 credential logging)
+	parsedOllamaURL, err := url.ParseRequestURI(*ollamaURL)
+	if err != nil || (parsedOllamaURL.Scheme != "http" && parsedOllamaURL.Scheme != "https") {
+		return fmt.Errorf("invalid --ollama-url %q: must be an http:// or https:// URL", *ollamaURL)
+	}
+	safeOllamaURL := *parsedOllamaURL
+	safeOllamaURL.User = nil
+	slog.Info("connecting to Ollama", "url", safeOllamaURL.String(), "model", *embedModel)
+
 	embedder, err := embed.NewOllamaClient(ctx, *ollamaURL, *embedModel)
 	if err != nil {
 		return fmt.Errorf("ollama: %w", err)

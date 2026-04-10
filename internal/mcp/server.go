@@ -45,10 +45,14 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	slog.Info("engram MCP server starting", "addr", addr)
 
 	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(fmt.Sprintf("http://%s", addr)))
+
+	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           s.applyMiddleware(sse, apiKey),
+		Handler:           http.MaxBytesHandler(s.applyMiddleware(sse, apiKey), maxRequestBodyBytes),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

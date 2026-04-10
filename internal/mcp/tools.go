@@ -161,12 +161,23 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
+	if len(content) > types.MaxContentLength {
+		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
+	}
+	memType := getString(args, "memory_type", types.MemoryTypeContext)
+	if !types.ValidateMemoryType(memType) {
+		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+	}
+	importance := getInt(args, "importance", 2)
+	if importance < 0 || importance > 4 {
+		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+	}
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     content,
-		MemoryType:  getString(args, "memory_type", types.MemoryTypeContext),
+		MemoryType:  memType,
 		Project:     project,
-		Importance:  getInt(args, "importance", 2),
+		Importance:  importance,
 		Tags:        toStringSlice(args["tags"]),
 		Immutable:   getBool(args, "immutable", false),
 		StorageMode: "focused",
@@ -189,12 +200,23 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
+	if len(content) > types.MaxContentLength {
+		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
+	}
+	memType := getString(args, "memory_type", types.MemoryTypeContext)
+	if !types.ValidateMemoryType(memType) {
+		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+	}
+	importance := getInt(args, "importance", 2)
+	if importance < 0 || importance > 4 {
+		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+	}
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     content,
-		MemoryType:  getString(args, "memory_type", types.MemoryTypeContext),
+		MemoryType:  memType,
 		Project:     project,
-		Importance:  getInt(args, "importance", 2),
+		Importance:  importance,
 		Tags:        toStringSlice(args["tags"]),
 		StorageMode: "document",
 	}
@@ -217,29 +239,50 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
 	}
 	var ids []string
-	for _, item := range items {
+	var storeErrs []string
+	for idx, item := range items {
 		mmap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+		content := getString(mmap, "content", "")
+		if content == "" {
+			continue
+		}
+		if len(content) > types.MaxContentLength {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
+			continue
+		}
+		memType := getString(mmap, "memory_type", types.MemoryTypeContext)
+		if !types.ValidateMemoryType(memType) {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
+			continue
+		}
+		importance := getInt(mmap, "importance", 2)
+		if importance < 0 || importance > 4 {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
+			continue
+		}
 		m := &types.Memory{
 			ID:          types.NewMemoryID(),
-			Content:     getString(mmap, "content", ""),
-			MemoryType:  getString(mmap, "memory_type", types.MemoryTypeContext),
+			Content:     content,
+			MemoryType:  memType,
 			Project:     project,
-			Importance:  getInt(mmap, "importance", 2),
+			Importance:  importance,
 			Tags:        toStringSlice(mmap["tags"]),
 			StorageMode: "focused",
 		}
-		if m.Content == "" {
-			continue
-		}
 		if err := h.Engine.Store(ctx, m); err != nil {
-			return nil, err
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: %s", idx, err))
+			continue
 		}
 		ids = append(ids, m.ID)
 	}
-	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
+	response := map[string]any{"ids": ids, "count": len(ids)}
+	if len(storeErrs) > 0 {
+		response["errors"] = storeErrs
+	}
+	return toolResult(response)
 }
 
 // handleMemoryRecall performs semantic recall against a project's memories.
@@ -256,6 +299,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, fmt.Errorf("query is required")
 	}
 	topK := getInt(args, "top_k", 10)
+	if topK < 1 || topK > 100 {
+		topK = 10
+	}
 	detail := getString(args, "detail", "summary")
 	rerank := getBool(args, "rerank", false)
 
@@ -279,6 +325,9 @@ func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolR
 		return nil, err
 	}
 	limit := getInt(args, "limit", 50)
+	if limit < 1 || limit > 500 {
+		limit = 50
+	}
 	offset := getInt(args, "offset", 0)
 	var memType *string
 	if s := getString(args, "memory_type", ""); s != "" {

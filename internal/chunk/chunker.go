@@ -242,8 +242,8 @@ func ChunkDocument(text string, targetChunkChars int) []ChunkCandidate {
 
 		results = append(results, sectionChunks...)
 
-		if len(results) > 0 {
-			prevLastSentence = lastSentence(results[len(results)-1].Text)
+		if len(sectionChunks) > 0 {
+			prevLastSentence = lastSentence(sectionChunks[len(sectionChunks)-1].Text)
 		}
 	}
 

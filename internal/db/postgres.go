@@ -913,6 +913,28 @@ func (b *PostgresBackend) DeleteRelationshipsForMemory(ctx context.Context, memo
 	return err
 }
 
+func (b *PostgresBackend) GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, source_id, target_id, rel_type, strength, project, created_at
+		FROM relationships
+		WHERE project = $1 AND (source_id = $2 OR target_id = $2)`,
+		project, memoryID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rels []types.Relationship
+	for rows.Next() {
+		var r types.Relationship
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.RelType, &r.Strength, &r.Project, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}
+
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
@@ -973,7 +995,7 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 
 	rows, err := b.pool.Query(ctx, q, args...)
 	if err != nil {
-		slog.Debug("FTS query failed", "query", query, "err", err)
+		slog.Debug("FTS query failed", "query_len", len(query), "err", err)
 		return nil, nil
 	}
 	defer rows.Close()
@@ -1119,6 +1141,18 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 		"SELECT COUNT(*) FROM memories WHERE project=$1 AND summary IS NULL", project,
 	).Scan(&stats.PendingSummarization); err != nil {
 		return nil, err
+	}
+
+	var summarized int
+	err = b.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM memories WHERE project = $1 AND summary IS NOT NULL`,
+		project).Scan(&summarized)
+	if err != nil {
+		summarized = 0
+	}
+	stats.Summarization = map[string]any{
+		"pending":   stats.PendingSummarization,
+		"completed": summarized,
 	}
 
 	if err := b.pool.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&stats.DBSizeBytes); err != nil {
