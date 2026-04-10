@@ -110,3 +110,76 @@ func TestSearchEngine_Recall(t *testing.T) {
 	require.NotEmpty(t, results)
 	require.Equal(t, m.ID, results[0].Memory.ID)
 }
+
+func TestSearchEngine_List(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-list"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m := &types.Memory{ID: types.NewMemoryID(), Content: "list test",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	require.NoError(t, engine.Store(ctx, m))
+
+	results, err := engine.List(ctx, nil, nil, nil, 10, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+}
+
+func TestSearchEngine_Connect(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-connect"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m1 := &types.Memory{ID: types.NewMemoryID(), Content: "source",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	m2 := &types.Memory{ID: types.NewMemoryID(), Content: "target",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	require.NoError(t, engine.Store(ctx, m1))
+	require.NoError(t, engine.Store(ctx, m2))
+
+	err := engine.Connect(ctx, m1.ID, m2.ID, types.RelTypeRelatesTo, 1.0)
+	require.NoError(t, err)
+}
+
+func TestSearchEngine_Correct(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-correct"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m := &types.Memory{ID: types.NewMemoryID(), Content: "original",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	require.NoError(t, engine.Store(ctx, m))
+
+	newContent := "corrected"
+	updated, err := engine.Correct(ctx, m.ID, &newContent, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "corrected", updated.Content)
+}
+
+func TestSearchEngine_Forget(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-forget"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m := &types.Memory{ID: types.NewMemoryID(), Content: "to delete",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	require.NoError(t, engine.Store(ctx, m))
+
+	deleted, err := engine.Forget(ctx, m.ID)
+	require.NoError(t, err)
+	require.True(t, deleted)
+
+	gone, err := engine.Backend().GetMemory(ctx, m.ID)
+	require.NoError(t, err)
+	require.Nil(t, gone)
+}
+
+func TestSearchEngine_Status(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-status"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	stats, err := engine.Status(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, stats)
+}

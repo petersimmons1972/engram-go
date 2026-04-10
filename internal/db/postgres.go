@@ -338,7 +338,7 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	if _, err := tx.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", id); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", id, id); err != nil {
+	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", id); err != nil {
 		return false, err
 	}
 	tag, err := tx.Exec(ctx,

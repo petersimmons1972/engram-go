@@ -385,3 +385,135 @@ type chunkScore struct {
 	chunk  *types.Chunk
 	cosine float64
 }
+
+// List returns memories for the project matching optional filters.
+func (e *SearchEngine) List(ctx context.Context, memType *string, tags []string,
+	maxImportance *int, limit, offset int) ([]*types.Memory, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return e.backend.ListMemories(ctx, e.project, db.ListOptions{
+		MemoryType:        memType,
+		Tags:              tags,
+		ImportanceCeiling: maxImportance,
+		Limit:             limit,
+		Offset:            offset,
+	})
+}
+
+// Connect creates a directed relationship between two memories.
+func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string, strength float64) error {
+	if !types.ValidateRelationType(relType) {
+		return fmt.Errorf("invalid relation type %q", relType)
+	}
+	if strength <= 0 {
+		strength = 1.0
+	}
+	rel := &types.Relationship{
+		ID:       types.NewMemoryID(),
+		SourceID: srcID,
+		TargetID: dstID,
+		RelType:  relType,
+		Strength: strength,
+		Project:  e.project,
+	}
+	return e.backend.StoreRelationship(ctx, rel)
+}
+
+// Correct updates mutable fields on an existing memory and returns the updated record.
+func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error) {
+	return e.backend.UpdateMemory(ctx, id, content, tags, importance)
+}
+
+// Forget deletes a memory by ID. Returns true if deleted, false if not found.
+func (e *SearchEngine) Forget(ctx context.Context, id string) (bool, error) {
+	return e.backend.DeleteMemoryAtomic(ctx, e.project, id, false)
+}
+
+// Status returns aggregate statistics for the project.
+func (e *SearchEngine) Status(ctx context.Context) (*types.MemoryStats, error) {
+	return e.backend.GetStats(ctx, e.project)
+}
+
+// Feedback boosts edge weights and touches access timestamps for the given memory IDs,
+// signaling that these memories were useful to the caller.
+func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
+	for _, id := range ids {
+		if _, err := e.backend.BoostEdgesForMemory(ctx, id, 1.05); err != nil {
+			return err
+		}
+		if err := e.backend.TouchMemory(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// jaccardMergeThreshold is the Jaccard similarity above which two memories are
+// considered duplicates during consolidation.
+const jaccardMergeThreshold = 0.85
+
+// Consolidate prunes stale and cold memories and decays graph edges.
+// Returns a summary map of counts for each operation performed.
+func (e *SearchEngine) Consolidate(ctx context.Context) (map[string]any, error) {
+	pruned, err := e.backend.PruneStaleMemories(ctx, e.project, 90*24, 3)
+	if err != nil {
+		return nil, err
+	}
+	coldPruned, err := e.backend.PruneColdDocuments(ctx, e.project, 60*24, 3)
+	if err != nil {
+		return nil, err
+	}
+	decayed, edgePruned, err := e.backend.DecayAllEdges(ctx, e.project, 0.02, 0.1)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"pruned_memories":  pruned,
+		"pruned_cold_docs": coldPruned,
+		"edges_decayed":    decayed,
+		"edges_pruned":     edgePruned,
+	}, nil
+}
+
+// Verify checks hash coverage and corruption for the project.
+// Returns a map with total, hashed, corrupt counts and coverage percentage.
+func (e *SearchEngine) Verify(ctx context.Context) (map[string]any, error) {
+	stats, err := e.backend.GetIntegrityStats(ctx, e.project)
+	if err != nil {
+		return nil, err
+	}
+	pct := 0.0
+	if stats.Total > 0 {
+		pct = float64(stats.Hashed) / float64(stats.Total) * 100
+	}
+	return map[string]any{
+		"total":    stats.Total,
+		"hashed":   stats.Hashed,
+		"corrupt":  stats.Corrupt,
+		"coverage": fmt.Sprintf("%.1f%%", pct),
+	}, nil
+}
+
+// MigrateEmbedder initiates an embedding migration to a new model by nulling all
+// existing embeddings and recording the new model name in project metadata.
+// A background reembed worker will repopulate embeddings after this call.
+func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (map[string]any, error) {
+	if err := e.backend.SetMeta(ctx, e.project, "embedding_migration_in_progress", "true"); err != nil {
+		return nil, err
+	}
+	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
+		return nil, err
+	}
+	nulled, err := e.backend.NullAllEmbeddings(ctx, e.project)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"chunks_nulled": nulled,
+		"new_model":     newModel,
+		"status":        "migration started — reembed worker will complete in background",
+	}, nil
+}
+
+// SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).
