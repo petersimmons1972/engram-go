@@ -243,6 +243,7 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	for idx, item := range items {
 		mmap, ok := item.(map[string]any)
 		if !ok {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: expected object, got %T", idx, item))
 			continue
 		}
 		content := getString(mmap, "content", "")
