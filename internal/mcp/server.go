@@ -11,6 +11,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/petersimmons1972/engram/internal/claude"
 )
 
 // Server wraps the MCP SSE server and owns the EnginePool.
@@ -29,6 +30,12 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	s.mcp = mcpServer
 	s.registerTools()
 	return s
+}
+
+// SetClaudeClient sets the Claude client used for advisor operations (e.g. consolidation).
+// Must be called before Start. Will be expanded to a ClaudeDoer interface in Task 4.3.
+func (s *Server) SetClaudeClient(client *claude.Client) {
+	s.cfg.claudeClient = client
 }
 
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
@@ -126,7 +133,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryConsolidate(ctx, pool, req)
+				return handleMemoryConsolidate(ctx, pool, req, cfg)
 			}},
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

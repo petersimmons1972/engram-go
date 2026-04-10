@@ -35,6 +35,7 @@ func run() error {
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
 	claudeAPIKey := fs.String("claude-api-key", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key for Claude advisor")
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
+	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Optional bearer token (empty = no auth)")
@@ -65,14 +66,18 @@ func run() error {
 	// closure captures the interface value, not the concrete pointer.
 	var embedClient embed.Client = embedder
 
-	// Construct Claude client if API key provided and Claude summarization is enabled.
+	// Construct Claude client if API key provided and any Claude advisor feature is enabled.
 	var claudeCompleter summarize.ClaudeCompleter
-	if *claudeAPIKey != "" && *claudeSummarize {
-		cc, err := claude.New(*claudeAPIKey)
+	var cc *claude.Client
+	if *claudeAPIKey != "" && (*claudeSummarize || *claudeConsolidate) {
+		var err error
+		cc, err = claude.New(*claudeAPIKey)
 		if err != nil {
 			return fmt.Errorf("claude client: %w", err)
 		}
-		claudeCompleter = cc
+		if *claudeSummarize {
+			claudeCompleter = cc
+		}
 	}
 
 	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
@@ -88,11 +93,15 @@ func run() error {
 	defer pool.Close()
 
 	cfg := internalmcp.Config{
-		OllamaURL:        *ollamaURL,
-		SummarizeModel:   *summarizeModel,
-		SummarizeEnabled: *summarizeEnabled,
+		OllamaURL:                *ollamaURL,
+		SummarizeModel:           *summarizeModel,
+		SummarizeEnabled:         *summarizeEnabled,
+		ClaudeConsolidateEnabled: *claudeConsolidate,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
+	if cc != nil {
+		srv.SetClaudeClient(cc)
+	}
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)

@@ -6,16 +6,54 @@ import (
 	"fmt"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/markdown"
+	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // Config holds server-wide configuration passed to tool handlers.
 type Config struct {
-	OllamaURL        string
-	SummarizeModel   string
-	SummarizeEnabled bool
+	OllamaURL                string
+	SummarizeModel           string
+	SummarizeEnabled         bool
+	ClaudeConsolidateEnabled bool
+	claudeClient             *claude.Client // set via Server.SetClaudeClient
+}
+
+// claudeMergeAdapter adapts *claude.Client to search.MergeReviewer by converting
+// between the search-package and claude-package candidate/decision types.
+type claudeMergeAdapter struct {
+	client *claude.Client
+}
+
+func (a *claudeMergeAdapter) ReviewMergeCandidates(ctx context.Context, candidates []search.MergeCandidate) ([]search.MergeDecision, error) {
+	// Convert search.MergeCandidate → claude.MergeCandidate.
+	claudeCandidates := make([]claude.MergeCandidate, len(candidates))
+	for i, c := range candidates {
+		claudeCandidates[i] = claude.MergeCandidate{
+			MemoryA:    c.MemoryA,
+			MemoryB:    c.MemoryB,
+			Similarity: c.Similarity,
+		}
+	}
+	claudeDecisions, err := a.client.ReviewMergeCandidates(ctx, claudeCandidates)
+	if err != nil {
+		return nil, err
+	}
+	// Convert claude.MergeDecision → search.MergeDecision.
+	decisions := make([]search.MergeDecision, len(claudeDecisions))
+	for i, d := range claudeDecisions {
+		decisions[i] = search.MergeDecision{
+			MemoryAID:     d.MemoryAID,
+			MemoryBID:     d.MemoryBID,
+			ShouldMerge:   d.ShouldMerge,
+			Reason:        d.Reason,
+			MergedContent: d.MergedContent,
+		}
+	}
+	return decisions, nil
 }
 
 // toolResult marshals v to JSON and wraps it in an MCP text result.
@@ -333,14 +371,21 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 }
 
 // handleMemoryConsolidate merges near-duplicate memories to reduce redundancy.
-func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// When cfg.ClaudeConsolidateEnabled is true and a claude client is available,
+// it uses bigramJaccard similarity + Claude review for near-duplicate merging.
+func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	result, err := h.Engine.Consolidate(ctx)
+	var result map[string]any
+	if cfg.ClaudeConsolidateEnabled && cfg.claudeClient != nil {
+		result, err = h.Engine.ConsolidateWithClaude(ctx, &claudeMergeAdapter{client: cfg.claudeClient})
+	} else {
+		result, err = h.Engine.Consolidate(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
