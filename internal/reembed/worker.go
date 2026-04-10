@@ -3,7 +3,6 @@ package reembed
 import (
 	"context"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
@@ -111,22 +110,10 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 			slog.Warn("reembed embed failed", "chunk", c.ID, "err", err)
 			continue
 		}
-		blob := toBlob(vec)
-		if n, err := w.backend.UpdateChunkEmbedding(ctx, c.ID, blob); err != nil || n == 0 {
+		if n, err := w.backend.UpdateChunkEmbedding(ctx, c.ID, vec); err != nil || n == 0 {
 			slog.Warn("reembed update failed or chunk deleted", "chunk", c.ID)
 		}
 	}
 	return len(chunks) < batchSize
 }
 
-func toBlob(vec []float32) []byte {
-	b := make([]byte, 4*len(vec))
-	for i, f := range vec {
-		u := math.Float32bits(f)
-		b[4*i] = byte(u)
-		b[4*i+1] = byte(u >> 8)
-		b[4*i+2] = byte(u >> 16)
-		b[4*i+3] = byte(u >> 24)
-	}
-	return b
-}

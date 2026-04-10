@@ -129,8 +129,9 @@ type Chunk struct {
 	ChunkIndex int    `json:"chunk_index"`
 	ChunkHash  string `json:"chunk_hash"`
 
-	// Embedding is the raw little-endian float32 blob from vector.ToBlob.
-	Embedding []byte `json:"embedding,omitempty"`
+	// Embedding is the float32 vector from the embedding model.
+	// Stored as pgvector vector(768) in the database.
+	Embedding []float32 `json:"embedding,omitempty"`
 
 	// SectionHeading is the nearest level-1/2 Markdown heading ancestor, or nil
 	// for non-document-mode chunks.

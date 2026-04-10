@@ -3,7 +3,6 @@ package search
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -169,7 +168,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 			ChunkHash:  hash,
 			ChunkType:  c.ChunkType,
 			Project:    e.project,
-			Embedding:  embedToBlob(embedding),
+			Embedding:  embedding,
 		}
 		if c.HasHeading {
 			heading := c.SectionHeading
@@ -201,8 +200,9 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 }
 
 // RecallWithOpts retrieves the topK most relevant memories for query, using composite
-// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
-// or "full" (default). opts allows optional post-processing such as re-ranking.
+// vector+FTS scoring via the pgvector HNSW index. detail controls content truncation:
+// "id_only", "summary", or "full" (default). opts allows optional post-processing
+// such as re-ranking.
 func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, error) {
 	if topK <= 0 {
 		topK = 10
@@ -213,12 +213,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	chunks, err := e.backend.GetAllChunksWithEmbeddings(ctx, e.project, 10_000)
+	// ANN vector search via pgvector HNSW index.
+	vecHits, err := e.backend.VectorSearch(ctx, e.project, queryVec, topK*3)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fan-out FTS search concurrently while scoring vectors.
+	// Fan-out FTS search concurrently.
 	type ftsResult struct {
 		results []db.FTSResult
 		err     error
@@ -229,33 +230,32 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		ftsCh <- ftsResult{res, err}
 	}()
 
-	// Score all chunks by cosine similarity.
-	var scored []chunkScore
-	for _, c := range chunks {
-		if len(c.Embedding) == 0 {
-			continue
+	// Build per-memory best cosine from vector hits.
+	// pgvector returns cosine distance (0-2); convert to similarity (1-0).
+	bestCosine := make(map[string]float64)
+	bestChunkText := make(map[string]string)
+	bestChunkIndex := make(map[string]int)
+	bestChunkSection := make(map[string]*string)
+	bestChunkID := make(map[string]string)
+	uniqueIDs := make([]string, 0, len(vecHits))
+	seen := make(map[string]bool, len(vecHits))
+
+	for _, h := range vecHits {
+		cosine := 1.0 - h.Distance
+		if cosine > bestCosine[h.MemoryID] {
+			bestCosine[h.MemoryID] = cosine
+			bestChunkText[h.MemoryID] = h.ChunkText
+			bestChunkIndex[h.MemoryID] = h.ChunkIndex
+			bestChunkSection[h.MemoryID] = h.SectionHeading
+			bestChunkID[h.MemoryID] = h.ChunkID
 		}
-		chunkVec := blobToEmbed(c.Embedding)
-		cos := cosineSimilarity(queryVec, chunkVec)
-		if cos > 0 {
-			scored = append(scored, chunkScore{c, cos})
+		if !seen[h.MemoryID] {
+			seen[h.MemoryID] = true
+			uniqueIDs = append(uniqueIDs, h.MemoryID)
 		}
 	}
 
-	sortByScore(scored)
-	if len(scored) > topK*3 {
-		scored = scored[:topK*3]
-	}
-
-	// Resolve memory records for top vector hits in a single batch query.
-	uniqueIDs := make([]string, 0, len(scored))
-	seen := make(map[string]bool, len(scored))
-	for _, s := range scored {
-		if !seen[s.chunk.MemoryID] {
-			seen[s.chunk.MemoryID] = true
-			uniqueIDs = append(uniqueIDs, s.chunk.MemoryID)
-		}
-	}
+	// Batch-fetch memory records for vector hits.
 	batchMems, err := e.backend.GetMemoriesByIDs(ctx, e.project, uniqueIDs)
 	if err != nil {
 		return nil, err
@@ -265,6 +265,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[m.ID] = m
 	}
 
+	// Merge FTS results.
 	ftsRes := <-ftsCh
 	if ftsRes.err != nil {
 		return nil, ftsRes.err
@@ -279,16 +280,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[r.Memory.ID] = r.Memory
 	}
 
-	// Per-memory: best cosine score and the chunk that produced it.
-	bestCosine := make(map[string]float64)
-	bestChunk := make(map[string]*types.Chunk)
-	for _, s := range scored {
-		if s.cosine > bestCosine[s.chunk.MemoryID] {
-			bestCosine[s.chunk.MemoryID] = s.cosine
-			bestChunk[s.chunk.MemoryID] = s.chunk
-		}
-	}
-
+	// Composite scoring per memory.
 	var results []types.SearchResult
 	for id, m := range memories {
 		bm25 := 0.0
@@ -303,7 +295,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		score := CompositeScore(input)
 
-		mc := bestChunk[id]
 		result := types.SearchResult{
 			Memory:     m,
 			Score:      score,
@@ -313,11 +304,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				"bm25":    bm25,
 				"recency": RecencyDecay(input.HoursSince),
 			},
-		}
-		if mc != nil {
-			result.MatchedChunk = mc.ChunkText
-			result.MatchedChunkIndex = mc.ChunkIndex
-			result.MatchedChunkSection = mc.SectionHeading
+			MatchedChunk:        bestChunkText[id],
+			MatchedChunkIndex:   bestChunkIndex[id],
+			MatchedChunkSection: bestChunkSection[id],
 		}
 		switch detail {
 		case "id_only":
@@ -326,7 +315,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			if m.Summary != nil {
 				result.Memory.Content = *m.Summary
 			} else {
-				// Summary not yet generated; truncate content as preview.
 				content := m.Content
 				if len(content) > 500 {
 					content = content[:500] + "…"
@@ -339,7 +327,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	sortResults(results)
 
-	// Apply optional re-ranking before final truncation.
+	// Optional re-ranking (unchanged).
 	if opts.Reranker != nil && len(results) > 0 {
 		items := make([]RerankItem, len(results))
 		for i, r := range results {
@@ -360,18 +348,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		reranked, err := opts.Reranker.RerankResults(ctx, query, items)
 		if err == nil && len(reranked) > 0 {
-			// Build lookup map from reranked scores.
 			scoreMap := make(map[string]float64, len(reranked))
 			for _, rr := range reranked {
 				scoreMap[rr.ID] = rr.Score
 			}
-			// Overwrite scores for matched IDs.
 			for i := range results {
 				if newScore, ok := scoreMap[results[i].Memory.ID]; ok {
 					results[i].Score = newScore
 				}
 			}
-			// Re-sort with new scores.
 			sortResults(results)
 		}
 	}
@@ -380,11 +365,11 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Update access timestamps for returned results.
+	// Update access timestamps.
 	for _, r := range results {
 		_ = e.backend.TouchMemory(ctx, r.Memory.ID)
-		if r.MatchedChunk != "" && bestChunk[r.Memory.ID] != nil {
-			_ = e.backend.UpdateChunkLastMatched(ctx, bestChunk[r.Memory.ID].ID)
+		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
+			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}
 	}
 
@@ -433,66 +418,13 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	return nil
 }
 
-// embedToBlob encodes a float32 vector as a little-endian byte slice.
-func embedToBlob(vec []float32) []byte {
-	b := make([]byte, 4*len(vec))
-	for i, f := range vec {
-		u := math.Float32bits(f)
-		b[4*i] = byte(u)
-		b[4*i+1] = byte(u >> 8)
-		b[4*i+2] = byte(u >> 16)
-		b[4*i+3] = byte(u >> 24)
-	}
-	return b
-}
-
-// blobToEmbed decodes a little-endian byte slice back to float32 vector.
-func blobToEmbed(b []byte) []float32 {
-	if len(b)%4 != 0 {
-		return nil
-	}
-	vec := make([]float32, len(b)/4)
-	for i := range vec {
-		u := uint32(b[4*i]) | uint32(b[4*i+1])<<8 | uint32(b[4*i+2])<<16 | uint32(b[4*i+3])<<24
-		vec[i] = math.Float32frombits(u)
-	}
-	return vec
-}
-
-// cosineSimilarity returns the cosine similarity between two equal-length vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
 func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
-}
-
-// sortByScore sorts descending by cosine score.
-func sortByScore(s []chunkScore) {
-	sort.Slice(s, func(i, j int) bool { return s[i].cosine > s[j].cosine })
 }
 
 // sortResults sorts descending by composite score.
 func sortResults(r []types.SearchResult) {
 	sort.Slice(r, func(i, j int) bool { return r[i].Score > r[j].Score })
-}
-
-type chunkScore struct {
-	chunk  *types.Chunk
-	cosine float64
 }
 
 // List returns memories for the project matching optional filters.

@@ -527,10 +527,14 @@ func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (id) DO NOTHING`
 	for _, c := range chunks {
+		var embParam any
+		if len(c.Embedding) > 0 {
+			embParam = pgvector.NewVector(c.Embedding)
+		}
 		_, err := ex.Exec(ctx, chunkSQL,
 			c.ID, c.MemoryID, c.Project,
 			c.ChunkText, c.ChunkIndex, c.ChunkHash,
-			c.Embedding, c.SectionHeading, c.ChunkType,
+			embParam, c.SectionHeading, c.ChunkType,
 		)
 		if err != nil {
 			return err
@@ -649,11 +653,39 @@ func (b *PostgresBackend) GetChunksPendingEmbedding(ctx context.Context, project
 	return pgx.CollectRows(rows, rowToChunk)
 }
 
-func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []byte) (int, error) {
+func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []float32) (int, error) {
 	tag, err := b.pool.Exec(ctx,
-		"UPDATE chunks SET embedding=$1 WHERE id=$2", embedding, chunkID,
+		"UPDATE chunks SET embedding=$1 WHERE id=$2", pgvector.NewVector(embedding), chunkID,
 	)
 	return int(tag.RowsAffected()), err
+}
+
+func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT c.id, c.memory_id,
+		       c.embedding <=> $1::vector AS distance,
+		       c.chunk_text, c.chunk_index, c.section_heading
+		FROM chunks c
+		WHERE c.project = $2 AND c.embedding IS NOT NULL
+		ORDER BY c.embedding <=> $1::vector
+		LIMIT $3`,
+		pgvector.NewVector(queryVec), project, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hits []VectorHit
+	for rows.Next() {
+		var h VectorHit
+		if err := rows.Scan(&h.ChunkID, &h.MemoryID, &h.Distance,
+			&h.ChunkText, &h.ChunkIndex, &h.SectionHeading); err != nil {
+			return nil, err
+		}
+		hits = append(hits, h)
+	}
+	return hits, rows.Err()
 }
 
 func (b *PostgresBackend) UpdateChunkLastMatched(ctx context.Context, chunkID string) error {
@@ -1264,7 +1296,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText      string
 		ChunkIndex     int
 		ChunkHash      string
-		Embedding      []byte
+		Embedding      pgvector.Vector
 		SectionHeading *string
 		ChunkType      string
 		LastMatched    *time.Time
@@ -1291,7 +1323,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText:      r.ChunkText,
 		ChunkIndex:     r.ChunkIndex,
 		ChunkHash:      r.ChunkHash,
-		Embedding:      r.Embedding,
+		Embedding:      r.Embedding.Slice(),
 		SectionHeading: r.SectionHeading,
 		ChunkType:      chunkType,
 		LastMatched:    r.LastMatched,
