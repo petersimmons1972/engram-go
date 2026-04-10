@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="100%">
+  <defs>
+    <!-- Forward arrow: neutral gray-blue for the productive steps -->
+    <marker id="arrow-fwd" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#8b949e"/>
+    </marker>
+    <!-- Return arrow: red, the loss signal -->
+    <marker id="arrow-return" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#f85149"/>
+    </marker>
+  </defs>
+
+  <!-- LAYER 1: BACKGROUND -->
+  <rect width="900" height="300" fill="#0d1117"/>
+
+  <!-- LAYER 2: GEOMETRY — all fills before any text -->
+
+  <!-- Horizontal rail line: visual spine of the composition -->
+  <line x1="25" y1="148" x2="875" y2="148" stroke="#1c2128" stroke-width="1"/>
+
+  <!-- Node 1: New Session — blue signal -->
+  <rect x="25" y="126" width="120" height="44" rx="8" ry="8" fill="#0d2035" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Node 2: Learn Context — green, productive -->
+  <rect x="195" y="126" width="120" height="44" rx="8" ry="8" fill="#0d2415" stroke="#3fb950" stroke-width="1.5"/>
+
+  <!-- Node 3: Make Decisions — green, productive -->
+  <rect x="375" y="126" width="130" height="44" rx="8" ry="8" fill="#0d2415" stroke="#3fb950" stroke-width="1.5"/>
+
+  <!-- Node 4: Session Ends — amber, warning -->
+  <rect x="560" y="126" width="120" height="44" rx="8" ry="8" fill="#2a1a0d" stroke="#f0883e" stroke-width="1.5"/>
+
+  <!-- Node 5: Memory Erased — red, the failure -->
+  <rect x="735" y="126" width="120" height="44" rx="8" ry="8" fill="#2a0d0d" stroke="#f85149" stroke-width="1.5"/>
+
+  <!-- LAYER 3: STROKES — arrows between nodes -->
+
+  <!-- Arrow 1->2 -->
+  <line x1="146" y1="148" x2="193" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+
+  <!-- Arrow 2->3 -->
+  <line x1="316" y1="148" x2="373" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+
+  <!-- Arrow 3->4 -->
+  <line x1="506" y1="148" x2="558" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+
+  <!-- Arrow 4->5 -->
+  <line x1="681" y1="148" x2="733" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+
+  <!-- Return arc: cubic bezier below the rail from node 5 right edge back to node 1 left edge -->
+  <!-- Start: right edge of Memory Erased node (855, 148), End: left edge of New Session node (25, 148) -->
+  <!-- Control points pull the arc down to y=250, creating a wide return sweep below the composition -->
+  <path d="M855,148 C855,252 25,252 25,148"
+        fill="none"
+        stroke="#f85149"
+        stroke-width="1.5"
+        stroke-dasharray="6,4"
+        marker-end="url(#arrow-return)"/>
+
+  <!-- "Start over" label on the return arc — sits at the apex of the arc below -->
+  <!-- Background kill rect so label reads against the arc path -->
+  <rect x="365" y="250" width="170" height="20" rx="3" ry="3" fill="#0d1117"/>
+
+  <!-- LAYER 4: TEXT — drawn last, on top of all geometry -->
+
+  <!-- Title block: top-left anchor -->
+  <text x="25" y="28"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="16"
+        font-weight="700"
+        fill="#e6edf3"
+        letter-spacing="0.3">The Agent Memory Problem</text>
+
+  <text x="25" y="47"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="12"
+        fill="#8b949e">Without persistent memory, every AI session starts from zero.</text>
+
+  <!-- Node 1 label -->
+  <text x="85" y="145"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#58a6ff">New</text>
+  <text x="85" y="161"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#58a6ff">Session</text>
+
+  <!-- Node 2 label -->
+  <text x="255" y="145"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#3fb950">Learn</text>
+  <text x="255" y="161"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#3fb950">Context</text>
+
+  <!-- Node 3 label -->
+  <text x="440" y="145"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#3fb950">Make</text>
+  <text x="440" y="161"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#3fb950">Decisions</text>
+
+  <!-- Node 4 label -->
+  <text x="620" y="145"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#f0883e">Session</text>
+  <text x="620" y="161"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#f0883e">Ends</text>
+
+  <!-- Node 5 label -->
+  <text x="795" y="145"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#f85149">Memory</text>
+  <text x="795" y="161"
+        text-anchor="middle"
+        font-family="'Courier New', monospace"
+        font-size="12"
+        font-weight="600"
+        fill="#f85149">Erased</text>
+
+  <!-- Return arc label -->
+  <text x="450" y="265"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        font-style="italic"
+        fill="#f85149">Start over. Every time.</text>
+
+  <!-- Annotation labels below nodes — secondary, #8b949e, 10px -->
+  <!-- Under "Learn Context" -->
+  <text x="255" y="196"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">Architecture, patterns,</text>
+  <text x="255" y="210"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">decisions</text>
+
+  <!-- Under "Make Decisions" -->
+  <text x="440" y="196"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">Bugs fixed,</text>
+  <text x="440" y="210"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">choices made</text>
+
+  <!-- Under "Session Ends" -->
+  <text x="620" y="196"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">Tab closed.</text>
+  <text x="620" y="210"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">Coffee break.</text>
+
+  <!-- Under "Memory Erased" -->
+  <text x="795" y="196"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="11"
+        fill="#8b949e">Gone.</text>
+
+</svg>

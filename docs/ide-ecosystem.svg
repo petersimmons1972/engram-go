@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 900 300"
+     width="100%"
+     font-family="system-ui, -apple-system, sans-serif">
+
+  <defs>
+    <!-- Arrowhead marker for connection lines -->
+    <marker id="arrow-amber"
+            markerWidth="8" markerHeight="8"
+            refX="6" refY="3"
+            orient="auto">
+      <path d="M 0,0 L 6,3 L 0,6 Z" fill="#f0883e"/>
+    </marker>
+  </defs>
+
+  <!-- LAYER 1: BACKGROUND -->
+  <rect width="900" height="300" fill="#0d1117"/>
+
+  <!-- LAYER 2: GEOMETRY — client boxes -->
+
+  <!-- Client box 1: Claude Code / CLI — center y=52 -->
+  <rect x="10" y="34" width="160" height="36" rx="5"
+        fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Client box 2: Cursor / IDE — center y=103 -->
+  <rect x="10" y="85" width="160" height="36" rx="5"
+        fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Client box 3: VS Code / Copilot — center y=154 -->
+  <rect x="10" y="136" width="160" height="36" rx="5"
+        fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Client box 4: Windsurf / IDE — center y=205 -->
+  <rect x="10" y="187" width="160" height="36" rx="5"
+        fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Client box 5: Claude Desktop / App — center y=256 -->
+  <rect x="10" y="238" width="160" height="36" rx="5"
+        fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- engram-go server box — 200x180, center at x=710, y=150 -->
+  <rect x="610" y="60" width="200" height="180" rx="8"
+        fill="#0d2415" stroke="#3fb950" stroke-width="2"/>
+
+  <!-- Divider line inside engram-go box -->
+  <line x1="625" y1="120" x2="795" y2="120"
+        stroke="#30363d" stroke-width="1"/>
+
+  <!-- Right annotation bracket line -->
+  <line x1="813" y1="90" x2="822" y2="90"
+        stroke="#30363d" stroke-width="1"/>
+  <line x1="813" y1="210" x2="822" y2="210"
+        stroke="#30363d" stroke-width="1"/>
+  <line x1="822" y1="90" x2="822" y2="210"
+        stroke="#30363d" stroke-width="1"/>
+  <line x1="822" y1="150" x2="836" y2="150"
+        stroke="#30363d" stroke-width="1"/>
+
+  <!-- LAYER 3: CONNECTION LINES (arrows) -->
+
+  <!-- Arrow 1: Claude Code -> engram-go -->
+  <line x1="170" y1="52" x2="608" y2="52"
+        stroke="#f0883e" stroke-width="1"
+        marker-end="url(#arrow-amber)"/>
+
+  <!-- Arrow 2: Cursor -> engram-go -->
+  <line x1="170" y1="103" x2="608" y2="103"
+        stroke="#f0883e" stroke-width="1"
+        marker-end="url(#arrow-amber)"/>
+
+  <!-- Arrow 3: VS Code -> engram-go (representative label on this one) -->
+  <line x1="170" y1="154" x2="608" y2="154"
+        stroke="#f0883e" stroke-width="1"
+        marker-end="url(#arrow-amber)"/>
+
+  <!-- Arrow 4: Windsurf -> engram-go -->
+  <line x1="170" y1="205" x2="608" y2="205"
+        stroke="#f0883e" stroke-width="1"
+        marker-end="url(#arrow-amber)"/>
+
+  <!-- Arrow 5: Claude Desktop -> engram-go -->
+  <line x1="170" y1="256" x2="608" y2="256"
+        stroke="#f0883e" stroke-width="1"
+        marker-end="url(#arrow-amber)"/>
+
+  <!-- LAYER 4: TEXT -->
+
+  <!-- Title and subtitle — top left -->
+  <text x="20" y="16"
+        font-size="13" font-weight="700"
+        fill="#e6edf3">Connect Any MCP-Compatible Client</text>
+  <text x="20" y="29"
+        font-size="11" fill="#8b949e">One memory server. Every tool that speaks MCP.</text>
+
+  <!-- Client box labels -->
+
+  <!-- Box 1: Claude Code -->
+  <text x="72" y="49"
+        font-size="12" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">Claude Code</text>
+  <text x="72" y="62"
+        font-size="11" fill="#8b949e" text-anchor="middle">CLI</text>
+
+  <!-- Box 2: Cursor -->
+  <text x="72" y="100"
+        font-size="12" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">Cursor</text>
+  <text x="72" y="113"
+        font-size="11" fill="#8b949e" text-anchor="middle">IDE</text>
+
+  <!-- Box 3: VS Code -->
+  <text x="72" y="151"
+        font-size="12" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">VS Code</text>
+  <text x="72" y="164"
+        font-size="11" fill="#8b949e" text-anchor="middle">Copilot</text>
+
+  <!-- Box 4: Windsurf -->
+  <text x="72" y="202"
+        font-size="12" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">Windsurf</text>
+  <text x="72" y="215"
+        font-size="11" fill="#8b949e" text-anchor="middle">IDE</text>
+
+  <!-- Box 5: Claude Desktop -->
+  <text x="72" y="253"
+        font-size="12" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">Claude Desktop</text>
+  <text x="72" y="266"
+        font-size="11" fill="#8b949e" text-anchor="middle">App</text>
+
+  <!-- MCP SSE label on middle arrow -->
+  <rect x="355" y="143" width="62" height="14" rx="2"
+        fill="#0d1117"/>
+  <text x="386" y="154"
+        font-family="'Courier New', monospace"
+        font-size="11" fill="#8b949e" text-anchor="middle">MCP SSE</text>
+
+  <!-- engram-go box labels -->
+  <text x="710" y="93"
+        font-size="18" font-weight="700"
+        fill="#3fb950" text-anchor="middle">engram-go</text>
+  <text x="710" y="110"
+        font-size="11" fill="#8b949e" text-anchor="middle">v2.0</text>
+
+  <text x="710" y="138"
+        font-size="13" font-weight="600"
+        fill="#e6edf3" text-anchor="middle">MCP Server</text>
+  <text x="710" y="155"
+        font-family="'Courier New', monospace"
+        font-size="11" fill="#8b949e" text-anchor="middle">port 8788</text>
+  <text x="710" y="172"
+        font-size="12" font-weight="600"
+        fill="#3fb950" text-anchor="middle">19 tools</text>
+
+  <!-- Right annotation stack — backend dependencies -->
+  <text x="838" y="125"
+        font-size="11" fill="#e6edf3">PostgreSQL</text>
+  <text x="838" y="139"
+        font-size="11" fill="#8b949e">+ pgvector</text>
+  <text x="838" y="158"
+        font-size="11" fill="#e6edf3">Ollama</text>
+  <text x="838" y="172"
+        font-size="11" fill="#8b949e">Claude API</text>
+  <text x="838" y="184"
+        font-size="11" fill="#8b949e">(optional)</text>
+
+</svg>

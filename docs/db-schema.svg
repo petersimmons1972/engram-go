@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" width="100%">
+
+  <!-- LAYER 1: BACKGROUNDS -->
+  <rect width="900" height="380" fill="#0d1117"/>
+
+  <!-- Hub table background -->
+  <rect x="335" y="95" width="210" height="135" rx="3" fill="#0d2415"/>
+
+  <!-- Satellite table backgrounds -->
+  <rect x="40" y="28" width="175" height="82" rx="3" fill="#0d1a2e"/>
+  <rect x="685" y="28" width="175" height="92" rx="3" fill="#0d1a2e"/>
+  <rect x="40" y="230" width="175" height="100" rx="3" fill="#2a1a0d"/>
+  <rect x="685" y="230" width="175" height="82" rx="3" fill="#161b22"/>
+
+  <!-- LAYER 2: GEOMETRY - relationship lines drawn before borders -->
+
+  <!-- memories (hub) box center: cx=440, cy=162 -->
+  <!-- memory_fts box center: cx=127, cy=69 -->
+  <!-- chunks box center: cx=772, cy=74 -->
+  <!-- relationships box center: cx=127, cy=280 -->
+  <!-- project_meta box center: cx=772, cy=271 -->
+
+  <!-- Line: memories -> memory_fts (solid #58a6ff) -->
+  <!-- From left edge of memories box (x=335) at y=120 to right edge of memory_fts (x=215) at y=69 -->
+  <line x1="335" y1="128" x2="215" y2="69" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Line: memories -> chunks (solid #58a6ff) -->
+  <!-- From right edge of memories box (x=545) at y=120 to left edge of chunks (x=685) at y=74 -->
+  <line x1="545" y1="128" x2="685" y2="74" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- Line: memories -> relationships (solid #f0883e) -->
+  <!-- From left edge of memories box (x=335) at y=175 to right edge of relationships (x=215) at y=280 -->
+  <line x1="335" y1="192" x2="215" y2="280" stroke="#f0883e" stroke-width="1.5"/>
+
+  <!-- Line: memories -> project_meta (dashed #30363d) -->
+  <!-- From right edge of memories box (x=545) at y=175 to left edge of project_meta (x=685) at y=271 -->
+  <line x1="545" y1="192" x2="685" y2="271" stroke="#30363d" stroke-width="1.5" stroke-dasharray="5,4"/>
+
+  <!-- LAYER 3: STROKES - table borders -->
+
+  <!-- Hub: memories border -->
+  <rect x="335" y="95" width="210" height="135" rx="3" fill="none" stroke="#3fb950" stroke-width="2"/>
+  <!-- Header divider line -->
+  <line x1="335" y1="117" x2="545" y2="117" stroke="#3fb950" stroke-width="1"/>
+
+  <!-- memory_fts border -->
+  <rect x="40" y="28" width="175" height="82" rx="3" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+  <line x1="40" y1="48" x2="215" y2="48" stroke="#58a6ff" stroke-width="1"/>
+
+  <!-- chunks border -->
+  <rect x="685" y="28" width="175" height="92" rx="3" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+  <line x1="685" y1="48" x2="860" y2="48" stroke="#58a6ff" stroke-width="1"/>
+
+  <!-- relationships border -->
+  <rect x="40" y="230" width="175" height="100" rx="3" fill="none" stroke="#f0883e" stroke-width="1.5"/>
+  <line x1="40" y1="250" x2="215" y2="250" stroke="#f0883e" stroke-width="1"/>
+
+  <!-- project_meta border -->
+  <rect x="685" y="230" width="175" height="82" rx="3" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <line x1="685" y1="250" x2="860" y2="250" stroke="#30363d" stroke-width="1"/>
+
+  <!-- LAYER 4: TEXT -->
+
+  <!-- Title block -->
+  <text x="18" y="18" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#e6edf3">Database Schema</text>
+  <text x="18" y="356" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Five tables. One hub. All memory data in PostgreSQL.</text>
+
+  <!-- Hub: memories table -->
+  <text x="353" y="112" font-family="'Courier New', monospace" font-size="13" font-weight="700" fill="#3fb950">memories</text>
+  <text x="353" y="134" font-family="'Courier New', monospace" font-size="11" fill="#e6edf3">id  content  type</text>
+  <text x="353" y="150" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">tags  importance  summary</text>
+  <text x="353" y="166" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">sha256  project  created_at</text>
+  <text x="353" y="185" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">embedding  project_id</text>
+  <text x="353" y="201" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">updated_at  deleted_at</text>
+  <text x="353" y="218" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">source  version</text>
+
+  <!-- memory_fts table -->
+  <text x="57" y="43" font-family="'Courier New', monospace" font-size="12" font-weight="700" fill="#58a6ff">memory_fts</text>
+  <text x="57" y="62" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">memory_id  tsvector</text>
+  <text x="57" y="78" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">lang  updated_at</text>
+  <!-- Label below -->
+  <text x="57" y="124" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e" font-style="italic">BM25 full-text index</text>
+
+  <!-- chunks table -->
+  <text x="702" y="43" font-family="'Courier New', monospace" font-size="12" font-weight="700" fill="#58a6ff">chunks</text>
+  <text x="702" y="62" font-family="'Courier New', monospace" font-size="11" fill="#e6edf3">id  memory_id  content</text>
+  <text x="702" y="78" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">embedding  chunk_index</text>
+  <text x="702" y="94" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">model  created_at</text>
+  <!-- Label below -->
+  <text x="702" y="136" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e" font-style="italic">768-dim vector embeddings</text>
+
+  <!-- relationships table -->
+  <text x="57" y="245" font-family="'Courier New', monospace" font-size="12" font-weight="700" fill="#f0883e">relationships</text>
+  <text x="57" y="264" font-family="'Courier New', monospace" font-size="11" fill="#e6edf3">id  source_id  target_id</text>
+  <text x="57" y="280" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">rel_type  weight</text>
+  <text x="57" y="296" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">created_at  metadata</text>
+  <!-- Label below -->
+  <text x="57" y="344" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e" font-style="italic">knowledge graph edges</text>
+
+  <!-- project_meta table -->
+  <text x="702" y="245" font-family="'Courier New', monospace" font-size="12" font-weight="700" fill="#8b949e">project_meta</text>
+  <text x="702" y="264" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">project  embedder</text>
+  <text x="702" y="280" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">state  created_at</text>
+  <!-- Label below -->
+  <text x="702" y="326" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e" font-style="italic">per-project config</text>
+
+  <!-- Relationship line labels — positioned at midpoints -->
+  <!-- memories -> memory_fts midpoint approx (275, 99) -->
+  <text x="248" y="93" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#58a6ff">1:1</text>
+
+  <!-- memories -> chunks midpoint approx (615, 101) -->
+  <text x="588" y="93" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#58a6ff">1:many</text>
+
+  <!-- memories -> relationships midpoint approx (275, 236) -->
+  <text x="222" y="232" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#f0883e">many:many</text>
+
+  <!-- memories -> project_meta midpoint approx (615, 232) -->
+  <text x="566" y="243" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">many:1</text>
+
+  <!-- Bottom annotation strip -->
+  <text x="450" y="370" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">PostgreSQL + pgvector extension  cosine distance operator &lt;=&gt;</text>
+
+</svg>

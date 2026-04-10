@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 350" width="100%" font-family="system-ui, -apple-system, sans-serif">
+
+  <defs>
+    <!-- Arrowhead for step connectors (gray) -->
+    <marker id="arrow-gray" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M 0,0 L 0,7 L 9,3.5 Z" fill="#30363d"/>
+    </marker>
+    <!-- Arrowhead for return loop (green), pointing left -->
+    <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="2" refY="3.5" orient="auto">
+      <path d="M 9,0 L 9,7 L 0,3.5 Z" fill="#3fb950"/>
+    </marker>
+  </defs>
+
+  <!-- 1. BACKGROUND -->
+  <rect width="1000" height="350" fill="#0d1117"/>
+
+  <!-- 2. TITLE BLOCK -->
+  <text x="32" y="36" font-size="21" font-weight="700" fill="#e6edf3">The Session Pattern</text>
+  <text x="32" y="56" font-size="13" fill="#8b949e">Recall at the start. Store as you go. Hand off at the end.</text>
+
+  <!-- ============================================================ -->
+  <!-- STEP BOXES                                                   -->
+  <!-- Box geometry: width=90, height=130                          -->
+  <!-- Centers at x: 100, 250, 415, 580, 730                      -->
+  <!-- Box top y=74, bottom y=204                                  -->
+  <!-- ============================================================ -->
+
+  <!-- Step 1 fill -->
+  <rect x="55" y="74" width="90" height="130" rx="6" ry="6" fill="#0d1a2e"/>
+  <!-- Step 2 fill -->
+  <rect x="205" y="74" width="90" height="130" rx="6" ry="6" fill="#0d2415"/>
+  <!-- Step 3 fill (4px taller top to signal emphasis) -->
+  <rect x="370" y="70" width="90" height="134" rx="6" ry="6" fill="#2a1a0d"/>
+  <!-- Step 4 fill -->
+  <rect x="535" y="74" width="90" height="130" rx="6" ry="6" fill="#1a0d2a"/>
+  <!-- Step 5 fill -->
+  <rect x="685" y="74" width="90" height="130" rx="6" ry="6" fill="#0d1a2e"/>
+
+  <!-- Step 1 border -->
+  <rect x="55" y="74" width="90" height="130" rx="6" ry="6" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+  <!-- Step 2 border -->
+  <rect x="205" y="74" width="90" height="130" rx="6" ry="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <!-- Step 3 border -->
+  <rect x="370" y="70" width="90" height="134" rx="6" ry="6" fill="none" stroke="#f0883e" stroke-width="1.5"/>
+  <!-- Step 4 border -->
+  <rect x="535" y="74" width="90" height="130" rx="6" ry="6" fill="none" stroke="#a371f7" stroke-width="1.5"/>
+  <!-- Step 5 border -->
+  <rect x="685" y="74" width="90" height="130" rx="6" ry="6" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+
+  <!-- ============================================================ -->
+  <!-- CONNECTOR ARROWS (drawn before text, after fills)           -->
+  <!-- ============================================================ -->
+  <line x1="147" y1="139" x2="203" y2="139" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+  <line x1="297" y1="139" x2="368" y2="139" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+  <line x1="462" y1="139" x2="533" y2="139" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+  <line x1="627" y1="139" x2="683" y2="139" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+
+  <!-- ============================================================ -->
+  <!-- RETURN ARC (green dashed, below boxes)                      -->
+  <!-- From Step 5 bottom-center (730,205) to Step 1 (100,205)    -->
+  <!-- ============================================================ -->
+  <path d="M 730,205 C 730,275 100,275 100,205"
+        fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="6,4"
+        marker-end="url(#arrow-green)"/>
+
+  <!-- ============================================================ -->
+  <!-- LOOP ANNOTATION TEXT                                        -->
+  <!-- ============================================================ -->
+  <text x="415" y="255" font-size="12" fill="#8b949e" text-anchor="middle" font-style="italic">Unlike the memory-loss cycle -- this time it WORKS.</text>
+  <text x="415" y="273" font-size="13" font-weight="600" fill="#3fb950" text-anchor="middle">Context carries forward  -&gt;  next session picks up here</text>
+
+  <!-- ============================================================ -->
+  <!-- STEP TEXT (drawn last, above all geometry)                  -->
+  <!-- Minimum 11px per visual-output-standards                    -->
+  <!-- ============================================================ -->
+
+  <!-- Step 1: SESSION START -->
+  <text x="100" y="99"  font-size="22" font-weight="700" fill="#58a6ff" text-anchor="middle">1</text>
+  <text x="100" y="117" font-size="12" font-weight="600" fill="#e6edf3" text-anchor="middle">Session Start</text>
+  <line x1="63" y1="123" x2="137" y2="123" stroke="#30363d" stroke-width="0.8"/>
+  <text x="100" y="137" font-size="11" fill="#58a6ff" text-anchor="middle" font-family="'Courier New', monospace">memory_recall</text>
+  <text x="100" y="155" font-size="11" fill="#8b949e" text-anchor="middle">What happened</text>
+  <text x="100" y="169" font-size="11" fill="#8b949e" text-anchor="middle">last time?</text>
+  <text x="100" y="183" font-size="11" fill="#8b949e" text-anchor="middle">Our patterns?</text>
+
+  <!-- Step 2: RECALL CONTEXT -->
+  <text x="250" y="99"  font-size="22" font-weight="700" fill="#3fb950" text-anchor="middle">2</text>
+  <text x="250" y="117" font-size="12" font-weight="600" fill="#e6edf3" text-anchor="middle">Recall Context</text>
+  <line x1="213" y1="123" x2="287" y2="123" stroke="#30363d" stroke-width="0.8"/>
+  <text x="250" y="137" font-size="11" fill="#3fb950" text-anchor="middle" font-family="'Courier New', monospace">memory_recall</text>
+  <text x="250" y="151" font-size="11" fill="#3fb950" text-anchor="middle" font-family="'Courier New', monospace">memory_list</text>
+  <text x="250" y="168" font-size="11" fill="#8b949e" text-anchor="middle">Auth decisions,</text>
+  <text x="250" y="182" font-size="11" fill="#8b949e" text-anchor="middle">bugs, preferences</text>
+
+  <!-- Step 3: DO THE WORK -->
+  <text x="415" y="95"  font-size="22" font-weight="700" fill="#f0883e" text-anchor="middle">3</text>
+  <text x="415" y="113" font-size="12" font-weight="600" fill="#e6edf3" text-anchor="middle">Work</text>
+  <line x1="378" y1="119" x2="452" y2="119" stroke="#30363d" stroke-width="0.8"/>
+  <text x="415" y="133" font-size="11" fill="#f0883e" text-anchor="middle" font-family="'Courier New', monospace">memory_store</text>
+  <text x="415" y="147" font-size="11" fill="#f0883e" text-anchor="middle" font-family="'Courier New', monospace">memory_correct</text>
+  <text x="415" y="161" font-size="11" fill="#f0883e" text-anchor="middle" font-family="'Courier New', monospace">memory_connect</text>
+  <text x="415" y="176" font-size="11" fill="#8b949e" text-anchor="middle">Store decisions</text>
+  <text x="415" y="190" font-size="11" fill="#8b949e" text-anchor="middle">as you make them.</text>
+
+  <!-- Step 4: STORE HANDOFF -->
+  <text x="580" y="99"  font-size="22" font-weight="700" fill="#a371f7" text-anchor="middle">4</text>
+  <text x="580" y="117" font-size="12" font-weight="600" fill="#e6edf3" text-anchor="middle">Store Handoff</text>
+  <line x1="543" y1="123" x2="617" y2="123" stroke="#30363d" stroke-width="0.8"/>
+  <text x="580" y="137" font-size="11" fill="#a371f7" text-anchor="middle" font-family="'Courier New', monospace">memory_store</text>
+  <text x="580" y="155" font-size="11" fill="#8b949e" text-anchor="middle">SESSION HANDOFF</text>
+  <text x="580" y="169" font-size="11" fill="#8b949e" text-anchor="middle">What's done,</text>
+  <text x="580" y="183" font-size="11" fill="#8b949e" text-anchor="middle">what's next.</text>
+
+  <!-- Step 5: SESSION END -->
+  <text x="730" y="99"  font-size="22" font-weight="700" fill="#58a6ff" text-anchor="middle">5</text>
+  <text x="730" y="117" font-size="12" font-weight="600" fill="#e6edf3" text-anchor="middle">Session End</text>
+  <line x1="693" y1="123" x2="767" y2="123" stroke="#30363d" stroke-width="0.8"/>
+  <text x="730" y="137" font-size="11" fill="#8b949e" text-anchor="middle" font-family="'Courier New', monospace">--</text>
+  <text x="730" y="155" font-size="11" fill="#8b949e" text-anchor="middle">Tomorrow's agent</text>
+  <text x="730" y="169" font-size="11" fill="#8b949e" text-anchor="middle">reads the handoff.</text>
+  <text x="730" y="183" font-size="11" fill="#8b949e" text-anchor="middle">Picks up here.</text>
+
+  <!-- ============================================================ -->
+  <!-- RIGHT PANEL: Engram persistent store indicator             -->
+  <!-- Vertical rule + label block                                 -->
+  <!-- ============================================================ -->
+  <line x1="845" y1="74" x2="845" y2="204" stroke="#30363d" stroke-width="0.8"/>
+  <!-- Upper half-disc: center (905,139), r=28, pinned at y=139 baseline -->
+  <path d="M 877,139 A 28,28 0 0 1 933,139 Z" fill="#a371f7" opacity="0.25"/>
+  <!-- Platform bar covering lower half of disc -->
+  <rect x="877" y="139" width="56" height="8" fill="#1a0d2a"/>
+  <text x="905" y="96"  font-size="12" font-weight="600" fill="#8b949e" text-anchor="middle">Engram MCP</text>
+  <text x="905" y="112" font-size="11" fill="#8b949e" text-anchor="middle">persistent</text>
+  <text x="905" y="126" font-size="11" fill="#a371f7" text-anchor="middle">vector store</text>
+  <text x="905" y="162" font-size="11" fill="#8b949e" text-anchor="middle">localhost:8788</text>
+  <text x="905" y="178" font-size="11" fill="#8b949e" text-anchor="middle">Qdrant backend</text>
+
+  <!-- ============================================================ -->
+  <!-- FOOTER RULE                                                  -->
+  <!-- ============================================================ -->
+  <line x1="32" y1="308" x2="968" y2="308" stroke="#30363d" stroke-width="0.8"/>
+  <text x="32"  y="323" font-size="11" fill="#8b949e">engram-go / session-workflow</text>
+  <text x="968" y="323" font-size="11" fill="#8b949e" text-anchor="end">recall -- work -- store -- repeat</text>
+
+</svg>

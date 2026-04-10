@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 320" width="900" height="320">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#30363d"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="320" fill="#0d1117"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#e6edf3">memory_reason — Grounded Answers from Your Memory Store</text>
+
+  <!-- Subtitle -->
+  <text x="450" y="60" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#8b949e">Recall relevant memories. Synthesize with Claude. Get a cited answer.</text>
+
+  <!-- Stage 1: INPUT -->
+  <rect x="30" y="90" width="150" height="70" rx="6" ry="6" fill="#0d1a2e" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="105" y="119" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Your Question</text>
+  <text x="105" y="138" text-anchor="middle" font-family="'Courier New', monospace" font-size="10" font-style="italic" fill="#8b949e">Why did we switch</text>
+  <text x="105" y="152" text-anchor="middle" font-family="'Courier New', monospace" font-size="10" font-style="italic" fill="#8b949e">from Redis?</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="180" y1="125" x2="228" y2="125" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Stage 2: RECALL ENGINE -->
+  <rect x="230" y="90" width="160" height="70" rx="6" ry="6" fill="#0d2415" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="310" y="116" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Recall Engine</text>
+  <text x="310" y="133" text-anchor="middle" font-family="'Courier New', monospace" font-size="10" fill="#8b949e">BM25 + Vector + Graph</text>
+  <!-- Search result lines -->
+  <line x1="278" y1="147" x2="310" y2="147" stroke="#3fb950" stroke-width="1.5" opacity="0.6"/>
+  <line x1="278" y1="152" x2="326" y2="152" stroke="#3fb950" stroke-width="1" opacity="0.4"/>
+  <line x1="278" y1="157" x2="318" y2="157" stroke="#3fb950" stroke-width="1" opacity="0.3"/>
+
+  <!-- Arrow 2→3 -->
+  <line x1="390" y1="125" x2="438" y2="125" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Stage 3: CLAUDE SYNTHESIS -->
+  <rect x="440" y="80" width="160" height="90" rx="6" ry="6" fill="#1a0d2a" stroke="#a371f7" stroke-width="1.5"/>
+  <text x="520" y="107" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#a371f7">Claude</text>
+  <text x="520" y="124" text-anchor="middle" font-family="'Courier New', monospace" font-size="9" fill="#8b949e">advisor_20260301</text>
+  <text x="520" y="137" text-anchor="middle" font-family="'Courier New', monospace" font-size="9" fill="#8b949e">Sonnet → Opus</text>
+  <text x="520" y="153" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Reads recalled memories.</text>
+  <text x="520" y="164" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Synthesizes answer.</text>
+
+  <!-- Arrow 3→4 -->
+  <line x1="600" y1="125" x2="648" y2="125" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Stage 4: CITED ANSWER -->
+  <rect x="650" y="90" width="150" height="70" rx="6" ry="6" fill="#2a1a0d" stroke="#f0883e" stroke-width="1.5"/>
+  <text x="725" y="116" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Cited Answer</text>
+  <text x="725" y="133" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">References memory IDs</text>
+  <text x="725" y="147" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">Can ask follow-ups</text>
+
+  <!-- Stage labels below boxes -->
+  <text x="105" y="176" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#58a6ff" letter-spacing="1">INPUT</text>
+  <text x="310" y="176" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#3fb950" letter-spacing="1">RETRIEVE</text>
+  <text x="520" y="184" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#a371f7" letter-spacing="1">SYNTHESIZE</text>
+  <text x="725" y="176" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#f0883e" letter-spacing="1">OUTPUT</text>
+
+  <!-- Callout box -->
+  <rect x="200" y="215" width="500" height="50" rx="4" ry="4" fill="transparent" stroke="#30363d" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <!-- Warning triangle -->
+  <polygon points="218,250 228,232 238,250" fill="transparent" stroke="#f0883e" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="233" y="245" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="700" fill="#f0883e">!</text>
+  <text x="450" y="237" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Requires ANTHROPIC_API_KEY</text>
+  <text x="450" y="254" text-anchor="middle" font-family="'Courier New', monospace" font-size="10" fill="#8b949e">Costs ~$0.002–0.01 per question</text>
+</svg>

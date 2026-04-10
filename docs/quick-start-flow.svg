@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" width="100%">
+
+  <!-- === LAYER 1: BACKGROUND === -->
+  <rect width="900" height="280" fill="#0d1117"/>
+
+  <!-- Bottom strip background -->
+  <rect x="0" y="248" width="900" height="32" fill="#0d2415"/>
+  <!-- Bottom strip top border -->
+  <rect x="0" y="248" width="900" height="1" fill="#3fb950"/>
+
+  <!-- Step block backgrounds -->
+  <rect x="20" y="58" width="260" height="182" rx="4" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="320" y="58" width="260" height="182" rx="4" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="620" y="58" width="260" height="182" rx="4" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Code block inner rectangles -->
+  <rect x="30" y="128" width="240" height="66" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="330" y="128" width="240" height="66" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="630" y="128" width="240" height="66" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+
+  <!-- === LAYER 2: GEOMETRY (arrows between blocks) === -->
+
+  <!-- Arrow 1: between block 1 and block 2 -->
+  <path d="M 286,149 L 310,149" stroke="#30363d" stroke-width="1.5" fill="none"/>
+  <path d="M 304,143 L 314,149 L 304,155" stroke="#30363d" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+
+  <!-- Arrow 2: between block 2 and block 3 -->
+  <path d="M 586,149 L 610,149" stroke="#30363d" stroke-width="1.5" fill="none"/>
+  <path d="M 604,143 L 614,149 L 604,155" stroke="#30363d" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+
+  <!-- Bottom strip: three check indicators as small rects -->
+  <!-- Check indicator 1 -->
+  <rect x="90" y="256" width="7" height="7" rx="1" fill="#3fb950"/>
+  <!-- Check indicator 2 -->
+  <rect x="310" y="256" width="7" height="7" rx="1" fill="#3fb950"/>
+  <!-- Check indicator 3 -->
+  <rect x="530" y="256" width="7" height="7" rx="1" fill="#3fb950"/>
+
+  <!-- === LAYER 3: STROKES === (already embedded in rects above) -->
+
+  <!-- === LAYER 4: TEXT === -->
+
+  <!-- Title and subtitle -->
+  <text x="20" y="22" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#e6edf3">Up and Running in 5 Minutes</text>
+  <text x="20" y="42" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Three commands. Three containers. Zero configuration required beyond a password.</text>
+
+  <!-- STEP 1 -->
+  <!-- Large numeral -->
+  <text x="30" y="116" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="700" fill="#58a6ff">1</text>
+  <!-- Step title -->
+  <text x="62" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Clone &amp; Configure</text>
+  <!-- Code lines -->
+  <text x="38" y="144" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">git clone .../engram-go</text>
+  <text x="38" y="158" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">cp .env.example .env</text>
+  <text x="38" y="172" font-family="'Courier New', monospace" font-size="11" fill="#8b949e"># Set POSTGRES_PASSWORD</text>
+  <!-- Annotation -->
+  <text x="30" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">One password to change</text>
+
+  <!-- STEP 2 -->
+  <!-- Large numeral -->
+  <text x="330" y="116" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="700" fill="#3fb950">2</text>
+  <!-- Step title -->
+  <text x="364" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Start</text>
+  <!-- Code line -->
+  <text x="338" y="152" font-family="'Courier New', monospace" font-size="11" fill="#3fb950">docker compose up -d</text>
+  <!-- Annotation two lines -->
+  <text x="330" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">3 containers start.</text>
+  <text x="330" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Ollama downloads model on first run.</text>
+
+  <!-- STEP 3 -->
+  <!-- Large numeral -->
+  <text x="630" y="116" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="700" fill="#f0883e">3</text>
+  <!-- Step title -->
+  <text x="664" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Connect Your IDE</text>
+  <!-- Code lines -->
+  <text x="638" y="144" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">claude mcp add engram \</text>
+  <text x="638" y="158" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">  --transport sse \</text>
+  <text x="638" y="172" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">  http://localhost:8788/sse</text>
+  <!-- Annotation two lines -->
+  <text x="630" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">19 tools now available</text>
+  <text x="630" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">in every Claude Code session</text>
+
+  <!-- Bottom strip text: ASCII only, no Unicode -->
+  <text x="104" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#3fb950">PostgreSQL</text>
+  <text x="184" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">+</text>
+  <text x="196" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Ollama</text>
+  <text x="243" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">+</text>
+  <rect x="254" y="258" width="7" height="7" rx="1" fill="#3fb950"/>
+  <text x="266" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#3fb950">engram-go</text>
+  <text x="332" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">--</text>
+  <text x="347" y="267" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">three containers, one command</text>
+
+</svg>
