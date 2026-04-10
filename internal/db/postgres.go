@@ -453,14 +453,15 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", id); err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx,
-		"WITH d AS (DELETE FROM memories WHERE id=$1 RETURNING id) SELECT count(*) FROM d", id,
-	)
+	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1", id)
 	if err != nil {
 		return false, err
 	}
 
-	return tag.RowsAffected() > 0, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (b *PostgresBackend) ListMemories(ctx context.Context, project string, opts ListOptions) ([]*types.Memory, error) {
@@ -624,10 +625,7 @@ func (b *PostgresBackend) DeleteChunksByIDs(ctx context.Context, chunkIDs []stri
 	if len(chunkIDs) == 0 {
 		return 0, nil
 	}
-	tag, err := b.pool.Exec(ctx,
-		"WITH d AS (DELETE FROM chunks WHERE id=ANY($1) RETURNING id) SELECT count(*) FROM d",
-		chunkIDs,
-	)
+	tag, err := b.pool.Exec(ctx, "DELETE FROM chunks WHERE id=ANY($1)", chunkIDs)
 	return int(tag.RowsAffected()), err
 }
 
@@ -921,13 +919,11 @@ func (b *PostgresBackend) DeleteRelationshipsForMemory(ctx context.Context, memo
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tag, err := b.pool.Exec(ctx, `
-		WITH d AS (
-			DELETE FROM memories
-			WHERE project=$1 AND NOT immutable AND (
-				(importance>=$2 AND last_accessed<$3 AND access_count=0)
-				OR (expires_at IS NOT NULL AND expires_at<NOW())
-			) RETURNING id
-		) SELECT count(*) FROM d`, project, maxImportance, cutoff,
+		DELETE FROM memories
+		WHERE project=$1 AND NOT immutable AND (
+			(importance>=$2 AND last_accessed<$3 AND access_count=0)
+			OR (expires_at IS NOT NULL AND expires_at<NOW())
+		)`, project, maxImportance, cutoff,
 	)
 	return int(tag.RowsAffected()), err
 }
@@ -935,7 +931,7 @@ func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string
 func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tag, err := b.pool.Exec(ctx, `
-		WITH cold AS (
+		DELETE FROM memories WHERE id IN (
 			SELECT m.id FROM memories m
 			WHERE m.project=$1 AND m.storage_mode='document'
 			  AND NOT m.immutable AND m.importance>=$2 AND m.created_at<$3
@@ -943,8 +939,7 @@ func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string
 				SELECT 1 FROM chunks c
 				WHERE c.memory_id=m.id AND c.last_matched IS NOT NULL
 			  )
-		), d AS (DELETE FROM memories WHERE id IN (SELECT id FROM cold) RETURNING id)
-		SELECT count(*) FROM d`, project, maxImportance, cutoff,
+		)`, project, maxImportance, cutoff,
 	)
 	return int(tag.RowsAffected()), err
 }
