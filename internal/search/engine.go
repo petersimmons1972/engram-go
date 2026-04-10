@@ -15,6 +15,52 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// MergeReviewer reviews candidate near-duplicate pairs and returns merge decisions.
+// Implemented by *claude.Client via an adapter in internal/mcp; declared here to avoid import cycle.
+type MergeReviewer interface {
+	ReviewMergeCandidates(ctx context.Context, candidates []MergeCandidate) ([]MergeDecision, error)
+}
+
+// ResultReranker re-ranks recall results using an external model.
+// Implemented by an adapter in the mcp package; declared here to avoid import cycle.
+type ResultReranker interface {
+	RerankResults(ctx context.Context, query string, items []RerankItem) ([]RerankResult, error)
+}
+
+// RerankItem is a memory result passed to the reranker.
+type RerankItem struct {
+	ID      string  `json:"id"`
+	Summary string  `json:"summary"`
+	Score   float64 `json:"score"`
+}
+
+// RerankResult is the re-ranked score for one item.
+type RerankResult struct {
+	ID    string  `json:"id"`
+	Score float64 `json:"score"`
+}
+
+// RecallOpts controls optional post-processing for Recall.
+type RecallOpts struct {
+	Reranker ResultReranker // nil = skip re-ranking
+}
+
+// MergeCandidate is a pair of memories with their similarity score.
+type MergeCandidate struct {
+	MemoryA    *types.Memory
+	MemoryB    *types.Memory
+	Similarity float64
+}
+
+// MergeDecision is the reviewer's verdict on whether to merge a candidate pair.
+type MergeDecision struct {
+	MemoryAID     string `json:"memory_a_id"`
+	MemoryBID     string `json:"memory_b_id"`
+	ShouldMerge   bool   `json:"should_merge"`
+	Reason        string `json:"reason"`
+	MergedContent string `json:"merged_content,omitempty"`
+}
+
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
@@ -26,10 +72,12 @@ type SearchEngine struct {
 }
 
 // New constructs a SearchEngine and starts background summarize and reembed workers.
+// claudeClient may be nil, in which case summarization falls back to Ollama.
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
-	ollamaURL, summarizeModel string, summarizeEnabled bool) *SearchEngine {
+	ollamaURL, summarizeModel string, summarizeEnabled bool,
+	claudeClient summarize.ClaudeCompleter) *SearchEngine {
 
-	sum := summarize.NewWorker(backend, project, ollamaURL, summarizeModel, summarizeEnabled)
+	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.Start()
 
 	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)
@@ -146,10 +194,15 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	return tx.Commit(ctx)
 }
 
-// Recall retrieves the topK most relevant memories for query, using composite
-// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
-// or "full" (default).
+// Recall retrieves the topK most relevant memories for query.
 func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error) {
+	return e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
+}
+
+// RecallWithOpts retrieves the topK most relevant memories for query, using composite
+// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
+// or "full" (default). opts allows optional post-processing such as re-ranking.
+func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, error) {
 	if topK <= 0 {
 		topK = 10
 	}
@@ -284,6 +337,44 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 	}
 
 	sortResults(results)
+
+	// Apply optional re-ranking before final truncation.
+	if opts.Reranker != nil && len(results) > 0 {
+		items := make([]RerankItem, len(results))
+		for i, r := range results {
+			summary := ""
+			if r.Memory.Summary != nil {
+				summary = *r.Memory.Summary
+			} else {
+				summary = r.Memory.Content
+				if len(summary) > 500 {
+					summary = summary[:500]
+				}
+			}
+			items[i] = RerankItem{
+				ID:      r.Memory.ID,
+				Summary: summary,
+				Score:   r.Score,
+			}
+		}
+		reranked, err := opts.Reranker.RerankResults(ctx, query, items)
+		if err == nil && len(reranked) > 0 {
+			// Build lookup map from reranked scores.
+			scoreMap := make(map[string]float64, len(reranked))
+			for _, rr := range reranked {
+				scoreMap[rr.ID] = rr.Score
+			}
+			// Overwrite scores for matched IDs.
+			for i := range results {
+				if newScore, ok := scoreMap[results[i].Memory.ID]; ok {
+					results[i].Score = newScore
+				}
+			}
+			// Re-sort with new scores.
+			sortResults(results)
+		}
+	}
+
 	if len(results) > topK {
 		results = results[:topK]
 	}
@@ -547,6 +638,120 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 		"new_model":     newModel,
 		"status":        "migration started — reembed worker will complete in background",
 	}, nil
+}
+
+const consolidateJaccardThreshold = 0.85
+const consolidateMaxMemories = 500
+
+// ConsolidateWithClaude runs base consolidation then finds near-duplicate memory
+// pairs via character-bigram Jaccard similarity, batches them to reviewer for
+// merge decisions, and applies the approved merges.
+func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer MergeReviewer) (map[string]any, error) {
+	// 1. Run base consolidation first.
+	result, err := e.Consolidate(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Fetch up to consolidateMaxMemories memories.
+	mems, err := e.backend.ListMemories(ctx, e.project, db.ListOptions{Limit: consolidateMaxMemories})
+	if err != nil {
+		return result, err
+	}
+
+	// 3. Filter: content 50-4000 chars, not immutable.
+	var filtered []*types.Memory
+	for _, m := range mems {
+		if m.Immutable {
+			continue
+		}
+		if len(m.Content) < 50 || len(m.Content) > 4000 {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+
+	// 4. Pairwise bigramJaccard, collect candidates >= threshold.
+	var candidates []MergeCandidate
+	for i := 0; i < len(filtered); i++ {
+		for j := i + 1; j < len(filtered); j++ {
+			sim := bigramJaccard(filtered[i].Content, filtered[j].Content)
+			if sim >= consolidateJaccardThreshold {
+				candidates = append(candidates, MergeCandidate{
+					MemoryA:    filtered[i],
+					MemoryB:    filtered[j],
+					Similarity: sim,
+				})
+			}
+		}
+	}
+
+	// 5. Batch into groups of batchSize and call reviewer.
+	const batchSize = 10
+	var totalMerged int
+	var totalReviewed int
+	for start := 0; start < len(candidates); start += batchSize {
+		end := start + batchSize
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+		batch := candidates[start:end]
+		decisions, err := reviewer.ReviewMergeCandidates(ctx, batch)
+		if err != nil {
+			// Log and continue — don't abort entire consolidation on reviewer error.
+			continue
+		}
+		totalReviewed += len(batch)
+		for _, d := range decisions {
+			if !d.ShouldMerge {
+				continue
+			}
+			content := d.MergedContent
+			if content != "" {
+				_, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil)
+				if err != nil {
+					continue
+				}
+			}
+			deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false)
+			if err != nil || !deleted {
+				continue
+			}
+			totalMerged++
+		}
+	}
+
+	result["merged_memories"] = totalMerged
+	result["candidates_reviewed"] = totalReviewed
+	return result, nil
+}
+
+// bigramJaccard computes character-bigram Jaccard similarity between two strings.
+// Returns |A∩B| / |A∪B| where A and B are the bigram sets of a and b.
+func bigramJaccard(a, b string) float64 {
+	bigrams := func(s string) map[string]struct{} {
+		m := make(map[string]struct{}, len(s))
+		for i := 0; i+1 < len(s); i++ {
+			m[s[i:i+2]] = struct{}{}
+		}
+		return m
+	}
+	setA := bigrams(a)
+	setB := bigrams(b)
+	if len(setA) == 0 && len(setB) == 0 {
+		return 1.0
+	}
+	var inter int
+	for k := range setA {
+		if _, ok := setB[k]; ok {
+			inter++
+		}
+	}
+	union := len(setA) + len(setB) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
 }
 
 // SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).

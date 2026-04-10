@@ -6,16 +6,85 @@ import (
 	"fmt"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/markdown"
+	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // Config holds server-wide configuration passed to tool handlers.
 type Config struct {
-	OllamaURL        string
-	SummarizeModel   string
-	SummarizeEnabled bool
+	OllamaURL                string
+	SummarizeModel           string
+	SummarizeEnabled         bool
+	ClaudeEnabled            bool // true when a claude client is present
+	ClaudeConsolidateEnabled bool
+	ClaudeRerankEnabled      bool
+	claudeClient             *claude.Client // set via Server.SetClaudeClient
+}
+
+// claudeMergeAdapter adapts *claude.Client to search.MergeReviewer by converting
+// between the search-package and claude-package candidate/decision types.
+type claudeMergeAdapter struct {
+	client *claude.Client
+}
+
+func (a *claudeMergeAdapter) ReviewMergeCandidates(ctx context.Context, candidates []search.MergeCandidate) ([]search.MergeDecision, error) {
+	// Convert search.MergeCandidate → claude.MergeCandidate.
+	claudeCandidates := make([]claude.MergeCandidate, len(candidates))
+	for i, c := range candidates {
+		claudeCandidates[i] = claude.MergeCandidate{
+			MemoryA:    c.MemoryA,
+			MemoryB:    c.MemoryB,
+			Similarity: c.Similarity,
+		}
+	}
+	claudeDecisions, err := a.client.ReviewMergeCandidates(ctx, claudeCandidates)
+	if err != nil {
+		return nil, err
+	}
+	// Convert claude.MergeDecision → search.MergeDecision.
+	decisions := make([]search.MergeDecision, len(claudeDecisions))
+	for i, d := range claudeDecisions {
+		decisions[i] = search.MergeDecision{
+			MemoryAID:     d.MemoryAID,
+			MemoryBID:     d.MemoryBID,
+			ShouldMerge:   d.ShouldMerge,
+			Reason:        d.Reason,
+			MergedContent: d.MergedContent,
+		}
+	}
+	return decisions, nil
+}
+
+// claudeRerankAdapter bridges search.ResultReranker to claude.Client.
+type claudeRerankAdapter struct {
+	client *claude.Client
+}
+
+func (a *claudeRerankAdapter) RerankResults(ctx context.Context, query string, items []search.RerankItem) ([]search.RerankResult, error) {
+	// Convert search.RerankItem → claude.RerankItem.
+	claudeItems := make([]claude.RerankItem, len(items))
+	for i, item := range items {
+		claudeItems[i] = claude.RerankItem{
+			ID:      item.ID,
+			Summary: item.Summary,
+			Score:   item.Score,
+		}
+	}
+	claudeResults, err := a.client.RerankResults(ctx, query, claudeItems)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]search.RerankResult, len(claudeResults))
+	for i, r := range claudeResults {
+		results[i] = search.RerankResult{
+			ID:    r.ID,
+			Score: r.Score,
+		}
+	}
+	return results, nil
 }
 
 // toolResult marshals v to JSON and wraps it in an MCP text result.
@@ -169,7 +238,8 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 }
 
 // handleMemoryRecall performs semantic recall against a project's memories.
-func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// Pass cfg to enable optional Claude re-ranking via the rerank argument.
+func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
@@ -182,7 +252,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	topK := getInt(args, "top_k", 10)
 	detail := getString(args, "detail", "summary")
-	results, err := h.Engine.Recall(ctx, query, topK, detail)
+	rerank := getBool(args, "rerank", false)
+
+	var opts search.RecallOpts
+	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
+		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
+	}
+	results, err := h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -333,14 +409,21 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 }
 
 // handleMemoryConsolidate merges near-duplicate memories to reduce redundancy.
-func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// When cfg.ClaudeConsolidateEnabled is true and a claude client is available,
+// it uses bigramJaccard similarity + Claude review for near-duplicate merging.
+func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	result, err := h.Engine.Consolidate(ctx)
+	var result map[string]any
+	if cfg.ClaudeConsolidateEnabled && cfg.claudeClient != nil {
+		result, err = h.Engine.ConsolidateWithClaude(ctx, &claudeMergeAdapter{client: cfg.claudeClient})
+	} else {
+		result, err = h.Engine.Consolidate(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -457,4 +540,57 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		ids = append(ids, m.ID)
 	}
 	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
+}
+
+// handleMemoryReason recalls memories relevant to a question and uses Claude to
+// synthesize a grounded answer from those memories.
+func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	question := getString(args, "question", "")
+	topK := getInt(args, "top_k", 10)
+	detail := getString(args, "detail", "full")
+
+	if question == "" {
+		return mcpgo.NewToolResultError("question is required"), nil
+	}
+	if cfg.claudeClient == nil {
+		return mcpgo.NewToolResultError("memory_reason requires ANTHROPIC_API_KEY to be set"), nil
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("get engine for %q: %w", project, err)
+	}
+
+	results, err := h.Engine.Recall(ctx, question, topK, detail)
+	if err != nil {
+		return nil, fmt.Errorf("recall: %w", err)
+	}
+
+	// Extract the Memory pointer from each search result.
+	memories := make([]*types.Memory, 0, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			memories = append(memories, r.Memory)
+		}
+	}
+
+	answer, err := cfg.claudeClient.ReasonOverMemories(ctx, question, memories)
+	if err != nil {
+		return nil, fmt.Errorf("reason: %w", err)
+	}
+
+	memoryIDs := make([]string, 0, len(memories))
+	for _, m := range memories {
+		memoryIDs = append(memoryIDs, m.ID)
+	}
+
+	out := map[string]any{
+		"answer":        answer,
+		"memories_used": len(memories),
+		"memory_ids":    memoryIDs,
+	}
+	data, _ := json.Marshal(out)
+	return mcpgo.NewToolResultText(string(data)), nil
 }
