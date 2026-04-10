@@ -222,7 +222,8 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 }
 
 func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
-	row, err := b.pool.Query(ctx, "SELECT * FROM memories WHERE id=$1", id)
+	row, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2", id, b.project)
 	if err != nil {
 		return nil, err
 	}
@@ -274,12 +275,25 @@ func (b *PostgresBackend) UpdateMemory(
 	ctx context.Context, id string,
 	content *string, tags []string, importance *int,
 ) (*types.Memory, error) {
-	m, err := b.GetMemory(ctx, id)
+	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if m == nil {
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Lock the row for the duration of the read-modify-write to prevent races.
+	row, err := tx.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		id, b.project)
+	if err != nil {
+		return nil, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	if m.Immutable {
 		return nil, fmt.Errorf("memory %q is immutable and cannot be updated", id)
@@ -304,39 +318,31 @@ func (b *PostgresBackend) UpdateMemory(
 	if content != nil {
 		hash := contentHash(m.Content)
 		m.ContentHash = &hash
-		_, err = b.pool.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5 WHERE id=$6",
-			m.Content, tagsJSON, m.Importance, now, hash, id,
+		_, err = tx.Exec(ctx,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5 WHERE id=$6 AND project=$7",
+			m.Content, tagsJSON, m.Importance, now, hash, id, b.project,
 		)
 	} else {
-		_, err = b.pool.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4 WHERE id=$5",
-			m.Content, tagsJSON, m.Importance, now, id,
+		_, err = tx.Exec(ctx,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4 WHERE id=$5 AND project=$6",
+			m.Content, tagsJSON, m.Importance, now, id, b.project,
 		)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	m.UpdatedAt = now
 	return m, nil
 }
 
+// DeleteMemory removes a memory and all its dependent data (chunks, relationships)
+// in a single atomic transaction. Routes through DeleteMemoryAtomic — keeping both
+// for interface compatibility.
 func (b *PostgresBackend) DeleteMemory(ctx context.Context, id string) (bool, error) {
-	m, err := b.GetMemory(ctx, id)
-	if err != nil {
-		return false, err
-	}
-	if m != nil && m.Immutable {
-		return false, fmt.Errorf("memory %q is immutable and cannot be deleted", id)
-	}
-	tag, err := b.pool.Exec(ctx,
-		"WITH d AS (DELETE FROM memories WHERE id=$1 RETURNING id) SELECT count(*) FROM d",
-		id,
-	)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() > 0, nil
+	return b.DeleteMemoryAtomic(ctx, b.project, id, false)
 }
 
 func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id string, force bool) (bool, error) {
@@ -1047,7 +1053,9 @@ func (b *PostgresBackend) GetMemoriesPendingSummary(ctx context.Context, project
 }
 
 func (b *PostgresBackend) StoreSummary(ctx context.Context, memoryID, summary string) error {
-	_, err := b.pool.Exec(ctx, "UPDATE memories SET summary=$1 WHERE id=$2", summary, memoryID)
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET summary=$1 WHERE id=$2 AND project=$3",
+		summary, memoryID, b.project)
 	return err
 }
 
@@ -1080,7 +1088,9 @@ func (b *PostgresBackend) GetMemoriesMissingHash(ctx context.Context, project st
 }
 
 func (b *PostgresBackend) UpdateMemoryHash(ctx context.Context, memoryID, contentHash string) error {
-	_, err := b.pool.Exec(ctx, "UPDATE memories SET content_hash=$1 WHERE id=$2", contentHash, memoryID)
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET content_hash=$1 WHERE id=$2 AND project=$3",
+		contentHash, memoryID, b.project)
 	return err
 }
 
