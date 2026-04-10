@@ -70,7 +70,7 @@ services:
 
   engram-go:
     container_name: engram-go-app
-    image: engram-go:2.0.0
+    image: engram-go:2.1.0
     ports:
       - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     environment:
@@ -78,6 +78,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-nomic-embed-text}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2}
+      - ENGRAM_API_KEY=${ENGRAM_API_KEY}
       # ── Claude advisor strategy (v2.0) — all opt-in, default off ─────────
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}
