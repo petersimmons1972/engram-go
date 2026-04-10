@@ -68,6 +68,7 @@ type SearchEngine struct {
 	backend    db.Backend
 	embedder   embed.Client
 	project    string
+	ollamaURL  string
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
 }
@@ -88,6 +89,7 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		backend:    backend,
 		embedder:   embedder,
 		project:    project,
+		ollamaURL:  ollamaURL,
 		summarizer: sum,
 		reembedder: reb,
 	}
@@ -608,10 +610,25 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
 		return nil, err
 	}
+
+	// Stop old reembed worker and create a new one with the new model.
+	// Without this, the worker holds a stale reference to the original embedder
+	// and never runs because its done channel was already closed at construction.
+	e.reembedder.Stop()
+
+	newEmbedder, err := embed.NewOllamaClient(ctx, e.ollamaURL, newModel)
+	if err != nil {
+		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
+	}
+	e.embedder = newEmbedder
+
+	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
+	e.reembedder.Start()
+
 	return map[string]any{
 		"chunks_nulled": nulled,
 		"new_model":     newModel,
-		"status":        "migration started — reembed worker will complete in background",
+		"status":        "migration started — reembed worker running with new model",
 	}, nil
 }
 
