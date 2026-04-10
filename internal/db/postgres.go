@@ -688,6 +688,24 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 	return hits, rows.Err()
 }
 
+func (b *PostgresBackend) ChunkEmbeddingDistance(ctx context.Context, memAID, memBID string) (float64, error) {
+	var dist *float64
+	err := b.pool.QueryRow(ctx, `
+		SELECT MIN(ca.embedding <=> cb.embedding)
+		FROM chunks ca, chunks cb
+		WHERE ca.memory_id = $1 AND cb.memory_id = $2
+		  AND ca.embedding IS NOT NULL AND cb.embedding IS NOT NULL`,
+		memAID, memBID,
+	).Scan(&dist)
+	if err != nil {
+		return 2.0, err
+	}
+	if dist == nil {
+		return 2.0, nil // no embedded chunks
+	}
+	return *dist, nil
+}
+
 func (b *PostgresBackend) UpdateChunkLastMatched(ctx context.Context, chunkID string) error {
 	_, err := b.pool.Exec(ctx,
 		"UPDATE chunks SET last_matched=NOW() WHERE id=$1", chunkID,

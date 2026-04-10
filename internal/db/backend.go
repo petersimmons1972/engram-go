@@ -76,6 +76,10 @@ type Backend interface {
 	// VectorSearch returns the nearest chunks to queryVec by cosine distance,
 	// using the HNSW index. Returns at most limit results.
 	VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error)
+	// ChunkEmbeddingDistance returns the minimum cosine distance between any
+	// chunk of memA and any chunk of memB. Returns 2.0 (max distance) if
+	// either memory has no embedded chunks.
+	ChunkEmbeddingDistance(ctx context.Context, memAID, memBID string) (float64, error)
 	// UpdateChunkLastMatched sets last_matched = now on a chunk.
 	UpdateChunkLastMatched(ctx context.Context, chunkID string) error
 	// GetPendingEmbeddingCount returns the count of chunks with NULL embedding.

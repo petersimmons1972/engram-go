@@ -10,6 +10,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/minhash"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -567,12 +568,14 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 
 const consolidateJaccardThreshold = 0.85
 const consolidateMaxMemories = 500
+const consolidateCombinedThreshold = 0.80
 
 // ConsolidateWithClaude runs base consolidation then finds near-duplicate memory
-// pairs via character-bigram Jaccard similarity, batches them to reviewer for
-// merge decisions, and applies the approved merges.
+// pairs via MinHash/LSH candidate generation, scores them with a hybrid
+// Jaccard + embedding cosine signal, batches them to reviewer for merge
+// decisions, and applies the approved merges.
 func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer MergeReviewer) (map[string]any, error) {
-	// 1. Run base consolidation first.
+	// 1. Run base consolidation.
 	result, err := e.Consolidate(ctx)
 	if err != nil {
 		return nil, err
@@ -584,37 +587,64 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		return result, err
 	}
 
-	// 3. Filter: content 50-4000 chars, not immutable.
+	// 3. Filter: 50-4000 chars, not immutable.
 	var filtered []*types.Memory
+	memMap := make(map[string]*types.Memory)
 	for _, m := range mems {
-		if m.Immutable {
-			continue
-		}
-		if len(m.Content) < 50 || len(m.Content) > 4000 {
+		if m.Immutable || len(m.Content) < 50 || len(m.Content) > 4000 {
 			continue
 		}
 		filtered = append(filtered, m)
+		memMap[m.ID] = m
 	}
 
-	// 4. Pairwise bigramJaccard, collect candidates >= threshold.
+	// 4. Compute MinHash signatures — O(n).
+	hasher := minhash.NewHasher(42)
+	idx := minhash.NewIndex(16, 8)
+	for _, m := range filtered {
+		sig := hasher.Signature(m.Content)
+		idx.Add(m.ID, sig)
+	}
+
+	// 5. Get candidate pairs from LSH — O(n).
+	lshPairs := idx.Candidates()
+
+	// 6. Score each candidate: exact Jaccard + embedding cosine.
 	var candidates []MergeCandidate
-	for i := 0; i < len(filtered); i++ {
-		for j := i + 1; j < len(filtered); j++ {
-			sim := bigramJaccard(filtered[i].Content, filtered[j].Content)
-			if sim >= consolidateJaccardThreshold {
-				candidates = append(candidates, MergeCandidate{
-					MemoryA:    filtered[i],
-					MemoryB:    filtered[j],
-					Similarity: sim,
-				})
-			}
+	for _, pair := range lshPairs {
+		memA, memB := memMap[pair[0]], memMap[pair[1]]
+		if memA == nil || memB == nil {
+			continue
 		}
+
+		jaccard := bigramJaccard(memA.Content, memB.Content)
+		if jaccard < consolidateJaccardThreshold {
+			continue // LSH false positive
+		}
+
+		// Embedding cosine distance → similarity.
+		dist, err := e.backend.ChunkEmbeddingDistance(ctx, memA.ID, memB.ID)
+		if err != nil {
+			dist = 2.0 // treat as max distance on error
+		}
+		cosineSim := 1.0 - dist
+
+		// Combined score: weighted Jaccard + cosine.
+		combined := 0.7*jaccard + 0.3*cosineSim
+		if combined < consolidateCombinedThreshold {
+			continue
+		}
+
+		candidates = append(candidates, MergeCandidate{
+			MemoryA:    memA,
+			MemoryB:    memB,
+			Similarity: combined,
+		})
 	}
 
-	// 5. Batch into groups of batchSize and call reviewer.
+	// 7. Batch candidates to Claude reviewer.
 	const batchSize = 10
-	var totalMerged int
-	var totalReviewed int
+	var totalMerged, totalReviewed int
 	for start := 0; start < len(candidates); start += batchSize {
 		end := start + batchSize
 		if end > len(candidates) {
@@ -623,7 +653,6 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		batch := candidates[start:end]
 		decisions, err := reviewer.ReviewMergeCandidates(ctx, batch)
 		if err != nil {
-			// Log and continue — don't abort entire consolidation on reviewer error.
 			continue
 		}
 		totalReviewed += len(batch)
@@ -633,13 +662,11 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			}
 			content := d.MergedContent
 			if content != "" {
-				_, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil)
-				if err != nil {
+				if _, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil); err != nil {
 					continue
 				}
 			}
-			deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false)
-			if err != nil || !deleted {
+			if deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false); err != nil || !deleted {
 				continue
 			}
 			totalMerged++
@@ -648,6 +675,8 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	result["merged_memories"] = totalMerged
 	result["candidates_reviewed"] = totalReviewed
+	result["lsh_candidates"] = len(lshPairs)
+	result["jaccard_passed"] = len(candidates)
 	return result, nil
 }
 
