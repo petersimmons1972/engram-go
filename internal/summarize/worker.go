@@ -21,17 +21,30 @@ const (
 
 var summarizePrompt = "Summarize the following memory in 1-2 concise sentences. Focus on the key fact or decision. No preamble.\n\n"
 
+// summarizeHTTPClient is shared across all SummarizeContent calls so that the
+// underlying connection pool is reused rather than rebuilt on every request.
+var summarizeHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		IdleConnTimeout:     30 * time.Second,
+		MaxIdleConnsPerHost: 2,
+	},
+}
+
 // SummarizeContent calls Ollama /api/generate synchronously. Returns the trimmed response.
 func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (string, error) {
 	if len(content) > maxContent {
 		content = content[:maxContent]
 	}
 	prompt := summarizePrompt + content
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"model":  model,
 		"prompt": prompt,
 		"stream": false,
 	})
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(ollamaURL, "/")+"/api/generate", bytes.NewReader(body))
@@ -40,14 +53,7 @@ func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (st
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			IdleConnTimeout:     30 * time.Second,
-			MaxIdleConnsPerHost: 2,
-		},
-	}
-	resp, err := client.Do(req)
+	resp, err := summarizeHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ollama generate: %w", err)
 	}
@@ -63,21 +69,23 @@ func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (st
 }
 
 // SummarizeOne immediately summarizes a single memory by ID and stores the result.
-func SummarizeOne(ctx context.Context, backend db.Backend, memoryID, project, ollamaURL, model string) error {
-	rows, err := backend.GetMemoriesPendingSummary(ctx, project, 1000)
+// Returns nil if the memory is already summarized.
+func SummarizeOne(ctx context.Context, backend db.Backend, memoryID, ollamaURL, model string) error {
+	mem, err := backend.GetMemory(ctx, memoryID)
+	if err != nil {
+		return fmt.Errorf("get memory %s: %w", memoryID, err)
+	}
+	if mem == nil {
+		return fmt.Errorf("memory %s not found", memoryID)
+	}
+	if mem.Summary != nil {
+		return nil // already summarized
+	}
+	summary, err := SummarizeContent(ctx, mem.Content, ollamaURL, model)
 	if err != nil {
 		return err
 	}
-	for _, row := range rows {
-		if row.ID == memoryID {
-			summary, err := SummarizeContent(ctx, row.Content, ollamaURL, model)
-			if err != nil {
-				return err
-			}
-			return backend.StoreSummary(ctx, memoryID, summary)
-		}
-	}
-	return fmt.Errorf("memory %s not found or already summarized", memoryID)
+	return backend.StoreSummary(ctx, memoryID, summary)
 }
 
 // Worker is a background goroutine that fills summary IS NULL rows.

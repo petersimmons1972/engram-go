@@ -21,7 +21,6 @@ type SearchEngine struct {
 	backend    db.Backend
 	embedder   embed.Client
 	project    string
-	cancel     context.CancelFunc
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
 }
@@ -29,7 +28,6 @@ type SearchEngine struct {
 // New constructs a SearchEngine and starts background summarize and reembed workers.
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
 	ollamaURL, summarizeModel string, summarizeEnabled bool) *SearchEngine {
-	_, cancel := context.WithCancel(ctx)
 
 	sum := summarize.NewWorker(backend, project, ollamaURL, summarizeModel, summarizeEnabled)
 	sum.Start()
@@ -41,7 +39,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		backend:    backend,
 		embedder:   embedder,
 		project:    project,
-		cancel:     cancel,
 		summarizer: sum,
 		reembedder: reb,
 	}
@@ -49,7 +46,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 
 // Close shuts down the engine and stops all background workers.
 func (e *SearchEngine) Close() {
-	e.cancel()
 	e.summarizer.Stop()
 	e.reembedder.Stop()
 }
