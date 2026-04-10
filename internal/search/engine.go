@@ -3,13 +3,14 @@ package search
 import (
 	"context"
 	"fmt"
-	"math"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/minhash"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -168,7 +169,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 			ChunkHash:  hash,
 			ChunkType:  c.ChunkType,
 			Project:    e.project,
-			Embedding:  embedToBlob(embedding),
+			Embedding:  embedding,
 		}
 		if c.HasHeading {
 			heading := c.SectionHeading
@@ -200,8 +201,9 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 }
 
 // RecallWithOpts retrieves the topK most relevant memories for query, using composite
-// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
-// or "full" (default). opts allows optional post-processing such as re-ranking.
+// vector+FTS scoring via the pgvector HNSW index. detail controls content truncation:
+// "id_only", "summary", or "full" (default). opts allows optional post-processing
+// such as re-ranking.
 func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, error) {
 	if topK <= 0 {
 		topK = 10
@@ -212,12 +214,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	chunks, err := e.backend.GetAllChunksWithEmbeddings(ctx, e.project, 10_000)
+	// ANN vector search via pgvector HNSW index.
+	vecHits, err := e.backend.VectorSearch(ctx, e.project, queryVec, topK*3)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fan-out FTS search concurrently while scoring vectors.
+	// Fan-out FTS search concurrently.
 	type ftsResult struct {
 		results []db.FTSResult
 		err     error
@@ -228,33 +231,32 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		ftsCh <- ftsResult{res, err}
 	}()
 
-	// Score all chunks by cosine similarity.
-	var scored []chunkScore
-	for _, c := range chunks {
-		if len(c.Embedding) == 0 {
-			continue
+	// Build per-memory best cosine from vector hits.
+	// pgvector returns cosine distance (0-2); convert to similarity (1-0).
+	bestCosine := make(map[string]float64)
+	bestChunkText := make(map[string]string)
+	bestChunkIndex := make(map[string]int)
+	bestChunkSection := make(map[string]*string)
+	bestChunkID := make(map[string]string)
+	uniqueIDs := make([]string, 0, len(vecHits))
+	seen := make(map[string]bool, len(vecHits))
+
+	for _, h := range vecHits {
+		cosine := 1.0 - h.Distance
+		if cosine > bestCosine[h.MemoryID] {
+			bestCosine[h.MemoryID] = cosine
+			bestChunkText[h.MemoryID] = h.ChunkText
+			bestChunkIndex[h.MemoryID] = h.ChunkIndex
+			bestChunkSection[h.MemoryID] = h.SectionHeading
+			bestChunkID[h.MemoryID] = h.ChunkID
 		}
-		chunkVec := blobToEmbed(c.Embedding)
-		cos := cosineSimilarity(queryVec, chunkVec)
-		if cos > 0 {
-			scored = append(scored, chunkScore{c, cos})
+		if !seen[h.MemoryID] {
+			seen[h.MemoryID] = true
+			uniqueIDs = append(uniqueIDs, h.MemoryID)
 		}
 	}
 
-	sortByScore(scored)
-	if len(scored) > topK*3 {
-		scored = scored[:topK*3]
-	}
-
-	// Resolve memory records for top vector hits in a single batch query.
-	uniqueIDs := make([]string, 0, len(scored))
-	seen := make(map[string]bool, len(scored))
-	for _, s := range scored {
-		if !seen[s.chunk.MemoryID] {
-			seen[s.chunk.MemoryID] = true
-			uniqueIDs = append(uniqueIDs, s.chunk.MemoryID)
-		}
-	}
+	// Batch-fetch memory records for vector hits.
 	batchMems, err := e.backend.GetMemoriesByIDs(ctx, e.project, uniqueIDs)
 	if err != nil {
 		return nil, err
@@ -264,6 +266,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[m.ID] = m
 	}
 
+	// Merge FTS results.
 	ftsRes := <-ftsCh
 	if ftsRes.err != nil {
 		return nil, ftsRes.err
@@ -278,16 +281,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[r.Memory.ID] = r.Memory
 	}
 
-	// Per-memory: best cosine score and the chunk that produced it.
-	bestCosine := make(map[string]float64)
-	bestChunk := make(map[string]*types.Chunk)
-	for _, s := range scored {
-		if s.cosine > bestCosine[s.chunk.MemoryID] {
-			bestCosine[s.chunk.MemoryID] = s.cosine
-			bestChunk[s.chunk.MemoryID] = s.chunk
-		}
-	}
-
+	// Composite scoring per memory.
 	var results []types.SearchResult
 	for id, m := range memories {
 		bm25 := 0.0
@@ -302,7 +296,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		score := CompositeScore(input)
 
-		mc := bestChunk[id]
 		result := types.SearchResult{
 			Memory:     m,
 			Score:      score,
@@ -312,11 +305,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				"bm25":    bm25,
 				"recency": RecencyDecay(input.HoursSince),
 			},
-		}
-		if mc != nil {
-			result.MatchedChunk = mc.ChunkText
-			result.MatchedChunkIndex = mc.ChunkIndex
-			result.MatchedChunkSection = mc.SectionHeading
+			MatchedChunk:        bestChunkText[id],
+			MatchedChunkIndex:   bestChunkIndex[id],
+			MatchedChunkSection: bestChunkSection[id],
 		}
 		switch detail {
 		case "id_only":
@@ -325,7 +316,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			if m.Summary != nil {
 				result.Memory.Content = *m.Summary
 			} else {
-				// Summary not yet generated; truncate content as preview.
 				content := m.Content
 				if len(content) > 500 {
 					content = content[:500] + "…"
@@ -338,7 +328,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	sortResults(results)
 
-	// Apply optional re-ranking before final truncation.
+	// Optional re-ranking (unchanged).
 	if opts.Reranker != nil && len(results) > 0 {
 		items := make([]RerankItem, len(results))
 		for i, r := range results {
@@ -359,18 +349,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		reranked, err := opts.Reranker.RerankResults(ctx, query, items)
 		if err == nil && len(reranked) > 0 {
-			// Build lookup map from reranked scores.
 			scoreMap := make(map[string]float64, len(reranked))
 			for _, rr := range reranked {
 				scoreMap[rr.ID] = rr.Score
 			}
-			// Overwrite scores for matched IDs.
 			for i := range results {
 				if newScore, ok := scoreMap[results[i].Memory.ID]; ok {
 					results[i].Score = newScore
 				}
 			}
-			// Re-sort with new scores.
 			sortResults(results)
 		}
 	}
@@ -379,11 +366,11 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Update access timestamps for returned results.
+	// Update access timestamps.
 	for _, r := range results {
 		_ = e.backend.TouchMemory(ctx, r.Memory.ID)
-		if r.MatchedChunk != "" && bestChunk[r.Memory.ID] != nil {
-			_ = e.backend.UpdateChunkLastMatched(ctx, bestChunk[r.Memory.ID].ID)
+		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
+			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}
 	}
 
@@ -432,74 +419,13 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	return nil
 }
 
-// embedToBlob encodes a float32 vector as a little-endian byte slice.
-func embedToBlob(vec []float32) []byte {
-	b := make([]byte, 4*len(vec))
-	for i, f := range vec {
-		u := math.Float32bits(f)
-		b[4*i] = byte(u)
-		b[4*i+1] = byte(u >> 8)
-		b[4*i+2] = byte(u >> 16)
-		b[4*i+3] = byte(u >> 24)
-	}
-	return b
-}
-
-// blobToEmbed decodes a little-endian byte slice back to float32 vector.
-func blobToEmbed(b []byte) []float32 {
-	if len(b)%4 != 0 {
-		return nil
-	}
-	vec := make([]float32, len(b)/4)
-	for i := range vec {
-		u := uint32(b[4*i]) | uint32(b[4*i+1])<<8 | uint32(b[4*i+2])<<16 | uint32(b[4*i+3])<<24
-		vec[i] = math.Float32frombits(u)
-	}
-	return vec
-}
-
-// cosineSimilarity returns the cosine similarity between two equal-length vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
 func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
 }
 
-// sortByScore sorts descending by cosine (insertion sort — small N, cache-friendly).
-func sortByScore(s []chunkScore) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j].cosine > s[j-1].cosine; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}
-
 // sortResults sorts descending by composite score.
 func sortResults(r []types.SearchResult) {
-	for i := 1; i < len(r); i++ {
-		for j := i; j > 0 && r[j].Score > r[j-1].Score; j-- {
-			r[j], r[j-1] = r[j-1], r[j]
-		}
-	}
-}
-
-type chunkScore struct {
-	chunk  *types.Chunk
-	cosine float64
+	sort.Slice(r, func(i, j int) bool { return r[i].Score > r[j].Score })
 }
 
 // List returns memories for the project matching optional filters.
@@ -642,12 +568,14 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 
 const consolidateJaccardThreshold = 0.85
 const consolidateMaxMemories = 500
+const consolidateCombinedThreshold = 0.80
 
 // ConsolidateWithClaude runs base consolidation then finds near-duplicate memory
-// pairs via character-bigram Jaccard similarity, batches them to reviewer for
-// merge decisions, and applies the approved merges.
+// pairs via MinHash/LSH candidate generation, scores them with a hybrid
+// Jaccard + embedding cosine signal, batches them to reviewer for merge
+// decisions, and applies the approved merges.
 func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer MergeReviewer) (map[string]any, error) {
-	// 1. Run base consolidation first.
+	// 1. Run base consolidation.
 	result, err := e.Consolidate(ctx)
 	if err != nil {
 		return nil, err
@@ -659,37 +587,64 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		return result, err
 	}
 
-	// 3. Filter: content 50-4000 chars, not immutable.
+	// 3. Filter: 50-4000 chars, not immutable.
 	var filtered []*types.Memory
+	memMap := make(map[string]*types.Memory)
 	for _, m := range mems {
-		if m.Immutable {
-			continue
-		}
-		if len(m.Content) < 50 || len(m.Content) > 4000 {
+		if m.Immutable || len(m.Content) < 50 || len(m.Content) > 4000 {
 			continue
 		}
 		filtered = append(filtered, m)
+		memMap[m.ID] = m
 	}
 
-	// 4. Pairwise bigramJaccard, collect candidates >= threshold.
+	// 4. Compute MinHash signatures — O(n).
+	hasher := minhash.NewHasher(42)
+	idx := minhash.NewIndex(16, 8)
+	for _, m := range filtered {
+		sig := hasher.Signature(m.Content)
+		idx.Add(m.ID, sig)
+	}
+
+	// 5. Get candidate pairs from LSH — O(n).
+	lshPairs := idx.Candidates()
+
+	// 6. Score each candidate: exact Jaccard + embedding cosine.
 	var candidates []MergeCandidate
-	for i := 0; i < len(filtered); i++ {
-		for j := i + 1; j < len(filtered); j++ {
-			sim := bigramJaccard(filtered[i].Content, filtered[j].Content)
-			if sim >= consolidateJaccardThreshold {
-				candidates = append(candidates, MergeCandidate{
-					MemoryA:    filtered[i],
-					MemoryB:    filtered[j],
-					Similarity: sim,
-				})
-			}
+	for _, pair := range lshPairs {
+		memA, memB := memMap[pair[0]], memMap[pair[1]]
+		if memA == nil || memB == nil {
+			continue
 		}
+
+		jaccard := bigramJaccard(memA.Content, memB.Content)
+		if jaccard < consolidateJaccardThreshold {
+			continue // LSH false positive
+		}
+
+		// Embedding cosine distance → similarity.
+		dist, err := e.backend.ChunkEmbeddingDistance(ctx, memA.ID, memB.ID)
+		if err != nil {
+			dist = 2.0 // treat as max distance on error
+		}
+		cosineSim := 1.0 - dist
+
+		// Combined score: weighted Jaccard + cosine.
+		combined := 0.7*jaccard + 0.3*cosineSim
+		if combined < consolidateCombinedThreshold {
+			continue
+		}
+
+		candidates = append(candidates, MergeCandidate{
+			MemoryA:    memA,
+			MemoryB:    memB,
+			Similarity: combined,
+		})
 	}
 
-	// 5. Batch into groups of batchSize and call reviewer.
+	// 7. Batch candidates to Claude reviewer.
 	const batchSize = 10
-	var totalMerged int
-	var totalReviewed int
+	var totalMerged, totalReviewed int
 	for start := 0; start < len(candidates); start += batchSize {
 		end := start + batchSize
 		if end > len(candidates) {
@@ -698,7 +653,6 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		batch := candidates[start:end]
 		decisions, err := reviewer.ReviewMergeCandidates(ctx, batch)
 		if err != nil {
-			// Log and continue — don't abort entire consolidation on reviewer error.
 			continue
 		}
 		totalReviewed += len(batch)
@@ -708,13 +662,11 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			}
 			content := d.MergedContent
 			if content != "" {
-				_, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil)
-				if err != nil {
+				if _, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil); err != nil {
 					continue
 				}
 			}
-			deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false)
-			if err != nil || !deleted {
+			if deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false); err != nil || !deleted {
 				continue
 			}
 			totalMerged++
@@ -723,16 +675,20 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	result["merged_memories"] = totalMerged
 	result["candidates_reviewed"] = totalReviewed
+	result["lsh_candidates"] = len(lshPairs)
+	result["jaccard_passed"] = len(candidates)
 	return result, nil
 }
 
 // bigramJaccard computes character-bigram Jaccard similarity between two strings.
 // Returns |A∩B| / |A∪B| where A and B are the bigram sets of a and b.
+// Iterates over Unicode code points (runes), not bytes, to handle multibyte UTF-8.
 func bigramJaccard(a, b string) float64 {
-	bigrams := func(s string) map[string]struct{} {
-		m := make(map[string]struct{}, len(s))
-		for i := 0; i+1 < len(s); i++ {
-			m[s[i:i+2]] = struct{}{}
+	bigrams := func(s string) map[[2]rune]struct{} {
+		r := []rune(s)
+		m := make(map[[2]rune]struct{}, len(r))
+		for i := 0; i+1 < len(r); i++ {
+			m[[2]rune{r[i], r[i+1]}] = struct{}{}
 		}
 		return m
 	}

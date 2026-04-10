@@ -45,7 +45,18 @@ func New(apiKey string) (*Client, error) {
 // advisorModel is the model to escalate to (e.g. "claude-opus-4-6").
 // advisorMaxUses is the max_uses value in the advisor tool declaration.
 // maxTokens is the max_tokens field in the request.
+// claudeAPITimeout is the maximum time a single Claude API call may take.
+// This guards against hung connections when the caller's context has no deadline.
+const claudeAPITimeout = 90 * time.Second
+
 func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, advisorModel string, advisorMaxUses, maxTokens int) (string, error) {
+	// Apply a per-request deadline if the caller's context has none.
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, claudeAPITimeout)
+		defer cancel()
+	}
+
 	reqBody := messagesRequest{
 		Model:     executorModel,
 		MaxTokens: maxTokens,

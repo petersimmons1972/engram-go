@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -79,6 +81,16 @@ func (b *PostgresBackend) Close() {
 }
 
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
+	// Ensure the migration tracking table exists. This is always idempotent.
+	const createTracker = `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			filename   TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`
+	if _, err := b.pool.Exec(ctx, createTracker); err != nil {
+		return fmt.Errorf("create schema_migrations table: %w", err)
+	}
+
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
@@ -87,15 +99,109 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 			continue
 		}
-		sql, err := migrationsFS.ReadFile("migrations/" + e.Name())
+		name := e.Name()
+
+		// Skip already-applied migrations.
+		var applied bool
+		err := b.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename = $1)`, name,
+		).Scan(&applied)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", e.Name(), err)
+			return fmt.Errorf("check migration %s: %w", name, err)
+		}
+		if applied {
+			continue
+		}
+
+		// Gate 004: only apply if backfill is complete.
+		if name == "004_pgvector_finalize.sql" {
+			var pending string
+			err := b.pool.QueryRow(ctx,
+				`SELECT COALESCE(
+					(SELECT value FROM project_meta WHERE project='_engram' AND key='pgvector_backfill_pending'),
+					'false'
+				)`).Scan(&pending)
+			if err != nil {
+				return fmt.Errorf("check backfill status: %w", err)
+			}
+			if pending == "true" {
+				slog.Info("skipping 004_pgvector_finalize.sql — backfill still pending")
+				continue
+			}
+		}
+
+		sql, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 		if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", e.Name(), err)
+			return fmt.Errorf("apply migration %s: %w", name, err)
+		}
+		if _, err := b.pool.Exec(ctx,
+			`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
+		); err != nil {
+			return fmt.Errorf("record migration %s: %w", name, err)
+		}
+		slog.Info("applied migration", "file", name)
+
+		// After 003: run the Go-side backfill.
+		if name == "003_pgvector.sql" {
+			if err := b.backfillVectors(ctx); err != nil {
+				return fmt.Errorf("pgvector backfill failed: %w", err)
+			}
 		}
 	}
 	return nil
+}
+
+// backfillVectors converts existing BYTEA embeddings to the new embedding_vec
+// vector(768) column. Called once after 003_pgvector.sql creates the column.
+// Idempotent: skips rows where embedding_vec is already populated.
+func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, embedding FROM chunks
+		WHERE embedding IS NOT NULL AND embedding_vec IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill query: %w", err)
+	}
+	defer rows.Close()
+
+	var converted int
+	for rows.Next() {
+		var id string
+		var blob []byte
+		if err := rows.Scan(&id, &blob); err != nil {
+			return fmt.Errorf("backfill scan: %w", err)
+		}
+		if len(blob)%4 != 0 || len(blob) == 0 {
+			slog.Warn("backfill: skipping chunk with invalid BYTEA length", "id", id, "len", len(blob))
+			continue
+		}
+		// Decode little-endian float32 blob.
+		vec := make([]float32, len(blob)/4)
+		for i := range vec {
+			u := uint32(blob[4*i]) | uint32(blob[4*i+1])<<8 | uint32(blob[4*i+2])<<16 | uint32(blob[4*i+3])<<24
+			vec[i] = math.Float32frombits(u)
+		}
+		// Write to the new vector column using pgvector encoding.
+		if _, err := b.pool.Exec(ctx,
+			"UPDATE chunks SET embedding_vec = $1 WHERE id = $2",
+			pgvector.NewVector(vec), id,
+		); err != nil {
+			return fmt.Errorf("backfill update chunk %s: %w", id, err)
+		}
+		converted++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("backfill iteration: %w", err)
+	}
+
+	slog.Info("pgvector backfill complete", "chunks_converted", converted)
+
+	// Mark backfill done so 004 can run.
+	_, err = b.pool.Exec(ctx,
+		`UPDATE project_meta SET value='false' WHERE project='_engram' AND key='pgvector_backfill_pending'`)
+	return err
 }
 
 // ── Transactions ─────────────────────────────────────────────────────────────
@@ -192,7 +298,8 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 }
 
 func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
-	row, err := b.pool.Query(ctx, "SELECT * FROM memories WHERE id=$1", id)
+	row, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2", id, b.project)
 	if err != nil {
 		return nil, err
 	}
@@ -244,12 +351,25 @@ func (b *PostgresBackend) UpdateMemory(
 	ctx context.Context, id string,
 	content *string, tags []string, importance *int,
 ) (*types.Memory, error) {
-	m, err := b.GetMemory(ctx, id)
+	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if m == nil {
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Lock the row for the duration of the read-modify-write to prevent races.
+	row, err := tx.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		id, b.project)
+	if err != nil {
+		return nil, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	if m.Immutable {
 		return nil, fmt.Errorf("memory %q is immutable and cannot be updated", id)
@@ -274,39 +394,31 @@ func (b *PostgresBackend) UpdateMemory(
 	if content != nil {
 		hash := contentHash(m.Content)
 		m.ContentHash = &hash
-		_, err = b.pool.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5 WHERE id=$6",
-			m.Content, tagsJSON, m.Importance, now, hash, id,
+		_, err = tx.Exec(ctx,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5 WHERE id=$6 AND project=$7",
+			m.Content, tagsJSON, m.Importance, now, hash, id, b.project,
 		)
 	} else {
-		_, err = b.pool.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4 WHERE id=$5",
-			m.Content, tagsJSON, m.Importance, now, id,
+		_, err = tx.Exec(ctx,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4 WHERE id=$5 AND project=$6",
+			m.Content, tagsJSON, m.Importance, now, id, b.project,
 		)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	m.UpdatedAt = now
 	return m, nil
 }
 
+// DeleteMemory removes a memory and all its dependent data (chunks, relationships)
+// in a single atomic transaction. Routes through DeleteMemoryAtomic — keeping both
+// for interface compatibility.
 func (b *PostgresBackend) DeleteMemory(ctx context.Context, id string) (bool, error) {
-	m, err := b.GetMemory(ctx, id)
-	if err != nil {
-		return false, err
-	}
-	if m != nil && m.Immutable {
-		return false, fmt.Errorf("memory %q is immutable and cannot be deleted", id)
-	}
-	tag, err := b.pool.Exec(ctx,
-		"WITH d AS (DELETE FROM memories WHERE id=$1 RETURNING id) SELECT count(*) FROM d",
-		id,
-	)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() > 0, nil
+	return b.DeleteMemoryAtomic(ctx, b.project, id, false)
 }
 
 func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id string, force bool) (bool, error) {
@@ -415,10 +527,14 @@ func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (id) DO NOTHING`
 	for _, c := range chunks {
+		var embParam any
+		if len(c.Embedding) > 0 {
+			embParam = pgvector.NewVector(c.Embedding)
+		}
 		_, err := ex.Exec(ctx, chunkSQL,
 			c.ID, c.MemoryID, c.Project,
 			c.ChunkText, c.ChunkIndex, c.ChunkHash,
-			c.Embedding, c.SectionHeading, c.ChunkType,
+			embParam, c.SectionHeading, c.ChunkType,
 		)
 		if err != nil {
 			return err
@@ -537,11 +653,57 @@ func (b *PostgresBackend) GetChunksPendingEmbedding(ctx context.Context, project
 	return pgx.CollectRows(rows, rowToChunk)
 }
 
-func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []byte) (int, error) {
+func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []float32) (int, error) {
 	tag, err := b.pool.Exec(ctx,
-		"UPDATE chunks SET embedding=$1 WHERE id=$2", embedding, chunkID,
+		"UPDATE chunks SET embedding=$1 WHERE id=$2", pgvector.NewVector(embedding), chunkID,
 	)
 	return int(tag.RowsAffected()), err
+}
+
+func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT c.id, c.memory_id,
+		       c.embedding <=> $1::vector AS distance,
+		       c.chunk_text, c.chunk_index, c.section_heading
+		FROM chunks c
+		WHERE c.project = $2 AND c.embedding IS NOT NULL
+		ORDER BY c.embedding <=> $1::vector
+		LIMIT $3`,
+		pgvector.NewVector(queryVec), project, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hits []VectorHit
+	for rows.Next() {
+		var h VectorHit
+		if err := rows.Scan(&h.ChunkID, &h.MemoryID, &h.Distance,
+			&h.ChunkText, &h.ChunkIndex, &h.SectionHeading); err != nil {
+			return nil, err
+		}
+		hits = append(hits, h)
+	}
+	return hits, rows.Err()
+}
+
+func (b *PostgresBackend) ChunkEmbeddingDistance(ctx context.Context, memAID, memBID string) (float64, error) {
+	var dist *float64
+	err := b.pool.QueryRow(ctx, `
+		SELECT MIN(ca.embedding <=> cb.embedding)
+		FROM chunks ca, chunks cb
+		WHERE ca.memory_id = $1 AND cb.memory_id = $2
+		  AND ca.embedding IS NOT NULL AND cb.embedding IS NOT NULL`,
+		memAID, memBID,
+	).Scan(&dist)
+	if err != nil {
+		return 2.0, err
+	}
+	if dist == nil {
+		return 2.0, nil // no embedded chunks
+	}
+	return *dist, nil
 }
 
 func (b *PostgresBackend) UpdateChunkLastMatched(ctx context.Context, chunkID string) error {
@@ -1017,7 +1179,9 @@ func (b *PostgresBackend) GetMemoriesPendingSummary(ctx context.Context, project
 }
 
 func (b *PostgresBackend) StoreSummary(ctx context.Context, memoryID, summary string) error {
-	_, err := b.pool.Exec(ctx, "UPDATE memories SET summary=$1 WHERE id=$2", summary, memoryID)
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET summary=$1 WHERE id=$2 AND project=$3",
+		summary, memoryID, b.project)
 	return err
 }
 
@@ -1050,7 +1214,9 @@ func (b *PostgresBackend) GetMemoriesMissingHash(ctx context.Context, project st
 }
 
 func (b *PostgresBackend) UpdateMemoryHash(ctx context.Context, memoryID, contentHash string) error {
-	_, err := b.pool.Exec(ctx, "UPDATE memories SET content_hash=$1 WHERE id=$2", contentHash, memoryID)
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET content_hash=$1 WHERE id=$2 AND project=$3",
+		contentHash, memoryID, b.project)
 	return err
 }
 
@@ -1148,7 +1314,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText      string
 		ChunkIndex     int
 		ChunkHash      string
-		Embedding      []byte
+		Embedding      pgvector.Vector
 		SectionHeading *string
 		ChunkType      string
 		LastMatched    *time.Time
@@ -1175,7 +1341,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText:      r.ChunkText,
 		ChunkIndex:     r.ChunkIndex,
 		ChunkHash:      r.ChunkHash,
-		Embedding:      r.Embedding,
+		Embedding:      r.Embedding.Slice(),
 		SectionHeading: r.SectionHeading,
 		ChunkType:      chunkType,
 		LastMatched:    r.LastMatched,

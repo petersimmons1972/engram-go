@@ -71,8 +71,15 @@ type Backend interface {
 	NullAllEmbeddings(ctx context.Context, project string) (int, error)
 	// GetChunksPendingEmbedding returns chunks with NULL embedding for a project.
 	GetChunksPendingEmbedding(ctx context.Context, project string, limit int) ([]*types.Chunk, error)
-	// UpdateChunkEmbedding sets the embedding bytes on a chunk. Returns rows updated.
-	UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []byte) (int, error)
+	// UpdateChunkEmbedding sets the embedding on a chunk. Returns rows updated.
+	UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []float32) (int, error)
+	// VectorSearch returns the nearest chunks to queryVec by cosine distance,
+	// using the HNSW index. Returns at most limit results.
+	VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error)
+	// ChunkEmbeddingDistance returns the minimum cosine distance between any
+	// chunk of memA and any chunk of memB. Returns 2.0 (max distance) if
+	// either memory has no embedded chunks.
+	ChunkEmbeddingDistance(ctx context.Context, memAID, memBID string) (float64, error)
 	// UpdateChunkLastMatched sets last_matched = now on a chunk.
 	UpdateChunkLastMatched(ctx context.Context, chunkID string) error
 	// GetPendingEmbeddingCount returns the count of chunks with NULL embedding.
@@ -166,6 +173,16 @@ type ConnectedResult struct {
 type FTSResult struct {
 	Memory *types.Memory
 	Score  float64
+}
+
+// VectorHit is a single result from a pgvector ANN search.
+type VectorHit struct {
+	ChunkID        string
+	MemoryID       string
+	Distance       float64 // cosine distance (0 = identical, 2 = opposite)
+	ChunkText      string
+	ChunkIndex     int
+	SectionHeading *string
 }
 
 // IDContent pairs a memory ID with its content (used for batch summary/hash operations).
