@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/petersimmons1972/engram/internal/claude"
@@ -151,8 +152,13 @@ func envInt(key string, def int) int {
 }
 
 func envBool(key string, def bool) bool {
-	if v := os.Getenv(key); v != "" {
-		return v == "1" || v == "true" || v == "yes"
+	v := strings.ToLower(os.Getenv(key))
+	switch v {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	default:
+		return def
 	}
-	return def
 }

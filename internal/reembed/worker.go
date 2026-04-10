@@ -57,15 +57,15 @@ func (w *Worker) Start() {
 	go w.run(ctx)
 }
 
-// Stop signals the worker and waits up to 35s.
+// Stop signals the worker and waits up to 8s.
 func (w *Worker) Stop() {
 	if w.cancel != nil {
 		w.cancel()
 	}
 	select {
 	case <-w.done:
-	case <-time.After(35 * time.Second):
-		slog.Warn("reembed worker did not stop within 35s", "project", w.project)
+	case <-time.After(8 * time.Second):
+		slog.Warn("reembed worker did not stop within 8s", "project", w.project)
 	}
 }
 

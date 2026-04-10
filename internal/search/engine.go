@@ -68,6 +68,7 @@ type SearchEngine struct {
 	backend    db.Backend
 	embedder   embed.Client
 	project    string
+	ollamaURL  string
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
 }
@@ -88,6 +89,7 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		backend:    backend,
 		embedder:   embedder,
 		project:    project,
+		ollamaURL:  ollamaURL,
 		summarizer: sum,
 		reembedder: reb,
 	}
@@ -103,26 +105,12 @@ func (e *SearchEngine) Close() {
 // (e.g. EnginePool, MCP tool handlers).
 func (e *SearchEngine) Backend() db.Backend { return e.backend }
 
-// Store persists a memory: sets defaults, chunks content, deduplicates by hash,
-// embeds new chunks, and writes everything inside a single transaction.
-func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
-	if m.ID == "" {
-		m.ID = types.NewMemoryID()
-	}
-	m.Project = e.project
-
-	if m.StorageMode == "" {
-		if len(m.Content) > 10_000 {
-			m.StorageMode = "document"
-		} else {
-			m.StorageMode = "focused"
-		}
-	}
-
-	if err := e.checkEmbedderMeta(ctx); err != nil {
-		return err
-	}
-
+// storeChunksForMemory chunks content, embeds each chunk, and returns the new
+// chunk records ready for storage. It is used by both Store (new memories) and
+// Correct (re-chunking after a content change). Embedding is done outside any
+// transaction because it is slow; callers are responsible for writing the
+// returned chunks inside a transaction.
+func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory) ([]*types.Chunk, error) {
 	// Produce chunk candidates. ChunkDocument returns []ChunkCandidate (with heading
 	// metadata). ChunkText returns plain []string which we wrap into candidates.
 	var candidates []chunk.ChunkCandidate
@@ -148,9 +136,9 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	for i, c := range candidates {
 		hash := chunk.ChunkHash(c.Text)
 
-		exists, err := e.backend.ChunkHashExists(ctx, hash, e.project)
+		exists, err := e.backend.ChunkHashExists(ctx, hash, m.ID)
 		if err != nil {
-			return fmt.Errorf("check chunk hash: %w", err)
+			return nil, fmt.Errorf("check chunk hash: %w", err)
 		}
 		if exists {
 			continue
@@ -158,7 +146,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 
 		embedding, err := e.embedder.Embed(ctx, c.Text)
 		if err != nil {
-			return fmt.Errorf("embed chunk %d: %w", i, err)
+			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
 		}
 
 		ch := &types.Chunk{
@@ -176,6 +164,33 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 			ch.SectionHeading = &heading
 		}
 		chunks = append(chunks, ch)
+	}
+	return chunks, nil
+}
+
+// Store persists a memory: sets defaults, chunks content, deduplicates by hash,
+// embeds new chunks, and writes everything inside a single transaction.
+func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
+	if m.ID == "" {
+		m.ID = types.NewMemoryID()
+	}
+	m.Project = e.project
+
+	if m.StorageMode == "" {
+		if len(m.Content) > 10_000 {
+			m.StorageMode = "document"
+		} else {
+			m.StorageMode = "focused"
+		}
+	}
+
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return err
+	}
+
+	chunks, err := e.storeChunksForMemory(ctx, m)
+	if err != nil {
+		return err
 	}
 
 	tx, err := e.backend.Begin(ctx)
@@ -463,8 +478,41 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 }
 
 // Correct updates mutable fields on an existing memory and returns the updated record.
+// When content is non-nil, the old chunks are deleted and new chunks are created so
+// the search index reflects the corrected text.
 func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error) {
-	return e.backend.UpdateMemory(ctx, id, content, tags, importance)
+	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance)
+	if err != nil {
+		return nil, err
+	}
+
+	// If content changed, delete stale chunks and re-chunk + re-embed the new content.
+	if content != nil {
+		if err := e.backend.DeleteChunksForMemory(ctx, mem.ID); err != nil {
+			return nil, fmt.Errorf("delete old chunks: %w", err)
+		}
+
+		chunks, err := e.storeChunksForMemory(ctx, mem)
+		if err != nil {
+			return nil, fmt.Errorf("re-chunk after correct: %w", err)
+		}
+
+		if len(chunks) > 0 {
+			tx, err := e.backend.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if err := e.backend.StoreChunksTx(ctx, tx, chunks); err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return mem, nil
 }
 
 // Forget deletes a memory by ID. Returns true if deleted, false if not found.
@@ -482,6 +530,9 @@ func (e *SearchEngine) Status(ctx context.Context) (*types.MemoryStats, error) {
 // immediately and subsequent IDs in the slice are not processed. Callers that need
 // all-or-nothing semantics should call this method once per ID and handle errors individually.
 func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("feedback: no memory IDs provided")
+	}
 	for _, id := range ids {
 		if _, err := e.backend.BoostEdgesForMemory(ctx, id, 1.05); err != nil {
 			return err
@@ -559,10 +610,25 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
 		return nil, err
 	}
+
+	// Stop old reembed worker and create a new one with the new model.
+	// Without this, the worker holds a stale reference to the original embedder
+	// and never runs because its done channel was already closed at construction.
+	e.reembedder.Stop()
+
+	newEmbedder, err := embed.NewOllamaClient(ctx, e.ollamaURL, newModel)
+	if err != nil {
+		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
+	}
+	e.embedder = newEmbedder
+
+	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
+	e.reembedder.Start()
+
 	return map[string]any{
 		"chunks_nulled": nulled,
 		"new_model":     newModel,
-		"status":        "migration started — reembed worker will complete in background",
+		"status":        "migration started — reembed worker running with new model",
 	}, nil
 }
 

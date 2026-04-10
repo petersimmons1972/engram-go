@@ -61,8 +61,8 @@ type Backend interface {
 	GetAllChunkTexts(ctx context.Context, project string, limit int) ([]string, error)
 	// GetChunksForMemories returns embedded chunks for specific memory IDs.
 	GetChunksForMemories(ctx context.Context, memoryIDs []string) ([]*types.Chunk, error)
-	// ChunkHashExists returns true if a chunk with this hash exists in the project.
-	ChunkHashExists(ctx context.Context, chunkHash, project string) (bool, error)
+	// ChunkHashExists returns true if a chunk with this hash exists for this memory.
+	ChunkHashExists(ctx context.Context, chunkHash, memoryID string) (bool, error)
 	// DeleteChunksForMemory deletes all chunks for a memory.
 	DeleteChunksForMemory(ctx context.Context, memoryID string) error
 	// DeleteChunksByIDs deletes specific chunks by ID. Returns count deleted.
