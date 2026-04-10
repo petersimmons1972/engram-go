@@ -62,3 +62,59 @@ func TestSignature_UTF8(t *testing.T) {
 	sig2 := h.Signature("日本語テスト")
 	require.Equal(t, sig1, sig2, "UTF-8 strings must produce identical signatures")
 }
+
+func TestLSH_IdenticalStrings_AreCandidates(t *testing.T) {
+	h := minhash.NewHasher(42)
+	idx := minhash.NewIndex(16, 8)
+
+	sig1 := h.Signature("the quick brown fox jumps over the lazy dog")
+	sig2 := h.Signature("the quick brown fox jumps over the lazy dog")
+
+	idx.Add("mem-1", sig1)
+	idx.Add("mem-2", sig2)
+
+	candidates := idx.Candidates()
+	require.Len(t, candidates, 1)
+	require.ElementsMatch(t, candidates[0][:], []string{"mem-1", "mem-2"})
+}
+
+func TestLSH_DifferentStrings_NotCandidates(t *testing.T) {
+	h := minhash.NewHasher(42)
+	idx := minhash.NewIndex(16, 8)
+
+	sig1 := h.Signature("aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd")
+	sig2 := h.Signature("xxxxxxxxxx yyyyyyyyyy zzzzzzzzzz wwwwwwwwww")
+
+	idx.Add("mem-1", sig1)
+	idx.Add("mem-2", sig2)
+
+	candidates := idx.Candidates()
+	require.Empty(t, candidates, "completely different strings should not be candidates")
+}
+
+func TestLSH_ThreeMemories_OnlyNearPairMatches(t *testing.T) {
+	h := minhash.NewHasher(42)
+	idx := minhash.NewIndex(16, 8)
+
+	base := "kubernetes deployment patterns for production workloads with high availability"
+	sig1 := h.Signature(base)
+	sig2 := h.Signature(base + " and resilience")
+	sig3 := h.Signature("completely unrelated text about cooking recipes and kitchen tips")
+
+	idx.Add("mem-1", sig1)
+	idx.Add("mem-2", sig2)
+	idx.Add("mem-3", sig3)
+
+	candidates := idx.Candidates()
+	// mem-1 and mem-2 should be candidates; mem-3 should not pair with either.
+	found := false
+	for _, pair := range candidates {
+		if (pair[0] == "mem-3") || (pair[1] == "mem-3") {
+			t.Error("mem-3 should not be a candidate with anything")
+		}
+		if (pair[0] == "mem-1" && pair[1] == "mem-2") || (pair[0] == "mem-2" && pair[1] == "mem-1") {
+			found = true
+		}
+	}
+	require.True(t, found, "mem-1 and mem-2 should be candidates")
+}
