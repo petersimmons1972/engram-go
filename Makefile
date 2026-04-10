@@ -1,28 +1,16 @@
-INFISICAL_DOMAIN  := https://infisical.petersimmons.com
-INFISICAL_PROJECT := f49c5b01-4bd1-4883-afbd-51c1fef53a2f
-INFISICAL_ENV     := prod
-INFISICAL_PATH    := /engram
-
-INFISICAL := infisical run \
-	--domain $(INFISICAL_DOMAIN) \
-	--projectId $(INFISICAL_PROJECT) \
-	--env $(INFISICAL_ENV) \
-	--path $(INFISICAL_PATH) \
-	--
-
 .PHONY: up down restart logs build test
 
-## Start engram (secrets injected from Infisical — no .env on disk)
+## Start engram — container fetches secrets from Infisical at startup via machine identity
 up:
-	$(INFISICAL) docker compose up -d engram-go
+	docker compose up -d engram-go
 
-## Stop engram (preserves volumes)
+## Stop engram (preserves volumes — never use 'down -v')
 down:
 	docker compose down
 
 ## Rebuild image and restart
 restart: build
-	$(INFISICAL) docker compose up -d --force-recreate engram-go
+	docker compose up -d --force-recreate engram-go
 
 ## Build the engram-go Docker image
 build:

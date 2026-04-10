@@ -2,3 +2,5 @@
 backups/
 .env
 .env.local
+.env.machine-identity
+infisical/infisical-bin
