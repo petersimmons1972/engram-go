@@ -103,26 +103,12 @@ func (e *SearchEngine) Close() {
 // (e.g. EnginePool, MCP tool handlers).
 func (e *SearchEngine) Backend() db.Backend { return e.backend }
 
-// Store persists a memory: sets defaults, chunks content, deduplicates by hash,
-// embeds new chunks, and writes everything inside a single transaction.
-func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
-	if m.ID == "" {
-		m.ID = types.NewMemoryID()
-	}
-	m.Project = e.project
-
-	if m.StorageMode == "" {
-		if len(m.Content) > 10_000 {
-			m.StorageMode = "document"
-		} else {
-			m.StorageMode = "focused"
-		}
-	}
-
-	if err := e.checkEmbedderMeta(ctx); err != nil {
-		return err
-	}
-
+// storeChunksForMemory chunks content, embeds each chunk, and returns the new
+// chunk records ready for storage. It is used by both Store (new memories) and
+// Correct (re-chunking after a content change). Embedding is done outside any
+// transaction because it is slow; callers are responsible for writing the
+// returned chunks inside a transaction.
+func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory) ([]*types.Chunk, error) {
 	// Produce chunk candidates. ChunkDocument returns []ChunkCandidate (with heading
 	// metadata). ChunkText returns plain []string which we wrap into candidates.
 	var candidates []chunk.ChunkCandidate
@@ -150,7 +136,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 
 		exists, err := e.backend.ChunkHashExists(ctx, hash, m.ID)
 		if err != nil {
-			return fmt.Errorf("check chunk hash: %w", err)
+			return nil, fmt.Errorf("check chunk hash: %w", err)
 		}
 		if exists {
 			continue
@@ -158,7 +144,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 
 		embedding, err := e.embedder.Embed(ctx, c.Text)
 		if err != nil {
-			return fmt.Errorf("embed chunk %d: %w", i, err)
+			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
 		}
 
 		ch := &types.Chunk{
@@ -176,6 +162,33 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 			ch.SectionHeading = &heading
 		}
 		chunks = append(chunks, ch)
+	}
+	return chunks, nil
+}
+
+// Store persists a memory: sets defaults, chunks content, deduplicates by hash,
+// embeds new chunks, and writes everything inside a single transaction.
+func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
+	if m.ID == "" {
+		m.ID = types.NewMemoryID()
+	}
+	m.Project = e.project
+
+	if m.StorageMode == "" {
+		if len(m.Content) > 10_000 {
+			m.StorageMode = "document"
+		} else {
+			m.StorageMode = "focused"
+		}
+	}
+
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return err
+	}
+
+	chunks, err := e.storeChunksForMemory(ctx, m)
+	if err != nil {
+		return err
 	}
 
 	tx, err := e.backend.Begin(ctx)
@@ -463,8 +476,41 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 }
 
 // Correct updates mutable fields on an existing memory and returns the updated record.
+// When content is non-nil, the old chunks are deleted and new chunks are created so
+// the search index reflects the corrected text.
 func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error) {
-	return e.backend.UpdateMemory(ctx, id, content, tags, importance)
+	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance)
+	if err != nil {
+		return nil, err
+	}
+
+	// If content changed, delete stale chunks and re-chunk + re-embed the new content.
+	if content != nil {
+		if err := e.backend.DeleteChunksForMemory(ctx, mem.ID); err != nil {
+			return nil, fmt.Errorf("delete old chunks: %w", err)
+		}
+
+		chunks, err := e.storeChunksForMemory(ctx, mem)
+		if err != nil {
+			return nil, fmt.Errorf("re-chunk after correct: %w", err)
+		}
+
+		if len(chunks) > 0 {
+			tx, err := e.backend.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if err := e.backend.StoreChunksTx(ctx, tx, chunks); err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return mem, nil
 }
 
 // Forget deletes a memory by ID. Returns true if deleted, false if not found.
