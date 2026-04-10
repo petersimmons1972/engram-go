@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-//go:embed ../../migrations/*.sql
+//go:embed migrations/*.sql
 var migrationsFS embed.FS
 
 // projectSlugRE strips characters not safe for project names.
@@ -160,7 +161,7 @@ func (b *PostgresBackend) StoreMemoryTx(ctx context.Context, tx Tx, m *types.Mem
 
 // execer is satisfied by both *pgxpool.Pool and pgx.Tx.
 type execer interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *types.Memory) error {
