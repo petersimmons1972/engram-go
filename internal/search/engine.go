@@ -299,6 +299,13 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 		return fmt.Errorf("embedder mismatch: stored=%q current=%q — run memory_migrate_embedder first",
 			storedName, e.embedder.Name())
 	}
+	// Skip dimension check if migration is in progress — the new model may have
+	// different dimensions, and embedder_dimensions will be reset once re-embedding
+	// completes.
+	migrating, _, _ := e.backend.GetMeta(ctx, e.project, "embedding_migration_in_progress")
+	if migrating == "true" {
+		return nil
+	}
 	storedDimsStr, ok, err := e.backend.GetMeta(ctx, e.project, "embedder_dimensions")
 	if err != nil {
 		return err
@@ -449,9 +456,7 @@ func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// jaccardMergeThreshold is the Jaccard similarity above which two memories are
-// considered duplicates during consolidation.
-const jaccardMergeThreshold = 0.85
+// jaccardMergeThreshold would be 0.85 when Jaccard near-duplicate merge is implemented (future task).
 
 // Consolidate prunes stale and cold memories and decays graph edges.
 // Returns a summary map of counts for each operation performed.
