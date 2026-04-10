@@ -26,10 +26,12 @@ type SearchEngine struct {
 }
 
 // New constructs a SearchEngine and starts background summarize and reembed workers.
+// claudeClient may be nil, in which case summarization falls back to Ollama.
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
-	ollamaURL, summarizeModel string, summarizeEnabled bool) *SearchEngine {
+	ollamaURL, summarizeModel string, summarizeEnabled bool,
+	claudeClient summarize.ClaudeCompleter) *SearchEngine {
 
-	sum := summarize.NewWorker(backend, project, ollamaURL, summarizeModel, summarizeEnabled)
+	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.Start()
 
 	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)

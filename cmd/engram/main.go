@@ -10,10 +10,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/search"
+	"github.com/petersimmons1972/engram/internal/summarize"
 )
 
 func main() {
@@ -31,6 +33,8 @@ func run() error {
 	embedModel := fs.String("model", envOr("ENGRAM_OLLAMA_MODEL", "nomic-embed-text"), "Embedding model")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
+	claudeAPIKey := fs.String("claude-api-key", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key for Claude advisor")
+	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Optional bearer token (empty = no auth)")
@@ -61,12 +65,22 @@ func run() error {
 	// closure captures the interface value, not the concrete pointer.
 	var embedClient embed.Client = embedder
 
+	// Construct Claude client if API key provided and Claude summarization is enabled.
+	var claudeCompleter summarize.ClaudeCompleter
+	if *claudeAPIKey != "" && *claudeSummarize {
+		cc, err := claude.New(*claudeAPIKey)
+		if err != nil {
+			return fmt.Errorf("claude client: %w", err)
+		}
+		claudeCompleter = cc
+	}
+
 	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(ctx, project, dsn)
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled)
+		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 

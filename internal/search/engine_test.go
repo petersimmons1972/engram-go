@@ -51,7 +51,7 @@ func newTestEngine(t *testing.T, project string) *search.SearchEngine {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 	return search.New(ctx, backend, &fakeClient{dims: 768}, project,
-		"http://ollama:11434", "llama3.2", false)
+		"http://ollama:11434", "llama3.2", false, nil)
 }
 
 func TestSearchEngine_Store(t *testing.T) {
