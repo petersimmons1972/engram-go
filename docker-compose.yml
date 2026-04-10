@@ -1,0 +1,116 @@
+# engram — Docker Compose (v2.0, Go)
+#
+# Three services:
+#   postgres   — persistent storage (claims existing engram_pgdata volume)
+#   ollama     — local embedding inference (nomic-embed-text)
+#   engram-go  — MCP server (port 8788)
+#
+# WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
+# volumes and permanently deletes all memory data. Use 'make down-safe' or
+# 'docker compose down' (no -v) to stop containers while preserving data.
+#
+# GPU SETUP — read before starting:
+#
+#   NVIDIA:  Uncomment the `deploy` block under the ollama service.
+#            Requires NVIDIA Container Toolkit on the host.
+#
+#   AMD:     Change the ollama image to ollama/ollama:rocm and
+#            uncomment the `devices` block under the ollama service.
+#
+#   Mac (M-series):  Docker Desktop does not pass through Metal GPU.
+#            Run Ollama natively instead:  brew install ollama && ollama serve
+#            Then set OLLAMA_URL=http://host.docker.internal:11434 in your .env
+#            and comment out the ollama service below.
+
+services:
+
+  postgres:
+    container_name: engram-postgres
+    image: cgr.dev/chainguard/postgres:latest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=engram
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-engram}
+      - POSTGRES_DB=engram
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "engram"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    container_name: engram-ollama
+    image: ollama/ollama:latest             # AMD users: change to ollama/ollama:rocm
+    volumes:
+      - ollama-data:/root/.ollama           # model files persist across restarts
+    ports:
+      - "127.0.0.1:11434:11434"
+    restart: unless-stopped
+    #
+    # ── NVIDIA GPU ───────────────────────────────────────────────────────────
+    # Uncomment the deploy block below. Requires NVIDIA Container Toolkit.
+    #
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    #
+    # ── AMD GPU (ROCm) ───────────────────────────────────────────────────────
+    # Change image to ollama/ollama:rocm above, then uncomment devices below.
+    # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
+    #
+    # devices:
+    #   - /dev/kfd:/dev/kfd
+    #   - /dev/dri:/dev/dri
+
+  engram-go:
+    container_name: engram-go-app
+    image: engram-go:2.0.0
+    ports:
+      - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
+    environment:
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:-engram}@postgres:5432/engram
+      - OLLAMA_URL=http://ollama:11434
+      - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-nomic-embed-text}
+      - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2}
+      # ── Claude advisor strategy (v2.0) — all opt-in, default off ─────────
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}
+      - ENGRAM_CLAUDE_CONSOLIDATE=${ENGRAM_CLAUDE_CONSOLIDATE:-false}
+      - ENGRAM_CLAUDE_RERANK=${ENGRAM_CLAUDE_RERANK:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Test database (CI only) ───────────────────────────────────────────────
+  test-postgres:
+    container_name: engram-test-postgres
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      - POSTGRES_DB=engram_test
+      - POSTGRES_USER=engram
+      - POSTGRES_PASSWORD=test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "engram"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+volumes:
+  pgdata:
+    external: true
+    name: engram_pgdata            # claims existing data — all memories preserved
+  ollama-data:
+    external: true
+    name: ollama_ollama_storage    # reuse existing volume — models already downloaded
