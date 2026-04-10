@@ -795,18 +795,54 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 
 	var results []FTSResult
 	for rows.Next() {
-		// We need to scan the extra "rank" column that isn't in the memories table.
-		// Use pgx.RowToStructByName is unsuitable here; scan manually.
-		vals, err := rows.Values()
-		if err != nil {
+		// SELECT m.*, rank — 17 columns: 16 memory fields + rank.
+		// Scan all fields in one call to avoid consuming the cursor twice.
+		var (
+			id, content, memType, project string
+			tags                          []byte
+			importance, accessCount       int
+			lastAccessed, createdAt, updatedAt time.Time
+			immutable                     bool
+			expiresAt                     *time.Time
+			summary, contentHash          *string
+			storageMode                   string
+			searchVector                  []byte
+			rank                          float64
+		)
+		if err := rows.Scan(
+			&id, &content, &memType, &project, &tags,
+			&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
+			&immutable, &expiresAt, &summary, &contentHash, &storageMode,
+			&searchVector, &rank,
+		); err != nil {
 			return nil, err
 		}
-		// The last value is the rank float.
-		rank, _ := vals[len(vals)-1].(float64)
-		// Reconstruct memory from rows — use a sub-query to get clean values.
-		m, err := rowToMemory(rows)
-		if err != nil {
-			return nil, err
+		var tagSlice []string
+		if len(tags) > 0 {
+			_ = json.Unmarshal(tags, &tagSlice)
+		}
+		if tagSlice == nil {
+			tagSlice = []string{}
+		}
+		if storageMode == "" {
+			storageMode = "focused"
+		}
+		m := &types.Memory{
+			ID:           id,
+			Content:      content,
+			MemoryType:   memType,
+			Project:      project,
+			Tags:         tagSlice,
+			Importance:   importance,
+			AccessCount:  accessCount,
+			LastAccessed: lastAccessed,
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
+			Immutable:    immutable,
+			ExpiresAt:    expiresAt,
+			Summary:      summary,
+			ContentHash:  contentHash,
+			StorageMode:  storageMode,
 		}
 		results = append(results, FTSResult{Memory: m, Score: rank})
 	}

@@ -2,8 +2,10 @@ package search_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -11,6 +13,12 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
+
+// uniqueProject returns a per-run isolated project name to prevent cross-run
+// state leakage when the test database persists between test invocations.
+func uniqueProject(base string) string {
+	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
+}
 
 func testDSN(t *testing.T) string {
 	t.Helper()
@@ -46,7 +54,7 @@ func newTestEngine(t *testing.T, project string) *search.SearchEngine {
 }
 
 func TestSearchEngine_Store(t *testing.T) {
-	engine := newTestEngine(t, "test-store")
+	engine := newTestEngine(t, uniqueProject("test-store"))
 	t.Cleanup(func() { engine.Close() })
 
 	ctx := context.Background()
@@ -63,7 +71,7 @@ func TestSearchEngine_Store(t *testing.T) {
 }
 
 func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
-	engine := newTestEngine(t, "test-dedup")
+	engine := newTestEngine(t, uniqueProject("test-dedup"))
 	t.Cleanup(func() { engine.Close() })
 
 	ctx := context.Background()
@@ -79,7 +87,7 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 }
 
 func TestSearchEngine_Recall(t *testing.T) {
-	engine := newTestEngine(t, "test-recall")
+	engine := newTestEngine(t, uniqueProject("test-recall"))
 	t.Cleanup(func() { engine.Close() })
 	ctx := context.Background()
 
