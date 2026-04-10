@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -63,6 +64,13 @@ func run() error {
 	if err != nil || (parsedOllamaURL.Scheme != "http" && parsedOllamaURL.Scheme != "https") {
 		return fmt.Errorf("invalid --ollama-url %q: must be an http:// or https:// URL", *ollamaURL)
 	}
+	// Block literal private-IP Ollama URLs to prevent SSRF (#55).
+	// Hostnames (e.g. "ollama" in Docker Compose) are intentionally excluded:
+	// they resolve to private container IPs by design and are not attacker-controlled.
+	if ollamaHost := parsedOllamaURL.Hostname(); net.ParseIP(ollamaHost) != nil && isPrivateIP(ollamaHost) {
+		return fmt.Errorf("invalid --ollama-url: IP %q is in a private/reserved range (SSRF protection)", ollamaHost)
+	}
+
 	safeOllamaURL := *parsedOllamaURL
 	safeOllamaURL.User = nil
 	slog.Info("connecting to Ollama", "url", safeOllamaURL.String(), "model", *embedModel)
@@ -141,6 +149,34 @@ func run() error {
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 	return srv.Start(ctx, *host, *port, *apiKey)
+}
+
+// isPrivateIP reports whether ipStr is an IP address that falls within a
+// private, loopback, or link-local range. Only literal IP addresses are
+// checked; hostnames must be resolved before calling this function.
+// Used to block SSRF via the Ollama URL flag (#55).
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"169.254.0.0/16", // link-local / AWS metadata endpoint
+		"127.0.0.0/8",    // loopback
+		"::1/128",        // IPv6 loopback
+		"fc00::/7",       // IPv6 ULA
+		"fe80::/10",      // IPv6 link-local
+	}
+	for _, cidr := range privateRanges {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func envOr(key, def string) string {
