@@ -41,7 +41,7 @@ func NewOllamaClient(ctx context.Context, baseURL, model string) (*OllamaClient,
 		IdleConnTimeout:     30 * time.Second,
 		MaxIdleConnsPerHost: 2,
 	}
-	hc := &http.Client{Transport: transport, Timeout: 60 * time.Second}
+	hc := &http.Client{Transport: transport}
 
 	c := &OllamaClient{baseURL: baseURL, model: model, http: hc}
 
@@ -158,5 +158,8 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 			return nil
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("ollama pull: reading response: %w", err)
+	}
+	return fmt.Errorf("ollama pull: stream ended without success status")
 }
