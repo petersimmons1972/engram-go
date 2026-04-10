@@ -71,8 +71,10 @@ func TestClient_Complete_EmptyContent(t *testing.T) {
 func TestClient_Complete_PassesAdvisorTool(t *testing.T) {
 	var capturedBody struct {
 		Tools []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
+			Type    string `json:"type"`
+			Name    string `json:"name"`
+			Model   string `json:"model"`
+			MaxUses int    `json:"max_uses"`
 		} `json:"tools"`
 	}
 
@@ -96,4 +98,6 @@ func TestClient_Complete_PassesAdvisorTool(t *testing.T) {
 	require.Len(t, capturedBody.Tools, 1)
 	require.Equal(t, "advisor_20260301", capturedBody.Tools[0].Type)
 	require.Equal(t, "advisor", capturedBody.Tools[0].Name)
+	require.Equal(t, "claude-opus-4-6", capturedBody.Tools[0].Model)
+	require.Equal(t, 2, capturedBody.Tools[0].MaxUses)
 }
