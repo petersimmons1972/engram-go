@@ -34,7 +34,7 @@ type engineEntry struct {
 // It enforces a maximum pool size by evicting the least-recently-used engine
 // when the cap is reached. Safe for concurrent use.
 type EnginePool struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	engines map[string]*engineEntry
 	factory EngineFactory
 }
@@ -49,26 +49,44 @@ func NewEnginePool(factory EngineFactory) *EnginePool {
 
 // Get returns the cached engine for project, creating one via factory if needed.
 // If the pool is at capacity, the least-recently-used engine is evicted first.
+//
+// Uses double-checked locking so the slow factory path (PostgreSQL connection +
+// migrations) runs outside the mutex, preventing contention across projects (#31).
 func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, error) {
 	if len(project) > 128 {
 		return nil, fmt.Errorf("project name too long (%d chars, max 128)", len(project))
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
+	// Fast path: read lock is sufficient when the engine already exists.
+	p.mu.RLock()
 	if e, ok := p.engines[project]; ok {
 		e.lastAccess = time.Now()
+		p.mu.RUnlock()
 		return e.handle, nil
 	}
+	p.mu.RUnlock()
 
-	// Evict LRU entry if at capacity.
-	if len(p.engines) >= maxPoolSize {
-		p.evictLRULocked()
-	}
-
+	// Slow path: create engine OUTSIDE the lock so other projects are not blocked
+	// during the PostgreSQL connection + migration phase.
 	h, err := p.factory(ctx, project)
 	if err != nil {
 		return nil, err
+	}
+
+	// Write lock only to insert. Check again in case a concurrent caller already
+	// created this project's engine while we were in factory.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e, ok := p.engines[project]; ok {
+		// Race: another goroutine won — discard the engine we just created.
+		if h != nil && h.Engine != nil {
+			h.Engine.Close()
+		}
+		e.lastAccess = time.Now()
+		return e.handle, nil
+	}
+	if len(p.engines) >= maxPoolSize {
+		p.evictLRULocked()
 	}
 	p.engines[project] = &engineEntry{handle: h, lastAccess: time.Now()}
 	return h, nil
