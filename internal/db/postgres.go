@@ -217,6 +217,29 @@ func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memo
 	return m, nil
 }
 
+func (b *PostgresBackend) GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE project=$1 AND id=ANY($2)",
+		project, ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var mems []*types.Memory
+	for rows.Next() {
+		m, err := rowToMemory(rows)
+		if err != nil {
+			return nil, err
+		}
+		mems = append(mems, m)
+	}
+	return mems, rows.Err()
+}
+
 func (b *PostgresBackend) UpdateMemory(
 	ctx context.Context, id string,
 	content *string, tags []string, importance *int,

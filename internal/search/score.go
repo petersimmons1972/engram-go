@@ -14,7 +14,7 @@ type ScoreInput struct {
 	Cosine     float64 // cosine similarity [0,1]
 	BM25       float64 // normalized BM25 score [0,1]
 	HoursSince float64 // hours since last access
-	Importance int     // [0,4]; importance=3 → boost of 1.0 (no change)
+	Importance int     // [0,4]; 0=critical (never pruned), 4=trivial (auto-pruned)
 }
 
 // RecencyDecay returns exp(-decayRate * hours). Result is in (0,1].
@@ -22,9 +22,15 @@ func RecencyDecay(hoursSince float64) float64 {
 	return math.Exp(-decayRate * hoursSince)
 }
 
-// ImportanceBoost returns importance/3.0. Importance=3 → no boost (×1.0).
+// ImportanceBoost returns a multiplier reflecting memory importance.
+// The importance scale is inverted: 0=critical (never pruned), 4=trivial (auto-pruned).
+// We invert so critical memories receive the highest boost:
+//
+//	importance=0 → 5/3 ≈ 1.67 (critical)
+//	importance=2 → 3/3 = 1.00 (neutral)
+//	importance=4 → 1/3 ≈ 0.33 (trivial)
 func ImportanceBoost(importance int) float64 {
-	return float64(importance) / 3.0
+	return float64(5-importance) / 3.0
 }
 
 // CompositeScore combines vector, BM25, and recency signals into a single rank score.

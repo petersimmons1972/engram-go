@@ -13,8 +13,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-var mathSqrt = math.Sqrt
-
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
@@ -177,13 +175,21 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 		scored = scored[:topK*3]
 	}
 
-	// Resolve memory records for top vector hits.
-	memories := make(map[string]*types.Memory)
+	// Resolve memory records for top vector hits in a single batch query.
+	uniqueIDs := make([]string, 0, len(scored))
+	seen := make(map[string]bool, len(scored))
 	for _, s := range scored {
-		m, err := e.backend.GetMemory(ctx, s.chunk.MemoryID)
-		if err != nil || m == nil {
-			continue
+		if !seen[s.chunk.MemoryID] {
+			seen[s.chunk.MemoryID] = true
+			uniqueIDs = append(uniqueIDs, s.chunk.MemoryID)
 		}
+	}
+	batchMems, err := e.backend.GetMemoriesByIDs(ctx, e.project, uniqueIDs)
+	if err != nil {
+		return nil, err
+	}
+	memories := make(map[string]*types.Memory, len(batchMems))
+	for _, m := range batchMems {
 		memories[m.ID] = m
 	}
 
@@ -227,8 +233,9 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 
 		mc := bestChunk[id]
 		result := types.SearchResult{
-			Memory: m,
-			Score:  score,
+			Memory:     m,
+			Score:      score,
+			ChunkScore: bestCosine[id],
 			ScoreBreakdown: map[string]float64{
 				"cosine":  bestCosine[id],
 				"bm25":    bm25,
@@ -246,6 +253,13 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 		case "summary":
 			if m.Summary != nil {
 				result.Memory.Content = *m.Summary
+			} else {
+				// Summary not yet generated; truncate content as preview.
+				content := m.Content
+				if len(content) > 500 {
+					content = content[:500] + "…"
+				}
+				result.Memory.Content = content
 			}
 		}
 		results = append(results, result)
@@ -342,7 +356,7 @@ func cosineSimilarity(a, b []float32) float64 {
 	if normA == 0 || normB == 0 {
 		return 0
 	}
-	return dot / (mathSqrt(normA) * mathSqrt(normB))
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 func hoursSince(t time.Time) float64 {

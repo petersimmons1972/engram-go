@@ -30,6 +30,9 @@ type Backend interface {
 	StoreMemoryTx(ctx context.Context, tx Tx, m *types.Memory) error
 	// GetMemory retrieves a memory by ID. Returns nil, nil if not found.
 	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoriesByIDs retrieves multiple memories by ID in a single query.
+	// Only memories belonging to project are returned. Missing IDs are silently omitted.
+	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)
 	// UpdateMemory updates mutable fields on an existing memory.
 	// Returns nil, nil if not found. Returns error if immutable.
 	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error)
