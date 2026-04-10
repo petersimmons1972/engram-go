@@ -442,8 +442,10 @@ func (e *SearchEngine) Status(ctx context.Context) (*types.MemoryStats, error) {
 	return e.backend.GetStats(ctx, e.project)
 }
 
-// Feedback boosts edge weights and touches access timestamps for the given memory IDs,
-// signaling that these memories were useful to the caller.
+// Feedback records a positive access signal by boosting edges and updating last-accessed
+// for each ID. This is a best-effort operation: if one ID fails, the error is returned
+// immediately and subsequent IDs in the slice are not processed. Callers that need
+// all-or-nothing semantics should call this method once per ID and handle errors individually.
 func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
 	for _, id := range ids {
 		if _, err := e.backend.BoostEdgesForMemory(ctx, id, 1.05); err != nil {
@@ -456,20 +458,27 @@ func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// jaccardMergeThreshold would be 0.85 when Jaccard near-duplicate merge is implemented (future task).
+const (
+	consolidateStaleAgeHours   = 90 * 24
+	consolidateColdAgeHours    = 60 * 24
+	consolidateMaxImportance   = 3
+	consolidateEdgeDecayFactor = 0.02
+	consolidateEdgeMinStrength = 0.1
+)
 
 // Consolidate prunes stale and cold memories and decays graph edges.
 // Returns a summary map of counts for each operation performed.
 func (e *SearchEngine) Consolidate(ctx context.Context) (map[string]any, error) {
-	pruned, err := e.backend.PruneStaleMemories(ctx, e.project, 90*24, 3)
+	// TODO: Jaccard near-duplicate merge (threshold 0.85) is a future task.
+	pruned, err := e.backend.PruneStaleMemories(ctx, e.project, consolidateStaleAgeHours, consolidateMaxImportance)
 	if err != nil {
 		return nil, err
 	}
-	coldPruned, err := e.backend.PruneColdDocuments(ctx, e.project, 60*24, 3)
+	coldPruned, err := e.backend.PruneColdDocuments(ctx, e.project, consolidateColdAgeHours, consolidateMaxImportance)
 	if err != nil {
 		return nil, err
 	}
-	decayed, edgePruned, err := e.backend.DecayAllEdges(ctx, e.project, 0.02, 0.1)
+	decayed, edgePruned, err := e.backend.DecayAllEdges(ctx, e.project, consolidateEdgeDecayFactor, consolidateEdgeMinStrength)
 	if err != nil {
 		return nil, err
 	}
@@ -504,14 +513,15 @@ func (e *SearchEngine) Verify(ctx context.Context) (map[string]any, error) {
 // existing embeddings and recording the new model name in project metadata.
 // A background reembed worker will repopulate embeddings after this call.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (map[string]any, error) {
+	// Null all embeddings first — if this fails, no metadata is written and state stays consistent.
+	nulled, err := e.backend.NullAllEmbeddings(ctx, e.project)
+	if err != nil {
+		return nil, err
+	}
 	if err := e.backend.SetMeta(ctx, e.project, "embedding_migration_in_progress", "true"); err != nil {
 		return nil, err
 	}
 	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
-		return nil, err
-	}
-	nulled, err := e.backend.NullAllEmbeddings(ctx, e.project)
-	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
