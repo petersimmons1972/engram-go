@@ -67,10 +67,11 @@ func run() error {
 	// closure captures the interface value, not the concrete pointer.
 	var embedClient embed.Client = embedder
 
-	// Construct Claude client if API key provided and any Claude advisor feature is enabled.
+	// Construct Claude client if API key is provided. memory_reason is auto-enabled
+	// whenever the key is set; the other advisor features require their own flags.
 	var claudeCompleter summarize.ClaudeCompleter
 	var cc *claude.Client
-	if *claudeAPIKey != "" && (*claudeSummarize || *claudeConsolidate || *claudeRerank) {
+	if *claudeAPIKey != "" {
 		var err error
 		cc, err = claude.New(*claudeAPIKey)
 		if err != nil {
@@ -97,12 +98,17 @@ func run() error {
 		OllamaURL:                *ollamaURL,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
+		ClaudeEnabled:            cc != nil,
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {
 		srv.SetClaudeClient(cc)
+		slog.Info("claude advisor enabled",
+			"summarize", *claudeSummarize,
+			"consolidate", *claudeConsolidate,
+			"rerank", *claudeRerank)
 	}
 
 	slog.Info("engram ready", "host", *host, "port", *port,

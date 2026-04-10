@@ -33,9 +33,10 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 }
 
 // SetClaudeClient sets the Claude client used for advisor operations (e.g. consolidation).
-// Must be called before Start. Will be expanded to a ClaudeDoer interface in Task 4.3.
+// Must be called before Start.
 func (s *Server) SetClaudeClient(client *claude.Client) {
 	s.cfg.claudeClient = client
+	s.cfg.ClaudeEnabled = (client != nil)
 }
 
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
@@ -163,5 +164,18 @@ func (s *Server) registerTools() {
 
 	for _, t := range tools {
 		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), t.handler)
+	}
+
+	// memory_reason is registered only when a Claude client is available.
+	if s.cfg.ClaudeEnabled {
+		pool := s.pool
+		cfg := s.cfg
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_reason",
+				mcpgo.WithDescription("Recall memories and synthesize a grounded answer using Claude")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryReason(ctx, pool, req, cfg)
+			},
+		)
 	}
 }

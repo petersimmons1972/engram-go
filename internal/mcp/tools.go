@@ -18,6 +18,7 @@ type Config struct {
 	OllamaURL                string
 	SummarizeModel           string
 	SummarizeEnabled         bool
+	ClaudeEnabled            bool // true when a claude client is present
 	ClaudeConsolidateEnabled bool
 	ClaudeRerankEnabled      bool
 	claudeClient             *claude.Client // set via Server.SetClaudeClient
@@ -539,4 +540,57 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		ids = append(ids, m.ID)
 	}
 	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
+}
+
+// handleMemoryReason recalls memories relevant to a question and uses Claude to
+// synthesize a grounded answer from those memories.
+func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	question := getString(args, "question", "")
+	topK := getInt(args, "top_k", 10)
+	detail := getString(args, "detail", "full")
+
+	if question == "" {
+		return mcpgo.NewToolResultError("question is required"), nil
+	}
+	if cfg.claudeClient == nil {
+		return mcpgo.NewToolResultError("memory_reason requires ANTHROPIC_API_KEY to be set"), nil
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("get engine for %q: %w", project, err)
+	}
+
+	results, err := h.Engine.Recall(ctx, question, topK, detail)
+	if err != nil {
+		return nil, fmt.Errorf("recall: %w", err)
+	}
+
+	// Extract the Memory pointer from each search result.
+	memories := make([]*types.Memory, 0, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			memories = append(memories, r.Memory)
+		}
+	}
+
+	answer, err := cfg.claudeClient.ReasonOverMemories(ctx, question, memories)
+	if err != nil {
+		return nil, fmt.Errorf("reason: %w", err)
+	}
+
+	memoryIDs := make([]string, 0, len(memories))
+	for _, m := range memories {
+		memoryIDs = append(memoryIDs, m.ID)
+	}
+
+	out := map[string]any{
+		"answer":        answer,
+		"memories_used": len(memories),
+		"memory_ids":    memoryIDs,
+	}
+	data, _ := json.Marshal(out)
+	return mcpgo.NewToolResultText(string(data)), nil
 }
