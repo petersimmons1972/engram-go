@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func (c *OllamaClient) modelPresent(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, m := range result.Models {
-		if strings.HasPrefix(m.Name, c.model) {
+		if m.Name == c.model || m.Name == c.model+":latest" {
 			return true, nil
 		}
 	}
@@ -147,6 +148,11 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 		return fmt.Errorf("ollama pull: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ollama pull: HTTP %d: %s", resp.StatusCode, string(body))
+	}
 
 	// Drain streaming NDJSON lines until "success" or end of body.
 	scanner := bufio.NewScanner(resp.Body)

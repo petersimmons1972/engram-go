@@ -16,6 +16,10 @@ import (
 // Mirrors Python LAZY_CHUNK_THRESHOLD = 8000.
 const LazyChunkThreshold = 8000
 
+// DefaultTargetChunkChars is the default chunk size used by ChunkDocument
+// when the caller passes targetChunkChars <= 0.
+const DefaultTargetChunkChars = 2000
+
 // headingRE matches level-1 and level-2 Markdown headings at the start of a line.
 var headingRE = regexp.MustCompile(`(?m)^#{1,2}\s+(.+)$`)
 
@@ -165,6 +169,9 @@ func ChunkText(text string, maxTokens, overlapTokens int) []string {
 func ChunkDocument(text string, targetChunkChars int) []ChunkCandidate {
 	if strings.TrimSpace(text) == "" {
 		return nil
+	}
+	if targetChunkChars <= 0 {
+		targetChunkChars = DefaultTargetChunkChars
 	}
 
 	type headingPos struct {

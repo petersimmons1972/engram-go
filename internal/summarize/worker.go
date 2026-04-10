@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -64,6 +65,11 @@ func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (st
 		return "", fmt.Errorf("ollama generate: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama generate: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
 
 	var result struct {
 		Response string `json:"response"`

@@ -482,6 +482,9 @@ func (e *SearchEngine) Status(ctx context.Context) (*types.MemoryStats, error) {
 // immediately and subsequent IDs in the slice are not processed. Callers that need
 // all-or-nothing semantics should call this method once per ID and handle errors individually.
 func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("feedback: no memory IDs provided")
+	}
 	for _, id := range ids {
 		if _, err := e.backend.BoostEdgesForMemory(ctx, id, 1.05); err != nil {
 			return err

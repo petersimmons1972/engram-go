@@ -728,11 +728,17 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Relationship) error {
 	// Verify both memories exist.
 	var dummy int
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.SourceID).Scan(&dummy); err == pgx.ErrNoRows {
-		return fmt.Errorf("source memory %q does not exist", rel.SourceID)
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.SourceID).Scan(&dummy); err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("source memory %q does not exist", rel.SourceID)
+		}
+		return fmt.Errorf("check source memory: %w", err)
 	}
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.TargetID).Scan(&dummy); err == pgx.ErrNoRows {
-		return fmt.Errorf("target memory %q does not exist", rel.TargetID)
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.TargetID).Scan(&dummy); err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("target memory %q does not exist", rel.TargetID)
+		}
+		return fmt.Errorf("check target memory: %w", err)
 	}
 
 	rel.Project = b.project
@@ -858,7 +864,7 @@ func (b *PostgresBackend) GetConnected(ctx context.Context, memoryID string, max
 
 func (b *PostgresBackend) BoostEdgesForMemory(ctx context.Context, memoryID string, factor float64) (int, error) {
 	tag, err := b.pool.Exec(ctx, `
-		UPDATE relationships SET strength=LEAST(1.0, strength+$1)
+		UPDATE relationships SET strength=LEAST(1.0, strength*$1)
 		WHERE source_id=$2 OR target_id=$2`, factor, memoryID,
 	)
 	return int(tag.RowsAffected()), err
@@ -1118,6 +1124,10 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	if err := b.pool.QueryRow(ctx,
 		"SELECT COUNT(*) FROM memories WHERE project=$1 AND summary IS NULL", project,
 	).Scan(&stats.PendingSummarization); err != nil {
+		return nil, err
+	}
+
+	if err := b.pool.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&stats.DBSizeBytes); err != nil {
 		return nil, err
 	}
 
