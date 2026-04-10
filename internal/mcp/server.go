@@ -65,8 +65,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 }
 
 func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler {
+	// apiKey is always non-empty — enforced by main.go startup check.
+	// This guard is a defence-in-depth backstop; it must never be the primary gate.
 	if apiKey == "" {
-		return next
+		panic("engram: auth middleware called with empty apiKey — programming error")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := []byte(r.Header.Get("Authorization"))
@@ -146,19 +148,19 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_export_all", "Export all memories to markdown files",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryExportAll(ctx, pool, req)
+				return handleMemoryExportAll(ctx, pool, req, cfg)
 			}},
 		{"memory_import_claudemd", "Import a CLAUDE.md file as structured memories",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryImportClaudeMD(ctx, pool, req)
+				return handleMemoryImportClaudeMD(ctx, pool, req, cfg)
 			}},
 		{"memory_dump", "Dump raw memory files to a directory",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryDump(ctx, pool, req)
+				return handleMemoryDump(ctx, pool, req, cfg)
 			}},
 		{"memory_ingest", "Ingest a file or directory as document memories",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryIngest(ctx, pool, req)
+				return handleMemoryIngest(ctx, pool, req, cfg)
 			}},
 	}
 

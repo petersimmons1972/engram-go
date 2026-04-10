@@ -79,6 +79,16 @@ func (b *PostgresBackend) Close() {
 }
 
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
+	// Ensure the migration tracking table exists. This is always idempotent.
+	const createTracker = `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			filename   TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`
+	if _, err := b.pool.Exec(ctx, createTracker); err != nil {
+		return fmt.Errorf("create schema_migrations table: %w", err)
+	}
+
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
@@ -87,13 +97,33 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 			continue
 		}
-		sql, err := migrationsFS.ReadFile("migrations/" + e.Name())
+		name := e.Name()
+
+		// Skip already-applied migrations.
+		var applied bool
+		err := b.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename = $1)`, name,
+		).Scan(&applied)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", e.Name(), err)
+			return fmt.Errorf("check migration %s: %w", name, err)
+		}
+		if applied {
+			continue
+		}
+
+		sql, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 		if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", e.Name(), err)
+			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
+		if _, err := b.pool.Exec(ctx,
+			`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
+		); err != nil {
+			return fmt.Errorf("record migration %s: %w", name, err)
+		}
+		slog.Info("applied migration", "file", name)
 	}
 	return nil
 }

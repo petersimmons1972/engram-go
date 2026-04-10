@@ -39,7 +39,8 @@ func run() error {
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
-	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Optional bearer token (empty = no auth)")
+	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Bearer token for auth (required; set ENGRAM_API_KEY)")
+	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -47,6 +48,9 @@ func run() error {
 
 	if *databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL or --database-url is required")
+	}
+	if *apiKey == "" {
+		return fmt.Errorf("ENGRAM_API_KEY or --api-key is required; refusing to start without authentication")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -101,6 +105,7 @@ func run() error {
 		ClaudeEnabled:            cc != nil,
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
+		DataDir:                  *dataDir,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {

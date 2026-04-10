@@ -21,7 +21,11 @@ type Config struct {
 	ClaudeEnabled            bool // true when a claude client is present
 	ClaudeConsolidateEnabled bool
 	ClaudeRerankEnabled      bool
-	claudeClient             *claude.Client // set via Server.SetClaudeClient
+	// DataDir is the base directory for all file-system operations (export,
+	// import, ingest). Paths provided by callers are validated to stay within
+	// this directory. Must be set; file-operation tools return an error if empty.
+	DataDir      string
+	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
 // claudeMergeAdapter adapts *claude.Client to search.MergeReviewer by converting
@@ -465,14 +469,21 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 }
 
 // handleMemoryExportAll exports all memories to markdown files in output_path.
-func handleMemoryExportAll(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryExportAll(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	if cfg.DataDir == "" {
+		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
+	}
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	outputPath := getString(args, "output_path", "./memory-export")
+	rawPath := getString(args, "output_path", "./memory-export")
+	outputPath, err := SafePath(cfg.DataDir, rawPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid output_path: %w", err)
+	}
 	memories, err := h.Engine.List(ctx, nil, nil, nil, 10_000, 0)
 	if err != nil {
 		return nil, err
@@ -484,18 +495,25 @@ func handleMemoryExportAll(ctx context.Context, pool *EnginePool, req mcpgo.Call
 }
 
 // handleMemoryImportClaudeMD imports a CLAUDE.md file as sectioned memories.
-func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	if cfg.DataDir == "" {
+		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
+	}
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	path := getString(args, "path", "")
-	if path == "" {
+	rawPath := getString(args, "path", "")
+	if rawPath == "" {
 		return nil, fmt.Errorf("path is required")
 	}
-	memories, err := markdown.ImportClaudeMD(path)
+	safePath, err := SafePath(cfg.DataDir, rawPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+	memories, err := markdown.ImportClaudeMD(safePath)
 	if err != nil {
 		return nil, err
 	}
@@ -511,23 +529,30 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 }
 
 // handleMemoryDump is an alias for handleMemoryExportAll.
-func handleMemoryDump(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	return handleMemoryExportAll(ctx, pool, req)
+func handleMemoryDump(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	return handleMemoryExportAll(ctx, pool, req, cfg)
 }
 
 // handleMemoryIngest reads markdown files from a directory and stores each as a memory.
-func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	if cfg.DataDir == "" {
+		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
+	}
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	path := getString(args, "path", "")
-	if path == "" {
+	rawPath := getString(args, "path", "")
+	if rawPath == "" {
 		return nil, fmt.Errorf("path is required")
 	}
-	memories, err := markdown.Ingest(path)
+	safePath, err := SafePath(cfg.DataDir, rawPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+	memories, err := markdown.Ingest(safePath)
 	if err != nil {
 		return nil, err
 	}
