@@ -24,6 +24,8 @@ type Client interface {
 	Dimensions() int
 }
 
+const maxEmbedResponseBytes = 10 * 1024 * 1024 // 10 MiB (#16)
+
 // OllamaClient calls the local Ollama /api/embed endpoint.
 type OllamaClient struct {
 	baseURL string
@@ -85,7 +87,7 @@ func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error
 	var result struct {
 		Embeddings [][]float32 `json:"embeddings"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxEmbedResponseBytes)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("ollama embed decode: %w", err)
 	}
 	if len(result.Embeddings) == 0 || len(result.Embeddings[0]) == 0 {

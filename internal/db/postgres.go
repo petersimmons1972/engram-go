@@ -973,7 +973,7 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 
 	rows, err := b.pool.Query(ctx, q, args...)
 	if err != nil {
-		slog.Debug("FTS query failed", "query", query, "err", err)
+		slog.Debug("FTS query failed", "query_len", len(query), "err", err)
 		return nil, nil
 	}
 	defer rows.Close()
