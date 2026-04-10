@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -111,6 +113,23 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 			continue
 		}
 
+		// Gate 004: only apply if backfill is complete.
+		if name == "004_pgvector_finalize.sql" {
+			var pending string
+			err := b.pool.QueryRow(ctx,
+				`SELECT COALESCE(
+					(SELECT value FROM project_meta WHERE project='_engram' AND key='pgvector_backfill_pending'),
+					'false'
+				)`).Scan(&pending)
+			if err != nil {
+				return fmt.Errorf("check backfill status: %w", err)
+			}
+			if pending == "true" {
+				slog.Info("skipping 004_pgvector_finalize.sql — backfill still pending")
+				continue
+			}
+		}
+
 		sql, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
@@ -124,8 +143,65 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
 		slog.Info("applied migration", "file", name)
+
+		// After 003: run the Go-side backfill.
+		if name == "003_pgvector.sql" {
+			if err := b.backfillVectors(ctx); err != nil {
+				return fmt.Errorf("pgvector backfill failed: %w", err)
+			}
+		}
 	}
 	return nil
+}
+
+// backfillVectors converts existing BYTEA embeddings to the new embedding_vec
+// vector(768) column. Called once after 003_pgvector.sql creates the column.
+// Idempotent: skips rows where embedding_vec is already populated.
+func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, embedding FROM chunks
+		WHERE embedding IS NOT NULL AND embedding_vec IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill query: %w", err)
+	}
+	defer rows.Close()
+
+	var converted int
+	for rows.Next() {
+		var id string
+		var blob []byte
+		if err := rows.Scan(&id, &blob); err != nil {
+			return fmt.Errorf("backfill scan: %w", err)
+		}
+		if len(blob)%4 != 0 || len(blob) == 0 {
+			slog.Warn("backfill: skipping chunk with invalid BYTEA length", "id", id, "len", len(blob))
+			continue
+		}
+		// Decode little-endian float32 blob.
+		vec := make([]float32, len(blob)/4)
+		for i := range vec {
+			u := uint32(blob[4*i]) | uint32(blob[4*i+1])<<8 | uint32(blob[4*i+2])<<16 | uint32(blob[4*i+3])<<24
+			vec[i] = math.Float32frombits(u)
+		}
+		// Write to the new vector column using pgvector encoding.
+		if _, err := b.pool.Exec(ctx,
+			"UPDATE chunks SET embedding_vec = $1 WHERE id = $2",
+			pgvector.NewVector(vec), id,
+		); err != nil {
+			return fmt.Errorf("backfill update chunk %s: %w", id, err)
+		}
+		converted++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("backfill iteration: %w", err)
+	}
+
+	slog.Info("pgvector backfill complete", "chunks_converted", converted)
+
+	// Mark backfill done so 004 can run.
+	_, err = b.pool.Exec(ctx,
+		`UPDATE project_meta SET value='false' WHERE project='_engram' AND key='pgvector_backfill_pending'`)
+	return err
 }
 
 // ── Transactions ─────────────────────────────────────────────────────────────
