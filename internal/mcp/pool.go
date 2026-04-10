@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -49,6 +50,9 @@ func NewEnginePool(factory EngineFactory) *EnginePool {
 // Get returns the cached engine for project, creating one via factory if needed.
 // If the pool is at capacity, the least-recently-used engine is evicted first.
 func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, error) {
+	if len(project) > 128 {
+		return nil, fmt.Errorf("project name too long (%d chars, max 128)", len(project))
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

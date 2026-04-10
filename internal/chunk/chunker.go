@@ -446,7 +446,9 @@ func wordSet(text string) map[string]bool {
 func defaultDedupThreshold() float64 {
 	if v := os.Getenv("ENGRAM_DEDUP_THRESHOLD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
+			if f >= 0 && f <= 1.0 {
+				return f
+			}
 		}
 	}
 	return 0.75

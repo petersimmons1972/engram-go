@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
@@ -115,7 +116,7 @@ func getInt(args map[string]any, key string, def int) int {
 	if v, ok := args[key]; ok {
 		switch n := v.(type) {
 		case float64:
-			return int(n)
+			return int(math.Round(n))
 		case int:
 			return n
 		}
@@ -310,6 +311,9 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	strength := 1.0
 	if v, ok := args["strength"].(float64); ok {
 		strength = v
+	}
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
+		return nil, fmt.Errorf("strength must be between 0 and 1, got %v", strength)
 	}
 	if err := h.Engine.Connect(ctx, src, dst, relType, strength); err != nil {
 		return nil, err
