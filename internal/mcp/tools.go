@@ -239,7 +239,8 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
 	}
 	var ids []string
-	for _, item := range items {
+	var storeErrs []string
+	for idx, item := range items {
 		mmap, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -257,14 +258,20 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			continue
 		}
 		if len(m.Content) > types.MaxContentLength {
-			return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
+			continue
 		}
 		if err := h.Engine.Store(ctx, m); err != nil {
-			return nil, err
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: %s", idx, err))
+			continue
 		}
 		ids = append(ids, m.ID)
 	}
-	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
+	response := map[string]any{"ids": ids, "count": len(ids)}
+	if len(storeErrs) > 0 {
+		response["errors"] = storeErrs
+	}
+	return toolResult(response)
 }
 
 // handleMemoryRecall performs semantic recall against a project's memories.

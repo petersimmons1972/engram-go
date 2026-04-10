@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"time"
@@ -386,7 +387,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	// Update access timestamps.
 	for _, r := range results {
-		_ = e.backend.TouchMemory(ctx, r.Memory.ID)
+		if err := e.backend.TouchMemory(ctx, r.Memory.ID); err != nil {
+			slog.Warn("touch memory failed", "id", r.Memory.ID, "err", err)
+		}
 		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
 			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}
