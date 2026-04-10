@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 360" width="1000" height="360" font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif">
+
+  <!-- =====================================================
+       LAYER 1: BACKGROUNDS
+       ===================================================== -->
+
+  <!-- Canvas background -->
+  <rect width="1000" height="360" fill="#0d1117"/>
+
+  <!-- Subtle section divider — top signal zone -->
+  <rect x="20" y="20" width="960" height="165" rx="8" fill="#0d1117" stroke="#21262d" stroke-width="1"/>
+
+  <!-- Icon backing squares — each 80x80, centered in column -->
+  <!-- Col 1: BM25  center-x=125 -->
+  <rect x="85" y="32" width="80" height="80" rx="10" fill="#161b22"/>
+  <!-- Col 2: Cosine Vector  center-x=375 -->
+  <rect x="335" y="32" width="80" height="80" rx="10" fill="#161b22"/>
+  <!-- Col 3: Recency Decay  center-x=625 -->
+  <rect x="585" y="32" width="80" height="80" rx="10" fill="#161b22"/>
+  <!-- Col 4: Knowledge Graph  center-x=875 -->
+  <rect x="835" y="32" width="80" height="80" rx="10" fill="#161b22"/>
+
+  <!-- Weight badge pill backgrounds -->
+  <!-- BM25 35% -->
+  <rect x="96" y="149" width="58" height="22" rx="11" fill="#e3b341" fill-opacity="0.18"/>
+  <!-- Cosine 50% -->
+  <rect x="346" y="149" width="58" height="22" rx="11" fill="#3fb950" fill-opacity="0.18"/>
+  <!-- Recency 15% -->
+  <rect x="596" y="149" width="58" height="22" rx="11" fill="#1f6feb" fill-opacity="0.18"/>
+  <!-- KG enrichment -->
+  <rect x="820" y="149" width="110" height="22" rx="11" fill="#bc8cff" fill-opacity="0.18"/>
+
+  <!-- Connector zone background pill (BM25 + Cosine + Recency) -->
+  <rect x="40" y="195" width="690" height="135" rx="8" fill="#0d1117" stroke="#21262d" stroke-width="1"/>
+
+  <!-- Composite bar track -->
+  <rect x="40" y="240" width="660" height="28" rx="4" fill="#161b22"/>
+
+  <!-- KG multiplier panel -->
+  <rect x="750" y="195" width="210" height="135" rx="8" fill="#0d1117" stroke="#21262d" stroke-width="1"/>
+
+  <!-- =====================================================
+       LAYER 2: GEOMETRY — Icons, bars, connectors
+       ===================================================== -->
+
+  <!-- ---- BM25 icon: magnifying glass (ASCII-safe path construction) ---- -->
+  <!-- lens circle outline -->
+  <circle cx="120" cy="65" r="18" fill="none" stroke="#e3b341" stroke-width="3"/>
+  <!-- handle -->
+  <line x1="133" y1="78" x2="148" y2="93" stroke="#e3b341" stroke-width="3" stroke-linecap="round"/>
+  <!-- center dot hinting "Q" / search -->
+  <circle cx="120" cy="65" r="5" fill="#e3b341" fill-opacity="0.5"/>
+
+  <!-- ---- Cosine Vector icon: two arrows diverging (dot product gesture) ---- -->
+  <!-- Arrow 1: upper right -->
+  <line x1="375" y1="80" x2="402" y2="53" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round"/>
+  <polygon points="402,53 395,56 399,62" fill="#3fb950"/>
+  <!-- Arrow 2: lower right -->
+  <line x1="375" y1="80" x2="402" y2="107" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round"/>
+  <polygon points="402,107 395,102 399,96" fill="#3fb950"/>
+  <!-- Origin dot -->
+  <circle cx="375" cy="80" r="4" fill="#3fb950"/>
+  <!-- Small angle arc suggesting cosine -->
+  <path d="M 385,71 A 14,14 0 0 1 385,89" fill="none" stroke="#3fb950" stroke-width="1.5" stroke-opacity="0.6"/>
+
+  <!-- ---- Recency Decay icon: clock face ---- -->
+  <!-- clock circle -->
+  <circle cx="625" cy="72" r="24" fill="none" stroke="#1f6feb" stroke-width="2.5"/>
+  <!-- hour hand (pointing ~11 o-clock) -->
+  <line x1="625" y1="72" x2="618" y2="54" stroke="#1f6feb" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- minute hand (pointing ~3 o-clock) -->
+  <line x1="625" y1="72" x2="643" y2="72" stroke="#1f6feb" stroke-width="2" stroke-linecap="round"/>
+  <!-- center pin -->
+  <circle cx="625" cy="72" r="3" fill="#1f6feb"/>
+  <!-- tick at 12 -->
+  <line x1="625" y1="50" x2="625" y2="54" stroke="#1f6feb" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ---- Knowledge Graph icon: 4-node graph ---- -->
+  <!-- edges first (behind nodes) -->
+  <line x1="855" y1="55" x2="895" y2="55" stroke="#bc8cff" stroke-width="1.5" stroke-opacity="0.7"/>
+  <line x1="855" y1="55" x2="865" y2="88" stroke="#bc8cff" stroke-width="1.5" stroke-opacity="0.7"/>
+  <line x1="895" y1="55" x2="885" y2="88" stroke="#bc8cff" stroke-width="1.5" stroke-opacity="0.7"/>
+  <line x1="865" y1="88" x2="885" y2="88" stroke="#bc8cff" stroke-width="1.5" stroke-opacity="0.7"/>
+  <line x1="855" y1="55" x2="885" y2="88" stroke="#bc8cff" stroke-width="1.2" stroke-opacity="0.4"/>
+  <!-- nodes -->
+  <circle cx="855" cy="55" r="7" fill="#bc8cff"/>
+  <circle cx="895" cy="55" r="7" fill="#bc8cff" fill-opacity="0.7"/>
+  <circle cx="865" cy="88" r="7" fill="#bc8cff" fill-opacity="0.7"/>
+  <circle cx="885" cy="88" r="5" fill="#bc8cff" fill-opacity="0.5"/>
+
+  <!-- ---- Connector: + between BM25 and Cosine (x=250, vcenter=72) ---- -->
+  <line x1="237" y1="72" x2="263" y2="72" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+  <line x1="250" y1="59" x2="250" y2="85" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ---- Connector: + between Cosine and Recency (x=500, vcenter=72) ---- -->
+  <line x1="487" y1="72" x2="513" y2="72" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+  <line x1="500" y1="59" x2="500" y2="85" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ---- Connector: x (multiply) between Recency column and KG (x=740, vcenter=72) ---- -->
+  <!-- x drawn as two diagonal lines -->
+  <line x1="726" y1="60" x2="752" y2="84" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+  <line x1="752" y1="60" x2="726" y2="84" stroke="#484f58" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ---- Composite stacked bar ---- -->
+  <!-- Yellow: BM25 35% of 660 = 231px -->
+  <rect x="40" y="240" width="231" height="28" rx="0" fill="#e3b341"/>
+  <!-- Green: Cosine 50% of 660 = 330px -->
+  <rect x="271" y="240" width="330" height="28" fill="#3fb950"/>
+  <!-- Blue: Recency 15% of 660 = 99px -->
+  <rect x="601" y="240" width="99" height="28" rx="0" fill="#1f6feb"/>
+  <!-- Round left cap and right cap properly -->
+  <rect x="40" y="240" width="4" height="28" rx="4" fill="#e3b341"/>
+  <rect x="696" y="240" width="4" height="28" rx="4" fill="#1f6feb"/>
+
+  <!-- KG multiplier visual — purple accent band -->
+  <rect x="760" y="240" width="190" height="28" rx="4" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+  <!-- small multiply icon inside -->
+  <line x1="778" y1="250" x2="786" y2="258" stroke="#bc8cff" stroke-width="2" stroke-linecap="round"/>
+  <line x1="786" y1="250" x2="778" y2="258" stroke="#bc8cff" stroke-width="2" stroke-linecap="round"/>
+  <!-- arrow right -->
+  <line x1="794" y1="254" x2="810" y2="254" stroke="#bc8cff" stroke-width="1.5" stroke-linecap="round"/>
+  <polygon points="810,250 818,254 810,258" fill="#bc8cff"/>
+
+  <!-- =====================================================
+       LAYER 3: STROKES — borders, dividers
+       ===================================================== -->
+
+  <!-- Thin separator line between top zone and bottom zone -->
+  <line x1="40" y1="193" x2="960" y2="193" stroke="#21262d" stroke-width="1"/>
+
+  <!-- Bar tick marks at 35% and 85% boundaries -->
+  <line x1="271" y1="236" x2="271" y2="272" stroke="#0d1117" stroke-width="2"/>
+  <line x1="601" y1="236" x2="601" y2="272" stroke="#0d1117" stroke-width="2"/>
+
+  <!-- =====================================================
+       LAYER 4: TEXT
+       ===================================================== -->
+
+  <!-- Signal names — white, 14px -->
+  <text x="125" y="130" text-anchor="middle" font-size="14" font-weight="600" fill="#f0f6fc">BM25</text>
+  <text x="375" y="130" text-anchor="middle" font-size="14" font-weight="600" fill="#f0f6fc">Cosine Vector</text>
+  <text x="625" y="130" text-anchor="middle" font-size="14" font-weight="600" fill="#f0f6fc">Recency Decay</text>
+  <text x="875" y="130" text-anchor="middle" font-size="14" font-weight="600" fill="#f0f6fc">Knowledge Graph</text>
+
+  <!-- Weight badges — in signal color, 12px -->
+  <text x="125" y="164" text-anchor="middle" font-size="12" font-weight="700" fill="#e3b341">35%</text>
+  <text x="375" y="164" text-anchor="middle" font-size="12" font-weight="700" fill="#3fb950">50%</text>
+  <text x="625" y="164" text-anchor="middle" font-size="12" font-weight="700" fill="#1f6feb">15%</text>
+  <text x="875" y="164" text-anchor="middle" font-size="12" font-weight="700" fill="#bc8cff">enrichment</text>
+
+  <!-- Connector labels -->
+  <text x="250" y="98" text-anchor="middle" font-size="11" fill="#484f58">add</text>
+  <text x="500" y="98" text-anchor="middle" font-size="11" fill="#484f58">add</text>
+  <text x="739" y="98" text-anchor="middle" font-size="11" fill="#484f58">enrich</text>
+
+  <!-- Bar percentage labels inside bar -->
+  <text x="155" y="259" text-anchor="middle" font-size="12" font-weight="600" fill="#0d1117">BM25 35%</text>
+  <text x="435" y="259" text-anchor="middle" font-size="12" font-weight="600" fill="#0d1117">vector 50%</text>
+  <text x="650" y="259" text-anchor="middle" font-size="12" font-weight="600" fill="#f0f6fc">15%</text>
+
+  <!-- KG label inside multiplier band -->
+  <text x="830" y="259" text-anchor="middle" font-size="12" font-weight="600" fill="#bc8cff">final score</text>
+
+  <!-- Section label above bar -->
+  <text x="40" y="232" font-size="11" fill="#8b949e">composite score</text>
+  <text x="760" y="232" font-size="11" fill="#8b949e">importance multiplier</text>
+
+  <!-- Formula line 1 -->
+  <text x="40" y="298" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace" fill="#8b949e">composite = (vector x 0.50) + (bm25 x 0.35) + (recency x 0.15)</text>
+
+  <!-- Formula line 2 -->
+  <text x="40" y="320" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace" fill="#8b949e">final_score = composite x importance_multiplier</text>
+
+  <!-- Engram version label — subtle, top right -->
+  <text x="980" y="14" text-anchor="end" font-size="11" fill="#30363d">engram-go v2.0 scoring</text>
+
+</svg>

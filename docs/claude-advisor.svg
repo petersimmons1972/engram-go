@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1000 380"
+     width="1000"
+     height="380"
+     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif">
+
+  <!-- ============================================================
+       LAYER 1: BACKGROUNDS
+  ============================================================ -->
+
+  <!-- Root background -->
+  <rect x="0" y="0" width="1000" height="380" fill="#0d1117"/>
+
+  <!-- Sonnet box background -->
+  <rect x="60" y="88" width="164" height="64" rx="6" fill="#161b22"/>
+
+  <!-- Opus box background -->
+  <rect x="776" y="88" width="164" height="64" rx="6" fill="#161b22"/>
+
+  <!-- Decision diamond background — center (500, 120), half-width 66, half-height 44 -->
+  <polygon points="500,76 566,120 500,164 434,120" fill="#1f2937"/>
+
+  <!-- Badge backgrounds: 4x210px + 3x20px gaps = 900px, left start x=50 -->
+  <!-- Badge 1: x=50,  center=155 -->
+  <rect x="50"  y="252" width="210" height="68" rx="6" fill="#161b22"/>
+  <!-- Badge 2: x=280, center=385 -->
+  <rect x="280" y="252" width="210" height="68" rx="6" fill="#161b22"/>
+  <!-- Badge 3: x=510, center=615 -->
+  <rect x="510" y="252" width="210" height="68" rx="6" fill="#161b22"/>
+  <!-- Badge 4: x=740, center=845 -->
+  <rect x="740" y="252" width="210" height="68" rx="6" fill="#161b22"/>
+
+  <!-- ============================================================
+       LAYER 2: GEOMETRY
+  ============================================================ -->
+
+  <!-- Sonnet box border -->
+  <rect x="60" y="88" width="164" height="64" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+
+  <!-- Opus box border -->
+  <rect x="776" y="88" width="164" height="64" rx="6" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+
+  <!-- Diamond border -->
+  <polygon points="500,76 566,120 500,164 434,120" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+
+  <!-- Badge borders -->
+  <rect x="50"  y="252" width="210" height="68" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="280" y="252" width="210" height="68" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="510" y="252" width="210" height="68" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="740" y="252" width="210" height="68" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+
+  <!-- Arrow: Sonnet right (224) to diamond left (434), solid green, y=120 -->
+  <line x1="224" y1="120" x2="428" y2="120" stroke="#3fb950" stroke-width="1.5"/>
+  <polygon points="434,120 422,114 422,126" fill="#3fb950"/>
+
+  <!-- Arrow: diamond right (566) to Opus left (776), dashed blue, y=120 -->
+  <line x1="572" y1="120" x2="770" y2="120" stroke="#1f6feb" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <polygon points="776,120 764,114 764,126" fill="#1f6feb"/>
+
+  <!-- Verdict return arc: from Opus bottom (858, 152) down to y=200, left to x=500, up to diamond bottom (500, 164) -->
+  <path d="M 858,152 Q 858,200 500,200 L 500,170"
+        fill="none" stroke="#1f6feb" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <!-- Arrowhead pointing up at (500,170) toward (500,164) -->
+  <polygon points="500,164 494,176 506,176" fill="#1f6feb"/>
+
+  <!-- Star accent for badge 4 — small 5-point star near "Reason" label -->
+  <!-- Center approx (826, 270), outer radius 7, inner radius 3 -->
+  <polygon
+    points="826,263 828.3,269.3 835,269.3 829.9,273.2 831.9,279.7 826,275.8 820.1,279.7 822.1,273.2 817,269.3 823.7,269.3"
+    fill="#f0b429"/>
+
+  <!-- ============================================================
+       LAYER 3: STROKES
+  ============================================================ -->
+
+  <!-- Divider between flow and badges -->
+  <line x1="50" y1="232" x2="950" y2="232" stroke="#21262d" stroke-width="1"/>
+
+  <!-- ============================================================
+       LAYER 4: TEXT
+  ============================================================ -->
+
+  <!-- Sonnet box labels -->
+  <text x="142" y="115" text-anchor="middle" font-size="15" font-weight="600" fill="#ffffff">Claude Sonnet</text>
+  <text x="142" y="136" text-anchor="middle" font-size="12" fill="#8b949e">Executor</text>
+
+  <!-- Opus box labels -->
+  <text x="858" y="115" text-anchor="middle" font-size="15" font-weight="600" fill="#ffffff">Claude Opus</text>
+  <text x="858" y="136" text-anchor="middle" font-size="12" fill="#8b949e">Advisor</text>
+
+  <!-- Diamond label -->
+  <text x="500" y="116" text-anchor="middle" font-size="13" fill="#ffffff">Hard</text>
+  <text x="500" y="131" text-anchor="middle" font-size="13" fill="#ffffff">decision?</text>
+
+  <!-- Arrow labels -->
+  <text x="329" y="108" text-anchor="middle" font-size="11" fill="#3fb950">routine work</text>
+  <text x="674" y="108" text-anchor="middle" font-size="11" fill="#1f6feb">escalate</text>
+
+  <!-- Verdict label on return arc -->
+  <text x="720" y="215" text-anchor="middle" font-size="11" fill="#1f6feb">verdict</text>
+
+  <!-- Strategy annotation -->
+  <text x="500" y="246" text-anchor="middle" font-size="11" font-style="italic" fill="#8b949e">
+    advisor_20260301 strategy -- Sonnet speed, Opus judgment where it matters
+  </text>
+
+  <!-- Badge 1: Summarize — center x=155 -->
+  <text x="155" y="276" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">Summarize</text>
+  <text x="155" y="292" text-anchor="middle" font-size="11" fill="#8b949e">ENGRAM_CLAUDE_</text>
+  <text x="155" y="308" text-anchor="middle" font-size="11" fill="#8b949e">SUMMARIZE=true</text>
+
+  <!-- Badge 2: Consolidate — center x=385 -->
+  <text x="385" y="276" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">Consolidate</text>
+  <text x="385" y="292" text-anchor="middle" font-size="11" fill="#8b949e">ENGRAM_CLAUDE_</text>
+  <text x="385" y="308" text-anchor="middle" font-size="11" fill="#8b949e">CONSOLIDATE=true</text>
+
+  <!-- Badge 3: Re-rank — center x=615 -->
+  <text x="615" y="276" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">Re-rank</text>
+  <text x="615" y="292" text-anchor="middle" font-size="11" fill="#8b949e">ENGRAM_CLAUDE_</text>
+  <text x="615" y="308" text-anchor="middle" font-size="11" fill="#8b949e">RERANK=true</text>
+
+  <!-- Badge 4: Reason + star — center x=845, star at x=826 so label shifts slightly right -->
+  <text x="852" y="276" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">Reason</text>
+  <text x="845" y="297" text-anchor="middle" font-size="11" fill="#8b949e">memory_reason tool</text>
+
+  <!-- Bottom caption, centered at x=500 -->
+  <text x="500" y="342" text-anchor="middle" font-size="11" fill="#8b949e">All opt-in</text>
+  <text x="500" y="357" text-anchor="middle" font-size="11" fill="#8b949e">Defaults preserve existing behavior</text>
+  <text x="500" y="372" text-anchor="middle" font-size="11" fill="#8b949e">Set ANTHROPIC_API_KEY to enable</text>
+
+</svg>

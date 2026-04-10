@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" role="img" aria-label="Context reduction diagram showing summary mode reduces token consumption by 13x">
+
+  <!-- ============================================================
+       LAYER 1: BACKGROUNDS
+       ============================================================ -->
+
+  <!-- Root background -->
+  <rect x="0" y="0" width="900" height="300" fill="#0d1117"/>
+
+  <!-- Left panel background — full mode, tall -->
+  <rect x="30" y="30" width="340" height="220" rx="10" ry="10" fill="#161b22"/>
+
+  <!-- Right panel background — summary mode, short -->
+  <rect x="530" y="100" width="230" height="90" rx="10" ry="10" fill="#161b22"/>
+
+  <!-- ============================================================
+       LAYER 2: GEOMETRY — borders, simulated text lines, arrow
+       ============================================================ -->
+
+  <!-- Left panel border — red to signal "expensive" -->
+  <rect x="30" y="30" width="340" height="220" rx="10" ry="10" fill="none" stroke="#e74c3c" stroke-width="1.5"/>
+
+  <!-- Right panel border — green to signal "efficient" -->
+  <rect x="530" y="100" width="230" height="90" rx="10" ry="10" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+
+  <!-- Simulated text lines inside left panel — varying widths, 9 lines -->
+  <!-- Line 1: full width (~290px) -->
+  <rect x="50" y="62" width="290" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 2: ~250px -->
+  <rect x="50" y="77" width="250" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 3: ~275px -->
+  <rect x="50" y="92" width="275" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 4: ~230px -->
+  <rect x="50" y="107" width="230" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 5: ~285px -->
+  <rect x="50" y="122" width="285" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 6: ~200px -->
+  <rect x="50" y="137" width="200" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 7: ~265px -->
+  <rect x="50" y="152" width="265" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 8: ~240px -->
+  <rect x="50" y="167" width="240" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 9: ~210px -->
+  <rect x="50" y="182" width="210" height="7" rx="3" fill="#30363d"/>
+
+  <!-- Red badge background — top-right of left panel -->
+  <rect x="210" y="36" width="150" height="22" rx="11" fill="#e74c3c"/>
+
+  <!-- Simulated text lines inside right panel — 2 lines -->
+  <!-- Line 1: ~170px -->
+  <rect x="550" y="120" width="170" height="7" rx="3" fill="#30363d"/>
+  <!-- Line 2: ~130px -->
+  <rect x="550" y="135" width="130" height="7" rx="3" fill="#30363d"/>
+
+  <!-- Green badge background — top-right of right panel -->
+  <rect x="580" y="106" width="170" height="22" rx="11" fill="#3fb950"/>
+
+  <!-- Arrow shaft — pointing right, from left panel to right panel -->
+  <line x1="382" y1="140" x2="518" y2="140" stroke="#3fb950" stroke-width="2.5"/>
+  <!-- Arrow head — constructed from path, no Unicode -->
+  <path d="M 510,132 L 524,140 L 510,148 Z" fill="#3fb950"/>
+
+  <!-- Divider line above bottom caption -->
+  <line x1="50" y1="272" x2="850" y2="272" stroke="#21262d" stroke-width="1"/>
+
+  <!-- ============================================================
+       LAYER 3: STROKES (already embedded with geometry above)
+       ============================================================ -->
+
+  <!-- ============================================================
+       LAYER 4: TEXT — drawn last, never occluded
+       ============================================================ -->
+
+  <!-- Red badge label -->
+  <text x="285" y="51"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="12"
+        font-weight="700"
+        fill="#ffffff"
+        text-anchor="middle">~10,000 chars</text>
+
+  <!-- Green badge label -->
+  <text x="665" y="121"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="12"
+        font-weight="700"
+        fill="#ffffff"
+        text-anchor="middle">~150 chars</text>
+
+  <!-- Left panel primary label -->
+  <text x="200" y="222"
+        font-family="'Courier New', Courier, monospace"
+        font-size="14"
+        font-weight="700"
+        fill="#e74c3c"
+        text-anchor="middle">detail="full"</text>
+
+  <!-- Left panel sub-label -->
+  <text x="200" y="240"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="11"
+        fill="#8b949e"
+        text-anchor="middle">Full original content</text>
+
+  <!-- Right panel primary label -->
+  <text x="645" y="210"
+        font-family="'Courier New', Courier, monospace"
+        font-size="14"
+        font-weight="700"
+        fill="#3fb950"
+        text-anchor="middle">detail="summary"</text>
+
+  <!-- Right panel sub-label -->
+  <text x="645" y="228"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="11"
+        fill="#8b949e"
+        text-anchor="middle">1-2 sentence AI summary</text>
+
+  <!-- Arrow label: "summary mode" -->
+  <text x="450" y="126"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="12"
+        font-weight="600"
+        fill="#3fb950"
+        text-anchor="middle">summary mode</text>
+
+  <!-- Arrow reduction label: "div13x" constructed without Unicode -->
+  <text x="450" y="160"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="13"
+        font-weight="700"
+        fill="#3fb950"
+        text-anchor="middle">/ 13x reduction</text>
+
+  <!-- Bottom caption line — split into two tspan runs to stay within ~820px safe zone -->
+  <text x="450" y="287"
+        font-family="Inter, 'Segoe UI', sans-serif"
+        font-size="11"
+        fill="#8b949e"
+        text-anchor="middle">summary mode reduces context consumption by ~13x  --  use detail="full" when you need the original</text>
+
+</svg>

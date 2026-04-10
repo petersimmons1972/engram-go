@@ -1,0 +1,40 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck      # all errors must be handled
+    - govet         # standard go vet checks
+    - staticcheck   # comprehensive static analysis (subsumes gosimple, unused)
+    - revive        # idiomatic Go style
+    - ineffassign   # detect unused assignments
+    - misspell      # spelling errors in comments and strings
+    - bodyclose     # HTTP response bodies must be closed
+    - whitespace    # extra blank lines before/after blocks
+    - godot         # exported comments end with a period
+    - unconvert     # unnecessary type conversions
+    - noctx         # HTTP requests must use context
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: var-naming
+        severity: warning
+      - name: error-return
+        severity: warning
+  errcheck:
+    check-type-assertions: true
+    check-blank: false  # allow _ = err in deferred patterns
+
+issues:
+  exclude-rules:
+    # Test files: relax errcheck and godot
+    - path: "_test\\.go"
+      linters:
+        - errcheck
+        - godot
+    # Migration SQL files embedded in Go — skip all linters
+    - path: "internal/db/migrations"
+      linters:
+        - all
