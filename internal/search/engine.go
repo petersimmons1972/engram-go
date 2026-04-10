@@ -324,6 +324,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MatchedChunkIndex:   bestChunkIndex[id],
 			MatchedChunkSection: bestChunkSection[id],
 		}
+		if rels, err := e.backend.GetRelationships(ctx, e.project, m.ID); err == nil {
+			result.Connected = toConnectedMemories(rels, m.ID)
+		}
 		switch detail {
 		case "id_only":
 			result.Memory = &types.Memory{ID: m.ID}
@@ -436,6 +439,25 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 
 func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
+}
+
+// toConnectedMemories converts raw relationship rows into ConnectedMemory values
+// relative to the given memory ID. ConnectedMemory.Memory is intentionally left
+// nil to avoid a second DB round-trip per relationship.
+func toConnectedMemories(rels []types.Relationship, memID string) []types.ConnectedMemory {
+	out := make([]types.ConnectedMemory, 0, len(rels))
+	for _, r := range rels {
+		dir := "outgoing"
+		if r.TargetID == memID {
+			dir = "incoming"
+		}
+		out = append(out, types.ConnectedMemory{
+			RelType:   r.RelType,
+			Direction: dir,
+			Strength:  r.Strength,
+		})
+	}
+	return out
 }
 
 // sortResults sorts descending by composite score.

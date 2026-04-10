@@ -103,6 +103,9 @@ type Backend interface {
 	DecayAllEdges(ctx context.Context, project string, decayFactor, minStrength float64) (int, int, error)
 	// DeleteRelationshipsForMemory deletes all edges touching memoryID.
 	DeleteRelationshipsForMemory(ctx context.Context, memoryID string) error
+	// GetRelationships returns all relationship edges where memoryID is either
+	// the source or the target, scoped to project.
+	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
 
 	// ── Pruning ─────────────────────────────────────────────────────────────
 
