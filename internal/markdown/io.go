@@ -19,6 +19,9 @@ func Export(memories []*types.Memory, dir string) error {
 		return err
 	}
 	for _, m := range memories {
+		if m == nil || m.ID == "" {
+			continue
+		}
 		if err := writeMemory(m, filepath.Join(dir, m.ID+".md")); err != nil {
 			return fmt.Errorf("export %s: %w", m.ID, err)
 		}
@@ -51,7 +54,7 @@ func Dump(memories []*types.Memory, dir string) error {
 func ImportClaudeMD(path string) ([]*types.Memory, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ImportClaudeMD %s: %w", path, err)
 	}
 	return splitSections(string(data)), nil
 }
@@ -60,22 +63,29 @@ func ImportClaudeMD(path string) ([]*types.Memory, error) {
 func Ingest(dir string) ([]*types.Memory, error) {
 	var memories []*types.Memory
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
-			return err
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return nil // skip unreadable directories, continue walk
+			}
+			return err // abort on actual file-level errors
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
+		now := time.Now().UTC()
 		m := &types.Memory{
 			ID:           types.NewMemoryID(),
 			Content:      string(data),
 			MemoryType:   types.MemoryTypeContext,
 			Importance:   2,
 			StorageMode:  "document",
-			CreatedAt:    time.Now().UTC(),
-			UpdatedAt:    time.Now().UTC(),
-			LastAccessed: time.Now().UTC(),
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			LastAccessed: now,
 		}
 		memories = append(memories, m)
 		return nil
@@ -114,14 +124,15 @@ func sectionMemory(heading, content string) *types.Memory {
 	if heading != "" {
 		content = heading + "\n\n" + content
 	}
+	now := time.Now().UTC()
 	return &types.Memory{
 		ID:           types.NewMemoryID(),
 		Content:      content,
 		MemoryType:   types.MemoryTypeContext,
 		Importance:   2,
 		StorageMode:  "focused",
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
-		LastAccessed: time.Now().UTC(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		LastAccessed: now,
 	}
 }
