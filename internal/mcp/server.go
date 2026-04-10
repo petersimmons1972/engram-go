@@ -21,7 +21,7 @@ type Server struct {
 	mcp  *server.MCPServer
 }
 
-// NewServer constructs a Server with all 18 tools registered.
+// NewServer constructs a Server with all MCP tools registered.
 func NewServer(pool *EnginePool, cfg Config) *Server {
 	s := &Server{pool: pool, cfg: cfg}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
@@ -153,10 +153,6 @@ func (s *Server) registerTools() {
 		{"memory_import_claudemd", "Import a CLAUDE.md file as structured memories",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryImportClaudeMD(ctx, pool, req, cfg)
-			}},
-		{"memory_dump", "Dump raw memory files to a directory",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryDump(ctx, pool, req, cfg)
 			}},
 		{"memory_ingest", "Ingest a file or directory as document memories",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

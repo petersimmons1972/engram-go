@@ -528,11 +528,6 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 	return toolResult(map[string]any{"imported": len(ids), "ids": ids})
 }
 
-// handleMemoryDump is an alias for handleMemoryExportAll.
-func handleMemoryDump(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	return handleMemoryExportAll(ctx, pool, req, cfg)
-}
-
 // handleMemoryIngest reads markdown files from a directory and stores each as a memory.
 func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.DataDir == "" {

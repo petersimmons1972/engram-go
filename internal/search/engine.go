@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -479,22 +480,14 @@ func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
 }
 
-// sortByScore sorts descending by cosine (insertion sort — small N, cache-friendly).
+// sortByScore sorts descending by cosine score.
 func sortByScore(s []chunkScore) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j].cosine > s[j-1].cosine; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+	sort.Slice(s, func(i, j int) bool { return s[i].cosine > s[j].cosine })
 }
 
 // sortResults sorts descending by composite score.
 func sortResults(r []types.SearchResult) {
-	for i := 1; i < len(r); i++ {
-		for j := i; j > 0 && r[j].Score > r[j-1].Score; j-- {
-			r[j], r[j-1] = r[j-1], r[j]
-		}
-	}
+	sort.Slice(r, func(i, j int) bool { return r[i].Score > r[j].Score })
 }
 
 type chunkScore struct {
@@ -728,11 +721,13 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 // bigramJaccard computes character-bigram Jaccard similarity between two strings.
 // Returns |A∩B| / |A∪B| where A and B are the bigram sets of a and b.
+// Iterates over Unicode code points (runes), not bytes, to handle multibyte UTF-8.
 func bigramJaccard(a, b string) float64 {
-	bigrams := func(s string) map[string]struct{} {
-		m := make(map[string]struct{}, len(s))
-		for i := 0; i+1 < len(s); i++ {
-			m[s[i:i+2]] = struct{}{}
+	bigrams := func(s string) map[[2]rune]struct{} {
+		r := []rune(s)
+		m := make(map[[2]rune]struct{}, len(r))
+		for i := 0; i+1 < len(r); i++ {
+			m[[2]rune{r[i], r[i+1]}] = struct{}{}
 		}
 		return m
 	}
