@@ -3,9 +3,11 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -35,14 +37,20 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	slog.Info("engram MCP server starting", "addr", addr)
 
 	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(fmt.Sprintf("http://%s", addr)))
-	httpServer := &http.Server{Addr: addr, Handler: s.applyMiddleware(sse, apiKey)}
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.applyMiddleware(sse, apiKey),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
 
 	select {
 	case <-ctx.Done():
-		return httpServer.Shutdown(context.Background())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return httpServer.Shutdown(shutCtx)
 	case err := <-errCh:
 		return err
 	}
@@ -53,7 +61,9 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler 
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+apiKey {
+		got := []byte(r.Header.Get("Authorization"))
+		want := []byte("Bearer " + apiKey)
+		if subtle.ConstantTimeCompare(got, want) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
