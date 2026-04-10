@@ -139,6 +139,9 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		return nil, err
 	}
 	items, _ := args["memories"].([]any)
+	if len(items) == 0 {
+		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
+	}
 	var ids []string
 	for _, item := range items {
 		mmap, ok := item.(map[string]any)
@@ -217,6 +220,12 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 	src := getString(args, "source_id", "")
 	dst := getString(args, "target_id", "")
+	if src == "" {
+		return nil, fmt.Errorf("source_id is required")
+	}
+	if dst == "" {
+		return nil, fmt.Errorf("target_id is required")
+	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
 	strength := 1.0
 	if v, ok := args["strength"].(float64); ok {
@@ -237,6 +246,9 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return nil, err
 	}
 	id := getString(args, "memory_id", "")
+	if id == "" {
+		return nil, fmt.Errorf("memory_id is required")
+	}
 	var content *string
 	if c := getString(args, "content", ""); c != "" {
 		content = &c
@@ -262,6 +274,9 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	id := getString(args, "memory_id", "")
+	if id == "" {
+		return nil, fmt.Errorf("memory_id is required")
+	}
 	deleted, err := h.Engine.Forget(ctx, id)
 	if err != nil {
 		return nil, err
@@ -278,6 +293,9 @@ func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.Call
 		return nil, err
 	}
 	id := getString(args, "memory_id", "")
+	if id == "" {
+		return nil, fmt.Errorf("memory_id is required")
+	}
 	if err := summarize.SummarizeOne(ctx, h.Engine.Backend(), id, cfg.OllamaURL, cfg.SummarizeModel); err != nil {
 		return nil, err
 	}
