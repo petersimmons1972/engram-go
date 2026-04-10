@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/search"
@@ -25,9 +26,11 @@ type EngineHandle struct {
 type EngineFactory func(ctx context.Context, project string) (*EngineHandle, error)
 
 // engineEntry holds a handle plus its last-access timestamp for LRU eviction.
+// lastAccess stores UnixNano as an atomic int64 so the fast path (RLock) can
+// update it without a data race.
 type engineEntry struct {
 	handle     *EngineHandle
-	lastAccess time.Time
+	lastAccess atomic.Int64 // UnixNano; use Load/Store only
 }
 
 // EnginePool lazily creates and caches one SearchEngine per project.
@@ -58,9 +61,11 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	}
 
 	// Fast path: read lock is sufficient when the engine already exists.
+	// lastAccess is updated atomically so multiple goroutines can safely
+	// record their access time while holding only RLock.
 	p.mu.RLock()
 	if e, ok := p.engines[project]; ok {
-		e.lastAccess = time.Now()
+		e.lastAccess.Store(time.Now().UnixNano())
 		p.mu.RUnlock()
 		return e.handle, nil
 	}
@@ -82,13 +87,15 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 		if h != nil && h.Engine != nil {
 			h.Engine.Close()
 		}
-		e.lastAccess = time.Now()
+		e.lastAccess.Store(time.Now().UnixNano())
 		return e.handle, nil
 	}
 	if len(p.engines) >= maxPoolSize {
 		p.evictLRULocked()
 	}
-	p.engines[project] = &engineEntry{handle: h, lastAccess: time.Now()}
+	entry := &engineEntry{handle: h}
+	entry.lastAccess.Store(time.Now().UnixNano())
+	p.engines[project] = entry
 	return h, nil
 }
 
@@ -96,12 +103,13 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 // Caller must hold p.mu.
 func (p *EnginePool) evictLRULocked() {
 	var lruKey string
-	var lruTime time.Time
+	var lruNano int64
 	first := true
 	for k, e := range p.engines {
-		if first || e.lastAccess.Before(lruTime) {
+		nano := e.lastAccess.Load()
+		if first || nano < lruNano {
 			lruKey = k
-			lruTime = e.lastAccess
+			lruNano = nano
 			first = false
 		}
 	}

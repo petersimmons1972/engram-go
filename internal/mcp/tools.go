@@ -245,21 +245,32 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		if !ok {
 			continue
 		}
-		m := &types.Memory{
-			ID:          types.NewMemoryID(),
-			Content:     getString(mmap, "content", ""),
-			MemoryType:  getString(mmap, "memory_type", types.MemoryTypeContext),
-			Project:     project,
-			Importance:  getInt(mmap, "importance", 2),
-			Tags:        toStringSlice(mmap["tags"]),
-			StorageMode: "focused",
-		}
-		if m.Content == "" {
+		content := getString(mmap, "content", "")
+		if content == "" {
 			continue
 		}
-		if len(m.Content) > types.MaxContentLength {
+		if len(content) > types.MaxContentLength {
 			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
 			continue
+		}
+		memType := getString(mmap, "memory_type", types.MemoryTypeContext)
+		if !types.ValidateMemoryType(memType) {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
+			continue
+		}
+		importance := getInt(mmap, "importance", 2)
+		if importance < 0 || importance > 4 {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
+			continue
+		}
+		m := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     content,
+			MemoryType:  memType,
+			Project:     project,
+			Importance:  importance,
+			Tags:        toStringSlice(mmap["tags"]),
+			StorageMode: "focused",
 		}
 		if err := h.Engine.Store(ctx, m); err != nil {
 			storeErrs = append(storeErrs, fmt.Sprintf("item %d: %s", idx, err))

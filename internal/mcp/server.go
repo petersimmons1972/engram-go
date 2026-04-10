@@ -52,7 +52,6 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		Handler:           http.MaxBytesHandler(s.applyMiddleware(sse, apiKey), maxRequestBodyBytes),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 

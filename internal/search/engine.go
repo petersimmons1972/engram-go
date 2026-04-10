@@ -325,9 +325,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MatchedChunkIndex:   bestChunkIndex[id],
 			MatchedChunkSection: bestChunkSection[id],
 		}
-		if rels, err := e.backend.GetRelationships(ctx, e.project, m.ID); err == nil {
-			result.Connected = toConnectedMemories(rels, m.ID)
-		}
 		switch detail {
 		case "id_only":
 			result.Memory = &types.Memory{ID: m.ID}
@@ -383,6 +380,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	if len(results) > topK {
 		results = results[:topK]
+	}
+
+	// Fetch relationships only for the final topK results, not for every
+	// candidate. This reduces DB round-trips from up to topK*6 to exactly topK.
+	for i := range results {
+		if rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID); err == nil {
+			results[i].Connected = toConnectedMemories(rels, results[i].Memory.ID)
+		}
 	}
 
 	// Update access timestamps.
