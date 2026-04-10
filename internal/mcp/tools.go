@@ -1,0 +1,442 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/markdown"
+	"github.com/petersimmons1972/engram/internal/summarize"
+	"github.com/petersimmons1972/engram/internal/types"
+)
+
+// Config holds server-wide configuration passed to tool handlers.
+type Config struct {
+	OllamaURL        string
+	SummarizeModel   string
+	SummarizeEnabled bool
+}
+
+// toolResult marshals v to JSON and wraps it in an MCP text result.
+func toolResult(v any) (*mcpgo.CallToolResult, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return mcpgo.NewToolResultText(string(b)), nil
+}
+
+// getString extracts a string arg with a fallback default.
+func getString(args map[string]any, key, def string) string {
+	if v, ok := args[key]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return def
+}
+
+// getInt extracts an int arg (JSON numbers arrive as float64) with a fallback.
+func getInt(args map[string]any, key string, def int) int {
+	if v, ok := args[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return int(n)
+		case int:
+			return n
+		}
+	}
+	return def
+}
+
+// getBool extracts a bool arg with a fallback default.
+func getBool(args map[string]any, key string, def bool) bool {
+	if v, ok := args[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return def
+}
+
+// toStringSlice converts []any to []string, skipping non-string entries.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// handleMemoryStore stores a single focused memory.
+func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	content, _ := args["content"].(string)
+	if content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     content,
+		MemoryType:  getString(args, "memory_type", types.MemoryTypeContext),
+		Project:     project,
+		Importance:  getInt(args, "importance", 2),
+		Tags:        toStringSlice(args["tags"]),
+		Immutable:   getBool(args, "immutable", false),
+		StorageMode: "focused",
+	}
+	if err := h.Engine.Store(ctx, m); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"id": m.ID, "status": "stored"})
+}
+
+// handleMemoryStoreDocument stores a document-mode memory (whole document as one chunk).
+func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	content, _ := args["content"].(string)
+	if content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     content,
+		MemoryType:  getString(args, "memory_type", types.MemoryTypeContext),
+		Project:     project,
+		Importance:  getInt(args, "importance", 2),
+		Tags:        toStringSlice(args["tags"]),
+		StorageMode: "document",
+	}
+	if err := h.Engine.Store(ctx, m); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"id": m.ID, "status": "stored", "mode": "document"})
+}
+
+// handleMemoryStoreBatch stores multiple memories in a single call.
+func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	items, _ := args["memories"].([]any)
+	var ids []string
+	for _, item := range items {
+		mmap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		m := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     getString(mmap, "content", ""),
+			MemoryType:  getString(mmap, "memory_type", types.MemoryTypeContext),
+			Project:     project,
+			Importance:  getInt(mmap, "importance", 2),
+			Tags:        toStringSlice(mmap["tags"]),
+			StorageMode: "focused",
+		}
+		if m.Content == "" {
+			continue
+		}
+		if err := h.Engine.Store(ctx, m); err != nil {
+			return nil, err
+		}
+		ids = append(ids, m.ID)
+	}
+	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
+}
+
+// handleMemoryRecall performs semantic recall against a project's memories.
+func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	query := getString(args, "query", "")
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	topK := getInt(args, "top_k", 10)
+	detail := getString(args, "detail", "summary")
+	results, err := h.Engine.Recall(ctx, query, topK, detail)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"results": results, "count": len(results)})
+}
+
+// handleMemoryList lists memories with optional type and tag filters.
+func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	limit := getInt(args, "limit", 50)
+	offset := getInt(args, "offset", 0)
+	var memType *string
+	if s := getString(args, "memory_type", ""); s != "" {
+		memType = &s
+	}
+	memories, err := h.Engine.List(ctx, memType, toStringSlice(args["tags"]), nil, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"memories": memories, "count": len(memories)})
+}
+
+// handleMemoryConnect creates a directional relationship between two memories.
+func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	src := getString(args, "source_id", "")
+	dst := getString(args, "target_id", "")
+	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
+	strength := 1.0
+	if v, ok := args["strength"].(float64); ok {
+		strength = v
+	}
+	if err := h.Engine.Connect(ctx, src, dst, relType, strength); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"status": "connected", "source_id": src, "target_id": dst})
+}
+
+// handleMemoryCorrect updates the content, tags, or importance of an existing memory.
+func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	id := getString(args, "memory_id", "")
+	var content *string
+	if c := getString(args, "content", ""); c != "" {
+		content = &c
+	}
+	var importance *int
+	if v, ok := args["importance"].(float64); ok {
+		n := int(v)
+		importance = &n
+	}
+	updated, err := h.Engine.Correct(ctx, id, content, toStringSlice(args["tags"]), importance)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(updated)
+}
+
+// handleMemoryForget deletes a memory by ID.
+func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	id := getString(args, "memory_id", "")
+	deleted, err := h.Engine.Forget(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"deleted": deleted, "memory_id": id})
+}
+
+// handleMemorySummarize requests Ollama to summarize a memory's content.
+func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	id := getString(args, "memory_id", "")
+	if err := summarize.SummarizeOne(ctx, h.Engine.Backend(), id, cfg.OllamaURL, cfg.SummarizeModel); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"status": "summarized", "memory_id": id})
+}
+
+// handleMemoryStatus returns aggregate statistics for a project's memory store.
+func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := h.Engine.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(stats)
+}
+
+// handleMemoryFeedback records positive reinforcement for recalled memory IDs.
+func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	ids := toStringSlice(args["memory_ids"])
+	if err := h.Engine.Feedback(ctx, ids); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"status": "recorded", "count": len(ids)})
+}
+
+// handleMemoryConsolidate merges near-duplicate memories to reduce redundancy.
+func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.Engine.Consolidate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(result)
+}
+
+// handleMemoryVerify checks integrity of the memory store.
+func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.Engine.Verify(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(result)
+}
+
+// handleMemoryMigrateEmbedder re-embeds all chunks using a new Ollama model.
+func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	newModel := getString(args, "new_model", "")
+	if newModel == "" {
+		return nil, fmt.Errorf("new_model is required")
+	}
+	result, err := h.Engine.MigrateEmbedder(ctx, newModel)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(result)
+}
+
+// handleMemoryExportAll exports all memories to markdown files in output_path.
+func handleMemoryExportAll(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	outputPath := getString(args, "output_path", "./memory-export")
+	memories, err := h.Engine.List(ctx, nil, nil, nil, 10_000, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := markdown.Export(memories, outputPath); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"exported": len(memories), "path": outputPath})
+}
+
+// handleMemoryImportClaudeMD imports a CLAUDE.md file as sectioned memories.
+func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	path := getString(args, "path", "")
+	if path == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	memories, err := markdown.ImportClaudeMD(path)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, m := range memories {
+		m.Project = project
+		if err := h.Engine.Store(ctx, m); err != nil {
+			return nil, err
+		}
+		ids = append(ids, m.ID)
+	}
+	return toolResult(map[string]any{"imported": len(ids), "ids": ids})
+}
+
+// handleMemoryDump is an alias for handleMemoryExportAll.
+func handleMemoryDump(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	return handleMemoryExportAll(ctx, pool, req)
+}
+
+// handleMemoryIngest reads markdown files from a directory and stores each as a memory.
+func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	path := getString(args, "path", "")
+	if path == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	memories, err := markdown.Ingest(path)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, m := range memories {
+		m.Project = project
+		if err := h.Engine.Store(ctx, m); err != nil {
+			return nil, err
+		}
+		ids = append(ids, m.ID)
+	}
+	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
+}
