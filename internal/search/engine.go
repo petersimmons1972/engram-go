@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/chunk"
@@ -283,6 +284,20 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	if storedName != e.embedder.Name() {
 		return fmt.Errorf("embedder mismatch: stored=%q current=%q — run memory_migrate_embedder first",
 			storedName, e.embedder.Name())
+	}
+	storedDimsStr, ok, err := e.backend.GetMeta(ctx, e.project, "embedder_dimensions")
+	if err != nil {
+		return err
+	}
+	if ok {
+		storedDims, err := strconv.Atoi(storedDimsStr)
+		if err != nil {
+			return fmt.Errorf("embedder_dimensions metadata is corrupt: %w", err)
+		}
+		if storedDims != e.embedder.Dimensions() {
+			return fmt.Errorf("embedder dimensions mismatch: stored %d, current %d — use memory_migrate_embedder to switch models",
+				storedDims, e.embedder.Dimensions())
+		}
 	}
 	return nil
 }

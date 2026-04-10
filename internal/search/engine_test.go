@@ -71,7 +71,8 @@ func TestSearchEngine_Store(t *testing.T) {
 }
 
 func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
-	engine := newTestEngine(t, uniqueProject("test-dedup"))
+	proj := uniqueProject("test-dedup")
+	engine := newTestEngine(t, proj)
 	t.Cleanup(func() { engine.Close() })
 
 	ctx := context.Background()
@@ -84,6 +85,10 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 	m2 := &types.Memory{ID: types.NewMemoryID(), Content: content,
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m2))
+
+	chunks, err := engine.Backend().GetAllChunksWithEmbeddings(ctx, proj, 10_000)
+	require.NoError(t, err)
+	require.Len(t, chunks, 1, "identical content should produce exactly one stored chunk")
 }
 
 func TestSearchEngine_Recall(t *testing.T) {
