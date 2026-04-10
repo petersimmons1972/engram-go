@@ -19,6 +19,7 @@ type Config struct {
 	SummarizeModel           string
 	SummarizeEnabled         bool
 	ClaudeConsolidateEnabled bool
+	ClaudeRerankEnabled      bool
 	claudeClient             *claude.Client // set via Server.SetClaudeClient
 }
 
@@ -54,6 +55,35 @@ func (a *claudeMergeAdapter) ReviewMergeCandidates(ctx context.Context, candidat
 		}
 	}
 	return decisions, nil
+}
+
+// claudeRerankAdapter bridges search.ResultReranker to claude.Client.
+type claudeRerankAdapter struct {
+	client *claude.Client
+}
+
+func (a *claudeRerankAdapter) RerankResults(ctx context.Context, query string, items []search.RerankItem) ([]search.RerankResult, error) {
+	// Convert search.RerankItem → claude.RerankItem.
+	claudeItems := make([]claude.RerankItem, len(items))
+	for i, item := range items {
+		claudeItems[i] = claude.RerankItem{
+			ID:      item.ID,
+			Summary: item.Summary,
+			Score:   item.Score,
+		}
+	}
+	claudeResults, err := a.client.RerankResults(ctx, query, claudeItems)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]search.RerankResult, len(claudeResults))
+	for i, r := range claudeResults {
+		results[i] = search.RerankResult{
+			ID:    r.ID,
+			Score: r.Score,
+		}
+	}
+	return results, nil
 }
 
 // toolResult marshals v to JSON and wraps it in an MCP text result.
@@ -207,7 +237,8 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 }
 
 // handleMemoryRecall performs semantic recall against a project's memories.
-func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// Pass cfg to enable optional Claude re-ranking via the rerank argument.
+func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
@@ -220,7 +251,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	topK := getInt(args, "top_k", 10)
 	detail := getString(args, "detail", "summary")
-	results, err := h.Engine.Recall(ctx, query, topK, detail)
+	rerank := getBool(args, "rerank", false)
+
+	var opts search.RecallOpts
+	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
+		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
+	}
+	results, err := h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 	if err != nil {
 		return nil, err
 	}

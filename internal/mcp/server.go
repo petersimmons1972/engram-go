@@ -101,7 +101,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_recall", "Recall memories by semantic + full-text query",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryRecall(ctx, pool, req)
+				return handleMemoryRecall(ctx, pool, req, cfg)
 			}},
 		{"memory_list", "List memories with optional filters",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

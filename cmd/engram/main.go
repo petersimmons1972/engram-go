@@ -36,6 +36,7 @@ func run() error {
 	claudeAPIKey := fs.String("claude-api-key", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key for Claude advisor")
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
+	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Optional bearer token (empty = no auth)")
@@ -69,7 +70,7 @@ func run() error {
 	// Construct Claude client if API key provided and any Claude advisor feature is enabled.
 	var claudeCompleter summarize.ClaudeCompleter
 	var cc *claude.Client
-	if *claudeAPIKey != "" && (*claudeSummarize || *claudeConsolidate) {
+	if *claudeAPIKey != "" && (*claudeSummarize || *claudeConsolidate || *claudeRerank) {
 		var err error
 		cc, err = claude.New(*claudeAPIKey)
 		if err != nil {
@@ -97,6 +98,7 @@ func run() error {
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
 		ClaudeConsolidateEnabled: *claudeConsolidate,
+		ClaudeRerankEnabled:      *claudeRerank,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {

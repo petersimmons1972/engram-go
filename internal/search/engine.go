@@ -21,6 +21,30 @@ type MergeReviewer interface {
 	ReviewMergeCandidates(ctx context.Context, candidates []MergeCandidate) ([]MergeDecision, error)
 }
 
+// ResultReranker re-ranks recall results using an external model.
+// Implemented by an adapter in the mcp package; declared here to avoid import cycle.
+type ResultReranker interface {
+	RerankResults(ctx context.Context, query string, items []RerankItem) ([]RerankResult, error)
+}
+
+// RerankItem is a memory result passed to the reranker.
+type RerankItem struct {
+	ID      string  `json:"id"`
+	Summary string  `json:"summary"`
+	Score   float64 `json:"score"`
+}
+
+// RerankResult is the re-ranked score for one item.
+type RerankResult struct {
+	ID    string  `json:"id"`
+	Score float64 `json:"score"`
+}
+
+// RecallOpts controls optional post-processing for Recall.
+type RecallOpts struct {
+	Reranker ResultReranker // nil = skip re-ranking
+}
+
 // MergeCandidate is a pair of memories with their similarity score.
 type MergeCandidate struct {
 	MemoryA    *types.Memory
@@ -170,10 +194,15 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	return tx.Commit(ctx)
 }
 
-// Recall retrieves the topK most relevant memories for query, using composite
-// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
-// or "full" (default).
+// Recall retrieves the topK most relevant memories for query.
 func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error) {
+	return e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
+}
+
+// RecallWithOpts retrieves the topK most relevant memories for query, using composite
+// vector+FTS scoring. detail controls content truncation: "id_only", "summary",
+// or "full" (default). opts allows optional post-processing such as re-ranking.
+func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, error) {
 	if topK <= 0 {
 		topK = 10
 	}
@@ -308,6 +337,44 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 	}
 
 	sortResults(results)
+
+	// Apply optional re-ranking before final truncation.
+	if opts.Reranker != nil && len(results) > 0 {
+		items := make([]RerankItem, len(results))
+		for i, r := range results {
+			summary := ""
+			if r.Memory.Summary != nil {
+				summary = *r.Memory.Summary
+			} else {
+				summary = r.Memory.Content
+				if len(summary) > 500 {
+					summary = summary[:500]
+				}
+			}
+			items[i] = RerankItem{
+				ID:      r.Memory.ID,
+				Summary: summary,
+				Score:   r.Score,
+			}
+		}
+		reranked, err := opts.Reranker.RerankResults(ctx, query, items)
+		if err == nil && len(reranked) > 0 {
+			// Build lookup map from reranked scores.
+			scoreMap := make(map[string]float64, len(reranked))
+			for _, rr := range reranked {
+				scoreMap[rr.ID] = rr.Score
+			}
+			// Overwrite scores for matched IDs.
+			for i := range results {
+				if newScore, ok := scoreMap[results[i].Memory.ID]; ok {
+					results[i].Score = newScore
+				}
+			}
+			// Re-sort with new scores.
+			sortResults(results)
+		}
+	}
+
 	if len(results) > topK {
 		results = results[:topK]
 	}
