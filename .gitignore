@@ -4,3 +4,5 @@ backups/
 .env.local
 .env.machine-identity
 infisical/infisical-bin
+/engram
+/engram-*
