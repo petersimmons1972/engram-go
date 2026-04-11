@@ -190,25 +190,46 @@ func (w *Worker) Stop() {
 	}
 }
 
+const batchTimeout = 5 * time.Minute // max time for one runOnce iteration (#120)
+
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("summarize worker panic", "project", w.project, "panic", r)
-		}
-	}()
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
-	w.runOnce(ctx)
+	w.timedRunOnce(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.runOnce(ctx)
+			w.timedRunOnce(ctx)
 		}
 	}
+}
+
+// timedRunOnce wraps safeRunOnce with a per-iteration context timeout (#120).
+func (w *Worker) timedRunOnce(ctx context.Context) {
+	iterCtx, cancel := context.WithTimeout(ctx, batchTimeout)
+	defer cancel()
+	w.safeRunOnce(iterCtx)
+}
+
+// safeRunOnce wraps runOnce with per-iteration panic recovery (#106).
+// A panic logs an error and sleeps 1s so the loop can continue rather than
+// killing the worker goroutine permanently.
+func (w *Worker) safeRunOnce(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("summarize worker panic — will retry next tick",
+				"project", w.project, "panic", r)
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+	w.runOnce(ctx)
 }
 
 func (w *Worker) runOnce(ctx context.Context) {
