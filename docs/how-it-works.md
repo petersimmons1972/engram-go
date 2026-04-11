@@ -61,6 +61,14 @@ composite = (bm25 × 0.85) + (recency × 0.15)
 
 The importance multiplier is set at store time and applied at recall time. It is a flat scaling factor — a `critical` memory with a mediocre composite score still beats a `trivial` memory with a strong one.
 
+Two additional signals are applied after the composite:
+
+**Dynamic importance** replaces the static importance multiplier for memories that have been retrieved and marked useful via `memory_feedback`. The system tracks a spaced-repetition schedule (`next_review_at`) and applies an extra boost to memories that are due for review. Once a memory accumulates retrieval history, `dynamic_importance` supersedes the initial static weight.
+
+**Retrieval precision** tracks the ratio of useful retrievals to total retrievals (`times_useful / times_retrieved`). Memories with a high precision score — ones that consistently prove useful when surfaced — receive a small additional boost. New memories with no retrieval history are scored as if they have neutral precision.
+
+Both signals appear in the `score_breakdown` map returned with each result, so you can inspect exactly how a score was composed.
+
 ---
 
 ## Context-Efficient Recall
@@ -113,6 +121,24 @@ Two-hop traversal means: a query returns a memory, that memory's neighbors are a
 The graph does not require manual maintenance to stay useful. It self-optimizes toward what your queries actually find relevant, over time.
 
 <p align="center"><img src="knowledge-graph.svg" alt="Knowledge graph: memory relationships" width="900"></p>
+
+---
+
+## Episodic Memory
+
+Every SSE connection automatically starts an episode in the `global` project. When Claude Code connects to Engram, a new episode is created with a description like `"Claude Code session 2026-04-11T14:30:00Z"`. This requires no manual call to `memory_episode_start`.
+
+Episodes group memories from a session together, making it easy to review everything that happened in a specific working session:
+
+```python
+# List recent sessions
+memory_episode_list(project="global")
+
+# Recall all memories from a specific session
+memory_episode_recall(episode_id="ep-id-here", project="global")
+```
+
+Manual episode management is still available. `memory_episode_start` creates an explicitly named episode — useful for marking the start of a specific task. `memory_episode_end` closes it with an optional summary. Memories stored while an episode is open are tagged with its ID.
 
 ---
 

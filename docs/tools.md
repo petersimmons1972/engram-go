@@ -1,4 +1,4 @@
-# All 19 Tools
+# All 28 Tools
 
 You open a session. The codebase is the same as yesterday but you have no memory of it. Before writing a line, you need to know: what decisions did we make about auth? Are there any known bugs in this module? What was the next thing we planned to do?
 
@@ -292,12 +292,6 @@ memory_import_claudemd(content=claude_md_text, project="my-app")
 
 ---
 
-### memory_dump
-
-Dump raw memory files to a directory. Useful for backup or migration to another instance.
-
----
-
 ### memory_ingest
 
 Ingest a file or directory as document memories. Point it at an existing documentation tree and Engram indexes the whole thing.
@@ -305,6 +299,135 @@ Ingest a file or directory as document memories. Point it at an existing documen
 ```python
 memory_ingest(path="/path/to/docs/", project="my-app")
 ```
+
+---
+
+## History and Time Travel
+
+### memory_history
+
+Return the full version chain for a memory — every edit made via `memory_correct`, with timestamps and a diff of what changed. Use this to audit why a memory has its current content.
+
+```python
+memory_history(memory_id="id-here", project="my-app")
+```
+
+---
+
+### memory_timeline
+
+Recall memories that were active at a specific point in time. Pass an RFC3339 timestamp to `as_of` and get back the memories whose `valid_from` / `valid_to` window includes that moment.
+
+```python
+memory_timeline(as_of="2026-01-15T10:00:00Z", project="my-app")
+```
+
+Useful for reconstructing what the system "knew" before a decision was made, or for incident retrospectives.
+
+---
+
+## Episodic Memory
+
+Episodes group memories from a session. Every SSE connection auto-starts a `global` episode — you rarely need to call these manually, but they give you finer-grained control.
+
+### memory_episode_start
+
+Start a named episode to group memories from this session.
+
+```python
+memory_episode_start(description="Auth refactor session", project="my-app")
+# Returns: {"episode_id": "ep-xyz", ...}
+```
+
+Memories stored while an episode is open are tagged with its ID. Start an episode at the beginning of a focused work session so you can replay the whole session later.
+
+---
+
+### memory_episode_end
+
+Close the active episode with an optional summary.
+
+```python
+memory_episode_end(episode_id="ep-xyz", summary="Completed RS256 migration", project="my-app")
+```
+
+---
+
+### memory_episode_list
+
+List recent episodes for a project, newest first.
+
+```python
+memory_episode_list(project="my-app", limit=10)
+```
+
+---
+
+### memory_episode_recall
+
+Return all memories from a specific episode in chronological order.
+
+```python
+memory_episode_recall(episode_id="ep-xyz", project="my-app")
+```
+
+The complete context of a session in one call. Useful at the start of a follow-up session — recall the prior episode to re-establish where you left off.
+
+---
+
+## Cross-Project Federation
+
+### memory_projects
+
+List all projects with memory counts. Use this to discover what projects exist before recalling across them.
+
+```python
+memory_projects()
+# Returns: [{"project": "my-app", "count": 142}, {"project": "global", "count": 37}, ...]
+```
+
+---
+
+### memory_adopt
+
+Create a cross-project reference relationship. Links a memory in one project to a memory in another with a `references` edge. The adoption appears in graph traversal — a query in `frontend` can surface a related memory from `backend` if the two are connected by an adoption.
+
+```python
+memory_adopt(
+    source_id="frontend-memory-id",
+    target_id="backend-memory-id",
+    source_project="frontend",
+    target_project="backend"
+)
+```
+
+Use `memory_projects` first to discover project names and memory counts.
+
+---
+
+## Diagnostics
+
+### memory_diagnose ⭐ v2.0
+
+Return an evidence map for a set of recalled memories — conflicts between them, confidence level, and invalidated sources. Unlike `memory_reason`, this tool does no synthesis and requires no Claude API key. It returns raw evidence about the memories you pass in, not a generated answer.
+
+```python
+memory_diagnose(memory_ids="id1,id2,id3", project="my-app")
+```
+
+Use this before a critical decision to understand whether your recalled memories conflict with each other, and which sources may have been superseded.
+
+---
+
+### memory_sleep
+
+Run a full sleep-consolidation cycle: analyzes semantically related memories and infers relationship edges between them, mimicking the way memory consolidation works during sleep. Unlike `memory_consolidate` (which prunes and deduplicates), `memory_sleep` adds connections rather than removing memories.
+
+```python
+memory_sleep(project="my-app")
+```
+
+Run this periodically on active projects — monthly or after a major work session — to let the knowledge graph grow organically from semantic proximity.
 
 ---
 
@@ -324,3 +447,7 @@ Filtering by type is a hard filter — `memory_types=["error"]` returns only err
 ---
 
 **Previous:** [Connecting Your IDE](connecting.md) | **Next:** [Claude Advisor](claude-advisor.md)
+
+---
+
+*28 tools total: 27 registered unconditionally + `memory_reason` when `ANTHROPIC_API_KEY` is set.*

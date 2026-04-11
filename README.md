@@ -30,12 +30,14 @@ memory_store(
 
 ```bash
 git clone https://github.com/petersimmons1972/engram-go.git && cd engram-go
-cp .env.example .env   # set POSTGRES_PASSWORD
-docker compose up -d
-claude mcp add engram --transport sse http://localhost:8788/sse
+make init     # generates POSTGRES_PASSWORD and ENGRAM_API_KEY in .env
+make up       # starts postgres, ollama, and engram-go
+make setup    # configures Claude Code MCP client (run after container is healthy)
 ```
 
 The server starts on port 8788. Cold start: under 200ms. Memory at idle: 18 MB.
+
+`make setup` calls the `/setup-token` endpoint to fetch the bearer token and writes it to `~/.claude/mcp_servers.json` automatically. Run `/mcp` in Claude Code after setup to connect.
 
 ---
 
@@ -43,7 +45,7 @@ The server starts on port 8788. Cold start: under 200ms. Memory at idle: 18 MB.
 
 <p align="center"><img src="docs/architecture.svg" alt="Engram Architecture" width="900"></p>
 
-Your AI client speaks MCP over SSE. Engram exposes 19 tools — store, recall, relate, reason, summarize, export. PostgreSQL with pgvector stores everything. Ollama (optional, local) runs the embeddings. When Ollama is unavailable, search falls back to BM25 and recency. All tools stay functional.
+Your AI client speaks MCP over SSE. Engram exposes 28 tools — store, recall, connect, correct, diagnose, episode management, cross-project federation, and more. PostgreSQL with pgvector stores everything. Ollama (local) runs the embeddings. When Ollama is unavailable, search falls back to BM25 and recency. All tools stay functional.
 
 ---
 
@@ -55,7 +57,7 @@ Your AI client speaks MCP over SSE. Engram exposes 19 tools — store, recall, r
 | [How It Works](docs/how-it-works.md) | Four-signal search, knowledge graph, context efficiency |
 | [Getting Started](docs/getting-started.md) | Install and connect in 5 minutes |
 | [Connecting Your IDE](docs/connecting.md) | Claude Code, Cursor, VS Code, Windsurf, Claude Desktop |
-| [All 19 Tools](docs/tools.md) | MCP tool reference with usage examples |
+| [All 28 Tools](docs/tools.md) | MCP tool reference with usage examples |
 | [Claude Advisor](docs/claude-advisor.md) | AI-powered summarization, consolidation, re-ranking |
 | [Operations](docs/operations.md) | Backup, security, data portability |
 

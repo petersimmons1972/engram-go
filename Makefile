@@ -1,10 +1,13 @@
 .PHONY: up down restart logs build test setup setup-dry-run init
 
-## Start engram — container fetches secrets from Infisical at startup via machine identity
-## Requires POSTGRES_PASSWORD to be set in .env — run 'make init' first on a fresh install.
+## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
 up:
 	@if ! grep -qs '^POSTGRES_PASSWORD=' .env 2>/dev/null && [ -z "$$POSTGRES_PASSWORD" ]; then \
-	    echo "ERROR: POSTGRES_PASSWORD is not set. Run 'make init' to generate a strong password."; \
+	    echo "ERROR: POSTGRES_PASSWORD is not set. Run 'make init' to generate one."; \
+	    exit 1; \
+	fi
+	@if ! grep -qs '^ENGRAM_API_KEY=' .env 2>/dev/null && [ -z "$$ENGRAM_API_KEY" ]; then \
+	    echo "ERROR: ENGRAM_API_KEY is not set. Run 'make init' to generate one."; \
 	    exit 1; \
 	fi
 	docker compose up -d engram-go
@@ -25,7 +28,7 @@ build:
 logs:
 	docker logs -f engram-go-app
 
-## Generate .env with a strong random POSTGRES_PASSWORD (idempotent — safe to re-run)
+## Generate .env with strong random credentials (idempotent — safe to re-run).
 ## Run this once before 'make up' on a fresh install.
 init:
 	@if grep -qs '^POSTGRES_PASSWORD=' .env 2>/dev/null; then \
@@ -34,6 +37,17 @@ init:
 	    PW=$$(openssl rand -hex 32); \
 	    echo "POSTGRES_PASSWORD=$$PW" >> .env; \
 	    echo "✓ Generated POSTGRES_PASSWORD in .env"; \
+	fi
+	@if grep -qs '^ENGRAM_API_KEY=' .env 2>/dev/null; then \
+	    echo "ENGRAM_API_KEY already set in .env — skipping"; \
+	else \
+	    KEY=$$(openssl rand -hex 32); \
+	    echo "ENGRAM_API_KEY=$$KEY" >> .env; \
+	    echo "✓ Generated ENGRAM_API_KEY in .env"; \
+	fi
+	@if [ ! -f .env.machine-identity ]; then \
+	    touch .env.machine-identity; \
+	    echo "✓ Created .env.machine-identity (empty — add Infisical credentials here if using secret management)"; \
 	fi
 
 ## Configure MCP client — fetches current bearer token and writes mcpServers.engram in ~/.claude.json

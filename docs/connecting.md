@@ -2,7 +2,7 @@
 
 Engram speaks MCP over Server-Sent Events. Any MCP-compatible client that supports SSE transport works.
 
-The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 19 tools, and they appear in your model context.
+The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 28 tools, and they appear in your model context.
 
 ---
 
@@ -12,18 +12,22 @@ The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that en
 
 ## Claude Code
 
+The easiest way to configure Claude Code is `make setup`, which calls the `/setup-token` endpoint, fetches the current bearer token, and writes it to `~/.claude/mcp_servers.json` automatically:
+
 ```bash
-claude mcp add engram --transport sse http://localhost:8788/sse
+make setup
 ```
 
-That is the whole configuration. Claude Code stores it in your user-level MCP config and reconnects on every session.
+Run this once after a fresh install, and again after any container restart if the key rotates.
 
-If you set `ENGRAM_API_KEY`, pass the token as a header:
+To configure manually:
 
 ```bash
 claude mcp add engram --transport sse http://localhost:8788/sse \
   --header "Authorization: Bearer your-api-key-here"
 ```
+
+Copy your `ENGRAM_API_KEY` from `.env` for the header value. Bearer authentication is required — connections without it are rejected with `401 Unauthorized`.
 
 Verify the tools loaded:
 
@@ -31,7 +35,7 @@ Verify the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 19 tools. If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
+You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
 
 ---
 
@@ -154,15 +158,13 @@ docker compose up -d
 
 ## Authentication
 
-By default the SSE endpoint requires no authentication. It binds to `localhost` only, so network access is already restricted to the local machine.
+Bearer token authentication is required. The server refuses to start without `ENGRAM_API_KEY` set. Every SSE connection must present `Authorization: Bearer <token>` — connections without it are rejected with `401 Unauthorized`.
 
-To add bearer token authentication:
+**For Claude Code:** `make setup` handles the token automatically.
 
-1. Set `ENGRAM_API_KEY=your-secret-token` in `.env`
-2. Restart the server: `docker compose restart engram-go`
-3. Add the `Authorization: Bearer <token>` header to your IDE config (see the Claude Code and Cursor examples above)
+**For other clients:** copy `ENGRAM_API_KEY` from `.env` and add the `Authorization: Bearer <token>` header to your IDE's MCP config (see the Cursor example above).
 
-Every SSE connection must present the header when `ENGRAM_API_KEY` is set. Connections without it are rejected with `401 Unauthorized`.
+The token is stored in `.env` — never committed to git. The `/setup-token` endpoint (localhost-only) allows clients to fetch the token programmatically without a manual copy-paste step.
 
 There is no per-tool or per-project access control. Authentication is all-or-nothing at the connection level.
 
@@ -179,8 +181,8 @@ The SSE transport is a long-lived HTTP connection. Some reverse proxies and fire
 **"Authorization required" error.**
 You have `ENGRAM_API_KEY` set but the IDE is not sending the header. Check the IDE config and confirm the header key is `Authorization` and the value starts with `Bearer `.
 
-**Wrong number of tools (expect 19).**
-The `memory_reason` tool is only registered when `ANTHROPIC_API_KEY` is set in `.env`. If that variable is empty, you will see 18 tools. Set the key and restart `engram-go`:
+**Wrong number of tools (expect 27 or 28).**
+`memory_reason` is only registered when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 27 tools. With it, you see 28. Set the key and restart `engram-go`:
 
 ```bash
 docker compose restart engram-go
@@ -189,4 +191,4 @@ docker compose restart engram-go
 ---
 
 **Previous:** [Getting Started](getting-started.md) — prerequisites, startup, and configuration reference.  
-**Next:** [Tools Reference](tools.md) — all 19 tools with parameters and examples.
+**Next:** [Tools Reference](tools.md) — all 28 tools with parameters and examples.
