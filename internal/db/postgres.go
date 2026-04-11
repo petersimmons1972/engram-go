@@ -943,16 +943,31 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 
 // ── Relationship CRUD ─────────────────────────────────────────────────────────
 
+// StoreRelationship upserts a directed relationship between two memories.
+// Both existence checks and the upsert run inside a single transaction (#110)
+// so a concurrent DeleteMemory between the check and the insert is prevented
+// by the SELECT ... FOR UPDATE row locks.
 func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Relationship) error {
-	// Verify both memories exist.
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var dummy int
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", rel.SourceID, b.project).Scan(&dummy); err != nil {
+	if err := tx.QueryRow(ctx,
+		"SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
+		rel.SourceID, b.project,
+	).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("source memory %q does not exist or is invalidated", rel.SourceID)
 		}
 		return fmt.Errorf("check source memory: %w", err)
 	}
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", rel.TargetID, b.project).Scan(&dummy); err != nil {
+	if err := tx.QueryRow(ctx,
+		"SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
+		rel.TargetID, b.project,
+	).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("target memory %q does not exist or is invalidated", rel.TargetID)
 		}
@@ -960,7 +975,7 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 	}
 
 	rel.Project = b.project
-	_, err := b.pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO relationships
 		  (id, source_id, target_id, rel_type, strength, project, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -968,8 +983,10 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 		DO UPDATE SET strength = EXCLUDED.strength`,
 		rel.ID, rel.SourceID, rel.TargetID,
 		rel.RelType, rel.Strength, rel.Project, rel.CreatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // GetConnected performs BFS from memoryID via a single recursive CTE (#113).
@@ -1087,26 +1104,34 @@ func (b *PostgresBackend) GetConnectionCount(ctx context.Context, memoryID, proj
 	return count, err
 }
 
+// DecayAllEdges decays all edges for a project and prunes those below minStrength.
+// Both operations run inside a single transaction (#109) so a crash between them
+// cannot leave partially-decayed but un-pruned "zombie" edges.
 func (b *PostgresBackend) DecayAllEdges(ctx context.Context, project string, decayFactor, minStrength float64) (int, int, error) {
-	var decayed, pruned int
-	tag, err := b.pool.Exec(ctx, `
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE relationships SET strength=GREATEST(0.0, strength-$1)
 		WHERE project=$2`, decayFactor, project,
 	)
 	if err != nil {
 		return 0, 0, err
 	}
-	decayed = int(tag.RowsAffected())
+	decayed := int(tag.RowsAffected())
 
-	tag, err = b.pool.Exec(ctx,
+	tag, err = tx.Exec(ctx,
 		"DELETE FROM relationships WHERE strength<$1 AND project=$2",
 		minStrength, project,
 	)
 	if err != nil {
 		return decayed, 0, err
 	}
-	pruned = int(tag.RowsAffected())
-	return decayed, pruned, nil
+	pruned := int(tag.RowsAffected())
+	return decayed, pruned, tx.Commit(ctx)
 }
 
 func (b *PostgresBackend) DeleteRelationshipsForMemory(ctx context.Context, memoryID string) error {
@@ -1140,16 +1165,37 @@ func (b *PostgresBackend) GetRelationships(ctx context.Context, project, memoryI
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
+// PruneStaleMemories deletes old low-importance and expired memories.
+// Uses RETURNING to emit an audit log line per deleted row (#107) so operators
+// can reconstruct what was pruned from structured logs.
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
-	tag, err := b.pool.Exec(ctx, `
+	rows, err := b.pool.Query(ctx, `
 		DELETE FROM memories
 		WHERE project=$1 AND NOT immutable AND (
 			(importance>=$2 AND last_accessed<$3 AND access_count=0)
 			OR (expires_at IS NOT NULL AND expires_at<NOW())
-		)`, project, maxImportance, cutoff,
+		)
+		RETURNING id, content_hash, importance`, project, maxImportance, cutoff,
 	)
-	return int(tag.RowsAffected()), err
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var count int
+	for rows.Next() {
+		var id, contentHash string
+		var importance int
+		if err := rows.Scan(&id, &contentHash, &importance); err != nil {
+			return count, err
+		}
+		slog.Info("prune: deleted stale memory",
+			"project", project, "id", id,
+			"importance", importance, "content_hash", contentHash)
+		count++
+	}
+	return count, rows.Err()
 }
 
 func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
