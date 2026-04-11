@@ -43,7 +43,7 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama:latest             # AMD users: change to ollama/ollama:rocm
+    image: ollama/ollama:rocm
     volumes:
       - ollama-data:/root/.ollama           # model files persist across restarts
     ports:
@@ -65,9 +65,9 @@ services:
     # Change image to ollama/ollama:rocm above, then uncomment devices below.
     # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
     #
-    # devices:
-    #   - /dev/kfd:/dev/kfd
-    #   - /dev/dri:/dev/dri
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
 
   engram-go:
     container_name: engram-go-app

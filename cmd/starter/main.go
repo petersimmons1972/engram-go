@@ -18,6 +18,17 @@ import (
 	"time"
 )
 
+// patchDatabaseURLPassword replaces the password in a PostgreSQL DSN with
+// the supplied password. Returns the original dsn unchanged on any parse error.
+func patchDatabaseURLPassword(dsn, password string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		return dsn
+	}
+	u.User = url.UserPassword(u.User.Username(), password)
+	return u.String()
+}
+
 // infisicalDomainRE accepts only https:// URLs with a safe hostname.
 // This prevents INFISICAL_DOMAIN from being set to an attacker-controlled host
 // that would redirect machine-identity authentication (#135).
@@ -66,11 +77,24 @@ func main() {
 		fatalf("setenv ENGRAM_API_KEY: %v", err)
 	}
 
-	// Strip Infisical machine-identity credentials from the environment before
-	// exec-replacing ourselves with engram. The engram process has no need for
-	// these credentials — keeping them in /proc/PID/environ leaks them to any
-	// process that can read /proc (#138).
-	cleanEnv := filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET")
+	// Fetch POSTGRES_PASSWORD and patch DATABASE_URL so the correct password is
+	// injected at runtime rather than relying on the .env file on disk.
+	pgPassword, err := getSecret(ctx, domain, token, projectID, env, secretPath, "POSTGRES_PASSWORD")
+	if err != nil {
+		fatalf("fetch POSTGRES_PASSWORD: %v", err)
+	}
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		patched := patchDatabaseURLPassword(dbURL, pgPassword)
+		if err := os.Setenv("DATABASE_URL", patched); err != nil {
+			fatalf("setenv DATABASE_URL: %v", err)
+		}
+	}
+
+	// Strip Infisical machine-identity credentials and POSTGRES_PASSWORD from the
+	// environment before exec-replacing ourselves with engram. The engram process
+	// has no need for these credentials — keeping them in /proc/PID/environ leaks
+	// them to any process that can read /proc (#138, #139).
+	cleanEnv := filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD")
 
 	argv := append([]string{"/engram"}, os.Args[1:]...)
 	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil {
