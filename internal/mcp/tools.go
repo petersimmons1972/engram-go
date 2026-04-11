@@ -238,7 +238,9 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	return toolResult(map[string]any{"id": m.ID, "status": "stored", "mode": "document"})
 }
 
-// handleMemoryStoreBatch stores multiple memories in a single call.
+// handleMemoryStoreBatch stores multiple memories in a single atomic call (#115).
+// All items are validated first; then embeddings are computed; then all writes
+// are committed in one transaction — either all succeed or none do.
 func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
@@ -250,34 +252,36 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	if len(items) == 0 {
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
 	}
-	var ids []string
-	var storeErrs []string
+
+	// Validate all items before touching the database.
+	var validErrs []string
+	var memories []*types.Memory
 	for idx, item := range items {
 		mmap, ok := item.(map[string]any)
 		if !ok {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: expected object, got %T", idx, item))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: expected object, got %T", idx, item))
 			continue
 		}
 		content := getString(mmap, "content", "")
 		if content == "" {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content is empty", idx))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: content is empty", idx))
 			continue
 		}
 		if len(content) > types.MaxContentLength {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
 			continue
 		}
 		memType := getString(mmap, "memory_type", types.MemoryTypeContext)
 		if !types.ValidateMemoryType(memType) {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
 			continue
 		}
 		importance := getInt(mmap, "importance", 2)
 		if importance < 0 || importance > 4 {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
 			continue
 		}
-		m := &types.Memory{
+		memories = append(memories, &types.Memory{
 			ID:          types.NewMemoryID(),
 			Content:     content,
 			MemoryType:  memType,
@@ -285,18 +289,26 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Importance:  importance,
 			Tags:        toStringSlice(mmap["tags"]),
 			StorageMode: "focused",
-		}
-		if err := h.Engine.Store(ctx, m); err != nil {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: %s", idx, err))
-			continue
-		}
-		ids = append(ids, m.ID)
+		})
 	}
-	response := map[string]any{"ids": ids, "count": len(ids)}
-	if len(storeErrs) > 0 {
-		response["errors"] = storeErrs
+
+	if len(validErrs) > 0 {
+		return toolResult(map[string]any{
+			"ids":    []string{},
+			"count":  0,
+			"errors": validErrs,
+		})
 	}
-	return toolResult(response)
+
+	if err := h.Engine.StoreBatch(ctx, memories); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(memories))
+	for i, m := range memories {
+		ids[i] = m.ID
+	}
+	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
 }
 
 // handleMemoryRecall performs semantic recall against one or more project engines.

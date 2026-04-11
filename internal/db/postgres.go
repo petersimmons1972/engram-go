@@ -329,6 +329,19 @@ func (b *PostgresBackend) SetMeta(ctx context.Context, project, key, value strin
 	return err
 }
 
+func (b *PostgresBackend) SetMetaTx(ctx context.Context, tx Tx, project, key, value string) error {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	_, err = raw.Exec(ctx,
+		"INSERT INTO project_meta (project, key, value) VALUES ($1,$2,$3) "+
+			"ON CONFLICT (project, key) DO UPDATE SET value = EXCLUDED.value",
+		project, key, value,
+	)
+	return err
+}
+
 // ── Memory CRUD ───────────────────────────────────────────────────────────────
 
 func contentHash(content string) string {
@@ -568,6 +581,57 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	return tag.RowsAffected() > 0, nil
 }
 
+// MergeMemoriesAtomic updates winnerID's content (if newContent is non-empty) and
+// deletes loserID in a single transaction (#104). This prevents the state where
+// winnerID has merged content but loserID was never deleted on a crash.
+func (b *PostgresBackend) MergeMemoriesAtomic(ctx context.Context, project, winnerID, loserID, newContent string) error {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if newContent != "" {
+		now := time.Now().UTC()
+		hash := contentHash(newContent)
+		if _, err := tx.Exec(ctx,
+			"UPDATE memories SET content=$1, content_hash=$2, updated_at=$3 WHERE id=$4 AND project=$5",
+			newContent, hash, now, winnerID, project,
+		); err != nil {
+			return fmt.Errorf("MergeMemoriesAtomic update winner: %w", err)
+		}
+	}
+
+	// Lock loser row to ensure it still exists before deleting.
+	var immutable bool
+	err = tx.QueryRow(ctx,
+		"SELECT immutable FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		loserID, project,
+	).Scan(&immutable)
+	if err == pgx.ErrNoRows {
+		// Loser already gone — treat as already merged.
+		return tx.Commit(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic lock loser: %w", err)
+	}
+	if immutable {
+		return fmt.Errorf("MergeMemoriesAtomic: loser %s is immutable", loserID)
+	}
+
+	if _, err := tx.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", loserID); err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic delete chunks: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", loserID); err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic delete relationships: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1 AND project=$2", loserID, project); err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic delete loser: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (b *PostgresBackend) ListMemories(ctx context.Context, project string, opts ListOptions) ([]*types.Memory, error) {
 	q := "SELECT * FROM memories WHERE project=$1 AND valid_to IS NULL"
 	args := []any{project}
@@ -753,6 +817,18 @@ func (b *PostgresBackend) DeleteChunksByIDs(ctx context.Context, chunkIDs []stri
 
 func (b *PostgresBackend) NullAllEmbeddings(ctx context.Context, project string) (int, error) {
 	tag, err := b.pool.Exec(ctx,
+		"UPDATE chunks SET embedding=NULL WHERE memory_id IN (SELECT id FROM memories WHERE project=$1)",
+		project,
+	)
+	return int(tag.RowsAffected()), err
+}
+
+func (b *PostgresBackend) NullAllEmbeddingsTx(ctx context.Context, tx Tx, project string) (int, error) {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return 0, err
+	}
+	tag, err := raw.Exec(ctx,
 		"UPDATE chunks SET embedding=NULL WHERE memory_id IN (SELECT id FROM memories WHERE project=$1)",
 		project,
 	)

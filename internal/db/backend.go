@@ -21,6 +21,8 @@ type Backend interface {
 	GetMeta(ctx context.Context, project, key string) (string, bool, error)
 	// SetMeta upserts a key/value pair for the given project.
 	SetMeta(ctx context.Context, project, key, value string) error
+	// SetMetaTx is like SetMeta but runs inside an existing transaction.
+	SetMetaTx(ctx context.Context, tx Tx, project, key, value string) error
 
 	// ── Memory CRUD ─────────────────────────────────────────────────────────
 
@@ -41,6 +43,9 @@ type Backend interface {
 	// DeleteMemoryAtomic atomically locks, validates, and deletes a memory.
 	// force=true bypasses the immutability check (rollback path only).
 	DeleteMemoryAtomic(ctx context.Context, project, id string, force bool) (bool, error)
+	// MergeMemoriesAtomic updates winnerID content (if newContent non-empty) and
+	// deletes loserID in a single transaction. Prevents partial-merge state on crash.
+	MergeMemoriesAtomic(ctx context.Context, project, winnerID, loserID, newContent string) error
 	// ListMemories returns memories for project matching the given filters.
 	ListMemories(ctx context.Context, project string, opts ListOptions) ([]*types.Memory, error)
 	// TouchMemory increments access_count and sets last_accessed = now.
@@ -71,6 +76,8 @@ type Backend interface {
 	DeleteChunksByIDs(ctx context.Context, chunkIDs []string) (int, error)
 	// NullAllEmbeddings sets embedding=NULL on all chunks for a project.
 	NullAllEmbeddings(ctx context.Context, project string) (int, error)
+	// NullAllEmbeddingsTx is like NullAllEmbeddings but runs inside an existing transaction.
+	NullAllEmbeddingsTx(ctx context.Context, tx Tx, project string) (int, error)
 	// GetChunksPendingEmbedding returns chunks with NULL embedding for a project.
 	GetChunksPendingEmbedding(ctx context.Context, project string, limit int) ([]*types.Chunk, error)
 	// UpdateChunkEmbedding sets the embedding on a chunk. Returns rows updated.

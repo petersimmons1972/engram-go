@@ -234,6 +234,63 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	return tx.Commit(ctx)
 }
 
+// StoreBatch stores multiple memories atomically (#115).
+// All embeddings are computed first (outside any transaction), then the entire
+// batch is written in a single DB transaction — either all succeed or none do.
+func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory) error {
+	if len(memories) == 0 {
+		return nil
+	}
+
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return err
+	}
+
+	// Phase 1: compute embeddings for all items (external calls, outside tx).
+	type memWithChunks struct {
+		mem    *types.Memory
+		chunks []*types.Chunk
+	}
+	prepared := make([]memWithChunks, 0, len(memories))
+	for _, m := range memories {
+		if m.ID == "" {
+			m.ID = types.NewMemoryID()
+		}
+		m.Project = e.project
+		if m.StorageMode == "" {
+			if len(m.Content) > 10_000 {
+				m.StorageMode = "document"
+			} else {
+				m.StorageMode = "focused"
+			}
+		}
+		chunks, err := e.storeChunksForMemory(ctx, m)
+		if err != nil {
+			return fmt.Errorf("prepare memory %q: %w", m.ID, err)
+		}
+		prepared = append(prepared, memWithChunks{mem: m, chunks: chunks})
+	}
+
+	// Phase 2: write everything in one transaction.
+	tx, err := e.backend.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	for _, p := range prepared {
+		if err := e.backend.StoreMemoryTx(ctx, tx, p.mem); err != nil {
+			return err
+		}
+		if len(p.chunks) > 0 {
+			if err := e.backend.StoreChunksTx(ctx, tx, p.chunks); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // Recall retrieves the topK most relevant memories for query.
 func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error) {
 	return e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
@@ -717,15 +774,26 @@ func (e *SearchEngine) Verify(ctx context.Context) (map[string]any, error) {
 // existing embeddings and recording the new model name in project metadata.
 // A background reembed worker will repopulate embeddings after this call.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (map[string]any, error) {
-	// Null all embeddings first — if this fails, no metadata is written and state stays consistent.
-	nulled, err := e.backend.NullAllEmbeddings(ctx, e.project)
+	// Wrap null + meta writes in a single transaction (#102).
+	// Without this, a crash between NullAllEmbeddings and SetMeta leaves chunks
+	// without embeddings but the migrator flag never set — reembed worker never runs.
+	tx, err := e.backend.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := e.backend.SetMeta(ctx, e.project, "embedding_migration_in_progress", "true"); err != nil {
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	nulled, err := e.backend.NullAllEmbeddingsTx(ctx, tx, e.project)
+	if err != nil {
 		return nil, err
 	}
-	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
+	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedding_migration_in_progress", "true"); err != nil {
+		return nil, err
+	}
+	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedder_name", newModel); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -849,13 +917,8 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			if !d.ShouldMerge {
 				continue
 			}
-			content := d.MergedContent
-			if content != "" {
-				if _, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil); err != nil {
-					continue
-				}
-			}
-			if deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false); err != nil || !deleted {
+			// Atomic merge (#104): update winner content + delete loser in one tx.
+			if err := e.backend.MergeMemoriesAtomic(ctx, e.project, d.MemoryAID, d.MemoryBID, d.MergedContent); err != nil {
 				continue
 			}
 			totalMerged++
