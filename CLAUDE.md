@@ -6,6 +6,7 @@
 - When asked for a 'summary' or 'report', cover ALL items — not just a filtered subset.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state.
 - **Art direction:** See `~/projects/art-direction-research/ART-DIRECTION-RULE.md` and AGENTS.md §9. No generic AI design tools.
+- **Visual quality rules:** `visual-output-standards` skill is the canonical source for all charts, SVGs, and illustrations. Engram carries session context only — quality rules live in the skill. Every Cassandre dispatch must read the skill first. Run `bin/render-check.sh` before Ramsay review.
 
 ## Parallel Agent Rules
 - **Pre-validation:** ONE agent analyzes 2–3 samples first. Present findings. Only then dispatch remaining agents with the confirmed problem definition.

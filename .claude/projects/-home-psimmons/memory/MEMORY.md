@@ -1,37 +1,31 @@
 # Learning Index
 
-**Last Updated**: 2026-04-05T15:25:43Z
-**Session**: 20260405-112543
+**Last Updated**: 2026-04-11T14:11:18Z
+**Session**: 20260411-101118
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-04-05: ops: fix memory template — prune stale data + Key Lessons → Engram pointer
 - 2026-04-05: ops: compress AGENTS.md + prune MEMORY.md — ~1.8k tokens saved per session
 - 2026-04-05: ops: archive 15 more generals — 42→28 active agents
 - 2026-04-04: ops: archive 14 more generals — 56→42 active agents
 - 2026-04-04: ops: archive 8 redundant generals — 64→56 active agents
-- 2026-04-03: docs: implementation plan for longhorn-nfs migration — 11 tasks across 3 phases
-- 2026-04-03: docs: spec self-review fixes — Qdrant in A.1 table, TrueNAS image note, snapshot retention clarity
-- 2026-04-03: docs: longhorn-nfs migration design spec — Longhorn→NFS + DB consolidation
-- 2026-04-03: ops: calypso15 integration — adversarial review protocols and stall detection
-- 2026-04-01: ops: make Engram recall mandatory — dedicated section with explicit triggers
-- 2026-04-01: chore: remove stale memory topic file references — homelab files now in Engram
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  2 modified, 0 staged
+**Uncommitted**: ⚠️  4 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  8 OK, 0 failed, 2 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  8 OK, 0 failed, 3 warnings
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh`
 
-
-**J-2 Intelligence**: J-2 INTEL [2026-04-05T10:00]: Pods In Error State (WARNING, 44 patrol(s))
+**J-2 Intelligence**: J-2 INTEL [2026-04-11T10:00]: Pods In Error State (WARNING, 68 patrol(s))
 
 ---
 
