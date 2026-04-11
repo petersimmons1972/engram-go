@@ -9,12 +9,65 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"golang.org/x/time/rate"
+
 	"github.com/petersimmons1972/engram/internal/claude"
 )
+
+// rateLimiter holds per-IP token-bucket state for HTTP rate limiting (#140).
+type rateLimiter struct {
+	mu      sync.Mutex
+	clients map[string]*rateLimiterEntry
+}
+
+type rateLimiterEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
+func newRateLimiter() *rateLimiter {
+	rl := &rateLimiter{clients: make(map[string]*rateLimiterEntry)}
+	go rl.evict()
+	return rl
+}
+
+// allow returns true if the request from ip should be allowed.
+// Limit: 60 requests/minute with a burst of 20.
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	e, ok := rl.clients[ip]
+	if !ok {
+		e = &rateLimiterEntry{
+			limiter: rate.NewLimiter(rate.Every(time.Second), 20), // 1 req/s sustained, burst 20
+		}
+		rl.clients[ip] = e
+	}
+	e.lastSeen = time.Now()
+	ok = e.limiter.Allow()
+	rl.mu.Unlock()
+	return ok
+}
+
+// evict removes entries not seen in the last 5 minutes.
+func (rl *rateLimiter) evict() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		for ip, e := range rl.clients {
+			if time.Since(e.lastSeen) > 5*time.Minute {
+				delete(rl.clients, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
 
 // Server wraps the MCP SSE server and owns the EnginePool.
 type Server struct {
@@ -89,8 +142,9 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		})
 	})
 
-	// All other routes require Bearer authentication.
-	mux.Handle("/", s.applyMiddleware(sse, apiKey))
+	// All other routes require Bearer authentication and per-IP rate limiting (#140).
+	rl := newRateLimiter()
+	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
 	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{
@@ -116,13 +170,23 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	}
 }
 
-func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler {
+// applyMiddleware chains per-IP rate limiting (#140) and Bearer auth onto next.
+func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimiter) http.Handler {
 	// apiKey is always non-empty — enforced by main.go startup check.
 	// This guard is a defence-in-depth backstop; it must never be the primary gate.
 	if apiKey == "" {
 		panic("engram: auth middleware called with empty apiKey — programming error")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit before auth check to prevent timing-based enumeration.
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !rl.allow(remoteHost) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`)
+			return
+		}
 		got := []byte(r.Header.Get("Authorization"))
 		want := []byte("Bearer " + apiKey)
 		if subtle.ConstantTimeCompare(got, want) != 1 {
