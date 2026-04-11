@@ -65,6 +65,8 @@ type Backend interface {
 	ChunkHashExists(ctx context.Context, chunkHash, memoryID string) (bool, error)
 	// DeleteChunksForMemory deletes all chunks for a memory.
 	DeleteChunksForMemory(ctx context.Context, memoryID string) error
+	// DeleteChunksForMemoryTx is like DeleteChunksForMemory but runs inside an existing transaction.
+	DeleteChunksForMemoryTx(ctx context.Context, tx Tx, memoryID string) error
 	// DeleteChunksByIDs deletes specific chunks by ID. Returns count deleted.
 	DeleteChunksByIDs(ctx context.Context, chunkIDs []string) (int, error)
 	// NullAllEmbeddings sets embedding=NULL on all chunks for a project.

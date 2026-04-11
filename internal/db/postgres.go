@@ -133,9 +133,39 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
-		if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", name, err)
+
+		// 003_pgvector.sql starts with CREATE EXTENSION which cannot run
+		// inside a transaction in most PostgreSQL configurations. Run it
+		// outside any transaction, then record atomically below.
+		if name == "003_pgvector.sql" {
+			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
+				return fmt.Errorf("apply migration %s: %w", name, err)
+			}
+		} else {
+			// Wrap apply + record in a single transaction so a crash between
+			// the two steps cannot leave the schema in an inconsistent state.
+			tx, err := b.pool.Begin(ctx)
+			if err != nil {
+				return fmt.Errorf("begin migration tx for %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx, string(sql)); err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("apply migration %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
+			); err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("record migration %s: %w", name, err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("commit migration %s: %w", name, err)
+			}
+			slog.Info("applied migration", "file", name)
+			continue
 		}
+
+		// For 003: record the migration and run backfill outside the transaction.
 		if _, err := b.pool.Exec(ctx,
 			`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
 		); err != nil {
@@ -197,6 +227,20 @@ func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
 
 	slog.Info("pgvector backfill complete", "chunks_converted", converted)
 
+	// Verify no rows were skipped (e.g. due to invalid BYTEA length) before
+	// marking the backfill done. If remaining > 0, leave the flag set so the
+	// next startup retries the conversion rather than silently proceeding.
+	var remaining int
+	if err := b.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL AND embedding_vec IS NULL`,
+	).Scan(&remaining); err != nil {
+		return fmt.Errorf("backfill count check: %w", err)
+	}
+	if remaining > 0 {
+		slog.Warn("pgvector backfill incomplete — will retry on next startup", "remaining", remaining)
+		return nil
+	}
+
 	// Mark backfill done so 004 can run.
 	_, err = b.pool.Exec(ctx,
 		`UPDATE project_meta SET value='false' WHERE project='_engram' AND key='pgvector_backfill_pending'`)
@@ -221,7 +265,13 @@ func (b *PostgresBackend) Begin(ctx context.Context) (Tx, error) {
 }
 
 // unwrapTx extracts the underlying pgx.Tx from a Tx interface value.
-func unwrapTx(t Tx) pgx.Tx { return t.(*pgxTx).tx }
+func unwrapTx(t Tx) (pgx.Tx, error) {
+	pt, ok := t.(*pgxTx)
+	if !ok {
+		return nil, fmt.Errorf("unwrapTx: expected *pgxTx, got %T", t)
+	}
+	return pt.tx, nil
+}
 
 // ── Project metadata ──────────────────────────────────────────────────────────
 
@@ -261,7 +311,11 @@ func (b *PostgresBackend) StoreMemory(ctx context.Context, m *types.Memory) erro
 }
 
 func (b *PostgresBackend) StoreMemoryTx(ctx context.Context, tx Tx, m *types.Memory) error {
-	return b.storeMemoryExec(ctx, unwrapTx(tx), m)
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	return b.storeMemoryExec(ctx, raw, m)
 }
 
 // execer is satisfied by both *pgxpool.Pool and pgx.Tx.
@@ -514,7 +568,11 @@ func (b *PostgresBackend) StoreChunks(ctx context.Context, chunks []*types.Chunk
 }
 
 func (b *PostgresBackend) StoreChunksTx(ctx context.Context, tx Tx, chunks []*types.Chunk) error {
-	return b.storeChunksExec(ctx, unwrapTx(tx), chunks)
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	return b.storeChunksExec(ctx, raw, chunks)
 }
 
 func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks []*types.Chunk) error {
@@ -616,6 +674,15 @@ func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, memory
 
 func (b *PostgresBackend) DeleteChunksForMemory(ctx context.Context, memoryID string) error {
 	_, err := b.pool.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", memoryID)
+	return err
+}
+
+func (b *PostgresBackend) DeleteChunksForMemoryTx(ctx context.Context, tx Tx, memoryID string) error {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	_, err = raw.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", memoryID)
 	return err
 }
 
@@ -995,7 +1062,7 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 	rows, err := b.pool.Query(ctx, q, args...)
 	if err != nil {
 		slog.Debug("FTS query failed", "query_len", len(query), "err", err)
-		return nil, nil
+		return nil, fmt.Errorf("FTS search failed: %w", err)
 	}
 	defer rows.Close()
 

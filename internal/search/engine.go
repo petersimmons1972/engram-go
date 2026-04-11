@@ -516,29 +516,32 @@ func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, 
 		return nil, err
 	}
 
-	// If content changed, delete stale chunks and re-chunk + re-embed the new content.
+	// If content changed, re-chunk + re-embed first (outside any transaction so
+	// a slow embedder call does not hold a lock), then atomically swap old chunks
+	// for new ones inside a single transaction. This prevents orphaned memories
+	// (no chunks, no vector) if the embedder fails after the delete.
 	if content != nil {
-		if err := e.backend.DeleteChunksForMemory(ctx, mem.ID); err != nil {
-			return nil, fmt.Errorf("delete old chunks: %w", err)
-		}
-
 		chunks, err := e.storeChunksForMemory(ctx, mem)
 		if err != nil {
 			return nil, fmt.Errorf("re-chunk after correct: %w", err)
 		}
 
+		tx, err := e.backend.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := e.backend.DeleteChunksForMemoryTx(ctx, tx, mem.ID); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, fmt.Errorf("delete old chunks: %w", err)
+		}
 		if len(chunks) > 0 {
-			tx, err := e.backend.Begin(ctx)
-			if err != nil {
-				return nil, err
-			}
 			if err := e.backend.StoreChunksTx(ctx, tx, chunks); err != nil {
 				_ = tx.Rollback(ctx)
 				return nil, err
 			}
-			if err := tx.Commit(ctx); err != nil {
-				return nil, err
-			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
 		}
 	}
 
