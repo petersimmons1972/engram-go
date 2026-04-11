@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -162,6 +163,50 @@ func TestAdaptiveImportance_DecayStale(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, *after.DynamicImportance, initialDI,
 		"dynamic_importance must decrease after stale decay pass")
+}
+
+// TestDecayWorker_RunsOnTick verifies that the background DecayWorker actually
+// fires and reduces dynamic_importance on stale memories without any explicit
+// caller — the worker must tick autonomously and call DecayStaleImportance.
+func TestDecayWorker_RunsOnTick(t *testing.T) {
+	dsn := testDSN(t)
+	ctx := context.Background()
+	project := uniqueProject("test-decay-worker")
+
+	backend, err := db.NewPostgresBackend(ctx, project, dsn)
+	require.NoError(t, err)
+
+	// 50ms tick so the test completes quickly.
+	engine := search.New(ctx, backend, &fakeClient{dims: 768}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 50*time.Millisecond)
+	t.Cleanup(func() { engine.Close() })
+
+	m := &types.Memory{
+		Content:     "Stale memory for decay worker tick test",
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Importance:  3,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine.Store(ctx, m))
+
+	// Force next_review_at into the past so the worker will pick it up.
+	pastReview := time.Now().Add(-48 * time.Hour)
+	require.NoError(t, backend.SetNextReviewAt(ctx, m.ID, pastReview))
+
+	before, err := backend.GetMemory(ctx, m.ID)
+	require.NoError(t, err)
+	require.NotNil(t, before.DynamicImportance)
+	initialDI := *before.DynamicImportance
+
+	// Wait long enough for at least two ticks.
+	time.Sleep(200 * time.Millisecond)
+
+	after, err := backend.GetMemory(ctx, m.ID)
+	require.NoError(t, err)
+	require.NotNil(t, after.DynamicImportance)
+	assert.Less(t, *after.DynamicImportance, initialDI,
+		"decay worker must have fired and reduced dynamic_importance on the stale memory")
 }
 
 // TestAdaptiveImportance_UsedInRecall verifies that a memory with higher

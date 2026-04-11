@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -44,6 +45,7 @@ func run() error {
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Bearer token for auth (required; set ENGRAM_API_KEY)")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
+	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = default 8h)")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -121,7 +123,7 @@ func run() error {
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter)
+		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 
@@ -216,4 +218,13 @@ func envBool(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
 }
