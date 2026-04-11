@@ -363,11 +363,19 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		episodeID                  *string
 		rank                       float64
 	)
+	// Column order matches the live DB schema (search_vector was added between
+	// updated_at and immutable in an early migration, so it sits at position 10).
+	// Live order: id, content, memory_type, project, tags, importance, access_count,
+	//   last_accessed, created_at, updated_at, search_vector, immutable, expires_at,
+	//   summary, content_hash, storage_mode, valid_from, valid_to, invalidation_reason,
+	//   dynamic_importance, retrieval_interval_hrs, next_review_at, times_retrieved,
+	//   times_useful, retrieval_precision, episode_id (+rank appended by FTSSearch query).
 	if err := row.Scan(
 		&id, &content, &memType, &proj, &tags,
 		&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
+		&searchVector,
 		&immutable, &expiresAt, &summary, &contentHash, &storageMode,
-		&searchVector, &validFrom, &validTo, &invalidationReason,
+		&validFrom, &validTo, &invalidationReason,
 		&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
 		&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &rank,
 	); err != nil {
@@ -447,19 +455,22 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		EpisodeID            *string // nullable FK
 	}
 	var r raw
-	// Column order must match the DDL in migrations/*.sql exactly.
-	// 001_initial: id, content, memory_type, project, tags, importance, access_count,
-	//   last_accessed, created_at, updated_at, immutable, expires_at, summary,
-	//   content_hash, storage_mode, search_vector (GENERATED)
-	// 005_temporal ADD COLUMN: valid_from, valid_to, invalidation_reason
-	// 006_adaptive_importance ADD COLUMN: dynamic_importance, retrieval_interval_hrs, next_review_at
-	// 007_retrieval_tracking ADD COLUMN: times_retrieved, times_useful, retrieval_precision
-	// 008_episodes ADD COLUMN: episode_id
+	// Column order matches the live DB schema. search_vector was added between
+	// updated_at and immutable in the original migration, so it sits at position 10
+	// (0-indexed). Live order:
+	//   id, content, memory_type, project, tags, importance, access_count,
+	//   last_accessed, created_at, updated_at, search_vector, immutable, expires_at,
+	//   summary, content_hash, storage_mode,
+	//   valid_from, valid_to, invalidation_reason,          (005_temporal)
+	//   dynamic_importance, retrieval_interval_hrs, next_review_at, (006_adaptive)
+	//   times_retrieved, times_useful, retrieval_precision,  (007_retrieval)
+	//   episode_id                                           (008_episodes)
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
+		&r.SearchVector,
 		&r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
-		&r.SearchVector, &r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
+		&r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
 		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
 		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
 	)
