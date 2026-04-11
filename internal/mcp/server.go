@@ -83,6 +83,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	s := &Server{pool: pool, cfg: cfg}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
+		server.WithHooks(&server.Hooks{}),
 	)
 	s.mcp = mcpServer
 	s.registerTools()
@@ -111,6 +112,24 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	}
 	slog.Info("SSE base URL", "url", advertised)
 	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
+
+	// Auto-start a "global" episode on every new SSE client connection (#91).
+	// SSE sessions carry no project context, so episodes land in "global" where
+	// they can be queried via memory_episode_list/memory_episode_recall.
+	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, _ server.ClientSession) {
+		desc := "Claude Code session " + time.Now().UTC().Format(time.RFC3339)
+		h, err := s.pool.Get(ctx, "global")
+		if err != nil {
+			slog.Warn("auto-episode: could not get global engine", "err", err)
+			return
+		}
+		ep, err := h.Engine.Backend().StartEpisode(ctx, "global", desc)
+		if err != nil {
+			slog.Warn("auto-episode: StartEpisode failed", "err", err)
+			return
+		}
+		slog.Info("auto-episode started", "id", ep.ID, "project", "global", "desc", desc)
+	})
 
 	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
 	mux := http.NewServeMux()
