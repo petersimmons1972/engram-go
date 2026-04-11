@@ -8,8 +8,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_project
 CREATE INDEX IF NOT EXISTS idx_chunks_memory_id
     ON chunks (memory_id);
 
-CREATE INDEX IF NOT EXISTS idx_chunks_last_accessed
-    ON chunks (last_accessed DESC);
+CREATE INDEX IF NOT EXISTS idx_chunks_last_matched
+    ON chunks (last_matched DESC);
 
 CREATE INDEX IF NOT EXISTS idx_chunks_project
     ON chunks (project);

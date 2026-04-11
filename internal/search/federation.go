@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 
 	"github.com/petersimmons1972/engram/internal/types"
@@ -40,6 +41,7 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 		fan := <-ch
 		if fan.err != nil {
 			// Best-effort: log and skip failing engines rather than aborting the whole call.
+			slog.Warn("federation: engine recall failed", "err", fan.err)
 			continue
 		}
 		for _, r := range fan.results {

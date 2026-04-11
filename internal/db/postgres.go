@@ -345,22 +345,30 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		episodeArg = episodeID
 	}
 
+	// Seed dynamic_importance from static importance using Feature 2 formula.
+	if m.DynamicImportance == nil {
+		di := math.Max(0.1, (5.0-float64(m.Importance))/3.0)
+		m.DynamicImportance = &di
+	}
+
 	_, err = ex.Exec(ctx, `
 		INSERT INTO memories
 		  (id, content, memory_type, project, tags,
 		   importance, access_count, last_accessed, created_at, updated_at,
-		   immutable, expires_at, content_hash, storage_mode, episode_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		   immutable, expires_at, content_hash, storage_mode, episode_id,
+		   dynamic_importance)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		m.ID, m.Content, m.MemoryType, m.Project, tagsJSON,
 		m.Importance, m.AccessCount, now, now, now,
 		m.Immutable, m.ExpiresAt, hash, m.StorageMode, episodeArg,
+		m.DynamicImportance,
 	)
 	return err
 }
 
 func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
 	row, err := b.pool.Query(ctx,
-		"SELECT * FROM memories WHERE id=$1 AND project=$2", id, b.project)
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", id, b.project)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +428,7 @@ func (b *PostgresBackend) UpdateMemory(
 
 	// Lock the row for the duration of the read-modify-write to prevent races.
 	row, err := tx.Query(ctx,
-		"SELECT * FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
 		id, b.project)
 	if err != nil {
 		return nil, err
@@ -614,9 +622,14 @@ func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks
 	return nil
 }
 
+// chunkCols is an explicit column list for chunks SELECTs. Using SELECT c.*
+// breaks positional scanning when migrations reorder columns (e.g. after
+// 003_pgvector.sql drops the old BYTEA embedding and adds vector(768)).
+const chunkCols = "c.id, c.memory_id, c.project, c.chunk_text, c.chunk_index, c.chunk_hash, c.embedding, c.section_heading, c.chunk_type, c.last_matched"
+
 func (b *PostgresBackend) GetChunksForMemory(ctx context.Context, memoryID string) ([]*types.Chunk, error) {
 	rows, err := b.pool.Query(ctx,
-		"SELECT * FROM chunks WHERE memory_id=$1 ORDER BY chunk_index", memoryID,
+		"SELECT "+chunkCols+" FROM chunks c WHERE c.memory_id=$1 ORDER BY c.chunk_index", memoryID,
 	)
 	if err != nil {
 		return nil, err
@@ -626,7 +639,7 @@ func (b *PostgresBackend) GetChunksForMemory(ctx context.Context, memoryID strin
 
 func (b *PostgresBackend) GetAllChunksWithEmbeddings(ctx context.Context, project string, limit int) ([]*types.Chunk, error) {
 	rows, err := b.pool.Query(ctx, `
-		SELECT c.* FROM chunks c
+		SELECT `+chunkCols+` FROM chunks c
 		JOIN memories m ON m.id = c.memory_id
 		WHERE c.embedding IS NOT NULL AND m.project=$1 AND m.valid_to IS NULL
 		ORDER BY m.last_accessed DESC
@@ -664,7 +677,7 @@ func (b *PostgresBackend) GetChunksForMemories(ctx context.Context, memoryIDs []
 		return nil, nil
 	}
 	rows, err := b.pool.Query(ctx, `
-		SELECT c.* FROM chunks c
+		SELECT `+chunkCols+` FROM chunks c
 		WHERE c.memory_id = ANY($1) AND c.embedding IS NOT NULL
 		ORDER BY c.chunk_index`, memoryIDs,
 	)
@@ -674,13 +687,14 @@ func (b *PostgresBackend) GetChunksForMemories(ctx context.Context, memoryIDs []
 	return pgx.CollectRows(rows, rowToChunk)
 }
 
-func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, memoryID string) (bool, error) {
+func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, _ string) (bool, error) {
 	var exists bool
 	err := b.pool.QueryRow(ctx, `
 		SELECT EXISTS(
-			SELECT 1 FROM chunks
-			WHERE chunk_hash=$1 AND memory_id=$2
-		)`, chunkHash, memoryID,
+			SELECT 1 FROM chunks c
+			JOIN memories m ON m.id = c.memory_id
+			WHERE c.chunk_hash=$1 AND m.project=$2
+		)`, chunkHash, b.project,
 	).Scan(&exists)
 	return exists, err
 }
@@ -717,7 +731,7 @@ func (b *PostgresBackend) NullAllEmbeddings(ctx context.Context, project string)
 
 func (b *PostgresBackend) GetChunksPendingEmbedding(ctx context.Context, project string, limit int) ([]*types.Chunk, error) {
 	rows, err := b.pool.Query(ctx, `
-		SELECT c.* FROM chunks c
+		SELECT `+chunkCols+` FROM chunks c
 		JOIN memories m ON m.id = c.memory_id
 		WHERE m.project=$1 AND c.embedding IS NULL
 		ORDER BY m.last_accessed DESC
@@ -1266,7 +1280,7 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 }
 
 func (b *PostgresBackend) ListAllProjects(ctx context.Context) ([]string, error) {
-	rows, err := b.pool.Query(ctx, "SELECT DISTINCT project FROM memories ORDER BY project")
+	rows, err := b.pool.Query(ctx, "SELECT DISTINCT project FROM memories WHERE valid_to IS NULL ORDER BY project")
 	if err != nil {
 		return nil, err
 	}
@@ -1631,13 +1645,21 @@ func (b *PostgresBackend) versionMemoryTx(ctx context.Context, tx pgx.Tx, m *typ
 	if changeReason != "" {
 		reason = &changeReason
 	}
+	now := time.Now().UTC()
+	// Close the system_to window on all prior open versions for this memory.
+	if _, err = tx.Exec(ctx,
+		"UPDATE memory_versions SET system_to=$1 WHERE memory_id=$2 AND system_to IS NULL",
+		now, m.ID,
+	); err != nil {
+		return fmt.Errorf("versionMemoryTx: close prior system_to: %w", err)
+	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO memory_versions
 			(id, memory_id, content, memory_type, tags, importance,
 			 system_from, valid_from, valid_to, change_type, change_reason, project)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		types.NewMemoryID(), m.ID, m.Content, m.MemoryType, tagsJSON, m.Importance,
-		time.Now().UTC(), m.ValidFrom, m.ValidTo, changeType, reason, m.Project,
+		now, m.ValidFrom, m.ValidTo, changeType, reason, m.Project,
 	)
 	return err
 }
