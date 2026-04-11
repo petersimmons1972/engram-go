@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/chunk"
@@ -67,11 +68,20 @@ type MergeDecision struct {
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
 	backend    db.Backend
+	embedMu    sync.RWMutex // protects embedder; use getEmbedder() for all reads
 	embedder   embed.Client
 	project    string
 	ollamaURL  string
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
+}
+
+// getEmbedder safely reads the current embedder. Use this instead of e.embedder
+// directly so concurrent MigrateEmbedder calls don't cause a data race.
+func (e *SearchEngine) getEmbedder() embed.Client {
+	e.embedMu.RLock()
+	defer e.embedMu.RUnlock()
+	return e.embedder
 }
 
 // New constructs a SearchEngine and starts background summarize and reembed workers.
@@ -96,10 +106,12 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	}
 }
 
-// Close shuts down the engine and stops all background workers.
+// Close shuts down the engine, stops all background workers, and releases
+// the database connection pool. Must be called exactly once per engine.
 func (e *SearchEngine) Close() {
 	e.summarizer.Stop()
 	e.reembedder.Stop()
+	e.backend.Close()
 }
 
 // Backend exposes the underlying db.Backend for callers that need direct access
@@ -145,7 +157,7 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 			continue
 		}
 
-		embedding, err := e.embedder.Embed(ctx, c.Text)
+		embedding, err := e.getEmbedder().Embed(ctx, c.Text)
 		if err != nil {
 			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
 		}
@@ -225,7 +237,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	queryVec, err := e.embedder.Embed(ctx, query)
+	queryVec, err := e.getEmbedder().Embed(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
@@ -410,16 +422,17 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	emb := e.getEmbedder()
 	if !ok {
-		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", e.embedder.Name()); err != nil {
+		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", emb.Name()); err != nil {
 			return err
 		}
 		return e.backend.SetMeta(ctx, e.project, "embedder_dimensions",
-			fmt.Sprintf("%d", e.embedder.Dimensions()))
+			fmt.Sprintf("%d", emb.Dimensions()))
 	}
-	if storedName != e.embedder.Name() {
+	if storedName != emb.Name() {
 		return fmt.Errorf("embedder mismatch: stored=%q current=%q — run memory_migrate_embedder first",
-			storedName, e.embedder.Name())
+			storedName, emb.Name())
 	}
 	// Skip dimension check if migration is in progress — the new model may have
 	// different dimensions, and embedder_dimensions will be reset once re-embedding
@@ -437,9 +450,9 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("embedder_dimensions metadata is corrupt: %w", err)
 		}
-		if storedDims != e.embedder.Dimensions() {
+		if storedDims != emb.Dimensions() {
 			return fmt.Errorf("embedder dimensions mismatch: stored %d, current %d — use memory_migrate_embedder to switch models",
-				storedDims, e.embedder.Dimensions())
+				storedDims, emb.Dimensions())
 		}
 	}
 	return nil
@@ -653,7 +666,9 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
 	}
+	e.embedMu.Lock()
 	e.embedder = newEmbedder
+	e.embedMu.Unlock()
 
 	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
 	e.reembedder.Start()

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/search"
+	"golang.org/x/sync/singleflight"
 )
 
 // maxPoolSize is the maximum number of project engines kept in memory at once.
@@ -40,6 +41,8 @@ type EnginePool struct {
 	mu      sync.RWMutex
 	engines map[string]*engineEntry
 	factory EngineFactory
+	sfg     singleflight.Group
+	closed  atomic.Bool
 }
 
 // NewEnginePool creates an EnginePool using factory to construct missing engines.
@@ -56,6 +59,9 @@ func NewEnginePool(factory EngineFactory) *EnginePool {
 // Uses double-checked locking so the slow factory path (PostgreSQL connection +
 // migrations) runs outside the mutex, preventing contention across projects (#31).
 func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, error) {
+	if p.closed.Load() {
+		return nil, fmt.Errorf("engine pool is closed")
+	}
 	if len(project) > 128 {
 		return nil, fmt.Errorf("project name too long (%d chars, max 128)", len(project))
 	}
@@ -71,32 +77,47 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	}
 	p.mu.RUnlock()
 
-	// Slow path: create engine OUTSIDE the lock so other projects are not blocked
-	// during the PostgreSQL connection + migration phase.
-	h, err := p.factory(ctx, project)
+	// Slow path: use singleflight to ensure only one goroutine runs the
+	// factory for a given project at a time. All concurrent callers for the
+	// same project share the result, preventing TOCTOU races and duplicate
+	// backend connection pools.
+	v, err, _ := p.sfg.Do(project, func() (any, error) {
+		// Re-check under read lock in case a previous singleflight call (from
+		// before pool startup) already inserted this project.
+		p.mu.RLock()
+		if e, ok := p.engines[project]; ok {
+			p.mu.RUnlock()
+			return e.handle, nil
+		}
+		p.mu.RUnlock()
+
+		h, err := p.factory(ctx, project)
+		if err != nil {
+			return nil, err
+		}
+
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if e, ok := p.engines[project]; ok {
+			// Another singleflight group (from a different key race) won — discard.
+			if h != nil && h.Engine != nil {
+				h.Engine.Close()
+			}
+			e.lastAccess.Store(time.Now().UnixNano())
+			return e.handle, nil
+		}
+		if len(p.engines) >= maxPoolSize {
+			p.evictLRULocked()
+		}
+		entry := &engineEntry{handle: h}
+		entry.lastAccess.Store(time.Now().UnixNano())
+		p.engines[project] = entry
+		return h, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	// Write lock only to insert. Check again in case a concurrent caller already
-	// created this project's engine while we were in factory.
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if e, ok := p.engines[project]; ok {
-		// Race: another goroutine won — discard the engine we just created.
-		if h != nil && h.Engine != nil {
-			h.Engine.Close()
-		}
-		e.lastAccess.Store(time.Now().UnixNano())
-		return e.handle, nil
-	}
-	if len(p.engines) >= maxPoolSize {
-		p.evictLRULocked()
-	}
-	entry := &engineEntry{handle: h}
-	entry.lastAccess.Store(time.Now().UnixNano())
-	p.engines[project] = entry
-	return h, nil
+	return v.(*EngineHandle), nil
 }
 
 // evictLRULocked removes the engine with the oldest lastAccess time.
@@ -123,8 +144,10 @@ func (p *EnginePool) evictLRULocked() {
 	delete(p.engines, lruKey)
 }
 
-// Close stops all cached engines.
+// Close stops all cached engines and marks the pool as closed.
+// Subsequent calls to Get will return an error.
 func (p *EnginePool) Close() {
+	p.closed.Store(true)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.engines {
