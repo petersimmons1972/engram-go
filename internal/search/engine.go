@@ -437,11 +437,22 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			Memory:     m,
 			Score:      score,
 			ChunkScore: bestCosine[id],
-			ScoreBreakdown: map[string]float64{
-				"cosine":  bestCosine[id],
-				"bm25":    bm25,
-				"recency": RecencyDecay(input.HoursSince),
-			},
+			ScoreBreakdown: func() map[string]float64 {
+				bd := map[string]float64{
+					"cosine":  bestCosine[id],
+					"bm25":    bm25,
+					"recency": RecencyDecay(input.HoursSince),
+				}
+				if m.DynamicImportance != nil {
+					bd["dynamic_importance"] = *m.DynamicImportance
+				} else {
+					bd["importance_boost"] = ImportanceBoost(m.Importance)
+				}
+				if m.RetrievalPrecision != nil {
+					bd["retrieval_precision"] = *m.RetrievalPrecision
+				}
+				return bd
+			}(),
 			MatchedChunk:        bestChunkText[id],
 			MatchedChunkIndex:   bestChunkIndex[id],
 			MatchedChunkSection: bestChunkSection[id],
