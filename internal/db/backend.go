@@ -38,10 +38,14 @@ type Backend interface {
 	// UpdateMemory updates mutable fields on an existing memory.
 	// Returns nil, nil if not found. Returns error if immutable.
 	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error)
-	// DeleteMemory deletes a memory by ID. Returns false if not found.
+	// DeleteMemory hard-deletes a memory and its chunks/relationships by ID.
+	// Prefer SoftDeleteMemory for normal use — it preserves history and respects
+	// immutability. DeleteMemory is retained for internal rollback paths only
+	// (e.g. MergeMemoriesAtomic loser cleanup). Returns false if not found.
 	DeleteMemory(ctx context.Context, id string) (bool, error)
-	// DeleteMemoryAtomic atomically locks, validates, and deletes a memory.
+	// DeleteMemoryAtomic atomically locks, validates, and hard-deletes a memory.
 	// force=true bypasses the immutability check (rollback path only).
+	// Prefer SoftDeleteMemory for all caller-initiated deletes.
 	DeleteMemoryAtomic(ctx context.Context, project, id string, force bool) (bool, error)
 	// MergeMemoriesAtomic updates winnerID content (if newContent non-empty) and
 	// deletes loserID in a single transaction. Prevents partial-merge state on crash.

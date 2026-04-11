@@ -82,7 +82,10 @@ func (c *OllamaClient) Dimensions() int { return c.dims }
 
 // Embed calls POST /api/embed and returns the first embedding vector.
 func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
-	body, _ := json.Marshal(map[string]string{"model": c.model, "input": text})
+	body, err := json.Marshal(map[string]string{"model": c.model, "input": text})
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: marshal request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -153,7 +156,10 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 	pullCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	body, _ := json.Marshal(map[string]string{"name": c.model})
+	body, err := json.Marshal(map[string]string{"name": c.model})
+	if err != nil {
+		return fmt.Errorf("ollama pull: marshal request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(pullCtx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
 	if err != nil {
 		return err
