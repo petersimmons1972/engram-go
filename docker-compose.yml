@@ -70,7 +70,7 @@ services:
 
   engram-go:
     container_name: engram-go-app
-    image: engram-go:2.1.0
+    image: engram-go:2.2.0
     ports:
       - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     env_file:
@@ -96,7 +96,7 @@ services:
   # ── Test database (CI only) ───────────────────────────────────────────────
   test-postgres:
     container_name: engram-test-postgres
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     profiles: ["test"]
     environment:
       - POSTGRES_DB=engram_test
