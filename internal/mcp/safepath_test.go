@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
@@ -38,11 +39,26 @@ func TestSafePath_AllowsBaseItself(t *testing.T) {
 	require.Equal(t, base, got)
 }
 
-func TestSafePath_EmptyBaseSkipsCheck(t *testing.T) {
-	// When no DataDir is configured, SafePath returns a cleaned path without error.
-	got, err := internalmcp.SafePath("", "/tmp/anything")
-	require.NoError(t, err)
-	require.Equal(t, "/tmp/anything", got)
+func TestSafePath_EmptyBaseReturnsError(t *testing.T) {
+	// When no DataDir is configured, SafePath must refuse the path entirely.
+	_, err := internalmcp.SafePath("", "/tmp/anything")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "base directory is not configured")
+}
+
+func TestSafePath_BlocksSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+
+	// Create a symlink inside base that points outside base.
+	link := base + "/evil"
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skip("cannot create symlink:", err)
+	}
+
+	_, err := internalmcp.SafePath(base, link+"/secret.txt")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes allowed directory")
 }
 
 func TestEnginePool_LRU_EvictsAtCap(t *testing.T) {

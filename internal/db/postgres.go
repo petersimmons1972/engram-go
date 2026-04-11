@@ -40,12 +40,11 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 		project = "default"
 	}
 
-	warnDefaultPassword(dsn)
-
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("invalid DSN: %w", err)
 	}
+	warnDefaultPassword(cfg)
 	cfg.MinConns = 2
 	cfg.MaxConns = 10
 
@@ -69,9 +68,9 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	return b, nil
 }
 
-func warnDefaultPassword(dsn string) {
-	if strings.Contains(dsn, ":engram@") || strings.Contains(dsn, "%3Aengram%40") {
-		slog.Warn("SECURITY: PostgreSQL using default password 'engram'; set a strong POSTGRES_PASSWORD before exposing this service")
+func warnDefaultPassword(cfg *pgxpool.Config) {
+	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
+		slog.Warn("SECURITY: PostgreSQL using default password; set a strong POSTGRES_PASSWORD before exposing this service")
 	}
 }
 
@@ -453,7 +452,7 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", id); err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1", id)
+	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1 AND project=$2", id, project)
 	if err != nil {
 		return false, err
 	}
@@ -725,13 +724,13 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Relationship) error {
 	// Verify both memories exist.
 	var dummy int
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.SourceID).Scan(&dummy); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2", rel.SourceID, b.project).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("source memory %q does not exist", rel.SourceID)
 		}
 		return fmt.Errorf("check source memory: %w", err)
 	}
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.TargetID).Scan(&dummy); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2", rel.TargetID, b.project).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("target memory %q does not exist", rel.TargetID)
 		}
