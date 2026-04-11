@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -147,6 +148,12 @@ func getBool(args map[string]any, key string, def bool) bool {
 }
 
 // toStringSlice converts []any to []string, skipping non-string entries.
+// Applies per-tag and count limits to prevent tag injection attacks (#149).
+const (
+	maxTagCount  = 50
+	maxTagLength = 256
+)
+
 func toStringSlice(v any) []string {
 	arr, ok := v.([]any)
 	if !ok {
@@ -154,9 +161,17 @@ func toStringSlice(v any) []string {
 	}
 	result := make([]string, 0, len(arr))
 	for _, item := range arr {
-		if s, ok := item.(string); ok {
-			result = append(result, s)
+		s, ok := item.(string)
+		if !ok {
+			continue
 		}
+		if len(result) >= maxTagCount {
+			break // silently drop excess tags
+		}
+		if len(s) > maxTagLength {
+			s = s[:maxTagLength] // truncate oversized tag
+		}
+		result = append(result, s)
 	}
 	return result
 }
@@ -238,7 +253,9 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	return toolResult(map[string]any{"id": m.ID, "status": "stored", "mode": "document"})
 }
 
-// handleMemoryStoreBatch stores multiple memories in a single call.
+// handleMemoryStoreBatch stores multiple memories in a single atomic call (#115).
+// All items are validated first; then embeddings are computed; then all writes
+// are committed in one transaction — either all succeed or none do.
 func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
@@ -246,38 +263,44 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	if err != nil {
 		return nil, err
 	}
+	const maxBatchItems = 100 // guard against CPU/DB overload (#144)
 	items, _ := args["memories"].([]any)
 	if len(items) == 0 {
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
 	}
-	var ids []string
-	var storeErrs []string
+	if len(items) > maxBatchItems {
+		return nil, fmt.Errorf("memory_store_batch: too many items (%d > max %d)", len(items), maxBatchItems)
+	}
+
+	// Validate all items before touching the database.
+	var validErrs []string
+	var memories []*types.Memory
 	for idx, item := range items {
 		mmap, ok := item.(map[string]any)
 		if !ok {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: expected object, got %T", idx, item))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: expected object, got %T", idx, item))
 			continue
 		}
 		content := getString(mmap, "content", "")
 		if content == "" {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content is empty", idx))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: content is empty", idx))
 			continue
 		}
 		if len(content) > types.MaxContentLength {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
 			continue
 		}
 		memType := getString(mmap, "memory_type", types.MemoryTypeContext)
 		if !types.ValidateMemoryType(memType) {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
 			continue
 		}
 		importance := getInt(mmap, "importance", 2)
 		if importance < 0 || importance > 4 {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
+			validErrs = append(validErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
 			continue
 		}
-		m := &types.Memory{
+		memories = append(memories, &types.Memory{
 			ID:          types.NewMemoryID(),
 			Content:     content,
 			MemoryType:  memType,
@@ -285,18 +308,26 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Importance:  importance,
 			Tags:        toStringSlice(mmap["tags"]),
 			StorageMode: "focused",
-		}
-		if err := h.Engine.Store(ctx, m); err != nil {
-			storeErrs = append(storeErrs, fmt.Sprintf("item %d: %s", idx, err))
-			continue
-		}
-		ids = append(ids, m.ID)
+		})
 	}
-	response := map[string]any{"ids": ids, "count": len(ids)}
-	if len(storeErrs) > 0 {
-		response["errors"] = storeErrs
+
+	if len(validErrs) > 0 {
+		return toolResult(map[string]any{
+			"ids":    []string{},
+			"count":  0,
+			"errors": validErrs,
+		})
 	}
-	return toolResult(response)
+
+	if err := h.Engine.StoreBatch(ctx, memories); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(memories))
+	for i, m := range memories {
+		ids[i] = m.ID
+	}
+	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
 }
 
 // handleMemoryRecall performs semantic recall against one or more project engines.
@@ -335,6 +366,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
+				// Log so callers know results may be partial (#130).
+				slog.Warn("handleMemoryRecall: skipping project — init failed",
+					"project", p, "err", err)
 				continue
 			}
 			engines = append(engines, h.Engine)
@@ -686,7 +720,7 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, nil)
+	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
 		InferRelationshipsMinSimilarity: minSim,
 		InferRelationshipsLimit:         limit,
@@ -913,6 +947,9 @@ func buildEvidenceMap(ctx context.Context, backend interface {
 	for _, m := range memories {
 		rels, err := backend.GetRelationships(ctx, project, m.ID)
 		if err != nil {
+			// Log so operators know confidence may be degraded (#132).
+			slog.Warn("buildEvidenceMap: GetRelationships failed — conflict confidence may be incomplete",
+				"project", project, "memory_id", m.ID, "err", err)
 			continue
 		}
 		for _, r := range rels {

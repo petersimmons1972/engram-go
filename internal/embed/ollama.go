@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,10 +29,11 @@ const maxEmbedResponseBytes = 10 * 1024 * 1024 // 10 MiB (#16)
 
 // OllamaClient calls the local Ollama /api/embed endpoint.
 type OllamaClient struct {
-	baseURL string
-	model   string
-	dims    int
-	http    *http.Client
+	baseURL  string
+	model    string
+	dims     int
+	http     *http.Client // short-timeout client for embed/list requests
+	pullHTTP *http.Client // no client-level timeout for long model pulls
 }
 
 // NewOllamaClient constructs an OllamaClient and validates connectivity.
@@ -39,14 +41,27 @@ type OllamaClient struct {
 func NewOllamaClient(ctx context.Context, baseURL, model string) (*OllamaClient, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// DNS-safe transport: short idle timeout ensures DNS changes propagate within 30s.
+	// DNS-safe transport with explicit timeouts (#125).
+	// TLSHandshake/ResponseHeader caps apply even when the context has no deadline.
 	transport := &http.Transport{
-		IdleConnTimeout:     30 * time.Second,
-		MaxIdleConnsPerHost: 2,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+		MaxIdleConnsPerHost:   2,
 	}
-	hc := &http.Client{Transport: transport}
+	// Client-level Timeout provides an outer bound for non-pull requests.
+	// Embed calls include text up to a few KB; 60s is generous.
+	hc := &http.Client{Transport: transport, Timeout: 60 * time.Second}
 
-	c := &OllamaClient{baseURL: baseURL, model: model, http: hc}
+	// pullHTTP omits the client-level timeout — model pulls stream for minutes
+	// and are bounded only by the per-request context.
+	pullHTTP := &http.Client{Transport: transport}
+
+	c := &OllamaClient{baseURL: baseURL, model: model, http: hc, pullHTTP: pullHTTP}
 
 	if err := c.ensureModel(ctx); err != nil {
 		return nil, fmt.Errorf("ollama startup check failed: %w", err)
@@ -67,7 +82,10 @@ func (c *OllamaClient) Dimensions() int { return c.dims }
 
 // Embed calls POST /api/embed and returns the first embedding vector.
 func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
-	body, _ := json.Marshal(map[string]string{"model": c.model, "input": text})
+	body, err := json.Marshal(map[string]string{"model": c.model, "input": text})
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: marshal request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -138,14 +156,17 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 	pullCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	body, _ := json.Marshal(map[string]string{"name": c.model})
+	body, err := json.Marshal(map[string]string{"name": c.model})
+	if err != nil {
+		return fmt.Errorf("ollama pull: marshal request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(pullCtx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.pullHTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("ollama pull: %w", err)
 	}

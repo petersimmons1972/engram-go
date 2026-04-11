@@ -69,15 +69,15 @@ func (w *Worker) Stop() {
 	}
 }
 
+const batchTimeout = 5 * time.Minute // max time for one runBatch iteration (#120)
+
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("reembed worker panic", "project", w.project, "panic", r)
-		}
-	}()
 	for {
-		done := w.runBatch(ctx)
+		// Per-iteration timeout prevents an Ollama hang from blocking the worker forever.
+		iterCtx, cancel := context.WithTimeout(ctx, batchTimeout)
+		done := w.safeRunBatch(iterCtx)
+		cancel()
 		if ctx.Err() != nil {
 			return
 		}
@@ -92,6 +92,19 @@ func (w *Worker) run(ctx context.Context) {
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// safeRunBatch wraps runBatch with per-iteration panic recovery (#106).
+// Returns false on panic (treat as not-done so the loop retries after backoff).
+func (w *Worker) safeRunBatch(ctx context.Context) (done bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("reembed worker panic — will retry after poll interval",
+				"project", w.project, "panic", r)
+			done = false
+		}
+	}()
+	return w.runBatch(ctx)
 }
 
 func (w *Worker) runBatch(ctx context.Context) bool {

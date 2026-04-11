@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -85,6 +87,12 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 	return e.embedder
 }
 
+// Embedder returns the current embedding client. Used by callers (e.g. consolidate
+// runner) that need the live embedder rather than a nil placeholder (#94).
+func (e *SearchEngine) Embedder() embed.Client {
+	return e.getEmbedder()
+}
+
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
 // and spaced-repetition importance decay). claudeClient may be nil, in which case
 // summarization falls back to Ollama. decayInterval controls how often the decay
@@ -156,38 +164,69 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		candidates = []chunk.ChunkCandidate{{Text: m.Content, ChunkType: "sentence_window"}}
 	}
 
-	var chunks []*types.Chunk
+	// Filter to new chunks only (deduplicate by hash) before embedding.
+	type pendingChunk struct {
+		idx       int
+		candidate chunk.ChunkCandidate
+		hash      string
+	}
+	var pending []pendingChunk
 	for i, c := range candidates {
 		hash := chunk.ChunkHash(c.Text)
-
 		exists, err := e.backend.ChunkHashExists(ctx, hash, m.ID)
 		if err != nil {
 			return nil, fmt.Errorf("check chunk hash: %w", err)
 		}
-		if exists {
-			continue
+		if !exists {
+			pending = append(pending, pendingChunk{idx: i, candidate: c, hash: hash})
 		}
+	}
 
-		embedding, err := e.getEmbedder().Embed(ctx, c.Text)
-		if err != nil {
-			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
-		}
+	if len(pending) == 0 {
+		return nil, nil
+	}
 
-		ch := &types.Chunk{
-			ID:         types.NewMemoryID(),
-			MemoryID:   m.ID,
-			ChunkText:  c.Text,
-			ChunkIndex: i,
-			ChunkHash:  hash,
-			ChunkType:  c.ChunkType,
-			Project:    e.project,
-			Embedding:  embedding,
-		}
-		if c.HasHeading {
-			heading := c.SectionHeading
-			ch.SectionHeading = &heading
-		}
-		chunks = append(chunks, ch)
+	// Parallelize embedding across all new chunks (#118).
+	// Limit concurrency to 8 to avoid overwhelming Ollama.
+	const maxConcurrent = 8
+	chunks := make([]*types.Chunk, len(pending))
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(maxConcurrent)
+	embedder := e.getEmbedder()
+
+	for j, p := range pending {
+		j, p := j, p // capture loop variables
+		eg.Go(func() error {
+			// Embedding is best-effort (#108): if Ollama is unavailable the chunk
+			// is stored with a NULL embedding and the reembed worker will backfill
+			// it later. Memory storage is never blocked by an embedder outage.
+			embedding, err := embedder.Embed(egCtx, p.candidate.Text)
+			if err != nil {
+				slog.Warn("embed chunk failed — storing with NULL embedding for reembed worker",
+					"memory", m.ID, "chunk_idx", p.idx, "err", err)
+				embedding = nil
+			}
+			ch := &types.Chunk{
+				ID:         types.NewMemoryID(),
+				MemoryID:   m.ID,
+				ChunkText:  p.candidate.Text,
+				ChunkIndex: p.idx,
+				ChunkHash:  p.hash,
+				ChunkType:  p.candidate.ChunkType,
+				Project:    e.project,
+				Embedding:  embedding,
+			}
+			if p.candidate.HasHeading {
+				heading := p.candidate.SectionHeading
+				ch.SectionHeading = &heading
+			}
+			chunks[j] = ch
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 	return chunks, nil
 }
@@ -229,6 +268,63 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 		if err := e.backend.StoreChunksTx(ctx, tx, chunks); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// StoreBatch stores multiple memories atomically (#115).
+// All embeddings are computed first (outside any transaction), then the entire
+// batch is written in a single DB transaction — either all succeed or none do.
+func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory) error {
+	if len(memories) == 0 {
+		return nil
+	}
+
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return err
+	}
+
+	// Phase 1: compute embeddings for all items (external calls, outside tx).
+	type memWithChunks struct {
+		mem    *types.Memory
+		chunks []*types.Chunk
+	}
+	prepared := make([]memWithChunks, 0, len(memories))
+	for _, m := range memories {
+		if m.ID == "" {
+			m.ID = types.NewMemoryID()
+		}
+		m.Project = e.project
+		if m.StorageMode == "" {
+			if len(m.Content) > 10_000 {
+				m.StorageMode = "document"
+			} else {
+				m.StorageMode = "focused"
+			}
+		}
+		chunks, err := e.storeChunksForMemory(ctx, m)
+		if err != nil {
+			return fmt.Errorf("prepare memory %q: %w", m.ID, err)
+		}
+		prepared = append(prepared, memWithChunks{mem: m, chunks: chunks})
+	}
+
+	// Phase 2: write everything in one transaction.
+	tx, err := e.backend.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	for _, p := range prepared {
+		if err := e.backend.StoreMemoryTx(ctx, tx, p.mem); err != nil {
+			return err
+		}
+		if len(p.chunks) > 0 {
+			if err := e.backend.StoreChunksTx(ctx, tx, p.chunks); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit(ctx)
@@ -442,11 +538,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
 	}
 
-	// Update access timestamps.
+	// Batch-update access timestamps (#117 — replaces N+1 TouchMemory calls).
+	touchIDs := make([]string, len(results))
+	for i, r := range results {
+		touchIDs[i] = r.Memory.ID
+	}
+	if err := e.backend.TouchMemories(ctx, touchIDs); err != nil {
+		slog.Warn("touch memories failed", "err", err)
+	}
 	for _, r := range results {
-		if err := e.backend.TouchMemory(ctx, r.Memory.ID); err != nil {
-			slog.Warn("touch memory failed", "id", r.Memory.ID, "err", err)
-		}
 		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
 			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}
@@ -672,8 +772,8 @@ const (
 
 // Consolidate prunes stale and cold memories and decays graph edges.
 // Returns a summary map of counts for each operation performed.
+// For Claude-assisted near-duplicate merging, use ConsolidateWithClaude.
 func (e *SearchEngine) Consolidate(ctx context.Context) (map[string]any, error) {
-	// TODO: Jaccard near-duplicate merge (threshold 0.85) is a future task.
 	pruned, err := e.backend.PruneStaleMemories(ctx, e.project, consolidateStaleAgeHours, consolidateMaxImportance)
 	if err != nil {
 		return nil, err
@@ -717,15 +817,26 @@ func (e *SearchEngine) Verify(ctx context.Context) (map[string]any, error) {
 // existing embeddings and recording the new model name in project metadata.
 // A background reembed worker will repopulate embeddings after this call.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (map[string]any, error) {
-	// Null all embeddings first — if this fails, no metadata is written and state stays consistent.
-	nulled, err := e.backend.NullAllEmbeddings(ctx, e.project)
+	// Wrap null + meta writes in a single transaction (#102).
+	// Without this, a crash between NullAllEmbeddings and SetMeta leaves chunks
+	// without embeddings but the migrator flag never set — reembed worker never runs.
+	tx, err := e.backend.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := e.backend.SetMeta(ctx, e.project, "embedding_migration_in_progress", "true"); err != nil {
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	nulled, err := e.backend.NullAllEmbeddingsTx(ctx, tx, e.project)
+	if err != nil {
 		return nil, err
 	}
-	if err := e.backend.SetMeta(ctx, e.project, "embedder_name", newModel); err != nil {
+	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedding_migration_in_progress", "true"); err != nil {
+		return nil, err
+	}
+	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedder_name", newModel); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -849,13 +960,8 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			if !d.ShouldMerge {
 				continue
 			}
-			content := d.MergedContent
-			if content != "" {
-				if _, err := e.backend.UpdateMemory(ctx, d.MemoryAID, &content, nil, nil); err != nil {
-					continue
-				}
-			}
-			if deleted, err := e.backend.DeleteMemoryAtomic(ctx, e.project, d.MemoryBID, false); err != nil || !deleted {
+			// Atomic merge (#104): update winner content + delete loser in one tx.
+			if err := e.backend.MergeMemoriesAtomic(ctx, e.project, d.MemoryAID, d.MemoryBID, d.MergedContent); err != nil {
 				continue
 			}
 			totalMerged++
@@ -920,7 +1026,7 @@ func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK i
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := e.backend.StoreRetrievalEvent(ctx, event); err != nil {
-		slog.Warn("store retrieval event failed", "err", err)
+		slog.Warn("store retrieval event failed", "project", e.project, "err", err) // #96
 		return results, "", nil
 	}
 	return results, event.ID, nil

@@ -26,13 +26,14 @@ services:
 
   postgres:
     container_name: engram-postgres
-    image: cgr.dev/chainguard/postgres:latest
+    image: engram-postgres-cg:latest
     volumes:
       - pgdata:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=engram
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-engram}
       - POSTGRES_DB=engram
+
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "engram"]
       interval: 5s
@@ -42,7 +43,7 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama:latest             # AMD users: change to ollama/ollama:rocm
+    image: ollama/ollama:rocm
     volumes:
       - ollama-data:/root/.ollama           # model files persist across restarts
     ports:
@@ -64,13 +65,13 @@ services:
     # Change image to ollama/ollama:rocm above, then uncomment devices below.
     # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
     #
-    # devices:
-    #   - /dev/kfd:/dev/kfd
-    #   - /dev/dri:/dev/dri
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
 
   engram-go:
     container_name: engram-go-app
-    image: engram-go:2.2.0
+    image: engram-go:2.3.0
     ports:
       - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     env_file:
@@ -81,6 +82,10 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-nomic-embed-text}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2}
+      # Advertise the host-visible URL so Claude Code forwards auth headers correctly.
+      # Without this, SSE events say http://0.0.0.0:8788 but Claude Code's auth
+      # headers are tied to 127.0.0.1 — causing 401s on every MCP message POST.
+      - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
       # ── Claude advisor strategy (v2.0) — all opt-in, default off ─────────
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}

@@ -4,6 +4,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +64,9 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	if p.closed.Load() {
 		return nil, fmt.Errorf("engine pool is closed")
 	}
+	// Normalize before using as a cache key so " foo" and "foo" don't alias
+	// to different pool entries that point to the same backend (#143).
+	project = strings.ToLower(strings.TrimSpace(project))
 	if len(project) > 128 {
 		return nil, fmt.Errorf("project name too long (%d chars, max 128)", len(project))
 	}
@@ -124,14 +129,12 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 // Caller must hold p.mu.
 func (p *EnginePool) evictLRULocked() {
 	var lruKey string
-	var lruNano int64
-	first := true
+	lruNano := int64(math.MaxInt64) // #131: init to max so any real value wins
 	for k, e := range p.engines {
 		nano := e.lastAccess.Load()
-		if first || nano < lruNano {
+		if nano < lruNano {
 			lruKey = k
 			lruNano = nano
-			first = false
 		}
 	}
 	if lruKey == "" {

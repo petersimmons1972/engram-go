@@ -3,16 +3,73 @@ package mcp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"golang.org/x/time/rate"
+
 	"github.com/petersimmons1972/engram/internal/claude"
 )
+
+// rateLimiter holds per-IP token-bucket state for HTTP rate limiting (#140).
+type rateLimiter struct {
+	mu      sync.Mutex
+	clients map[string]*rateLimiterEntry
+}
+
+type rateLimiterEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
+func newRateLimiter() *rateLimiter {
+	rl := &rateLimiter{clients: make(map[string]*rateLimiterEntry)}
+	go rl.evict()
+	return rl
+}
+
+// allow returns true if the request from ip should be allowed.
+// Limit: 60 requests/minute with a burst of 20.
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	e, ok := rl.clients[ip]
+	if !ok {
+		e = &rateLimiterEntry{
+			limiter: rate.NewLimiter(rate.Every(time.Second), 20), // 1 req/s sustained, burst 20
+		}
+		rl.clients[ip] = e
+	}
+	e.lastSeen = time.Now()
+	ok = e.limiter.Allow()
+	rl.mu.Unlock()
+	return ok
+}
+
+// evict removes entries not seen in the last 5 minutes.
+func (rl *rateLimiter) evict() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		for ip, e := range rl.clients {
+			if time.Since(e.lastSeen) > 5*time.Minute {
+				delete(rl.clients, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
 
 // Server wraps the MCP SSE server and owns the EnginePool.
 type Server struct {
@@ -40,20 +97,67 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 }
 
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
-func (s *Server) Start(ctx context.Context, host string, port int, apiKey string) error {
+// baseURL overrides the URL advertised in SSE endpoint events; when empty,
+// it defaults to http://<host>:<port>. Set this to the externally-reachable
+// address (e.g. http://127.0.0.1:8788) when the bind address is 0.0.0.0,
+// so MCP clients forward auth headers to the correct host.
+func (s *Server) Start(ctx context.Context, host string, port int, apiKey string, baseURL string) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	slog.Info("engram MCP server starting", "addr", addr)
 
-	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(fmt.Sprintf("http://%s", addr)))
+	advertised := baseURL
+	if advertised == "" {
+		advertised = fmt.Sprintf("http://%s", addr)
+	}
+	slog.Info("SSE base URL", "url", advertised)
+	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
+
+	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
+	mux := http.NewServeMux()
+
+	// GET /health — unauthenticated; returns server status for diagnostics and readiness checks.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+	})
+
+	// GET /setup-token — local-network only; returns the current bearer token so MCP
+	// clients can self-configure without manual copy-paste.
+	//
+	// Security rationale: the Docker port mapping `127.0.0.1:8788->8788/tcp` already
+	// restricts external access at the host-network level. Inside the container, requests
+	// arriving from the host appear as Docker gateway IPs (172.x.x.x, 10.x.x.x) rather
+	// than 127.0.0.1 due to NAT. We accept RFC1918 addresses because they can only reach
+	// this port via the loopback-bound Docker port mapping — not from the network.
+	// The token is equivalent in sensitivity to ~/.claude.json which is already on disk.
+	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !isLocalAddress(remoteHost) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
+			"token":    apiKey,
+			"endpoint": advertised + "/sse",
+			"name":     "engram",
+		})
+	})
+
+	// All other routes require Bearer authentication and per-IP rate limiting (#140).
+	rl := newRateLimiter()
+	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
 	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           http.MaxBytesHandler(s.applyMiddleware(sse, apiKey), maxRequestBodyBytes),
+		Handler:           http.MaxBytesHandler(mux, maxRequestBodyBytes),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	slog.Info("engram ready — to configure MCP client run: make setup  (or: go run ./cmd/engram-setup)")
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
@@ -68,21 +172,65 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	}
 }
 
-func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler {
+// applyMiddleware chains per-IP rate limiting (#140) and Bearer auth onto next.
+func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimiter) http.Handler {
 	// apiKey is always non-empty — enforced by main.go startup check.
 	// This guard is a defence-in-depth backstop; it must never be the primary gate.
 	if apiKey == "" {
 		panic("engram: auth middleware called with empty apiKey — programming error")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		want := []byte("Bearer " + apiKey)
-		if subtle.ConstantTimeCompare(got, want) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		// Rate limit before auth check to prevent timing-based enumeration.
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !rl.allow(remoteHost) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`)
+			return
+		}
+		// ConstantTimeCompare leaks length when len(got) != len(want).
+		// Use ConstantTimeEq on the HMAC of each side so the comparison is
+		// always the same length regardless of input length (#129).
+		got := hmac.New(sha256.New, []byte(apiKey))
+		got.Write([]byte(r.Header.Get("Authorization")))
+		want := hmac.New(sha256.New, []byte(apiKey))
+		want.Write([]byte("Bearer " + apiKey))
+		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isLocalAddress reports whether the IP string is a loopback or RFC1918 private address.
+// Used by /setup-token to accept requests arriving via Docker's NAT gateway (which presents
+// as a Docker bridge IP, not 127.0.0.1, even when the port is host-loopback-bound).
+func isLocalAddress(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	local := []string{
+		"127.0.0.0/8",    // loopback
+		"::1/128",        // IPv6 loopback
+		"10.0.0.0/8",     // RFC1918 — Docker bridge networks (10.x.x.x)
+		"172.16.0.0/12",  // RFC1918 — Docker default bridge (172.17-31.x.x)
+		"192.168.0.0/16", // RFC1918 — Docker custom networks
+	}
+	for _, cidr := range local {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) registerTools() {
