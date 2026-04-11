@@ -187,25 +187,27 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 		return nil, nil
 	}
 
-	q := `SELECT m.*, ts_rank(m.search_vector, plainto_tsquery('english', $1)) AS rank
+	baseQ := `SELECT m.*, ts_rank(m.search_vector, plainto_tsquery('english', $1)) AS rank
 		  FROM memories m
 		  WHERE m.search_vector @@ plainto_tsquery('english', $2)
 		  AND m.project=$3 AND m.valid_to IS NULL`
 	args := []any{query, query, project}
-	n := 4
 
+	// Build optional time-range clauses using the same parameterized approach as ListMemories.
+	var timeWhere []string
 	if since != nil {
-		q += fmt.Sprintf(" AND m.created_at>=$%d", n)
 		args = append(args, since)
-		n++
+		timeWhere = append(timeWhere, fmt.Sprintf("m.created_at>=$%d", len(args)))
 	}
 	if before != nil {
-		q += fmt.Sprintf(" AND m.created_at<=$%d", n)
 		args = append(args, before)
-		n++
+		timeWhere = append(timeWhere, fmt.Sprintf("m.created_at<=$%d", len(args)))
 	}
-	q += fmt.Sprintf(" ORDER BY rank DESC LIMIT $%d", n)
+	for _, c := range timeWhere {
+		baseQ += " AND " + c
+	}
 	args = append(args, limit)
+	q := baseQ + fmt.Sprintf(" ORDER BY rank DESC LIMIT $%d", len(args))
 
 	rows, err := b.pool.Query(ctx, q, args...)
 	if err != nil {
