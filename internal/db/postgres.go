@@ -80,6 +80,28 @@ func (b *PostgresBackend) Close() {
 }
 
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
+	// Serialize concurrent project initialization with a per-project advisory lock (#105).
+	// Two backends for the same project initializing simultaneously would both pass the
+	// "migration already applied?" check and then race to apply the same DDL.
+	// Lock class 1986753120 is an arbitrary constant reserved for engram schema migrations.
+	const lockClass = 1986753120
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire connection for advisory lock: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_lock($1, hashtext($2::text))`, lockClass, b.project,
+	); err != nil {
+		return fmt.Errorf("acquire advisory lock for project %q: %w", b.project, err)
+	}
+	defer func() {
+		_, _ = conn.Exec(ctx,
+			`SELECT pg_advisory_unlock($1, hashtext($2::text))`, lockClass, b.project,
+		)
+	}()
+
 	// Ensure the migration tracking table exists. This is always idempotent.
 	const createTracker = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -136,14 +158,32 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 
 		// 003_pgvector.sql starts with CREATE EXTENSION which cannot run
 		// inside a transaction in most PostgreSQL configurations. Run it
-		// outside any transaction, then record atomically below.
+		// outside any transaction, complete the backfill, then record the
+		// migration last — so a crash before recording causes a safe retry
+		// on the next startup (CREATE EXTENSION IF NOT EXISTS is idempotent).
+		// Fix for #100: previously the migration was recorded before the
+		// backfill, leaving the schema permanently stuck if the backfill failed.
 		if name == "003_pgvector.sql" {
 			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}
-		} else {
-			// Wrap apply + record in a single transaction so a crash between
-			// the two steps cannot leave the schema in an inconsistent state.
+			// Run backfill before recording so a crash here causes a retry.
+			if err := b.backfillVectors(ctx); err != nil {
+				return fmt.Errorf("pgvector backfill failed: %w", err)
+			}
+			// Record last — use ON CONFLICT DO NOTHING so a concurrent or retried
+			// startup that already recorded doesn't fail here.
+			if _, err := b.pool.Exec(ctx,
+				`INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`, name,
+			); err != nil {
+				return fmt.Errorf("record migration %s: %w", name, err)
+			}
+			slog.Info("applied migration", "file", name)
+			continue
+		}
+
+		// All other migrations: wrap apply + record in a single transaction.
+		{
 			tx, err := b.pool.Begin(ctx)
 			if err != nil {
 				return fmt.Errorf("begin migration tx for %s: %w", name, err)
@@ -162,22 +202,6 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 				return fmt.Errorf("commit migration %s: %w", name, err)
 			}
 			slog.Info("applied migration", "file", name)
-			continue
-		}
-
-		// For 003: record the migration and run backfill outside the transaction.
-		if _, err := b.pool.Exec(ctx,
-			`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
-		); err != nil {
-			return fmt.Errorf("record migration %s: %w", name, err)
-		}
-		slog.Info("applied migration", "file", name)
-
-		// After 003: run the Go-side backfill.
-		if name == "003_pgvector.sql" {
-			if err := b.backfillVectors(ctx); err != nil {
-				return fmt.Errorf("pgvector backfill failed: %w", err)
-			}
 		}
 	}
 	return nil
@@ -1500,6 +1524,11 @@ func (b *PostgresBackend) GetRetrievalEvent(ctx context.Context, id string) (*ty
 // RecordFeedback updates the retrieval event with feedback_ids, sets feedback_at=NOW(),
 // increments times_retrieved on all result memories, increments times_useful on useful
 // memories, and recomputes retrieval_precision once times_retrieved >= 5.
+// RecordFeedback updates the retrieval event with feedback_ids, sets feedback_at=NOW(),
+// increments times_retrieved on all result memories, increments times_useful on useful
+// memories, and recomputes retrieval_precision once times_retrieved >= 5.
+// All four writes are wrapped in a single transaction so a mid-operation crash cannot
+// corrupt the spaced-repetition schedule (fix for #101).
 func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, usefulIDs []string) error {
 	event, err := b.GetRetrievalEvent(ctx, eventID)
 	if err != nil {
@@ -1513,7 +1542,14 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 	if err != nil {
 		return fmt.Errorf("marshal feedback_ids: %w", err)
 	}
-	if _, err := b.pool.Exec(ctx, `
+
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("RecordFeedback begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
 		UPDATE retrieval_events SET feedback_ids=$1, feedback_at=NOW() WHERE id=$2`,
 		feedbackIDsJSON, eventID,
 	); err != nil {
@@ -1522,14 +1558,17 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 
 	// Increment times_retrieved on all result memories.
 	if len(event.ResultIDs) > 0 {
-		if err := b.IncrementTimesRetrieved(ctx, event.ResultIDs); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE memories SET times_retrieved = COALESCE(times_retrieved, 0) + 1 WHERE id = ANY($1)`,
+			event.ResultIDs,
+		); err != nil {
 			return fmt.Errorf("increment times_retrieved: %w", err)
 		}
 	}
 
 	// Increment times_useful on useful memories.
 	if len(usefulIDs) > 0 {
-		if _, err := b.pool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			UPDATE memories SET times_useful = COALESCE(times_useful, 0) + 1 WHERE id = ANY($1)`,
 			usefulIDs,
 		); err != nil {
@@ -1539,7 +1578,7 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 
 	// Recompute precision for result memories that have reached the threshold.
 	if len(event.ResultIDs) > 0 {
-		if _, err := b.pool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			UPDATE memories
 			SET retrieval_precision = CAST(times_useful AS DOUBLE PRECISION) / times_retrieved
 			WHERE id = ANY($1) AND times_retrieved >= 5`,
@@ -1547,6 +1586,10 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 		); err != nil {
 			return fmt.Errorf("recompute precision: %w", err)
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("RecordFeedback commit: %w", err)
 	}
 	return nil
 }

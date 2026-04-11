@@ -4,8 +4,10 @@ package mcp
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -55,14 +57,44 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	slog.Info("SSE base URL", "url", advertised)
 	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
 
+	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
+	mux := http.NewServeMux()
+
+	// GET /health — unauthenticated; returns server status for diagnostics and readiness checks.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+	})
+
+	// GET /setup-token — localhost-only; returns the current bearer token so MCP clients can
+	// self-configure without manual copy-paste. Security: same boundary as ~/.claude.json on disk.
+	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
+		host, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if host != "127.0.0.1" && host != "::1" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
+			"token":    apiKey,
+			"endpoint": advertised + "/sse",
+			"name":     "engram",
+		})
+	})
+
+	// All other routes require Bearer authentication.
+	mux.Handle("/", s.applyMiddleware(sse, apiKey))
+
 	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           http.MaxBytesHandler(s.applyMiddleware(sse, apiKey), maxRequestBodyBytes),
+		Handler:           http.MaxBytesHandler(mux, maxRequestBodyBytes),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	slog.Info("engram ready — to configure MCP client run: make setup  (or: go run ./cmd/engram-setup)")
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
@@ -87,7 +119,9 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler 
 		got := []byte(r.Header.Get("Authorization"))
 		want := []byte("Bearer " + apiKey)
 		if subtle.ConstantTimeCompare(got, want) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`)
 			return
 		}
 		next.ServeHTTP(w, r)
