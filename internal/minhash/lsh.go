@@ -2,6 +2,7 @@ package minhash
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 )
 
@@ -15,15 +16,15 @@ type Index struct {
 }
 
 // NewIndex creates an LSH index. bands * rowsPerBand must equal NumHashes.
-func NewIndex(bands, rowsPerBand int) *Index {
+func NewIndex(bands, rowsPerBand int) (*Index, error) {
 	if bands*rowsPerBand != NumHashes {
-		panic("minhash: bands * rowsPerBand must equal NumHashes")
+		return nil, fmt.Errorf("minhash: bands * rowsPerBand (%d) must equal NumHashes (%d)", bands*rowsPerBand, NumHashes)
 	}
 	b := make([]map[uint64][]string, bands)
 	for i := range b {
 		b[i] = make(map[uint64][]string)
 	}
-	return &Index{bands: bands, rows: rowsPerBand, buckets: b}
+	return &Index{bands: bands, rows: rowsPerBand, buckets: b}, nil
 }
 
 // Add inserts a memory's signature into all band buckets.

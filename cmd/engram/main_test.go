@@ -21,6 +21,14 @@ func TestIsPrivateIP(t *testing.T) {
 		{"::1", true},              // IPv6 loopback
 		{"fc00::1", true},          // IPv6 ULA
 		{"fe80::1", true},          // IPv6 link-local
+		// Previously missing ranges (fixes #68)
+		{"0.0.0.1", true},          // this-network (RFC 1122)
+		{"100.64.0.1", true},       // CGNAT (RFC 6598)
+		{"100.127.255.255", true},  // CGNAT top
+		{"198.18.0.1", true},       // benchmark (RFC 2544)
+		{"198.19.255.255", true},   // benchmark top
+		{"240.0.0.1", true},        // reserved (RFC 1112)
+		{"::ffff:192.168.1.1", true}, // IPv4-mapped IPv6
 
 		// Public addresses that must pass
 		{"8.8.8.8", false},

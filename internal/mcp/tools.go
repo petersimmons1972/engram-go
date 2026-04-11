@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
+	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/markdown"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -119,6 +121,16 @@ func getInt(args map[string]any, key string, def int) int {
 			return int(math.Round(n))
 		case int:
 			return n
+		}
+	}
+	return def
+}
+
+// getFloat extracts a float64 arg with a fallback.
+func getFloat(args map[string]any, key string, def float64) float64 {
+	if v, ok := args[key]; ok {
+		if f, ok := v.(float64); ok {
+			return f
 		}
 	}
 	return def
@@ -248,6 +260,7 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		}
 		content := getString(mmap, "content", "")
 		if content == "" {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content is empty", idx))
 			continue
 		}
 		if len(content) > types.MaxContentLength {
@@ -286,15 +299,13 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	return toolResult(response)
 }
 
-// handleMemoryRecall performs semantic recall against a project's memories.
-// Pass cfg to enable optional Claude re-ranking via the rerank argument.
+// handleMemoryRecall performs semantic recall against one or more project engines.
+// When the optional "projects" argument is a non-empty slice, a federated fan-out
+// is performed across all named projects and results are merged by score.
+// Pass cfg to enable optional Claude re-ranking (single-project only).
 func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
-	h, err := pool.Get(ctx, project)
-	if err != nil {
-		return nil, err
-	}
 	query := getString(args, "query", "")
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
@@ -304,17 +315,135 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		topK = 10
 	}
 	detail := getString(args, "detail", "summary")
-	rerank := getBool(args, "rerank", false)
 
+	// Federated path: "projects" overrides the single-project recall.
+	projectNames := toStringSlice(args["projects"])
+	if len(projectNames) > 0 {
+		// Expand wildcard "*" to all known projects.
+		if len(projectNames) == 1 && projectNames[0] == "*" {
+			h0, err := pool.Get(ctx, project)
+			if err != nil {
+				return nil, err
+			}
+			all, err := h0.Engine.Backend().ListAllProjects(ctx)
+			if err != nil {
+				return nil, err
+			}
+			projectNames = all
+		}
+		engines := make([]*search.SearchEngine, 0, len(projectNames))
+		for _, p := range projectNames {
+			h, err := pool.Get(ctx, p)
+			if err != nil {
+				continue
+			}
+			engines = append(engines, h.Engine)
+		}
+		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
+		if err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{"results": results, "count": len(results)})
+	}
+
+	// Single-project path.
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	rerank := getBool(args, "rerank", false)
 	var opts search.RecallOpts
 	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
-	results, err := h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
+
+	// Use RecallWithEvent to log the retrieval; fall back to RecallWithOpts when
+	// re-ranking is requested (RecallWithEvent does not support a custom reranker).
+	if opts.Reranker != nil {
+		results, err := h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
+		if err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{"results": results, "count": len(results)})
+	}
+
+	results, eventID, err := h.Engine.RecallWithEvent(ctx, query, topK, detail)
 	if err != nil {
 		return nil, err
 	}
-	return toolResult(map[string]any{"results": results, "count": len(results)})
+	out := map[string]any{"results": results, "count": len(results)}
+	if eventID != "" {
+		out["event_id"] = eventID
+	}
+	return toolResult(out)
+}
+
+// handleMemoryProjects lists all projects with their memory counts and last-active timestamps.
+func handleMemoryProjects(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	// Use any project to get a backend connection for the cross-project query.
+	anchorProject := getString(args, "project", "default")
+	h, err := pool.Get(ctx, anchorProject)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := h.Engine.Backend().ListAllProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Enrich with per-project stats.
+	type projectInfo struct {
+		Project string `json:"project"`
+		Count   int    `json:"count"`
+	}
+	out := make([]projectInfo, 0, len(projects))
+	for _, p := range projects {
+		ph, err := pool.Get(ctx, p)
+		if err != nil {
+			out = append(out, projectInfo{Project: p})
+			continue
+		}
+		stats, err := ph.Engine.Status(ctx)
+		if err != nil {
+			out = append(out, projectInfo{Project: p})
+			continue
+		}
+		out = append(out, projectInfo{Project: p, Count: stats.TotalMemories})
+	}
+	return toolResult(map[string]any{"projects": out, "count": len(out)})
+}
+
+// handleMemoryAdopt creates a cross-project reference relationship from a memory in
+// the calling project to a memory in another project. The relationship is stored in
+// the calling project's edge table.
+func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	srcID := getString(args, "source_id", "")
+	dstID := getString(args, "target_id", "")
+	if srcID == "" {
+		return nil, fmt.Errorf("source_id is required")
+	}
+	if dstID == "" {
+		return nil, fmt.Errorf("target_id is required")
+	}
+	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
+	strength := 1.0
+	if v, ok := args["strength"].(float64); ok {
+		strength = v
+	}
+	if err := h.Engine.Connect(ctx, srcID, dstID, relType, strength); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{
+		"status":    "adopted",
+		"source_id": srcID,
+		"target_id": dstID,
+	})
 }
 
 // handleMemoryList lists memories with optional type and tag filters.
@@ -389,7 +518,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 	var importance *int
 	if v, ok := args["importance"].(float64); ok {
-		n := int(v)
+		n := types.ValidateImportance(int(v))
 		importance = &n
 	}
 	updated, err := h.Engine.Correct(ctx, id, content, toStringSlice(args["tags"]), importance)
@@ -399,7 +528,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	return toolResult(updated)
 }
 
-// handleMemoryForget deletes a memory by ID.
+// handleMemoryForget soft-deletes a memory by ID (sets valid_to=NOW(), preserves history).
 func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
@@ -411,11 +540,55 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if id == "" {
 		return nil, fmt.Errorf("memory_id is required")
 	}
-	deleted, err := h.Engine.Forget(ctx, id)
+	reason := getString(args, "reason", "")
+	deleted, err := h.Engine.Forget(ctx, id, reason)
 	if err != nil {
 		return nil, err
 	}
 	return toolResult(map[string]any{"deleted": deleted, "memory_id": id})
+}
+
+// handleMemoryHistory returns the version chain for a memory.
+func handleMemoryHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	id := getString(args, "memory_id", "")
+	if id == "" {
+		return nil, fmt.Errorf("memory_id is required")
+	}
+	history, err := h.Engine.MemoryHistory(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"memory_id": id, "versions": history, "count": len(history)})
+}
+
+// handleMemoryTimeline recalls memories that were active at a given point in time.
+func handleMemoryTimeline(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	asOfStr := getString(args, "as_of", "")
+	if asOfStr == "" {
+		return nil, fmt.Errorf("as_of is required (RFC3339 timestamp)")
+	}
+	asOf, err := time.Parse(time.RFC3339, asOfStr)
+	if err != nil {
+		return nil, fmt.Errorf("as_of must be RFC3339 (e.g. 2025-03-05T14:00:00Z): %w", err)
+	}
+	limit := getInt(args, "limit", 20)
+	memories, err := h.Engine.MemoryAsOf(ctx, asOf, limit)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"as_of": asOfStr, "memories": memories, "count": len(memories)})
 }
 
 // handleMemorySummarize requests Ollama to summarize a memory's content.
@@ -452,6 +625,8 @@ func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 }
 
 // handleMemoryFeedback records positive reinforcement for recalled memory IDs.
+// When event_id is provided (returned by memory_recall), retrieval outcome
+// tracking is updated in addition to the standard edge boost.
 func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
@@ -460,8 +635,18 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, err
 	}
 	ids := toStringSlice(args["memory_ids"])
-	if err := h.Engine.Feedback(ctx, ids); err != nil {
-		return nil, err
+	if len(ids) > 100 {
+		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
+	}
+	eventID := getString(args, "event_id", "")
+	if eventID != "" {
+		if err := h.Engine.FeedbackWithEvent(ctx, eventID, ids); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := h.Engine.Feedback(ctx, ids); err != nil {
+			return nil, err
+		}
 	}
 	return toolResult(map[string]any{"status": "recorded", "count": len(ids)})
 }
@@ -486,6 +671,27 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 		return nil, err
 	}
 	return toolResult(result)
+}
+
+// handleMemorySleep runs the full sleep-consolidation cycle (Feature 3).
+func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	minSim := getFloat(args, "min_similarity", 0.7)
+	limit := getInt(args, "limit", 500)
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, nil)
+	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
+		InferRelationshipsMinSimilarity: minSim,
+		InferRelationshipsLimit:         limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(stats)
 }
 
 // handleMemoryVerify checks integrity of the memory store.
@@ -616,13 +822,152 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
 }
 
+// handleMemoryEpisodeStart creates a new episode for a project.
+func handleMemoryEpisodeStart(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	description := getString(args, "description", "")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	ep, err := h.Engine.Backend().StartEpisode(ctx, project, description)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(ep)
+}
+
+// handleMemoryEpisodeEnd marks an episode as ended with an optional summary.
+func handleMemoryEpisodeEnd(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	id := getString(args, "episode_id", "")
+	summary := getString(args, "summary", "")
+	if id == "" {
+		return mcpgo.NewToolResultError("episode_id is required"), nil
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.Engine.Backend().EndEpisode(ctx, id, summary); err != nil {
+		return nil, err
+	}
+	return toolResult(map[string]any{"episode_id": id, "ended": true})
+}
+
+// handleMemoryEpisodeList returns recent episodes for a project.
+func handleMemoryEpisodeList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	limit := getInt(args, "limit", 20)
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	eps, err := h.Engine.Backend().ListEpisodes(ctx, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	if eps == nil {
+		eps = []*types.Episode{}
+	}
+	return toolResult(map[string]any{"episodes": eps, "count": len(eps)})
+}
+
+// handleMemoryEpisodeRecall returns all memories from a specific episode in
+// chronological order.
+func handleMemoryEpisodeRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	episodeID := getString(args, "episode_id", "")
+	if episodeID == "" {
+		return mcpgo.NewToolResultError("episode_id is required"), nil
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	memories, err := h.Engine.Backend().RecallEpisode(ctx, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	if memories == nil {
+		memories = []*types.Memory{}
+	}
+	return toolResult(map[string]any{"memories": memories, "count": len(memories), "episode_id": episodeID})
+}
+
+// buildEvidenceMap gathers the EvidenceMap for a set of recalled memories by
+// fetching their relationships from the backend (best-effort: errors are ignored
+// so the caller still gets an answer even if relationship queries fail).
+func buildEvidenceMap(ctx context.Context, backend interface {
+	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
+}, project string, memories []*types.Memory) claude.EvidenceMap {
+	seen := make(map[string]bool)
+	var allRels []types.Relationship
+	for _, m := range memories {
+		rels, err := backend.GetRelationships(ctx, project, m.ID)
+		if err != nil {
+			continue
+		}
+		for _, r := range rels {
+			if !seen[r.ID] {
+				seen[r.ID] = true
+				allRels = append(allRels, r)
+			}
+		}
+	}
+	return claude.DiagnoseMemories(memories, allRels)
+}
+
+// handleMemoryDiagnose returns a full evidence map for recalled memories without
+// synthesizing an answer — useful for inspecting conflicts before reasoning.
+func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	question := getString(args, "question", "")
+	topK := getInt(args, "top_k", 10)
+	detail := getString(args, "detail", "full")
+	if question == "" {
+		return mcpgo.NewToolResultError("question is required"), nil
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	results, err := h.Engine.Recall(ctx, question, topK, detail)
+	if err != nil {
+		return nil, err
+	}
+	memories := make([]*types.Memory, 0, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			memories = append(memories, r.Memory)
+		}
+	}
+	ev := buildEvidenceMap(ctx, h.Engine.Backend(), project, memories)
+	return toolResult(map[string]any{
+		"confidence":          ev.Confidence,
+		"conflicts":          ev.Conflicts,
+		"invalidated_sources": ev.InvalidatedSources,
+		"memories_used":      len(ev.Memories),
+	})
+}
+
 // handleMemoryReason recalls memories relevant to a question and uses Claude to
-// synthesize a grounded answer from those memories.
+// synthesize a grounded, conflict-aware answer.
 func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	question := getString(args, "question", "")
 	topK := getInt(args, "top_k", 10)
+	if topK < 1 {
+		topK = 1
+	} else if topK > 100 {
+		topK = 100
+	}
 	detail := getString(args, "detail", "full")
 
 	if question == "" {
@@ -642,7 +987,6 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, fmt.Errorf("recall: %w", err)
 	}
 
-	// Extract the Memory pointer from each search result.
 	memories := make([]*types.Memory, 0, len(results))
 	for _, r := range results {
 		if r.Memory != nil {
@@ -650,7 +994,9 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 	}
 
-	answer, err := cfg.claudeClient.ReasonOverMemories(ctx, question, memories)
+	ev := buildEvidenceMap(ctx, h.Engine.Backend(), project, memories)
+
+	answer, err := cfg.claudeClient.ReasonWithConflictAwareness(ctx, question, ev)
 	if err != nil {
 		return nil, fmt.Errorf("reason: %w", err)
 	}
@@ -661,9 +1007,12 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 
 	out := map[string]any{
-		"answer":        answer,
-		"memories_used": len(memories),
-		"memory_ids":    memoryIDs,
+		"answer":              answer,
+		"memories_used":       len(memories),
+		"memory_ids":          memoryIDs,
+		"conflicts":           ev.Conflicts,
+		"confidence":          ev.Confidence,
+		"invalidated_sources": ev.InvalidatedSources,
 	}
 	data, _ := json.Marshal(out)
 	return mcpgo.NewToolResultText(string(data)), nil

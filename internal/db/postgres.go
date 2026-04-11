@@ -40,12 +40,11 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 		project = "default"
 	}
 
-	warnDefaultPassword(dsn)
-
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("invalid DSN: %w", err)
 	}
+	warnDefaultPassword(cfg)
 	cfg.MinConns = 2
 	cfg.MaxConns = 10
 
@@ -69,9 +68,9 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	return b, nil
 }
 
-func warnDefaultPassword(dsn string) {
-	if strings.Contains(dsn, ":engram@") || strings.Contains(dsn, "%3Aengram%40") {
-		slog.Warn("SECURITY: PostgreSQL using default password 'engram'; set a strong POSTGRES_PASSWORD before exposing this service")
+func warnDefaultPassword(cfg *pgxpool.Config) {
+	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
+		slog.Warn("SECURITY: PostgreSQL using default password; set a strong POSTGRES_PASSWORD before exposing this service")
 	}
 }
 
@@ -134,9 +133,39 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
-		if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", name, err)
+
+		// 003_pgvector.sql starts with CREATE EXTENSION which cannot run
+		// inside a transaction in most PostgreSQL configurations. Run it
+		// outside any transaction, then record atomically below.
+		if name == "003_pgvector.sql" {
+			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
+				return fmt.Errorf("apply migration %s: %w", name, err)
+			}
+		} else {
+			// Wrap apply + record in a single transaction so a crash between
+			// the two steps cannot leave the schema in an inconsistent state.
+			tx, err := b.pool.Begin(ctx)
+			if err != nil {
+				return fmt.Errorf("begin migration tx for %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx, string(sql)); err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("apply migration %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
+			); err != nil {
+				_ = tx.Rollback(ctx)
+				return fmt.Errorf("record migration %s: %w", name, err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("commit migration %s: %w", name, err)
+			}
+			slog.Info("applied migration", "file", name)
+			continue
 		}
+
+		// For 003: record the migration and run backfill outside the transaction.
 		if _, err := b.pool.Exec(ctx,
 			`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
 		); err != nil {
@@ -198,6 +227,20 @@ func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
 
 	slog.Info("pgvector backfill complete", "chunks_converted", converted)
 
+	// Verify no rows were skipped (e.g. due to invalid BYTEA length) before
+	// marking the backfill done. If remaining > 0, leave the flag set so the
+	// next startup retries the conversion rather than silently proceeding.
+	var remaining int
+	if err := b.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL AND embedding_vec IS NULL`,
+	).Scan(&remaining); err != nil {
+		return fmt.Errorf("backfill count check: %w", err)
+	}
+	if remaining > 0 {
+		slog.Warn("pgvector backfill incomplete — will retry on next startup", "remaining", remaining)
+		return nil
+	}
+
 	// Mark backfill done so 004 can run.
 	_, err = b.pool.Exec(ctx,
 		`UPDATE project_meta SET value='false' WHERE project='_engram' AND key='pgvector_backfill_pending'`)
@@ -222,7 +265,13 @@ func (b *PostgresBackend) Begin(ctx context.Context) (Tx, error) {
 }
 
 // unwrapTx extracts the underlying pgx.Tx from a Tx interface value.
-func unwrapTx(t Tx) pgx.Tx { return t.(*pgxTx).tx }
+func unwrapTx(t Tx) (pgx.Tx, error) {
+	pt, ok := t.(*pgxTx)
+	if !ok {
+		return nil, fmt.Errorf("unwrapTx: expected *pgxTx, got %T", t)
+	}
+	return pt.tx, nil
+}
 
 // ── Project metadata ──────────────────────────────────────────────────────────
 
@@ -262,7 +311,11 @@ func (b *PostgresBackend) StoreMemory(ctx context.Context, m *types.Memory) erro
 }
 
 func (b *PostgresBackend) StoreMemoryTx(ctx context.Context, tx Tx, m *types.Memory) error {
-	return b.storeMemoryExec(ctx, unwrapTx(tx), m)
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	return b.storeMemoryExec(ctx, raw, m)
 }
 
 // execer is satisfied by both *pgxpool.Pool and pgx.Tx.
@@ -284,15 +337,23 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		return fmt.Errorf("marshal tags: %w", err)
 	}
 
+	episodeID := m.EpisodeID
+	var episodeArg any
+	if episodeID == "" {
+		episodeArg = nil
+	} else {
+		episodeArg = episodeID
+	}
+
 	_, err = ex.Exec(ctx, `
 		INSERT INTO memories
 		  (id, content, memory_type, project, tags,
 		   importance, access_count, last_accessed, created_at, updated_at,
-		   immutable, expires_at, content_hash, storage_mode)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		   immutable, expires_at, content_hash, storage_mode, episode_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		m.ID, m.Content, m.MemoryType, m.Project, tagsJSON,
 		m.Importance, m.AccessCount, now, now, now,
-		m.Immutable, m.ExpiresAt, hash, m.StorageMode,
+		m.Immutable, m.ExpiresAt, hash, m.StorageMode, episodeArg,
 	)
 	return err
 }
@@ -329,7 +390,7 @@ func (b *PostgresBackend) GetMemoriesByIDs(ctx context.Context, project string, 
 		return nil, nil
 	}
 	rows, err := b.pool.Query(ctx,
-		"SELECT * FROM memories WHERE project=$1 AND id=ANY($2)",
+		"SELECT * FROM memories WHERE project=$1 AND id=ANY($2) AND valid_to IS NULL",
 		project, ids,
 	)
 	if err != nil {
@@ -373,6 +434,11 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 	if m.Immutable {
 		return nil, fmt.Errorf("memory %q is immutable and cannot be updated", id)
+	}
+
+	// Snapshot current state into memory_versions before applying changes.
+	if err := b.versionMemoryTx(ctx, tx, m, types.VersionChangeUpdate, ""); err != nil {
+		return nil, fmt.Errorf("version snapshot: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -453,7 +519,7 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE source_id=$1 OR target_id=$1", id); err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1", id)
+	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1 AND project=$2", id, project)
 	if err != nil {
 		return false, err
 	}
@@ -465,7 +531,7 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 }
 
 func (b *PostgresBackend) ListMemories(ctx context.Context, project string, opts ListOptions) ([]*types.Memory, error) {
-	q := "SELECT * FROM memories WHERE project=$1"
+	q := "SELECT * FROM memories WHERE project=$1 AND valid_to IS NULL"
 	args := []any{project}
 	n := 2
 
@@ -515,7 +581,11 @@ func (b *PostgresBackend) StoreChunks(ctx context.Context, chunks []*types.Chunk
 }
 
 func (b *PostgresBackend) StoreChunksTx(ctx context.Context, tx Tx, chunks []*types.Chunk) error {
-	return b.storeChunksExec(ctx, unwrapTx(tx), chunks)
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	return b.storeChunksExec(ctx, raw, chunks)
 }
 
 func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks []*types.Chunk) error {
@@ -558,7 +628,7 @@ func (b *PostgresBackend) GetAllChunksWithEmbeddings(ctx context.Context, projec
 	rows, err := b.pool.Query(ctx, `
 		SELECT c.* FROM chunks c
 		JOIN memories m ON m.id = c.memory_id
-		WHERE c.embedding IS NOT NULL AND m.project=$1
+		WHERE c.embedding IS NOT NULL AND m.project=$1 AND m.valid_to IS NULL
 		ORDER BY m.last_accessed DESC
 		LIMIT $2`, project, limit,
 	)
@@ -572,7 +642,7 @@ func (b *PostgresBackend) GetAllChunkTexts(ctx context.Context, project string, 
 	rows, err := b.pool.Query(ctx, `
 		SELECT c.chunk_text FROM chunks c
 		JOIN memories m ON m.id = c.memory_id
-		WHERE m.project=$1 LIMIT $2`, project, limit,
+		WHERE m.project=$1 AND m.valid_to IS NULL LIMIT $2`, project, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -617,6 +687,15 @@ func (b *PostgresBackend) ChunkHashExists(ctx context.Context, chunkHash, memory
 
 func (b *PostgresBackend) DeleteChunksForMemory(ctx context.Context, memoryID string) error {
 	_, err := b.pool.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", memoryID)
+	return err
+}
+
+func (b *PostgresBackend) DeleteChunksForMemoryTx(ctx context.Context, tx Tx, memoryID string) error {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	_, err = raw.Exec(ctx, "DELETE FROM chunks WHERE memory_id=$1", memoryID)
 	return err
 }
 
@@ -715,7 +794,7 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 	err := b.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM chunks c
 		JOIN memories m ON m.id = c.memory_id
-		WHERE m.project=$1 AND c.embedding IS NULL`, project,
+		WHERE m.project=$1 AND m.valid_to IS NULL AND c.embedding IS NULL`, project,
 	).Scan(&count)
 	return count, err
 }
@@ -725,15 +804,15 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Relationship) error {
 	// Verify both memories exist.
 	var dummy int
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.SourceID).Scan(&dummy); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", rel.SourceID, b.project).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
-			return fmt.Errorf("source memory %q does not exist", rel.SourceID)
+			return fmt.Errorf("source memory %q does not exist or is invalidated", rel.SourceID)
 		}
 		return fmt.Errorf("check source memory: %w", err)
 	}
-	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1", rel.TargetID).Scan(&dummy); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", rel.TargetID, b.project).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
-			return fmt.Errorf("target memory %q does not exist", rel.TargetID)
+			return fmt.Errorf("target memory %q does not exist or is invalidated", rel.TargetID)
 		}
 		return fmt.Errorf("check target memory: %w", err)
 	}
@@ -824,7 +903,7 @@ func (b *PostgresBackend) GetConnected(ctx context.Context, memoryID string, max
 		for i, p := range batch {
 			newIDs[i] = p.nid
 		}
-		memRows, err := b.pool.Query(ctx, "SELECT * FROM memories WHERE id=ANY($1)", newIDs)
+		memRows, err := b.pool.Query(ctx, "SELECT * FROM memories WHERE id=ANY($1) AND valid_to IS NULL", newIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -976,7 +1055,7 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 	q := `SELECT m.*, ts_rank(m.search_vector, plainto_tsquery('english', $1)) AS rank
 		  FROM memories m
 		  WHERE m.search_vector @@ plainto_tsquery('english', $2)
-		  AND m.project=$3`
+		  AND m.project=$3 AND m.valid_to IS NULL`
 	args := []any{query, query, project}
 	n := 4
 
@@ -996,31 +1075,41 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 	rows, err := b.pool.Query(ctx, q, args...)
 	if err != nil {
 		slog.Debug("FTS query failed", "query_len", len(query), "err", err)
-		return nil, nil
+		return nil, fmt.Errorf("FTS search failed: %w", err)
 	}
 	defer rows.Close()
 
 	var results []FTSResult
 	for rows.Next() {
-		// SELECT m.*, rank — 17 columns: 16 memory fields + rank.
+		// SELECT m.*, rank — 26 memory columns + rank = 27 total.
 		// Scan all fields in one call to avoid consuming the cursor twice.
 		var (
-			id, content, memType, project string
-			tags                          []byte
-			importance, accessCount       int
+			id, content, memType, project  string
+			tags                           []byte
+			importance, accessCount        int
 			lastAccessed, createdAt, updatedAt time.Time
-			immutable                     bool
-			expiresAt                     *time.Time
-			summary, contentHash          *string
-			storageMode                   string
-			searchVector                  []byte
-			rank                          float64
+			immutable                      bool
+			expiresAt                      *time.Time
+			summary, contentHash           *string
+			storageMode                    string
+			searchVector                   []byte
+			validFrom, validTo             *time.Time
+			invalidationReason             *string
+			dynamicImportance              *float64
+			retrievalIntervalHrs           float64
+			nextReviewAt                   *time.Time
+			timesRetrieved, timesUseful    int
+			retrievalPrecision             *float64
+			episodeID                      *string
+			rank                           float64
 		)
 		if err := rows.Scan(
 			&id, &content, &memType, &project, &tags,
 			&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
 			&immutable, &expiresAt, &summary, &contentHash, &storageMode,
-			&searchVector, &rank,
+			&searchVector, &validFrom, &validTo, &invalidationReason,
+			&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
+			&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &rank,
 		); err != nil {
 			return nil, err
 		}
@@ -1034,22 +1123,36 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 		if storageMode == "" {
 			storageMode = "focused"
 		}
+		var epID string
+		if episodeID != nil {
+			epID = *episodeID
+		}
 		m := &types.Memory{
-			ID:           id,
-			Content:      content,
-			MemoryType:   memType,
-			Project:      project,
-			Tags:         tagSlice,
-			Importance:   importance,
-			AccessCount:  accessCount,
-			LastAccessed: lastAccessed,
-			CreatedAt:    createdAt,
-			UpdatedAt:    updatedAt,
-			Immutable:    immutable,
-			ExpiresAt:    expiresAt,
-			Summary:      summary,
-			ContentHash:  contentHash,
-			StorageMode:  storageMode,
+			ID:                   id,
+			Content:              content,
+			MemoryType:           memType,
+			Project:              project,
+			Tags:                 tagSlice,
+			Importance:           importance,
+			AccessCount:          accessCount,
+			LastAccessed:         lastAccessed,
+			CreatedAt:            createdAt,
+			UpdatedAt:            updatedAt,
+			Immutable:            immutable,
+			ExpiresAt:            expiresAt,
+			Summary:              summary,
+			ContentHash:          contentHash,
+			StorageMode:          storageMode,
+			ValidFrom:            validFrom,
+			ValidTo:              validTo,
+			InvalidationReason:   invalidationReason,
+			DynamicImportance:    dynamicImportance,
+			RetrievalIntervalHrs: retrievalIntervalHrs,
+			NextReviewAt:         nextReviewAt,
+			TimesRetrieved:       timesRetrieved,
+			TimesUseful:          timesUseful,
+			RetrievalPrecision:   retrievalPrecision,
+			EpisodeID:            epID,
 		}
 		results = append(results, FTSResult{Memory: m, Score: rank})
 	}
@@ -1076,11 +1179,11 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 		Summarization: map[string]any{},
 	}
 
-	if err := b.pool.QueryRow(ctx, "SELECT COUNT(*) FROM memories WHERE project=$1", project).Scan(&stats.TotalMemories); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&stats.TotalMemories); err != nil {
 		return nil, err
 	}
 	if err := b.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM chunks c JOIN memories m ON m.id=c.memory_id WHERE m.project=$1`, project,
+		SELECT COUNT(*) FROM chunks c JOIN memories m ON m.id=c.memory_id WHERE m.project=$1 AND m.valid_to IS NULL`, project,
 	).Scan(&stats.TotalChunks); err != nil {
 		return nil, err
 	}
@@ -1091,7 +1194,7 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	}
 
 	typeRows, err := b.pool.Query(ctx,
-		"SELECT memory_type, COUNT(*) FROM memories WHERE project=$1 GROUP BY memory_type", project)
+		"SELECT memory_type, COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL GROUP BY memory_type", project)
 	if err != nil {
 		return nil, err
 	}
@@ -1107,7 +1210,7 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	typeRows.Close()
 
 	impRows, err := b.pool.Query(ctx,
-		"SELECT importance, COUNT(*) FROM memories WHERE project=$1 GROUP BY importance", project)
+		"SELECT importance, COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL GROUP BY importance", project)
 	if err != nil {
 		return nil, err
 	}
@@ -1122,10 +1225,10 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	impRows.Close()
 
 	var oldest, newest *time.Time
-	if err := b.pool.QueryRow(ctx, "SELECT MIN(created_at) FROM memories WHERE project=$1", project).Scan(&oldest); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT MIN(created_at) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&oldest); err != nil {
 		return nil, err
 	}
-	if err := b.pool.QueryRow(ctx, "SELECT MAX(created_at) FROM memories WHERE project=$1", project).Scan(&newest); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT MAX(created_at) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&newest); err != nil {
 		return nil, err
 	}
 	if oldest != nil {
@@ -1138,14 +1241,14 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	}
 
 	if err := b.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM memories WHERE project=$1 AND summary IS NULL", project,
+		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL", project,
 	).Scan(&stats.PendingSummarization); err != nil {
 		return nil, err
 	}
 
 	var summarized int
 	err = b.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM memories WHERE project = $1 AND summary IS NOT NULL`,
+		`SELECT COUNT(*) FROM memories WHERE project = $1 AND valid_to IS NULL AND summary IS NOT NULL`,
 		project).Scan(&summarized)
 	if err != nil {
 		summarized = 0
@@ -1180,7 +1283,7 @@ func (b *PostgresBackend) ListAllProjects(ctx context.Context) ([]string, error)
 }
 
 func (b *PostgresBackend) GetAllMemoryIDs(ctx context.Context, project string) (map[string]struct{}, error) {
-	rows, err := b.pool.Query(ctx, "SELECT id FROM memories WHERE project=$1", project)
+	rows, err := b.pool.Query(ctx, "SELECT id FROM memories WHERE project=$1 AND valid_to IS NULL", project)
 	if err != nil {
 		return nil, err
 	}
@@ -1198,7 +1301,7 @@ func (b *PostgresBackend) GetAllMemoryIDs(ctx context.Context, project string) (
 
 func (b *PostgresBackend) GetMemoriesPendingSummary(ctx context.Context, project string, limit int) ([]IDContent, error) {
 	rows, err := b.pool.Query(ctx,
-		"SELECT id, content FROM memories WHERE project=$1 AND summary IS NULL LIMIT $2",
+		"SELECT id, content FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL LIMIT $2",
 		project, limit,
 	)
 	if err != nil {
@@ -1226,14 +1329,14 @@ func (b *PostgresBackend) StoreSummary(ctx context.Context, memoryID, summary st
 func (b *PostgresBackend) GetPendingSummaryCount(ctx context.Context, project string) (int, error) {
 	var count int
 	err := b.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM memories WHERE project=$1 AND summary IS NULL", project,
+		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL", project,
 	).Scan(&count)
 	return count, err
 }
 
 func (b *PostgresBackend) GetMemoriesMissingHash(ctx context.Context, project string, limit int) ([]IDContent, error) {
 	rows, err := b.pool.Query(ctx,
-		"SELECT id, content FROM memories WHERE project=$1 AND content_hash IS NULL LIMIT $2",
+		"SELECT id, content FROM memories WHERE project=$1 AND valid_to IS NULL AND content_hash IS NULL LIMIT $2",
 		project, limit,
 	)
 	if err != nil {
@@ -1260,17 +1363,17 @@ func (b *PostgresBackend) UpdateMemoryHash(ctx context.Context, memoryID, conten
 
 func (b *PostgresBackend) GetIntegrityStats(ctx context.Context, project string) (IntegrityStats, error) {
 	var stats IntegrityStats
-	if err := b.pool.QueryRow(ctx, "SELECT COUNT(*) FROM memories WHERE project=$1", project).Scan(&stats.Total); err != nil {
+	if err := b.pool.QueryRow(ctx, "SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&stats.Total); err != nil {
 		return stats, err
 	}
 	if err := b.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM memories WHERE project=$1 AND content_hash IS NOT NULL", project,
+		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND content_hash IS NOT NULL", project,
 	).Scan(&stats.Hashed); err != nil {
 		return stats, err
 	}
 	if err := b.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM memories
-		WHERE project=$1 AND content_hash IS NOT NULL
+		WHERE project=$1 AND valid_to IS NULL AND content_hash IS NOT NULL
 		AND content_hash != encode(sha256(content::bytea),'hex')`, project,
 	).Scan(&stats.Corrupt); err != nil {
 		return stats, err
@@ -1278,33 +1381,416 @@ func (b *PostgresBackend) GetIntegrityStats(ctx context.Context, project string)
 	return stats, nil
 }
 
+// ── Adaptive importance ───────────────────────────────────────────────────────
+
+// UpdateDynamicImportance atomically adjusts dynamic_importance by delta and,
+// when intervalFactor > 0, advances retrieval_interval_hrs *= intervalFactor and
+// sets next_review_at = now + new interval.
+func (b *PostgresBackend) UpdateDynamicImportance(ctx context.Context, id string, delta float64, intervalFactor float64) error {
+	if intervalFactor > 0 {
+		_, err := b.pool.Exec(ctx, `
+			UPDATE memories
+			SET dynamic_importance     = GREATEST(0.1, COALESCE(dynamic_importance, 1.0) + $1),
+			    retrieval_interval_hrs = GREATEST(1, COALESCE(retrieval_interval_hrs, 168) * $2),
+			    next_review_at         = NOW() + (GREATEST(1, COALESCE(retrieval_interval_hrs, 168) * $2) * INTERVAL '1 hour')
+			WHERE id = $3`,
+			delta, intervalFactor, id,
+		)
+		return err
+	}
+	_, err := b.pool.Exec(ctx, `
+		UPDATE memories
+		SET dynamic_importance = GREATEST(0.1, COALESCE(dynamic_importance, 1.0) + $1)
+		WHERE id = $2`,
+		delta, id,
+	)
+	return err
+}
+
+// SetNextReviewAt overrides the next_review_at timestamp for a memory.
+func (b *PostgresBackend) SetNextReviewAt(ctx context.Context, id string, t time.Time) error {
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET next_review_at=$1 WHERE id=$2",
+		t, id,
+	)
+	return err
+}
+
+// DecayStaleImportance multiplies dynamic_importance by factor on all active
+// memories whose next_review_at is in the past. Returns the number of rows updated.
+func (b *PostgresBackend) DecayStaleImportance(ctx context.Context, project string, factor float64) (int, error) {
+	tag, err := b.pool.Exec(ctx, `
+		UPDATE memories
+		SET dynamic_importance = GREATEST(0.1, dynamic_importance * $1),
+		    next_review_at     = next_review_at + (retrieval_interval_hrs * INTERVAL '1 hour')
+		WHERE project = $2
+		  AND valid_to IS NULL
+		  AND next_review_at IS NOT NULL
+		  AND next_review_at < NOW()`,
+		factor, project,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ── Retrieval outcome tracking ────────────────────────────────────────────────
+
+// StoreRetrievalEvent persists a new retrieval event.
+func (b *PostgresBackend) StoreRetrievalEvent(ctx context.Context, event *types.RetrievalEvent) error {
+	resultIDsJSON, err := json.Marshal(event.ResultIDs)
+	if err != nil {
+		return fmt.Errorf("marshal result_ids: %w", err)
+	}
+	_, err = b.pool.Exec(ctx, `
+		INSERT INTO retrieval_events (id, project, query, result_ids, created_at)
+		VALUES ($1, $2, $3, $4, $5)`,
+		event.ID, event.Project, event.Query, resultIDsJSON, event.CreatedAt,
+	)
+	return err
+}
+
+// GetRetrievalEvent fetches a retrieval event by ID. Returns nil, nil if not found.
+func (b *PostgresBackend) GetRetrievalEvent(ctx context.Context, id string) (*types.RetrievalEvent, error) {
+	var event types.RetrievalEvent
+	var resultIDsJSON, feedbackIDsJSON []byte
+	err := b.pool.QueryRow(ctx, `
+		SELECT id, project, query, result_ids, feedback_ids, created_at, feedback_at
+		FROM retrieval_events WHERE id=$1`,
+		id,
+	).Scan(&event.ID, &event.Project, &event.Query, &resultIDsJSON, &feedbackIDsJSON,
+		&event.CreatedAt, &event.FeedbackAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(resultIDsJSON) > 0 {
+		if err := json.Unmarshal(resultIDsJSON, &event.ResultIDs); err != nil {
+			return nil, fmt.Errorf("unmarshal result_ids: %w", err)
+		}
+	}
+	if event.ResultIDs == nil {
+		event.ResultIDs = []string{}
+	}
+	if len(feedbackIDsJSON) > 0 {
+		if err := json.Unmarshal(feedbackIDsJSON, &event.FeedbackIDs); err != nil {
+			return nil, fmt.Errorf("unmarshal feedback_ids: %w", err)
+		}
+	}
+	return &event, nil
+}
+
+// RecordFeedback updates the retrieval event with feedback_ids, sets feedback_at=NOW(),
+// increments times_retrieved on all result memories, increments times_useful on useful
+// memories, and recomputes retrieval_precision once times_retrieved >= 5.
+func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, usefulIDs []string) error {
+	event, err := b.GetRetrievalEvent(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("RecordFeedback get event: %w", err)
+	}
+	if event == nil {
+		return fmt.Errorf("retrieval event %q not found", eventID)
+	}
+
+	feedbackIDsJSON, err := json.Marshal(usefulIDs)
+	if err != nil {
+		return fmt.Errorf("marshal feedback_ids: %w", err)
+	}
+	if _, err := b.pool.Exec(ctx, `
+		UPDATE retrieval_events SET feedback_ids=$1, feedback_at=NOW() WHERE id=$2`,
+		feedbackIDsJSON, eventID,
+	); err != nil {
+		return fmt.Errorf("update retrieval event: %w", err)
+	}
+
+	// Increment times_retrieved on all result memories.
+	if len(event.ResultIDs) > 0 {
+		if err := b.IncrementTimesRetrieved(ctx, event.ResultIDs); err != nil {
+			return fmt.Errorf("increment times_retrieved: %w", err)
+		}
+	}
+
+	// Increment times_useful on useful memories.
+	if len(usefulIDs) > 0 {
+		if _, err := b.pool.Exec(ctx, `
+			UPDATE memories SET times_useful = COALESCE(times_useful, 0) + 1 WHERE id = ANY($1)`,
+			usefulIDs,
+		); err != nil {
+			return fmt.Errorf("increment times_useful: %w", err)
+		}
+	}
+
+	// Recompute precision for result memories that have reached the threshold.
+	if len(event.ResultIDs) > 0 {
+		if _, err := b.pool.Exec(ctx, `
+			UPDATE memories
+			SET retrieval_precision = CAST(times_useful AS DOUBLE PRECISION) / times_retrieved
+			WHERE id = ANY($1) AND times_retrieved >= 5`,
+			event.ResultIDs,
+		); err != nil {
+			return fmt.Errorf("recompute precision: %w", err)
+		}
+	}
+	return nil
+}
+
+// IncrementTimesRetrieved increments times_retrieved by 1 on each of the given memory IDs.
+func (b *PostgresBackend) IncrementTimesRetrieved(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := b.pool.Exec(ctx, `
+		UPDATE memories SET times_retrieved = COALESCE(times_retrieved, 0) + 1 WHERE id = ANY($1)`,
+		ids,
+	)
+	return err
+}
+
+// ── Episode management ────────────────────────────────────────────────────────
+
+func (b *PostgresBackend) StartEpisode(ctx context.Context, project, description string) (*types.Episode, error) {
+	ep := &types.Episode{
+		ID:          types.NewMemoryID(),
+		Project:     project,
+		Description: description,
+		StartedAt:   time.Now().UTC(),
+	}
+	_, err := b.pool.Exec(ctx, `
+		INSERT INTO episodes (id, project, description, started_at)
+		VALUES ($1, $2, $3, $4)`,
+		ep.ID, ep.Project, ep.Description, ep.StartedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("StartEpisode: %w", err)
+	}
+	return ep, nil
+}
+
+func (b *PostgresBackend) EndEpisode(ctx context.Context, id, summary string) error {
+	_, err := b.pool.Exec(ctx, `
+		UPDATE episodes SET ended_at = NOW(), summary = $1 WHERE id = $2`,
+		summary, id,
+	)
+	return err
+}
+
+func (b *PostgresBackend) ListEpisodes(ctx context.Context, project string, limit int) ([]*types.Episode, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, project, description, started_at, COALESCE(ended_at, '0001-01-01'::timestamptz), COALESCE(summary, '')
+		FROM episodes
+		WHERE project = $1
+		ORDER BY started_at DESC
+		LIMIT $2`,
+		project, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListEpisodes: %w", err)
+	}
+	defer rows.Close()
+	var eps []*types.Episode
+	for rows.Next() {
+		var ep types.Episode
+		if err := rows.Scan(&ep.ID, &ep.Project, &ep.Description, &ep.StartedAt, &ep.EndedAt, &ep.Summary); err != nil {
+			return nil, err
+		}
+		// Normalise the zero-time sentinel back.
+		if ep.EndedAt.Year() == 1 {
+			ep.EndedAt = time.Time{}
+		}
+		eps = append(eps, &ep)
+	}
+	return eps, rows.Err()
+}
+
+func (b *PostgresBackend) RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT * FROM memories
+		WHERE episode_id = $1 AND valid_to IS NULL
+		ORDER BY created_at ASC`,
+		episodeID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("RecallEpisode: %w", err)
+	}
+	return pgx.CollectRows(rows, rowToMemory)
+}
+
+// ── Temporal versioning ───────────────────────────────────────────────────────
+
+// versionMemoryTx snapshots the current state of m into memory_versions.
+// Must be called inside a pgx.Tx that already holds a FOR UPDATE lock on the row.
+func (b *PostgresBackend) versionMemoryTx(ctx context.Context, tx pgx.Tx, m *types.Memory, changeType, changeReason string) error {
+	tagsJSON, err := json.Marshal(m.Tags)
+	if err != nil {
+		return fmt.Errorf("versionMemoryTx: marshal tags: %w", err)
+	}
+	var reason *string
+	if changeReason != "" {
+		reason = &changeReason
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO memory_versions
+			(id, memory_id, content, memory_type, tags, importance,
+			 system_from, valid_from, valid_to, change_type, change_reason, project)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		types.NewMemoryID(), m.ID, m.Content, m.MemoryType, tagsJSON, m.Importance,
+		time.Now().UTC(), m.ValidFrom, m.ValidTo, changeType, reason, m.Project,
+	)
+	return err
+}
+
+// GetMemoryHistory returns all version snapshots for memoryID in reverse
+// chronological order (most recent change first).
+func (b *PostgresBackend) GetMemoryHistory(ctx context.Context, project, memoryID string) ([]*types.MemoryVersion, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, memory_id, content, memory_type, tags, importance,
+		       system_from, system_to, valid_from, valid_to,
+		       change_type, change_reason, project
+		FROM memory_versions
+		WHERE project=$1 AND memory_id=$2
+		ORDER BY system_from DESC`,
+		project, memoryID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*types.MemoryVersion
+	for rows.Next() {
+		var v types.MemoryVersion
+		var tagsJSON []byte
+		if err := rows.Scan(
+			&v.ID, &v.MemoryID, &v.Content, &v.MemoryType, &tagsJSON, &v.Importance,
+			&v.SystemFrom, &v.SystemTo, &v.ValidFrom, &v.ValidTo,
+			&v.ChangeType, &v.ChangeReason, &v.Project,
+		); err != nil {
+			return nil, err
+		}
+		if len(tagsJSON) > 0 {
+			if err := json.Unmarshal(tagsJSON, &v.Tags); err != nil {
+				return nil, fmt.Errorf("unmarshal tags: %w", err)
+			}
+		}
+		if v.Tags == nil {
+			v.Tags = []string{}
+		}
+		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
+// SoftDeleteMemory marks a memory as invalid by setting valid_to=NOW() and
+// storing the final state in memory_versions with change_type="invalidate".
+// Returns false if not found or already invalidated. Returns error if immutable.
+func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, reason string) (bool, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row, err := tx.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
+		id, project,
+	)
+	if err != nil {
+		return false, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if m.Immutable {
+		return false, fmt.Errorf("cannot soft-delete immutable memory %s", id)
+	}
+
+	if err := b.versionMemoryTx(ctx, tx, m, types.VersionChangeInvalidate, reason); err != nil {
+		return false, fmt.Errorf("version snapshot: %w", err)
+	}
+
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+	now := time.Now().UTC()
+	_, err = tx.Exec(ctx,
+		"UPDATE memories SET valid_to=$1, invalidation_reason=$2 WHERE id=$3 AND project=$4",
+		now, reasonPtr, id, project,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetMemoriesAsOf returns memories that were active at the given point in time:
+// created_at <= asOf AND (valid_to IS NULL OR valid_to > asOf).
+func (b *PostgresBackend) GetMemoriesAsOf(ctx context.Context, project string, asOf time.Time, limit int) ([]*types.Memory, error) {
+	rows, err := b.pool.Query(ctx, `
+		SELECT * FROM memories
+		WHERE project=$1 AND created_at <= $2
+		  AND (valid_to IS NULL OR valid_to > $2)
+		ORDER BY updated_at DESC
+		LIMIT $3`,
+		project, asOf, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return pgx.CollectRows(rows, rowToMemory)
+}
+
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
 func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 	type raw struct {
-		ID           string
-		Content      string
-		MemoryType   string
-		Project      string
-		Tags         []byte
-		Importance   int
-		AccessCount  int
-		LastAccessed time.Time
-		CreatedAt    time.Time
-		UpdatedAt    time.Time
-		Immutable    bool
-		ExpiresAt    *time.Time
-		Summary      *string
-		ContentHash  *string
-		StorageMode  string
-		SearchVector []byte // ignored — generated column
+		ID                   string
+		Content              string
+		MemoryType           string
+		Project              string
+		Tags                 []byte
+		Importance           int
+		AccessCount          int
+		LastAccessed         time.Time
+		CreatedAt            time.Time
+		UpdatedAt            time.Time
+		Immutable            bool
+		ExpiresAt            *time.Time
+		Summary              *string
+		ContentHash          *string
+		StorageMode          string
+		SearchVector         []byte // ignored — generated column
+		ValidFrom            *time.Time
+		ValidTo              *time.Time
+		InvalidationReason   *string
+		DynamicImportance    *float64
+		RetrievalIntervalHrs float64
+		NextReviewAt         *time.Time
+		TimesRetrieved       int
+		TimesUseful          int
+		RetrievalPrecision   *float64
+		EpisodeID            *string // nullable FK
 	}
 	var r raw
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
 		&r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
-		&r.SearchVector,
+		&r.SearchVector, &r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
+		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
+		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
 	)
 	if err != nil {
 		return nil, err
@@ -1325,22 +1811,36 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		storageMode = "focused"
 	}
 
+	var episodeID string
+	if r.EpisodeID != nil {
+		episodeID = *r.EpisodeID
+	}
 	return &types.Memory{
-		ID:           r.ID,
-		Content:      r.Content,
-		MemoryType:   r.MemoryType,
-		Project:      r.Project,
-		Tags:         tags,
-		Importance:   r.Importance,
-		AccessCount:  r.AccessCount,
-		LastAccessed: r.LastAccessed,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
-		Immutable:    r.Immutable,
-		ExpiresAt:    r.ExpiresAt,
-		Summary:      r.Summary,
-		ContentHash:  r.ContentHash,
-		StorageMode:  storageMode,
+		ID:                   r.ID,
+		Content:              r.Content,
+		MemoryType:           r.MemoryType,
+		Project:              r.Project,
+		Tags:                 tags,
+		Importance:           r.Importance,
+		AccessCount:          r.AccessCount,
+		LastAccessed:         r.LastAccessed,
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+		Immutable:            r.Immutable,
+		ExpiresAt:            r.ExpiresAt,
+		Summary:              r.Summary,
+		ContentHash:          r.ContentHash,
+		StorageMode:          storageMode,
+		ValidFrom:            r.ValidFrom,
+		ValidTo:              r.ValidTo,
+		InvalidationReason:   r.InvalidationReason,
+		DynamicImportance:    r.DynamicImportance,
+		RetrievalIntervalHrs: r.RetrievalIntervalHrs,
+		NextReviewAt:         r.NextReviewAt,
+		TimesRetrieved:       r.TimesRetrieved,
+		TimesUseful:          r.TimesUseful,
+		RetrievalPrecision:   r.RetrievalPrecision,
+		EpisodeID:            episodeID,
 	}, nil
 }
 

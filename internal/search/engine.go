@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/chunk"
@@ -67,11 +68,20 @@ type MergeDecision struct {
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
 	backend    db.Backend
+	embedMu    sync.RWMutex // protects embedder; use getEmbedder() for all reads
 	embedder   embed.Client
 	project    string
 	ollamaURL  string
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
+}
+
+// getEmbedder safely reads the current embedder. Use this instead of e.embedder
+// directly so concurrent MigrateEmbedder calls don't cause a data race.
+func (e *SearchEngine) getEmbedder() embed.Client {
+	e.embedMu.RLock()
+	defer e.embedMu.RUnlock()
+	return e.embedder
 }
 
 // New constructs a SearchEngine and starts background summarize and reembed workers.
@@ -96,15 +106,20 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	}
 }
 
-// Close shuts down the engine and stops all background workers.
+// Close shuts down the engine, stops all background workers, and releases
+// the database connection pool. Must be called exactly once per engine.
 func (e *SearchEngine) Close() {
 	e.summarizer.Stop()
 	e.reembedder.Stop()
+	e.backend.Close()
 }
 
 // Backend exposes the underlying db.Backend for callers that need direct access
 // (e.g. EnginePool, MCP tool handlers).
 func (e *SearchEngine) Backend() db.Backend { return e.backend }
+
+// Project returns the project slug this engine is scoped to.
+func (e *SearchEngine) Project() string { return e.project }
 
 // storeChunksForMemory chunks content, embeds each chunk, and returns the new
 // chunk records ready for storage. It is used by both Store (new memories) and
@@ -145,7 +160,7 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 			continue
 		}
 
-		embedding, err := e.embedder.Embed(ctx, c.Text)
+		embedding, err := e.getEmbedder().Embed(ctx, c.Text)
 		if err != nil {
 			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
 		}
@@ -225,7 +240,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	queryVec, err := e.embedder.Embed(ctx, query)
+	queryVec, err := e.getEmbedder().Embed(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
@@ -305,10 +320,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			bm25 = ftsScores[id] / maxBM25
 		}
 		input := ScoreInput{
-			Cosine:     bestCosine[id],
-			BM25:       bm25,
-			HoursSince: hoursSince(m.LastAccessed),
-			Importance: m.Importance,
+			Cosine:             bestCosine[id],
+			BM25:               bm25,
+			HoursSince:         hoursSince(m.LastAccessed),
+			Importance:         m.Importance,
+			DynamicImportance:  m.DynamicImportance,
+			RetrievalPrecision: m.RetrievalPrecision,
 		}
 		score := CompositeScore(input)
 
@@ -382,12 +399,39 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Fetch relationships only for the final topK results, not for every
-	// candidate. This reduces DB round-trips from up to topK*6 to exactly topK.
+	// Fetch relationships for the final topK results and populate connected
+	// memory objects via a single batched GetMemoriesByIDs call.
+	var allRels [][]types.Relationship
+	var neighborIDs []string
+	neighborSet := make(map[string]struct{})
 	for i := range results {
-		if rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID); err == nil {
-			results[i].Connected = toConnectedMemories(rels, results[i].Memory.ID)
+		rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID)
+		if err != nil {
+			rels = nil
 		}
+		allRels = append(allRels, rels)
+		for _, r := range rels {
+			neighborID := r.TargetID
+			if r.TargetID == results[i].Memory.ID {
+				neighborID = r.SourceID
+			}
+			if _, seen := neighborSet[neighborID]; !seen {
+				neighborSet[neighborID] = struct{}{}
+				neighborIDs = append(neighborIDs, neighborID)
+			}
+		}
+	}
+	neighborMap := make(map[string]*types.Memory, len(neighborIDs))
+	if len(neighborIDs) > 0 {
+		fetched, err := e.backend.GetMemoriesByIDs(ctx, e.project, neighborIDs)
+		if err == nil {
+			for _, m := range fetched {
+				neighborMap[m.ID] = m
+			}
+		}
+	}
+	for i := range results {
+		results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
 	}
 
 	// Update access timestamps.
@@ -410,16 +454,17 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	emb := e.getEmbedder()
 	if !ok {
-		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", e.embedder.Name()); err != nil {
+		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", emb.Name()); err != nil {
 			return err
 		}
 		return e.backend.SetMeta(ctx, e.project, "embedder_dimensions",
-			fmt.Sprintf("%d", e.embedder.Dimensions()))
+			fmt.Sprintf("%d", emb.Dimensions()))
 	}
-	if storedName != e.embedder.Name() {
+	if storedName != emb.Name() {
 		return fmt.Errorf("embedder mismatch: stored=%q current=%q — run memory_migrate_embedder first",
-			storedName, e.embedder.Name())
+			storedName, emb.Name())
 	}
 	// Skip dimension check if migration is in progress — the new model may have
 	// different dimensions, and embedder_dimensions will be reset once re-embedding
@@ -437,9 +482,9 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("embedder_dimensions metadata is corrupt: %w", err)
 		}
-		if storedDims != e.embedder.Dimensions() {
+		if storedDims != emb.Dimensions() {
 			return fmt.Errorf("embedder dimensions mismatch: stored %d, current %d — use memory_migrate_embedder to switch models",
-				storedDims, e.embedder.Dimensions())
+				storedDims, emb.Dimensions())
 		}
 	}
 	return nil
@@ -450,16 +495,19 @@ func hoursSince(t time.Time) float64 {
 }
 
 // toConnectedMemories converts raw relationship rows into ConnectedMemory values
-// relative to the given memory ID. ConnectedMemory.Memory is intentionally left
-// nil to avoid a second DB round-trip per relationship.
-func toConnectedMemories(rels []types.Relationship, memID string) []types.ConnectedMemory {
+// relative to the given memory ID. neighborMap is used to populate the Memory
+// field on each result; missing entries are left nil rather than failing.
+func toConnectedMemories(rels []types.Relationship, memID string, neighborMap map[string]*types.Memory) []types.ConnectedMemory {
 	out := make([]types.ConnectedMemory, 0, len(rels))
 	for _, r := range rels {
+		neighborID := r.TargetID
 		dir := "outgoing"
 		if r.TargetID == memID {
+			neighborID = r.SourceID
 			dir = "incoming"
 		}
 		out = append(out, types.ConnectedMemory{
+			Memory:    neighborMap[neighborID],
 			RelType:   r.RelType,
 			Direction: dir,
 			Strength:  r.Strength,
@@ -516,38 +564,53 @@ func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, 
 		return nil, err
 	}
 
-	// If content changed, delete stale chunks and re-chunk + re-embed the new content.
+	// If content changed, re-chunk + re-embed first (outside any transaction so
+	// a slow embedder call does not hold a lock), then atomically swap old chunks
+	// for new ones inside a single transaction. This prevents orphaned memories
+	// (no chunks, no vector) if the embedder fails after the delete.
 	if content != nil {
-		if err := e.backend.DeleteChunksForMemory(ctx, mem.ID); err != nil {
-			return nil, fmt.Errorf("delete old chunks: %w", err)
-		}
-
 		chunks, err := e.storeChunksForMemory(ctx, mem)
 		if err != nil {
 			return nil, fmt.Errorf("re-chunk after correct: %w", err)
 		}
 
+		tx, err := e.backend.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := e.backend.DeleteChunksForMemoryTx(ctx, tx, mem.ID); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, fmt.Errorf("delete old chunks: %w", err)
+		}
 		if len(chunks) > 0 {
-			tx, err := e.backend.Begin(ctx)
-			if err != nil {
-				return nil, err
-			}
 			if err := e.backend.StoreChunksTx(ctx, tx, chunks); err != nil {
 				_ = tx.Rollback(ctx)
 				return nil, err
 			}
-			if err := tx.Commit(ctx); err != nil {
-				return nil, err
-			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
 		}
 	}
 
 	return mem, nil
 }
 
-// Forget deletes a memory by ID. Returns true if deleted, false if not found.
-func (e *SearchEngine) Forget(ctx context.Context, id string) (bool, error) {
-	return e.backend.DeleteMemoryAtomic(ctx, e.project, id, false)
+// Forget soft-deletes a memory by setting valid_to=NOW() and snapshotting it
+// into memory_versions. Returns true if deleted, false if not found or already invalidated.
+func (e *SearchEngine) Forget(ctx context.Context, id, reason string) (bool, error) {
+	return e.backend.SoftDeleteMemory(ctx, e.project, id, reason)
+}
+
+// MemoryHistory returns the full version chain for a memory in reverse
+// chronological order (most recent change first).
+func (e *SearchEngine) MemoryHistory(ctx context.Context, id string) ([]*types.MemoryVersion, error) {
+	return e.backend.GetMemoryHistory(ctx, e.project, id)
+}
+
+// MemoryAsOf returns memories that were active at the given point in time.
+func (e *SearchEngine) MemoryAsOf(ctx context.Context, asOf time.Time, limit int) ([]*types.Memory, error) {
+	return e.backend.GetMemoriesAsOf(ctx, e.project, asOf, limit)
 }
 
 // Status returns aggregate statistics for the project.
@@ -568,6 +631,23 @@ func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
 			return err
 		}
 		if err := e.backend.TouchMemory(ctx, id); err != nil {
+			return err
+		}
+		// Spaced-repetition boost: grow dynamic_importance and advance next_review_at.
+		if err := e.backend.UpdateDynamicImportance(ctx, id, 0.1, 1.5); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FeedbackNegative records a negative access signal: dynamic_importance decreases.
+func (e *SearchEngine) FeedbackNegative(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("feedback: no memory IDs provided")
+	}
+	for _, id := range ids {
+		if err := e.backend.UpdateDynamicImportance(ctx, id, -0.05, 0); err != nil {
 			return err
 		}
 	}
@@ -650,7 +730,9 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
 	}
+	e.embedMu.Lock()
 	e.embedder = newEmbedder
+	e.embedMu.Unlock()
 
 	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
 	e.reembedder.Start()
@@ -696,7 +778,10 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	// 4. Compute MinHash signatures — O(n).
 	hasher := minhash.NewHasher(42)
-	idx := minhash.NewIndex(16, 8)
+	idx, err := minhash.NewIndex(16, 8)
+	if err != nil {
+		return result, fmt.Errorf("consolidate: %w", err)
+	}
 	for _, m := range filtered {
 		sig := hasher.Signature(m.Content)
 		idx.Add(m.ID, sig)
@@ -804,6 +889,47 @@ func bigramJaccard(a, b string) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+// RecallWithEvent is like Recall but also stores a retrieval_event row and returns
+// the event ID. Pass the event ID to FeedbackWithEvent to record which results were useful.
+func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, string, error) {
+	results, err := e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
+	if err != nil {
+		return nil, "", err
+	}
+
+	resultIDs := make([]string, len(results))
+	for i, r := range results {
+		resultIDs[i] = r.Memory.ID
+	}
+
+	event := &types.RetrievalEvent{
+		ID:        types.NewMemoryID(),
+		Project:   e.project,
+		Query:     query,
+		ResultIDs: resultIDs,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := e.backend.StoreRetrievalEvent(ctx, event); err != nil {
+		slog.Warn("store retrieval event failed", "err", err)
+		return results, "", nil
+	}
+	return results, event.ID, nil
+}
+
+// FeedbackWithEvent records which results from a retrieval event were useful.
+// It calls RecordFeedback (which increments times_retrieved/times_useful and
+// recomputes precision) and also applies the edge boost and spaced-repetition
+// boost via Feedback.
+func (e *SearchEngine) FeedbackWithEvent(ctx context.Context, eventID string, usefulIDs []string) error {
+	if err := e.backend.RecordFeedback(ctx, eventID, usefulIDs); err != nil {
+		return err
+	}
+	if len(usefulIDs) > 0 {
+		return e.Feedback(ctx, usefulIDs)
+	}
+	return nil
 }
 
 // SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).

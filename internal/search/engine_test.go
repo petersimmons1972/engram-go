@@ -166,7 +166,7 @@ func TestSearchEngine_Forget(t *testing.T) {
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m))
 
-	deleted, err := engine.Forget(ctx, m.ID)
+	deleted, err := engine.Forget(ctx, m.ID, "")
 	require.NoError(t, err)
 	require.True(t, deleted)
 

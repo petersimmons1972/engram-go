@@ -35,6 +35,17 @@ func (c *Client) ReasonOverMemories(ctx context.Context, question string, memori
 	return result, nil
 }
 
+// ReasonWithConflictAwareness synthesizes an answer from an EvidenceMap, using a
+// conflict-aware prompt so Claude acknowledges uncertainty when contradictions exist.
+func (c *Client) ReasonWithConflictAwareness(ctx context.Context, question string, ev EvidenceMap) (string, error) {
+	memories := ev.Memories
+	if len(memories) > maxMemoriesInReason {
+		ev.Memories = memories[:maxMemoriesInReason]
+	}
+	prompt := BuildConflictAwarePrompt(question, ev)
+	return c.Complete(ctx, reasonSystem, prompt, "claude-sonnet-4-6", "claude-opus-4-6", 2, 2048)
+}
+
 // buildReasonPrompt constructs the numbered memory listing prompt.
 func buildReasonPrompt(question string, memories []*types.Memory) string {
 	var sb strings.Builder

@@ -192,6 +192,11 @@ func (w *Worker) Stop() {
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("summarize worker panic", "project", w.project, "panic", r)
+		}
+	}()
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 

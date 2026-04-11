@@ -65,7 +65,8 @@ func TestSignature_UTF8(t *testing.T) {
 
 func TestLSH_IdenticalStrings_AreCandidates(t *testing.T) {
 	h := minhash.NewHasher(42)
-	idx := minhash.NewIndex(16, 8)
+	idx, err := minhash.NewIndex(16, 8)
+	require.NoError(t, err)
 
 	sig1 := h.Signature("the quick brown fox jumps over the lazy dog")
 	sig2 := h.Signature("the quick brown fox jumps over the lazy dog")
@@ -80,7 +81,8 @@ func TestLSH_IdenticalStrings_AreCandidates(t *testing.T) {
 
 func TestLSH_DifferentStrings_NotCandidates(t *testing.T) {
 	h := minhash.NewHasher(42)
-	idx := minhash.NewIndex(16, 8)
+	idx, err := minhash.NewIndex(16, 8)
+	require.NoError(t, err)
 
 	sig1 := h.Signature("aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd")
 	sig2 := h.Signature("xxxxxxxxxx yyyyyyyyyy zzzzzzzzzz wwwwwwwwww")
@@ -94,7 +96,8 @@ func TestLSH_DifferentStrings_NotCandidates(t *testing.T) {
 
 func TestLSH_ThreeMemories_OnlyNearPairMatches(t *testing.T) {
 	h := minhash.NewHasher(42)
-	idx := minhash.NewIndex(16, 8)
+	idx, err := minhash.NewIndex(16, 8)
+	require.NoError(t, err)
 
 	base := "kubernetes deployment patterns for production workloads with high availability"
 	sig1 := h.Signature(base)

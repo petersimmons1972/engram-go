@@ -71,6 +71,11 @@ func (w *Worker) Stop() {
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("reembed worker panic", "project", w.project, "panic", r)
+		}
+	}()
 	for {
 		done := w.runBatch(ctx)
 		if ctx.Err() != nil {
