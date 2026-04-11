@@ -74,6 +74,7 @@ type SearchEngine struct {
 	ollamaURL  string
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
+	decayer    *DecayWorker
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -84,17 +85,22 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 	return e.embedder
 }
 
-// New constructs a SearchEngine and starts background summarize and reembed workers.
-// claudeClient may be nil, in which case summarization falls back to Ollama.
+// New constructs a SearchEngine and starts background workers (summarize, reembed,
+// and spaced-repetition importance decay). claudeClient may be nil, in which case
+// summarization falls back to Ollama. decayInterval controls how often the decay
+// pass runs; pass 0 to use the default (8 hours).
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
 	ollamaURL, summarizeModel string, summarizeEnabled bool,
-	claudeClient summarize.ClaudeCompleter) *SearchEngine {
+	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration) *SearchEngine {
 
 	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.Start()
 
 	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)
 	reb.Start()
+
+	dec := NewDecayWorker(backend, project, decayInterval)
+	dec.Start()
 
 	return &SearchEngine{
 		backend:    backend,
@@ -103,12 +109,14 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		ollamaURL:  ollamaURL,
 		summarizer: sum,
 		reembedder: reb,
+		decayer:    dec,
 	}
 }
 
 // Close shuts down the engine, stops all background workers, and releases
 // the database connection pool. Must be called exactly once per engine.
 func (e *SearchEngine) Close() {
+	e.decayer.Stop()
 	e.summarizer.Stop()
 	e.reembedder.Stop()
 	e.backend.Close()
