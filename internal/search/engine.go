@@ -394,12 +394,39 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Fetch relationships only for the final topK results, not for every
-	// candidate. This reduces DB round-trips from up to topK*6 to exactly topK.
+	// Fetch relationships for the final topK results and populate connected
+	// memory objects via a single batched GetMemoriesByIDs call.
+	var allRels [][]types.Relationship
+	var neighborIDs []string
+	neighborSet := make(map[string]struct{})
 	for i := range results {
-		if rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID); err == nil {
-			results[i].Connected = toConnectedMemories(rels, results[i].Memory.ID)
+		rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID)
+		if err != nil {
+			rels = nil
 		}
+		allRels = append(allRels, rels)
+		for _, r := range rels {
+			neighborID := r.TargetID
+			if r.TargetID == results[i].Memory.ID {
+				neighborID = r.SourceID
+			}
+			if _, seen := neighborSet[neighborID]; !seen {
+				neighborSet[neighborID] = struct{}{}
+				neighborIDs = append(neighborIDs, neighborID)
+			}
+		}
+	}
+	neighborMap := make(map[string]*types.Memory, len(neighborIDs))
+	if len(neighborIDs) > 0 {
+		fetched, err := e.backend.GetMemoriesByIDs(ctx, e.project, neighborIDs)
+		if err == nil {
+			for _, m := range fetched {
+				neighborMap[m.ID] = m
+			}
+		}
+	}
+	for i := range results {
+		results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
 	}
 
 	// Update access timestamps.
@@ -463,16 +490,19 @@ func hoursSince(t time.Time) float64 {
 }
 
 // toConnectedMemories converts raw relationship rows into ConnectedMemory values
-// relative to the given memory ID. ConnectedMemory.Memory is intentionally left
-// nil to avoid a second DB round-trip per relationship.
-func toConnectedMemories(rels []types.Relationship, memID string) []types.ConnectedMemory {
+// relative to the given memory ID. neighborMap is used to populate the Memory
+// field on each result; missing entries are left nil rather than failing.
+func toConnectedMemories(rels []types.Relationship, memID string, neighborMap map[string]*types.Memory) []types.ConnectedMemory {
 	out := make([]types.ConnectedMemory, 0, len(rels))
 	for _, r := range rels {
+		neighborID := r.TargetID
 		dir := "outgoing"
 		if r.TargetID == memID {
+			neighborID = r.SourceID
 			dir = "incoming"
 		}
 		out = append(out, types.ConnectedMemory{
+			Memory:    neighborMap[neighborID],
 			RelType:   r.RelType,
 			Direction: dir,
 			Strength:  r.Strength,
