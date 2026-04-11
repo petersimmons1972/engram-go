@@ -141,7 +141,7 @@
         font-size="18" font-weight="700"
         fill="#3fb950" text-anchor="middle">engram-go</text>
   <text x="710" y="110"
-        font-size="11" fill="#8b949e" text-anchor="middle">v2.0</text>
+        font-size="11" fill="#8b949e" text-anchor="middle">v3.0</text>
 
   <text x="710" y="138"
         font-size="13" font-weight="600"
@@ -151,7 +151,7 @@
         font-size="11" fill="#8b949e" text-anchor="middle">port 8788</text>
   <text x="710" y="172"
         font-size="12" font-weight="600"
-        fill="#3fb950" text-anchor="middle">19 tools</text>
+        fill="#3fb950" text-anchor="middle">28 tools</text>
 
   <!-- Right annotation stack — backend dependencies -->
   <text x="838" y="125"

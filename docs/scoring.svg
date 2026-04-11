@@ -172,6 +172,6 @@
   <text x="40" y="320" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace" fill="#8b949e">final_score = composite x importance_multiplier</text>
 
   <!-- Engram version label — subtle, top right -->
-  <text x="980" y="14" text-anchor="end" font-size="11" fill="#30363d">engram-go v2.0 scoring</text>
+  <text x="980" y="14" text-anchor="end" font-size="11" fill="#30363d">engram-go v3.0 scoring</text>
 
 </svg>

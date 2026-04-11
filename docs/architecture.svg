@@ -106,5 +106,5 @@
   <text x="790" y="311" text-anchor="middle" font-family="Inter, 'Segoe UI', sans-serif" font-size="11" fill="#6e7681">Claude Advisor (optional)</text>
 
   <!-- Footer version label -->
-  <text x="500" y="478" text-anchor="middle" font-family="Inter, 'Segoe UI', sans-serif" font-size="11" fill="#484f58">engram-go v2.0 architecture</text>
+  <text x="500" y="478" text-anchor="middle" font-family="Inter, 'Segoe UI', sans-serif" font-size="11" fill="#484f58">engram-go v3.0 architecture</text>
 </svg>

@@ -42,7 +42,7 @@
 
   <!-- Title and subtitle -->
   <text x="20" y="22" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#e6edf3">Up and Running in 5 Minutes</text>
-  <text x="20" y="42" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Three commands. Three containers. Zero configuration required beyond a password.</text>
+  <text x="20" y="42" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Three commands. Three containers. Credentials generated automatically.</text>
 
   <!-- STEP 1 -->
   <!-- Large numeral -->
@@ -51,10 +51,9 @@
   <text x="62" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Clone &amp; Configure</text>
   <!-- Code lines -->
   <text x="38" y="144" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">git clone .../engram-go</text>
-  <text x="38" y="158" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">cp .env.example .env</text>
-  <text x="38" y="172" font-family="'Courier New', monospace" font-size="11" fill="#8b949e"># Set POSTGRES_PASSWORD</text>
+  <text x="38" y="162" font-family="'Courier New', monospace" font-size="13" fill="#3fb950">make init</text>
   <!-- Annotation -->
-  <text x="30" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">One password to change</text>
+  <text x="30" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Generates .env with strong credentials</text>
 
   <!-- STEP 2 -->
   <!-- Large numeral -->
@@ -62,7 +61,7 @@
   <!-- Step title -->
   <text x="364" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Start</text>
   <!-- Code line -->
-  <text x="338" y="152" font-family="'Courier New', monospace" font-size="11" fill="#3fb950">docker compose up -d</text>
+  <text x="338" y="158" font-family="'Courier New', monospace" font-size="13" fill="#3fb950">make up</text>
   <!-- Annotation two lines -->
   <text x="330" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">3 containers start.</text>
   <text x="330" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">Ollama downloads model on first run.</text>
@@ -73,11 +72,9 @@
   <!-- Step title -->
   <text x="664" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Connect Your IDE</text>
   <!-- Code lines -->
-  <text x="638" y="144" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">claude mcp add engram \</text>
-  <text x="638" y="158" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">  --transport sse \</text>
-  <text x="638" y="172" font-family="'Courier New', monospace" font-size="11" fill="#8b949e">  http://localhost:8788/sse</text>
+  <text x="638" y="158" font-family="'Courier New', monospace" font-size="13" fill="#3fb950">make setup</text>
   <!-- Annotation two lines -->
-  <text x="630" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">19 tools now available</text>
+  <text x="630" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">28 tools now available</text>
   <text x="630" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">in every Claude Code session</text>
 
   <!-- Bottom strip text: ASCII only, no Unicode -->

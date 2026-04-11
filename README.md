@@ -63,17 +63,20 @@ Your AI client speaks MCP over SSE. Engram exposes 28 tools — store, recall, c
 
 ---
 
-## v2.0 vs v1
+## v3.0 vs v2 vs v1
 
-v1 was Python. v2 is Go. The behavior is the same. The resource use is not.
+v1 was Python. v2 rewrote in Go. v3.0 adds required authentication, auto-episode starts on every SSE connection, and 28 tools.
 
-| | v1 (Python) | v2 (Go) |
-|---|---|---|
-| Container size | 200 MB | 10 MB |
-| Cold start | ~3 seconds | ~200ms |
-| Idle memory | 120 MB | 18 MB |
-| Base image | python:3.12-slim | Chainguard static |
-| MCP transport | stdio | SSE |
+| | v1 (Python) | v2 (Go) | v3.0 (Go) |
+|---|---|---|---|
+| Container size | 200 MB | 10 MB | 10 MB |
+| Cold start | ~3 seconds | ~200ms | ~200ms |
+| Idle memory | 120 MB | 18 MB | 18 MB |
+| Base image | python:3.12-slim | Chainguard static | Chainguard static |
+| MCP transport | stdio | SSE | SSE |
+| Authentication | optional | optional | required |
+| Auto-episode | no | no | yes |
+| Tool count | 19 | 19 | 28 |
 
 ---
 

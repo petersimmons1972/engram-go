@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280" role="img" aria-label="engram-go v2.0 hero banner">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280" role="img" aria-label="engram-go v3.0 hero banner">
   <defs>
     <!-- Accent gradient bar: Go cyan to GitHub green -->
     <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -45,7 +45,7 @@
   <!-- Badge 2: ~200ms startup -->
   <rect x="905" y="168" width="114" height="32" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
 
-  <!-- Badge 3: 19 MCP tools -->
+  <!-- Badge 3: 28 MCP tools -->
   <rect x="1030" y="168" width="114" height="32" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
 
   <!-- Accent gradient rule — thin horizontal line below tagline -->
@@ -108,7 +108,7 @@
     fill="#3fb950"
     text-anchor="middle"
     dominant-baseline="auto"
-    letter-spacing="0.8">v2.0  |  Go.  Fast.  Reliable.</text>
+    letter-spacing="0.8">v3.0  |  Go.  Fast.  Reliable.</text>
 
   <!-- Badge 1 label -->
   <text
@@ -141,7 +141,7 @@
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
-    dominant-baseline="central">19 MCP tools</text>
+    dominant-baseline="central">28 MCP tools</text>
 
   <!-- Small version callout below accent rule -->
   <text

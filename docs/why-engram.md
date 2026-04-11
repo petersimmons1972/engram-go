@@ -115,7 +115,7 @@ Each project is a separate filing cabinet. Global is the shared desk everyone ca
 
 ## The Trade-Off
 
-Engram is a local service. It needs PostgreSQL and, for full functionality, Ollama. That is two extra Docker containers and some RAM. The v2.0 Go rewrite reduced the overhead considerably — 18 MB idle for the server itself, 10 MB container — but the database and embedding model add to that.
+Engram is a local service. It needs PostgreSQL and, for full functionality, Ollama. That is two extra Docker containers and some RAM. The Go rewrite reduced the overhead considerably — 18 MB idle for the server itself, 10 MB container — but the database and embedding model add to that.
 
 The trade-off is real: if you want zero infrastructure, a notes file is simpler. But a notes file does not search by meaning. It does not surface connected decisions. It does not weight by recency. And when you are three sessions into a complex feature, the difference between "paste notes into context" and "recall exactly what's relevant" is not a small one.
 

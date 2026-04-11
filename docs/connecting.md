@@ -41,21 +41,7 @@ You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set).
 
 ## Cursor
 
-Add to `~/.cursor/mcp.json`. Create the file if it does not exist.
-
-```json
-{
-  "mcpServers": {
-    "engram": {
-      "url": "http://localhost:8788/sse"
-    }
-  }
-}
-```
-
-Restart Cursor. The tools appear in the model panel under MCP servers.
-
-With authentication:
+Add to `~/.cursor/mcp.json`. Create the file if it does not exist. Bearer authentication is required — the server rejects connections without it.
 
 ```json
 {
@@ -70,17 +56,22 @@ With authentication:
 }
 ```
 
+Copy your `ENGRAM_API_KEY` from `.env` for the header value. Restart Cursor after saving.
+
 ---
 
 ## VS Code (GitHub Copilot)
 
-VS Code reads MCP configuration from `.vscode/mcp.json` inside your workspace, or from `~/.vscode/mcp.json` for a global config that applies across all workspaces.
+VS Code reads MCP configuration from `.vscode/mcp.json` inside your workspace, or from `~/.vscode/mcp.json` for a global config that applies across all workspaces. Bearer authentication is required.
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "url": "http://localhost:8788/sse"
+      "url": "http://localhost:8788/sse",
+      "headers": {
+        "Authorization": "Bearer your-api-key-here"
+      }
     }
   }
 }
@@ -92,13 +83,16 @@ The global config is useful if you want Engram available in every project withou
 
 ## Windsurf
 
-Add to `~/.codeium/windsurf/mcp_config.json`:
+Add to `~/.codeium/windsurf/mcp_config.json`. Bearer authentication is required.
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "serverUrl": "http://localhost:8788/sse"
+      "serverUrl": "http://localhost:8788/sse",
+      "headers": {
+        "Authorization": "Bearer your-api-key-here"
+      }
     }
   }
 }

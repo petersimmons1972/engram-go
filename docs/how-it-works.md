@@ -32,7 +32,7 @@ The embedding model runs locally. There is no external API call on the recall pa
 
 ### Recency Decay
 
-Memories decay exponentially at 1% per hour. A memory stored today scores roughly 17× higher on the recency signal than one stored a month ago.
+Memories decay exponentially via `exp(-0.01 × hours)`. A memory stored today scores roughly 1300× higher on the recency signal than one stored a month ago — but a month-old memory still surfaces if nothing more recent is relevant.
 
 Nothing is deleted. Old memories do not disappear — they step back. The decay is a weight, not a filter. If you have only one memory that matches a query, it surfaces regardless of age.
 
@@ -49,7 +49,7 @@ Store a bug report. Store the architectural pattern that caused it. Connect them
 ## The Scoring Formula
 
 ```
-composite = (vector × 0.50) + (bm25 × 0.35) + (recency × 0.15)
+composite = (vector × 0.45) + (bm25 × 0.30) + (recency × 0.10) + (precision × 0.15)
 final     = composite × importance_multiplier
 ```
 
@@ -61,11 +61,11 @@ composite = (bm25 × 0.85) + (recency × 0.15)
 
 The importance multiplier is set at store time and applied at recall time. It is a flat scaling factor — a `critical` memory with a mediocre composite score still beats a `trivial` memory with a strong one.
 
-Two additional signals are applied after the composite:
+Two additional signals feed into the composite:
+
+**Retrieval precision** (`times_useful / times_retrieved`) gets its own weight (0.15). New memories with fewer than 5 retrievals are scored at 0.5 — neutral, neither helped nor hurt.
 
 **Dynamic importance** replaces the static importance multiplier for memories that have been retrieved and marked useful via `memory_feedback`. The system tracks a spaced-repetition schedule (`next_review_at`) and applies an extra boost to memories that are due for review. Once a memory accumulates retrieval history, `dynamic_importance` supersedes the initial static weight.
-
-**Retrieval precision** tracks the ratio of useful retrievals to total retrievals (`times_useful / times_retrieved`). Memories with a high precision score — ones that consistently prove useful when surfaced — receive a small additional boost. New memories with no retrieval history are scored as if they have neutral precision.
 
 Both signals appear in the `score_breakdown` map returned with each result, so you can inspect exactly how a score was composed.
 
@@ -89,13 +89,13 @@ At scale, summary mode reduces context consumption by roughly 13× compared to f
 
 ### Importance Multipliers
 
-Five levels, applied as multipliers on the final composite score:
+Five levels, applied as multipliers on the final composite score. The formula is `(5 - importance_level) / 3.0`:
 
-- **Critical (2.0×):** Non-negotiable constraints. "Never use raw SQL outside the Repository layer." These always surface near the top.
-- **High (1.5×):** Key decisions that should stay visible for weeks or months. Architecture choices, major trade-offs.
+- **Critical (1.67×):** Non-negotiable constraints. "Never use raw SQL outside the Repository layer." These always surface near the top.
+- **High (1.33×):** Key decisions that should stay visible for weeks or months. Architecture choices, major trade-offs.
 - **Medium (1.0×):** The baseline. Most memories belong here.
-- **Low (0.8×):** Notes you want to keep but do not need to see unless you specifically search for them.
-- **Trivial (0.6×):** Ephemeral observations. Auto-pruned after 30 days if never accessed.
+- **Low (0.67×):** Notes you want to keep but do not need to see unless you specifically search for them.
+- **Trivial (0.33×):** Ephemeral observations. Auto-pruned after 30 days if never accessed.
 
 Set `critical` sparingly. If everything is critical, nothing is.
 

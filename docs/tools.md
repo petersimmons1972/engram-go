@@ -49,17 +49,17 @@ memory_store(
 
 | Level | Value | Multiplier | Auto-pruned |
 | ----- | ----- | ---------- | ----------- |
-| Critical | 0 | 2.0× | Never |
-| High | 1 | 1.5× | Never |
+| Critical | 0 | 1.67× | Never |
+| High | 1 | 1.33× | Never |
 | Medium | 2 | 1.0× | Never |
-| Low | 3 | 0.8× | Never |
-| Trivial | 4 | 0.6× | After 30 days |
+| Low | 3 | 0.67× | Never |
+| Trivial | 4 | 0.33× | After 30 days |
 
 Set `importance=0` (Critical) sparingly. A constraint that must never be violated — never use raw SQL outside the repository layer, never store tokens in localStorage — belongs here. Most decisions belong at High or Medium. If everything is Critical, nothing is.
 
 ---
 
-### memory_store_document ⭐ v2.0
+### memory_store_document
 
 For large documents — up to 500,000 characters. Engram chunks at sentence boundaries automatically and embeds each chunk independently. Use this to ingest an entire architecture document, a long meeting transcript, or a codebase module you want the agent to be able to query.
 
@@ -256,6 +256,10 @@ memory_verify(project="my-app", fix=True)  # Backfill missing hashes
 
 Manually trigger summarization for memories that do not have summaries yet. Normally the background worker handles this within 60 seconds — use this when you need summaries immediately and cannot wait for the tick.
 
+```python
+memory_summarize(project="my-app")
+```
+
 ---
 
 ### memory_migrate_embedder
@@ -407,7 +411,7 @@ Use `memory_projects` first to discover project names and memory counts.
 
 ## Diagnostics
 
-### memory_diagnose ⭐ v2.0
+### memory_diagnose
 
 Return an evidence map for a set of recalled memories — conflicts between them, confidence level, and invalidated sources. Unlike `memory_reason`, this tool does no synthesis and requires no Claude API key. It returns raw evidence about the memories you pass in, not a generated answer.
 
