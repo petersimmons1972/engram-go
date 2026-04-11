@@ -40,13 +40,18 @@ func TestTemporalVersioning_SoftDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleted)
 
-	// GetMemory by ID should still return the memory (admin/history path is not filtered by valid_to).
+	// GetMemory must return nil — active-filter excludes soft-deleted records.
 	afterDelete, err := engine.Backend().GetMemory(ctx, m.ID)
 	require.NoError(t, err)
-	require.NotNil(t, afterDelete)
-	assert.NotNil(t, afterDelete.ValidTo, "valid_to must be set after soft-delete")
-	assert.NotNil(t, afterDelete.InvalidationReason)
-	assert.Equal(t, "superseded by new auth design", *afterDelete.InvalidationReason)
+	assert.Nil(t, afterDelete, "GetMemory must exclude soft-deleted memories from active results")
+
+	// GetMemoryHistory must contain the invalidation snapshot with the correct reason.
+	history, err := engine.MemoryHistory(ctx, m.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, history, "GetMemoryHistory must return at least one version entry")
+	assert.Equal(t, types.VersionChangeInvalidate, history[0].ChangeType)
+	require.NotNil(t, history[0].ChangeReason)
+	assert.Equal(t, "superseded by new auth design", *history[0].ChangeReason)
 
 	// Second forget on the same ID should return false (already invalidated).
 	deleted2, err := engine.Forget(ctx, m.ID, "duplicate")
