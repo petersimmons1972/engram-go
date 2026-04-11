@@ -75,6 +75,8 @@ services:
     ports:
       - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     env_file:
+      - path: .env
+        required: false
       - path: .env.machine-identity
         required: true
     environment:
