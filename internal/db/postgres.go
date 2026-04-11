@@ -44,7 +44,9 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	if err != nil {
 		return nil, fmt.Errorf("invalid DSN: %w", err)
 	}
-	warnDefaultPassword(cfg)
+	if err := rejectDefaultPassword(cfg); err != nil {
+		return nil, err
+	}
 	cfg.MinConns = 2
 	cfg.MaxConns = 10
 
@@ -68,10 +70,14 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	return b, nil
 }
 
-func warnDefaultPassword(cfg *pgxpool.Config) {
+// rejectDefaultPassword refuses to start if a well-known default password is detected (#124).
+// A warning is insufficient: operators who miss the log line leave the database exposed indefinitely.
+func rejectDefaultPassword(cfg *pgxpool.Config) error {
 	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
-		slog.Warn("SECURITY: PostgreSQL using default password; set a strong POSTGRES_PASSWORD before exposing this service")
+		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default password (%q) — "+
+			"set a strong POSTGRES_PASSWORD in your environment before starting engram", cfg.ConnConfig.Password)
 	}
+	return nil
 }
 
 // Close releases the connection pool.
@@ -193,7 +199,7 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO schema_migrations (filename) VALUES ($1)`, name,
+				`INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`, name,
 			); err != nil {
 				_ = tx.Rollback(ctx)
 				return fmt.Errorf("record migration %s: %w", name, err)
@@ -1117,84 +1123,9 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 	}
 	defer rows.Close()
 
-	var results []FTSResult
-	for rows.Next() {
-		// SELECT m.*, rank — 26 memory columns + rank = 27 total.
-		// Scan all fields in one call to avoid consuming the cursor twice.
-		var (
-			id, content, memType, project  string
-			tags                           []byte
-			importance, accessCount        int
-			lastAccessed, createdAt, updatedAt time.Time
-			immutable                      bool
-			expiresAt                      *time.Time
-			summary, contentHash           *string
-			storageMode                    string
-			searchVector                   []byte
-			validFrom, validTo             *time.Time
-			invalidationReason             *string
-			dynamicImportance              *float64
-			retrievalIntervalHrs           float64
-			nextReviewAt                   *time.Time
-			timesRetrieved, timesUseful    int
-			retrievalPrecision             *float64
-			episodeID                      *string
-			rank                           float64
-		)
-		if err := rows.Scan(
-			&id, &content, &memType, &project, &tags,
-			&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
-			&immutable, &expiresAt, &summary, &contentHash, &storageMode,
-			&searchVector, &validFrom, &validTo, &invalidationReason,
-			&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
-			&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &rank,
-		); err != nil {
-			return nil, err
-		}
-		var tagSlice []string
-		if len(tags) > 0 {
-			_ = json.Unmarshal(tags, &tagSlice)
-		}
-		if tagSlice == nil {
-			tagSlice = []string{}
-		}
-		if storageMode == "" {
-			storageMode = "focused"
-		}
-		var epID string
-		if episodeID != nil {
-			epID = *episodeID
-		}
-		m := &types.Memory{
-			ID:                   id,
-			Content:              content,
-			MemoryType:           memType,
-			Project:              project,
-			Tags:                 tagSlice,
-			Importance:           importance,
-			AccessCount:          accessCount,
-			LastAccessed:         lastAccessed,
-			CreatedAt:            createdAt,
-			UpdatedAt:            updatedAt,
-			Immutable:            immutable,
-			ExpiresAt:            expiresAt,
-			Summary:              summary,
-			ContentHash:          contentHash,
-			StorageMode:          storageMode,
-			ValidFrom:            validFrom,
-			ValidTo:              validTo,
-			InvalidationReason:   invalidationReason,
-			DynamicImportance:    dynamicImportance,
-			RetrievalIntervalHrs: retrievalIntervalHrs,
-			NextReviewAt:         nextReviewAt,
-			TimesRetrieved:       timesRetrieved,
-			TimesUseful:          timesUseful,
-			RetrievalPrecision:   retrievalPrecision,
-			EpisodeID:            epID,
-		}
-		results = append(results, FTSResult{Memory: m, Score: rank})
-	}
-	return results, rows.Err()
+	// Use the shared rowToFTSResult helper to avoid duplicating the 26-column
+	// scan that rowToMemory already owns (#112 — schema drift prevention).
+	return pgx.CollectRows(rows, rowToFTSResult)
 }
 
 func (b *PostgresBackend) RebuildFTS(ctx context.Context) error {
@@ -1819,6 +1750,84 @@ func (b *PostgresBackend) GetMemoriesAsOf(ctx context.Context, project string, a
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
+// rowToFTSResult scans the output of FTSSearch queries: SELECT m.*, rank
+// (26 memory columns + 1 rank float). Column order must stay in sync with the
+// DDL and with rowToMemory below (#112 — single point of schema knowledge).
+func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
+	var (
+		id, content, memType, proj string
+		tags                       []byte
+		importance, accessCount    int
+		lastAccessed, createdAt, updatedAt time.Time
+		immutable                  bool
+		expiresAt                  *time.Time
+		summary, contentHash       *string
+		storageMode                string
+		searchVector               []byte
+		validFrom, validTo         *time.Time
+		invalidationReason         *string
+		dynamicImportance          *float64
+		retrievalIntervalHrs       float64
+		nextReviewAt               *time.Time
+		timesRetrieved, timesUseful int
+		retrievalPrecision         *float64
+		episodeID                  *string
+		rank                       float64
+	)
+	if err := row.Scan(
+		&id, &content, &memType, &proj, &tags,
+		&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
+		&immutable, &expiresAt, &summary, &contentHash, &storageMode,
+		&searchVector, &validFrom, &validTo, &invalidationReason,
+		&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
+		&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &rank,
+	); err != nil {
+		return FTSResult{}, err
+	}
+	var tagSlice []string
+	if len(tags) > 0 {
+		_ = json.Unmarshal(tags, &tagSlice)
+	}
+	if tagSlice == nil {
+		tagSlice = []string{}
+	}
+	if storageMode == "" {
+		storageMode = "focused"
+	}
+	var epID string
+	if episodeID != nil {
+		epID = *episodeID
+	}
+	m := &types.Memory{
+		ID:                   id,
+		Content:              content,
+		MemoryType:           memType,
+		Project:              proj,
+		Tags:                 tagSlice,
+		Importance:           importance,
+		AccessCount:          accessCount,
+		LastAccessed:         lastAccessed,
+		CreatedAt:            createdAt,
+		UpdatedAt:            updatedAt,
+		Immutable:            immutable,
+		ExpiresAt:            expiresAt,
+		Summary:              summary,
+		ContentHash:          contentHash,
+		StorageMode:          storageMode,
+		ValidFrom:            validFrom,
+		ValidTo:              validTo,
+		InvalidationReason:   invalidationReason,
+		DynamicImportance:    dynamicImportance,
+		RetrievalIntervalHrs: retrievalIntervalHrs,
+		NextReviewAt:         nextReviewAt,
+		TimesRetrieved:       timesRetrieved,
+		TimesUseful:          timesUseful,
+		RetrievalPrecision:   retrievalPrecision,
+		EpisodeID:            epID,
+	}
+	return FTSResult{Memory: m, Score: rank}, nil
+}
+
 func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 	type raw struct {
 		ID                   string
@@ -1849,11 +1858,19 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		EpisodeID            *string // nullable FK
 	}
 	var r raw
+	// Column order must match the DDL in migrations/*.sql exactly.
+	// 001_initial: id, content, memory_type, project, tags, importance, access_count,
+	//   last_accessed, created_at, updated_at, immutable, expires_at, summary,
+	//   content_hash, storage_mode, search_vector (GENERATED)
+	// 005_temporal ADD COLUMN: valid_from, valid_to, invalidation_reason
+	// 006_adaptive_importance ADD COLUMN: dynamic_importance, retrieval_interval_hrs, next_review_at
+	// 007_retrieval_tracking ADD COLUMN: times_retrieved, times_useful, retrieval_precision
+	// 008_episodes ADD COLUMN: episode_id
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
-		&r.SearchVector, &r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
-		&r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
+		&r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
+		&r.SearchVector, &r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
 		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
 		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
 	)

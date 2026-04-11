@@ -37,14 +37,18 @@ func run() error {
 	embedModel := fs.String("model", envOr("ENGRAM_OLLAMA_MODEL", "nomic-embed-text"), "Embedding model")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
-	claudeAPIKey := fs.String("claude-api-key", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key for Claude advisor")
+	// #136: ANTHROPIC_API_KEY is intentionally NOT a CLI flag — secrets in CLI flags
+	// are visible in /proc/cmdline to any process on the host. Read from env only.
+	claudeAPIKey := envOr("ANTHROPIC_API_KEY", "")
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	baseURL := fs.String("base-url", envOr("ENGRAM_BASE_URL", ""), "External URL advertised in SSE events (e.g. http://127.0.0.1:8788); defaults to http://<host>:<port>")
-	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Bearer token for auth (required; set ENGRAM_API_KEY)")
+	// #136: ENGRAM_API_KEY is intentionally NOT a CLI flag — secrets in CLI flags
+	// are visible in /proc/cmdline to any process on the host. Read from env only.
+	apiKey := envOr("ENGRAM_API_KEY", "")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
 	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = default 8h)")
 
@@ -55,7 +59,7 @@ func run() error {
 	if *databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL or --database-url is required")
 	}
-	if *apiKey == "" {
+	if apiKey == "" {
 		return fmt.Errorf("ENGRAM_API_KEY or --api-key is required; refusing to start without authentication")
 	}
 
@@ -108,9 +112,9 @@ func run() error {
 	// whenever the key is set; the other advisor features require their own flags.
 	var claudeCompleter summarize.ClaudeCompleter
 	var cc *claude.Client
-	if *claudeAPIKey != "" {
+	if claudeAPIKey != "" {
 		var err error
-		cc, err = claude.New(*claudeAPIKey)
+		cc, err = claude.New(claudeAPIKey)
 		if err != nil {
 			return fmt.Errorf("claude client: %w", err)
 		}
@@ -151,7 +155,7 @@ func run() error {
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
-	return srv.Start(ctx, *host, *port, *apiKey, *baseURL)
+	return srv.Start(ctx, *host, *port, apiKey, *baseURL)
 }
 
 // isPrivateIP reports whether ipStr is an IP address that falls within a
