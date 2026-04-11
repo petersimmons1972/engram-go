@@ -2,7 +2,14 @@
 // running engram server.
 //
 // It calls the unauthenticated /setup-token endpoint on the engram server, retrieves the
-// current bearer token, and writes the mcpServers.engram block in ~/.claude.json.
+// current bearer token, and writes the mcpServers.engram block in the Claude Code config.
+//
+// Claude Code reads MCP servers from two files:
+//   - ~/.claude/mcp_servers.json  — primary (live config, read each session)
+//   - ~/.claude.json              — secondary (user settings, also read at startup)
+//
+// engram-setup writes both so the token stays fresh regardless of which file Claude
+// Code happens to use in a given version.
 //
 // Usage:
 //
@@ -30,9 +37,8 @@ func main() {
 
 func run() error {
 	port := flag.Int("port", 8788, "engram server port")
-	name := flag.String("name", "engram", "MCP server name to write in ~/.claude.json")
-	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing ~/.claude.json")
-	configPath := flag.String("config", "", "path to Claude config file (default: ~/.claude.json)")
+	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
+	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
 	flag.Parse()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", *port)
@@ -52,40 +58,15 @@ func run() error {
 		return fmt.Errorf("fetch /setup-token: %w", err)
 	}
 
-	// 3. Locate the Claude config file.
-	cfgPath := *configPath
-	if cfgPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("locate home directory: %w", err)
-		}
-		cfgPath = filepath.Join(home, ".claude.json")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
 	}
 
-	// 4. Read existing config (create skeleton if absent).
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", cfgPath, err)
-	}
-	var cfg map[string]json.RawMessage
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("parse %s: %w\n\nFix the JSON and re-run.", cfgPath, err)
-		}
-	}
-	if cfg == nil {
-		cfg = make(map[string]json.RawMessage)
-	}
-
-	// 5. Merge mcpServers.{name} block — preserve all other MCP servers.
-	var mcpServers map[string]json.RawMessage
-	if raw, ok := cfg["mcpServers"]; ok {
-		if err := json.Unmarshal(raw, &mcpServers); err != nil {
-			return fmt.Errorf("parse mcpServers: %w", err)
-		}
-	}
-	if mcpServers == nil {
-		mcpServers = make(map[string]json.RawMessage)
+	// Claude Code reads MCP servers from both of these files — keep both in sync.
+	targets := []string{
+		filepath.Join(home, ".claude", "mcp_servers.json"), // primary: Claude Code live config
+		filepath.Join(home, ".claude.json"),                 // secondary: Claude Code user settings
 	}
 
 	newEntry := map[string]interface{}{
@@ -95,50 +76,116 @@ func run() error {
 			"Authorization": "Bearer " + setup.Token,
 		},
 	}
-	entryJSON, err := json.MarshalIndent(newEntry, "    ", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal MCP entry: %w", err)
-	}
-
-	existing, alreadyPresent := mcpServers[*name]
 
 	if *dryRun {
-		if alreadyPresent {
-			fmt.Printf("~ mcpServers.%s (update)\n  was: %s\n  now: %s\n",
-				*name, string(existing), string(entryJSON))
-		} else {
-			fmt.Printf("+ mcpServers.%s (add)\n  %s\n", *name, string(entryJSON))
-		}
-		fmt.Println("\n(dry-run: no changes written)")
+		entryJSON, _ := json.MarshalIndent(newEntry, "    ", "  ")
+		fmt.Printf("DRY RUN — would write mcpServers.%s to:\n  %s\n  %s\n\n",
+			*name, targets[0], targets[1])
+		fmt.Printf("  entry: %s\n\n(no changes written)\n", string(entryJSON))
 		return nil
 	}
 
-	mcpServers[*name] = json.RawMessage(entryJSON)
+	var updated []string
+	for _, cfgPath := range targets {
+		action, err := updateMCPConfig(cfgPath, *name, newEntry)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "engram-setup: warning: could not update %s: %v\n", cfgPath, err)
+			continue
+		}
+		if action != "" {
+			updated = append(updated, fmt.Sprintf("%s (%s)", cfgPath, action))
+		}
+	}
+
+	if len(updated) == 0 {
+		return fmt.Errorf("failed to update any config file")
+	}
+
+	fmt.Printf("engram configured.\n")
+	fmt.Printf("  endpoint: %s\n", setup.Endpoint)
+	fmt.Printf("  token:    %s...%s\n", setup.Token[:8], setup.Token[len(setup.Token)-4:])
+	for _, u := range updated {
+		fmt.Printf("  wrote:    %s\n", u)
+	}
+	fmt.Println("Run /mcp in Claude Code to reconnect.")
+	return nil
+}
+
+// updateMCPConfig reads cfgPath, upserts mcpServers[name]=entry, and writes it back.
+// Returns the action taken ("added" or "updated"), or "" if the file was skipped.
+// For ~/.claude.json specifically: only writes if the file exists (it's the main user
+// settings file — we don't want to clobber it if it's absent or has no mcpServers yet).
+func updateMCPConfig(cfgPath, name string, entry map[string]interface{}) (string, error) {
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// ~/.claude.json: skip if absent (we don't create user settings from scratch).
+			// ~/.claude/mcp_servers.json: create it — it's a dedicated MCP config file.
+			if filepath.Base(cfgPath) == ".claude.json" {
+				return "", nil // skip
+			}
+			raw = []byte(`{"mcpServers":{}}`)
+		} else {
+			return "", fmt.Errorf("read: %w", err)
+		}
+	}
+
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", fmt.Errorf("parse JSON: %w", err)
+	}
+	if cfg == nil {
+		cfg = make(map[string]json.RawMessage)
+	}
+
+	// For ~/.claude.json: only update the mcpServers block if it already exists.
+	// Never add a new mcpServers key to the user settings file unprompted.
+	if filepath.Base(cfgPath) == ".claude.json" {
+		if _, hasMCP := cfg["mcpServers"]; !hasMCP {
+			return "", nil // skip
+		}
+	}
+
+	var mcpServers map[string]json.RawMessage
+	if existing, ok := cfg["mcpServers"]; ok {
+		if err := json.Unmarshal(existing, &mcpServers); err != nil {
+			return "", fmt.Errorf("parse mcpServers: %w", err)
+		}
+	}
+	if mcpServers == nil {
+		mcpServers = make(map[string]json.RawMessage)
+	}
+
+	_, alreadyPresent := mcpServers[name]
+	entryJSON, err := json.MarshalIndent(entry, "    ", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal entry: %w", err)
+	}
+	mcpServers[name] = json.RawMessage(entryJSON)
 
 	mcpRaw, err := json.Marshal(mcpServers)
 	if err != nil {
-		return fmt.Errorf("marshal mcpServers: %w", err)
+		return "", fmt.Errorf("marshal mcpServers: %w", err)
 	}
 	cfg["mcpServers"] = json.RawMessage(mcpRaw)
 
-	// 6. Write back with indentation.
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return "", fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0700); err != nil {
+		return "", fmt.Errorf("create directory: %w", err)
 	}
 	if err := os.WriteFile(cfgPath, append(out, '\n'), 0600); err != nil {
-		return fmt.Errorf("write %s: %w", cfgPath, err)
+		return "", fmt.Errorf("write: %w", err)
 	}
 
 	action := "added"
 	if alreadyPresent {
 		action = "updated"
 	}
-	fmt.Printf("✓ engram MCP server %s in %s\n", action, cfgPath)
-	fmt.Printf("  endpoint: %s\n", setup.Endpoint)
-	fmt.Printf("  token:    %s...%s\n", setup.Token[:8], setup.Token[len(setup.Token)-4:])
-	fmt.Println("\nNext step: run /mcp in Claude Code to connect.")
-	return nil
+	return action, nil
 }
 
 type setupResponse struct {
