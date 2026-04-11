@@ -109,6 +109,55 @@ type Backend interface {
 	// the source or the target, scoped to project.
 	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
 
+	// ── Temporal versioning ─────────────────────────────────────────────────
+
+	// GetMemoryHistory returns all version snapshots for memoryID in reverse
+	// chronological order (most recent change first).
+	GetMemoryHistory(ctx context.Context, project, memoryID string) ([]*types.MemoryVersion, error)
+
+	// SoftDeleteMemory marks a memory as invalid by setting valid_to=NOW() and
+	// storing the final state in memory_versions with change_type="invalidate".
+	// The memory and its chunks are NOT removed from the database; they remain
+	// for history queries. Returns false if not found, error if immutable.
+	SoftDeleteMemory(ctx context.Context, project, id, reason string) (bool, error)
+
+	// GetMemoriesAsOf returns memories that were active at the given point in time:
+	// created_at <= asOf AND (valid_to IS NULL OR valid_to > asOf).
+	GetMemoriesAsOf(ctx context.Context, project string, asOf time.Time, limit int) ([]*types.Memory, error)
+
+	// ── Retrieval outcome tracking ──────────────────────────────────────────
+
+	// StoreRetrievalEvent persists a new retrieval event. result_ids holds the
+	// memory IDs returned by the recall call.
+	StoreRetrievalEvent(ctx context.Context, event *types.RetrievalEvent) error
+
+	// GetRetrievalEvent fetches a retrieval event by ID.
+	GetRetrievalEvent(ctx context.Context, id string) (*types.RetrievalEvent, error)
+
+	// RecordFeedback updates the retrieval event with feedback_ids, sets
+	// feedback_at=NOW(), increments times_retrieved on all result memories, and
+	// increments times_useful on feedback memories. Recomputes retrieval_precision
+	// once times_retrieved >= 5.
+	RecordFeedback(ctx context.Context, eventID string, usefulIDs []string) error
+
+	// IncrementTimesRetrieved increments times_retrieved on the given memory IDs.
+	IncrementTimesRetrieved(ctx context.Context, ids []string) error
+
+	// ── Adaptive importance ─────────────────────────────────────────────────
+
+	// UpdateDynamicImportance atomically adjusts dynamic_importance by delta
+	// and, if positive, advances retrieval_interval_hrs by the given factor and
+	// sets next_review_at = now + new_interval. delta may be negative.
+	UpdateDynamicImportance(ctx context.Context, id string, delta float64, intervalFactor float64) error
+
+	// SetNextReviewAt overrides the next_review_at timestamp for a memory.
+	// Used by tests and the decay worker to force stale state.
+	SetNextReviewAt(ctx context.Context, id string, t time.Time) error
+
+	// DecayStaleImportance multiplies dynamic_importance by factor (<1.0) on all
+	// active memories whose next_review_at is in the past. Returns rows updated.
+	DecayStaleImportance(ctx context.Context, project string, factor float64) (int, error)
+
 	// ── Pruning ─────────────────────────────────────────────────────────────
 
 	// PruneStaleMemories deletes old low-importance and expired memories. Returns count.
@@ -143,6 +192,21 @@ type Backend interface {
 	UpdateMemoryHash(ctx context.Context, memoryID, contentHash string) error
 	// GetIntegrityStats returns total, hashed, and corrupt counts for a project.
 	GetIntegrityStats(ctx context.Context, project string) (IntegrityStats, error)
+
+	// ── Episodes ────────────────────────────────────────────────────────────
+
+	// StartEpisode creates a new episode record for the project and returns it.
+	StartEpisode(ctx context.Context, project, description string) (*types.Episode, error)
+
+	// EndEpisode marks an episode as ended and records an optional summary.
+	EndEpisode(ctx context.Context, id, summary string) error
+
+	// ListEpisodes returns up to limit episodes for the project, most recent first.
+	ListEpisodes(ctx context.Context, project string, limit int) ([]*types.Episode, error)
+
+	// RecallEpisode returns all memories associated with the given episode,
+	// ordered by created_at ascending (chronological).
+	RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error)
 
 	// ── Transactions ────────────────────────────────────────────────────────
 

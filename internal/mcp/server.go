@@ -122,9 +122,17 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryCorrect(ctx, pool, req)
 			}},
-		{"memory_forget", "Delete a memory (respects immutability)",
+		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryForget(ctx, pool, req)
+			}},
+		{"memory_history", "Return the full version chain for a memory",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryHistory(ctx, pool, req)
+			}},
+		{"memory_timeline", "Recall memories that were active at a given point in time (as_of param, RFC3339)",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryTimeline(ctx, pool, req)
 			}},
 		{"memory_summarize", "Immediately summarize a memory",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -141,6 +149,27 @@ func (s *Server) registerTools() {
 		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryConsolidate(ctx, pool, req, cfg)
+			}},
+		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemorySleep(ctx, pool, req)
+			}},
+		// Feature 6: Episodic Memory
+		{"memory_episode_start", "Start a named episode to group memories from this session",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEpisodeStart(ctx, pool, req)
+			}},
+		{"memory_episode_end", "End an episode with an optional summary",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEpisodeEnd(ctx, pool, req)
+			}},
+		{"memory_episode_list", "List recent episodes for a project",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEpisodeList(ctx, pool, req)
+			}},
+		{"memory_episode_recall", "Return all memories from a specific episode in chronological order",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEpisodeRecall(ctx, pool, req)
 			}},
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -162,10 +191,31 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngest(ctx, pool, req, cfg)
 			}},
+		// Feature 4: Cross-Project Knowledge Federation
+		{"memory_projects", "List all projects with memory counts",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryProjects(ctx, pool, req)
+			}},
+		{"memory_adopt", "Create a cross-project reference relationship",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAdopt(ctx, pool, req)
+			}},
 	}
 
 	for _, t := range tools {
 		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), t.handler)
+	}
+
+	// memory_diagnose is always available — no Claude required.
+	{
+		pool := s.pool
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_diagnose",
+				mcpgo.WithDescription("Return evidence map for recalled memories: conflicts, confidence, invalidated sources — no synthesis")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryDiagnose(ctx, pool, req)
+			},
+		)
 	}
 
 	// memory_reason is registered only when a Claude client is available.

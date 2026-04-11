@@ -118,6 +118,9 @@ func (e *SearchEngine) Close() {
 // (e.g. EnginePool, MCP tool handlers).
 func (e *SearchEngine) Backend() db.Backend { return e.backend }
 
+// Project returns the project slug this engine is scoped to.
+func (e *SearchEngine) Project() string { return e.project }
+
 // storeChunksForMemory chunks content, embeds each chunk, and returns the new
 // chunk records ready for storage. It is used by both Store (new memories) and
 // Correct (re-chunking after a content change). Embedding is done outside any
@@ -317,10 +320,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			bm25 = ftsScores[id] / maxBM25
 		}
 		input := ScoreInput{
-			Cosine:     bestCosine[id],
-			BM25:       bm25,
-			HoursSince: hoursSince(m.LastAccessed),
-			Importance: m.Importance,
+			Cosine:             bestCosine[id],
+			BM25:               bm25,
+			HoursSince:         hoursSince(m.LastAccessed),
+			Importance:         m.Importance,
+			DynamicImportance:  m.DynamicImportance,
+			RetrievalPrecision: m.RetrievalPrecision,
 		}
 		score := CompositeScore(input)
 
@@ -591,9 +596,21 @@ func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, 
 	return mem, nil
 }
 
-// Forget deletes a memory by ID. Returns true if deleted, false if not found.
-func (e *SearchEngine) Forget(ctx context.Context, id string) (bool, error) {
-	return e.backend.DeleteMemoryAtomic(ctx, e.project, id, false)
+// Forget soft-deletes a memory by setting valid_to=NOW() and snapshotting it
+// into memory_versions. Returns true if deleted, false if not found or already invalidated.
+func (e *SearchEngine) Forget(ctx context.Context, id, reason string) (bool, error) {
+	return e.backend.SoftDeleteMemory(ctx, e.project, id, reason)
+}
+
+// MemoryHistory returns the full version chain for a memory in reverse
+// chronological order (most recent change first).
+func (e *SearchEngine) MemoryHistory(ctx context.Context, id string) ([]*types.MemoryVersion, error) {
+	return e.backend.GetMemoryHistory(ctx, e.project, id)
+}
+
+// MemoryAsOf returns memories that were active at the given point in time.
+func (e *SearchEngine) MemoryAsOf(ctx context.Context, asOf time.Time, limit int) ([]*types.Memory, error) {
+	return e.backend.GetMemoriesAsOf(ctx, e.project, asOf, limit)
 }
 
 // Status returns aggregate statistics for the project.
@@ -614,6 +631,23 @@ func (e *SearchEngine) Feedback(ctx context.Context, ids []string) error {
 			return err
 		}
 		if err := e.backend.TouchMemory(ctx, id); err != nil {
+			return err
+		}
+		// Spaced-repetition boost: grow dynamic_importance and advance next_review_at.
+		if err := e.backend.UpdateDynamicImportance(ctx, id, 0.1, 1.5); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FeedbackNegative records a negative access signal: dynamic_importance decreases.
+func (e *SearchEngine) FeedbackNegative(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("feedback: no memory IDs provided")
+	}
+	for _, id := range ids {
+		if err := e.backend.UpdateDynamicImportance(ctx, id, -0.05, 0); err != nil {
 			return err
 		}
 	}
@@ -855,6 +889,47 @@ func bigramJaccard(a, b string) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+// RecallWithEvent is like Recall but also stores a retrieval_event row and returns
+// the event ID. Pass the event ID to FeedbackWithEvent to record which results were useful.
+func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, string, error) {
+	results, err := e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
+	if err != nil {
+		return nil, "", err
+	}
+
+	resultIDs := make([]string, len(results))
+	for i, r := range results {
+		resultIDs[i] = r.Memory.ID
+	}
+
+	event := &types.RetrievalEvent{
+		ID:        types.NewMemoryID(),
+		Project:   e.project,
+		Query:     query,
+		ResultIDs: resultIDs,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := e.backend.StoreRetrievalEvent(ctx, event); err != nil {
+		slog.Warn("store retrieval event failed", "err", err)
+		return results, "", nil
+	}
+	return results, event.ID, nil
+}
+
+// FeedbackWithEvent records which results from a retrieval event were useful.
+// It calls RecordFeedback (which increments times_retrieved/times_useful and
+// recomputes precision) and also applies the edge boost and spaced-repetition
+// boost via Feedback.
+func (e *SearchEngine) FeedbackWithEvent(ctx context.Context, eventID string, usefulIDs []string) error {
+	if err := e.backend.RecordFeedback(ctx, eventID, usefulIDs); err != nil {
+		return err
+	}
+	if len(usefulIDs) > 0 {
+		return e.Feedback(ctx, usefulIDs)
+	}
+	return nil
 }
 
 // SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).

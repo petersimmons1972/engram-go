@@ -21,12 +21,19 @@ const (
 
 // Relationship type constants. Values must match Python RelationType enum strings exactly.
 const (
-	RelTypeCausedBy   = "caused_by"
-	RelTypeRelatesTo  = "relates_to"
-	RelTypeDependsOn  = "depends_on"
-	RelTypeSupersedes = "supersedes"
-	RelTypeUsedIn     = "used_in"
-	RelTypeResolvedBy = "resolved_by"
+	RelTypeCausedBy    = "caused_by"
+	RelTypeRelatesTo   = "relates_to"
+	RelTypeDependsOn   = "depends_on"
+	RelTypeSupersedes  = "supersedes"
+	RelTypeUsedIn      = "used_in"
+	RelTypeResolvedBy  = "resolved_by"
+	RelTypeContradicts = "contradicts" // set by sleep consolidation daemon
+)
+
+// MemoryVersionChangeType constants for memory_versions.change_type.
+const (
+	VersionChangeUpdate     = "update"
+	VersionChangeInvalidate = "invalidate"
 )
 
 // MaxContentLength is the maximum allowed length of memory content in bytes.
@@ -45,12 +52,13 @@ var validMemoryTypes = map[string]bool{
 
 // validRelationTypes is the closed set of allowed relationship type strings.
 var validRelationTypes = map[string]bool{
-	RelTypeCausedBy:   true,
-	RelTypeRelatesTo:  true,
-	RelTypeDependsOn:  true,
-	RelTypeSupersedes: true,
-	RelTypeUsedIn:     true,
-	RelTypeResolvedBy: true,
+	RelTypeCausedBy:    true,
+	RelTypeRelatesTo:   true,
+	RelTypeDependsOn:   true,
+	RelTypeSupersedes:  true,
+	RelTypeUsedIn:      true,
+	RelTypeResolvedBy:  true,
+	RelTypeContradicts: true,
 }
 
 // ValidateMemoryType reports whether s is a valid memory type constant.
@@ -119,6 +127,80 @@ type Memory struct {
 	// StorageMode is "focused" (sentence-window chunks) or "document"
 	// (semantic chunking via ChunkDocument).
 	StorageMode string `json:"storage_mode"`
+
+	// ValidFrom and ValidTo define the known-truth window (bi-temporal model).
+	// ValidTo IS NULL while the memory is active. Set to NOW() on soft-delete.
+	ValidFrom *time.Time `json:"valid_from,omitempty"`
+	ValidTo   *time.Time `json:"valid_to,omitempty"`
+
+	// InvalidationReason records why the memory was soft-deleted.
+	InvalidationReason *string `json:"invalidation_reason,omitempty"`
+
+	// DynamicImportance is the learned importance score updated via spaced repetition.
+	// Starts at (5-Importance)/3 and drifts up on positive feedback, down on decay.
+	DynamicImportance *float64 `json:"dynamic_importance,omitempty"`
+
+	// RetrievalIntervalHrs is the spaced-repetition interval in hours.
+	// Grows by 1.5× on positive feedback; reset toward default on negative.
+	RetrievalIntervalHrs float64 `json:"retrieval_interval_hrs,omitempty"`
+
+	// NextReviewAt is when the memory should next be retrieved to avoid decay.
+	NextReviewAt *time.Time `json:"next_review_at,omitempty"`
+
+	// TimesRetrieved counts how many recall events included this memory.
+	TimesRetrieved int `json:"times_retrieved,omitempty"`
+
+	// TimesUseful counts how many of those retrievals were marked useful by the caller.
+	TimesUseful int `json:"times_useful,omitempty"`
+
+	// RetrievalPrecision is times_useful / times_retrieved, set once TimesRetrieved >= 5.
+	// nil during cold start (treated as 0.5 neutral in scoring).
+	RetrievalPrecision *float64 `json:"retrieval_precision,omitempty"`
+
+	// EpisodeID links this memory to the session episode during which it was stored.
+	// nil if the memory was stored outside of a named episode.
+	EpisodeID string `json:"episode_id,omitempty"`
+}
+
+// Episode is a named session context that groups memories stored during one
+// connected session. Created by memory_episode_start, closed by memory_episode_end.
+type Episode struct {
+	ID          string    `json:"id"`
+	Project     string    `json:"project"`
+	Description string    `json:"description"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
+	Summary     string    `json:"summary,omitempty"`
+}
+
+// RetrievalEvent records one recall invocation and the caller's feedback.
+type RetrievalEvent struct {
+	ID          string     `json:"id"`
+	Project     string     `json:"project"`
+	Query       string     `json:"query"`
+	ResultIDs   []string   `json:"result_ids"`
+	FeedbackIDs []string   `json:"feedback_ids,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	FeedbackAt  *time.Time `json:"feedback_at,omitempty"`
+}
+
+// MemoryVersion is one entry in the bi-temporal history of a Memory.
+// A row is written to memory_versions before every update and on every
+// soft-delete, giving a full audit trail.
+type MemoryVersion struct {
+	ID           string     `json:"id"`
+	MemoryID     string     `json:"memory_id"`
+	Content      string     `json:"content"`
+	MemoryType   string     `json:"memory_type"`
+	Tags         []string   `json:"tags"`
+	Importance   int        `json:"importance"`
+	SystemFrom   time.Time  `json:"system_from"`
+	SystemTo     *time.Time `json:"system_to,omitempty"`
+	ValidFrom    *time.Time `json:"valid_from,omitempty"`
+	ValidTo      *time.Time `json:"valid_to,omitempty"`
+	ChangeType   string     `json:"change_type"`
+	ChangeReason *string    `json:"change_reason,omitempty"`
+	Project      string     `json:"project"`
 }
 
 // Chunk is a sub-unit of a Memory, holding one text window and its embedding.

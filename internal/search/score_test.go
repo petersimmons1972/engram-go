@@ -27,24 +27,25 @@ func TestImportanceBoost(t *testing.T) {
 }
 
 func TestCompositeScore(t *testing.T) {
-	// importance=2 → neutral boost of 1.0 → composite equals the raw weighted sum
+	// importance=2 → neutral boost of 1.0; nil precision → cold-start neutral 0.5
+	// raw = cosine(0.45) + bm25(0.30) + recency(0.10) + precision(0.15*0.5) = 0.925; boost=1.0
 	s := search.CompositeScore(search.ScoreInput{
 		Cosine:     1.0,
 		BM25:       1.0,
 		HoursSince: 0,
 		Importance: 2,
 	})
-	// raw = cosine(0.50) + bm25(0.35) + recency(0.15) = 1.0; boost=1.0 → 1.0
-	require.InDelta(t, 1.0, s, 0.001)
+	require.InDelta(t, 0.925, s, 0.001)
 
-	// Zero cosine and BM25: only recency contributes; boost=1.0 for importance=2
+	// Zero cosine and BM25: recency + cold-start precision contribute; boost=1.0
+	// raw = 0.10*1.0 + 0.15*0.5 = 0.175
 	s2 := search.CompositeScore(search.ScoreInput{
 		Cosine:     0,
 		BM25:       0,
 		HoursSince: 0,
 		Importance: 2,
 	})
-	require.InDelta(t, 0.15, s2, 0.001)
+	require.InDelta(t, 0.175, s2, 0.001)
 
 	// Critical memory (importance=0) scores higher than trivial (importance=4)
 	sCritical := search.CompositeScore(search.ScoreInput{Cosine: 0.5, BM25: 0.5, HoursSince: 0, Importance: 0})
