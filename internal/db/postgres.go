@@ -428,7 +428,7 @@ func (b *PostgresBackend) UpdateMemory(
 
 	// Lock the row for the duration of the read-modify-write to prevent races.
 	row, err := tx.Query(ctx,
-		"SELECT * FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
 		id, b.project)
 	if err != nil {
 		return nil, err
@@ -1280,7 +1280,7 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 }
 
 func (b *PostgresBackend) ListAllProjects(ctx context.Context) ([]string, error) {
-	rows, err := b.pool.Query(ctx, "SELECT DISTINCT project FROM memories ORDER BY project")
+	rows, err := b.pool.Query(ctx, "SELECT DISTINCT project FROM memories WHERE valid_to IS NULL ORDER BY project")
 	if err != nil {
 		return nil, err
 	}
@@ -1645,13 +1645,21 @@ func (b *PostgresBackend) versionMemoryTx(ctx context.Context, tx pgx.Tx, m *typ
 	if changeReason != "" {
 		reason = &changeReason
 	}
+	now := time.Now().UTC()
+	// Close the system_to window on all prior open versions for this memory.
+	if _, err = tx.Exec(ctx,
+		"UPDATE memory_versions SET system_to=$1 WHERE memory_id=$2 AND system_to IS NULL",
+		now, m.ID,
+	); err != nil {
+		return fmt.Errorf("versionMemoryTx: close prior system_to: %w", err)
+	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO memory_versions
 			(id, memory_id, content, memory_type, tags, importance,
 			 system_from, valid_from, valid_to, change_type, change_reason, project)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		types.NewMemoryID(), m.ID, m.Content, m.MemoryType, tagsJSON, m.Importance,
-		time.Now().UTC(), m.ValidFrom, m.ValidTo, changeType, reason, m.Project,
+		now, m.ValidFrom, m.ValidTo, changeType, reason, m.Project,
 	)
 	return err
 }
