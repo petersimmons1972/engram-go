@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-cert-sync
+  namespace: default
+spec:
+  schedule: "0 6 * * 1"  # Weekly, Monday 06:00
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cert-sync
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cert-sync
+            image: python:3.12-alpine
+            env:
+            - name: TRUENAS_HOST
+              value: "trunas.petersimmons.com"
+            - name: TRUENAS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: truenas-api-key
+                  key: apiKey
+            - name: PG_HOST
+              value: "trunas.petersimmons.com"
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DATA_DIR
+              value: "/mnt/.ix-apps/app_mounts/postgres-consolidated/data/18/docker"
+            command: ["python3", "/scripts/sync-cert.py"]
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: tls
+              mountPath: /certs
+              readOnly: true
+          volumes:
+          - name: script
+            configMap:
+              name: cert-sync-script
+          - name: tls
+            secret:
+              secretName: petersimmons-tls

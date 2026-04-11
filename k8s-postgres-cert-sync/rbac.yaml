@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cert-sync
+  namespace: default
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cert-sync-egress
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: cert-sync
+  policyTypes:
+  - Egress
+  egress:
+  # TrueNAS — REST API (443) and Postgres (5432)
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 5432
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 192.168.0.189/32
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cert-sync
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["petersimmons-tls"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cert-sync
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: cert-sync
+  namespace: default
+roleRef:
+  kind: Role
+  name: cert-sync
+  apiGroup: rbac.authorization.k8s.io

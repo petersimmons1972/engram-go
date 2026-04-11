@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-sync-script
+  namespace: default
+data:
+  sync-cert.py: |
+    import os, ssl, json, urllib.request, sys, time
+
+    TRUENAS_HOST = os.environ["TRUENAS_HOST"]
+    TRUENAS_API_KEY = os.environ["TRUENAS_API_KEY"]
+    PG_DATA_DIR = os.environ["PG_DATA_DIR"]
+    PG_HOST = os.environ["PG_HOST"]
+    PG_PORT = int(os.environ.get("PG_PORT", "5432"))
+
+    # Read cert/key from mounted secret volume
+    with open("/certs/tls.crt", "rb") as f:
+        new_crt = f.read()
+    with open("/certs/tls.key", "rb") as f:
+        new_key = f.read()
+    print(f"K8s cert loaded ({len(new_crt)} bytes)")
+
+    # TrueNAS API helpers
+    tn_ctx = ssl.create_default_context()
+    tn_ctx.check_hostname = False
+    tn_ctx.verify_mode = ssl.CERT_NONE
+    tn_headers = {"Authorization": f"Bearer {TRUENAS_API_KEY}"}
+
+    def tn_get(path, data=None):
+        req = urllib.request.Request(
+            f"https://{TRUENAS_HOST}/api/v2.0/{path}", data=data,
+            headers={**tn_headers, "Content-Type": "application/json"}, method="GET" if data is None else "POST")
+        try:
+            with urllib.request.urlopen(req, context=tn_ctx) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            return None
+
+    def tn_post_json(path, payload):
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"https://{TRUENAS_HOST}/api/v2.0/{path}", data=data,
+            headers={**tn_headers, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, context=tn_ctx) as r:
+            return json.loads(r.read())
+
+    def tn_put_file(file_path, content):
+        boundary = "----TrueNASBoundary"
+        meta = json.dumps({"path": file_path})
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"data\"\r\n\r\n{meta}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"file\"\r\n\r\n"
+        ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(
+            f"https://{TRUENAS_HOST}/api/v2.0/filesystem/put", data=body,
+            headers={**tn_headers, "Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, context=tn_ctx) as r:
+                job_id = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            print(f"ERROR writing {file_path}: HTTP {e.code} {e.read()}")
+            sys.exit(1)
+        # Poll job
+        for _ in range(20):
+            result = json.loads(tn_get(f"core/get_jobs?id={job_id}") or b"[]")
+            if result and result[0]["state"] in ("SUCCESS", "FAILED"):
+                if result[0]["state"] == "FAILED":
+                    print(f"ERROR: put job failed for {file_path}: {result[0].get('error','')[:200]}")
+                    sys.exit(1)
+                break
+            time.sleep(1)
+        print(f"Written: {file_path}")
+
+    def tn_chown(file_path, uid, gid):
+        job_id = tn_post_json("filesystem/chown", {
+            "path": file_path, "uid": uid, "gid": gid, "options": {"recursive": False}})
+        for _ in range(20):
+            result = json.loads(tn_get(f"core/get_jobs?id={job_id}") or b"[]")
+            if result and result[0]["state"] in ("SUCCESS", "FAILED"):
+                if result[0]["state"] == "FAILED":
+                    print(f"ERROR: chown failed for {file_path}: {result[0].get('error','')[:200]}")
+                    sys.exit(1)
+                break
+            time.sleep(1)
+
+    print("Updating cert files on TrueNAS...")
+
+    tn_put_file(f"{PG_DATA_DIR}/server.crt", new_crt)
+    tn_chown(f"{PG_DATA_DIR}/server.crt", 999, 999)
+    tn_put_file(f"{PG_DATA_DIR}/server.key", new_key)
+    tn_chown(f"{PG_DATA_DIR}/server.key", 999, 999)
+
+    # Restart Postgres via TrueNAS API to load new cert
+    stop_job = tn_post_json("app/stop", "postgres-consolidated")
+    for _ in range(30):
+        result = json.loads(tn_get(f"core/get_jobs?id={stop_job}") or b"[]")
+        if result and result[0]["state"] in ("SUCCESS", "FAILED"):
+            break
+        import time; time.sleep(2)
+    print("Postgres stopped")
+
+    time.sleep(3)
+
+    start_job = tn_post_json("app/start", "postgres-consolidated")
+    for _ in range(30):
+        result = json.loads(tn_get(f"core/get_jobs?id={start_job}") or b"[]")
+        if result and result[0]["state"] in ("SUCCESS", "FAILED"):
+            break
+        time.sleep(2)
+    print("Postgres started — SSL cert updated successfully")
