@@ -248,6 +248,7 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		}
 		content := getString(mmap, "content", "")
 		if content == "" {
+			storeErrs = append(storeErrs, fmt.Sprintf("item %d: content is empty", idx))
 			continue
 		}
 		if len(content) > types.MaxContentLength {
@@ -389,7 +390,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 	var importance *int
 	if v, ok := args["importance"].(float64); ok {
-		n := int(v)
+		n := types.ValidateImportance(int(v))
 		importance = &n
 	}
 	updated, err := h.Engine.Correct(ctx, id, content, toStringSlice(args["tags"]), importance)
@@ -460,6 +461,9 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, err
 	}
 	ids := toStringSlice(args["memory_ids"])
+	if len(ids) > 100 {
+		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
+	}
 	if err := h.Engine.Feedback(ctx, ids); err != nil {
 		return nil, err
 	}
@@ -623,6 +627,11 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	project := getString(args, "project", "default")
 	question := getString(args, "question", "")
 	topK := getInt(args, "top_k", 10)
+	if topK < 1 {
+		topK = 1
+	} else if topK > 100 {
+		topK = 100
+	}
 	detail := getString(args, "detail", "full")
 
 	if question == "" {

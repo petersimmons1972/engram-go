@@ -714,7 +714,10 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	// 4. Compute MinHash signatures — O(n).
 	hasher := minhash.NewHasher(42)
-	idx := minhash.NewIndex(16, 8)
+	idx, err := minhash.NewIndex(16, 8)
+	if err != nil {
+		return result, fmt.Errorf("consolidate: %w", err)
+	}
 	for _, m := range filtered {
 		sig := hasher.Signature(m.Content)
 		idx.Add(m.ID, sig)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -94,7 +95,8 @@ func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, ad
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("claude: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("claude: HTTP %d: %s", resp.StatusCode, body)
 	}
 
 	var result messagesResponse
