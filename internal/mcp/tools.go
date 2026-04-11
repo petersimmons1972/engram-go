@@ -525,6 +525,9 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if err != nil {
 		return nil, err
 	}
+	if updated == nil {
+		return nil, fmt.Errorf("memory %q not found or has been soft-deleted", id)
+	}
 	return toolResult(updated)
 }
 
