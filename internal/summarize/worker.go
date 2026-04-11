@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/db"
 )
@@ -38,10 +39,20 @@ var summarizeHTTPClient = &http.Client{
 	},
 }
 
+// truncateRunes trims content to at most n UTF-8 characters (#121).
+// Using byte slicing on a rune string can split multi-byte characters.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n])
+}
+
 // SummarizeContent calls Ollama /api/generate synchronously. Returns the trimmed response.
 func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (string, error) {
-	if len(content) > maxContent {
-		content = content[:maxContent]
+	if utf8.RuneCountInString(content) > maxContent {
+		content = truncateRunes(content, maxContent)
 	}
 	prompt := summarizePrompt + content
 	body, err := json.Marshal(map[string]any{
@@ -101,10 +112,10 @@ func SummarizeOne(ctx context.Context, backend db.Backend, memoryID, ollamaURL, 
 }
 
 // ClaudeSummarize summarizes content using the Anthropic Messages API via client.
-// Content is truncated to maxContent bytes before being sent.
+// Content is truncated to maxContent runes before being sent (#121).
 func ClaudeSummarize(ctx context.Context, content string, client ClaudeCompleter) (string, error) {
-	if len(content) > maxContent {
-		content = content[:maxContent]
+	if utf8.RuneCountInString(content) > maxContent {
+		content = truncateRunes(content, maxContent)
 	}
 	system := "You are a memory summarizer. Respond only with a 1-2 sentence summary of the key fact or decision. No preamble."
 	result, err := client.Complete(ctx, system, content,

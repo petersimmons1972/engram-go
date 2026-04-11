@@ -766,8 +766,8 @@ const (
 
 // Consolidate prunes stale and cold memories and decays graph edges.
 // Returns a summary map of counts for each operation performed.
+// For Claude-assisted near-duplicate merging, use ConsolidateWithClaude.
 func (e *SearchEngine) Consolidate(ctx context.Context) (map[string]any, error) {
-	// TODO: Jaccard near-duplicate merge (threshold 0.85) is a future task.
 	pruned, err := e.backend.PruneStaleMemories(ctx, e.project, consolidateStaleAgeHours, consolidateMaxImportance)
 	if err != nil {
 		return nil, err
