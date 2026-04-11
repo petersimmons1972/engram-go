@@ -50,6 +50,8 @@ type Backend interface {
 	ListMemories(ctx context.Context, project string, opts ListOptions) ([]*types.Memory, error)
 	// TouchMemory increments access_count and sets last_accessed = now.
 	TouchMemory(ctx context.Context, id string) error
+	// TouchMemories batch-increments access_count and sets last_accessed = now for multiple IDs.
+	TouchMemories(ctx context.Context, ids []string) error
 
 	// ── Chunk CRUD ──────────────────────────────────────────────────────────
 

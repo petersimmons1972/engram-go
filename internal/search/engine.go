@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -156,38 +158,64 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		candidates = []chunk.ChunkCandidate{{Text: m.Content, ChunkType: "sentence_window"}}
 	}
 
-	var chunks []*types.Chunk
+	// Filter to new chunks only (deduplicate by hash) before embedding.
+	type pendingChunk struct {
+		idx       int
+		candidate chunk.ChunkCandidate
+		hash      string
+	}
+	var pending []pendingChunk
 	for i, c := range candidates {
 		hash := chunk.ChunkHash(c.Text)
-
 		exists, err := e.backend.ChunkHashExists(ctx, hash, m.ID)
 		if err != nil {
 			return nil, fmt.Errorf("check chunk hash: %w", err)
 		}
-		if exists {
-			continue
+		if !exists {
+			pending = append(pending, pendingChunk{idx: i, candidate: c, hash: hash})
 		}
+	}
 
-		embedding, err := e.getEmbedder().Embed(ctx, c.Text)
-		if err != nil {
-			return nil, fmt.Errorf("embed chunk %d: %w", i, err)
-		}
+	if len(pending) == 0 {
+		return nil, nil
+	}
 
-		ch := &types.Chunk{
-			ID:         types.NewMemoryID(),
-			MemoryID:   m.ID,
-			ChunkText:  c.Text,
-			ChunkIndex: i,
-			ChunkHash:  hash,
-			ChunkType:  c.ChunkType,
-			Project:    e.project,
-			Embedding:  embedding,
-		}
-		if c.HasHeading {
-			heading := c.SectionHeading
-			ch.SectionHeading = &heading
-		}
-		chunks = append(chunks, ch)
+	// Parallelize embedding across all new chunks (#118).
+	// Limit concurrency to 8 to avoid overwhelming Ollama.
+	const maxConcurrent = 8
+	chunks := make([]*types.Chunk, len(pending))
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(maxConcurrent)
+	embedder := e.getEmbedder()
+
+	for j, p := range pending {
+		j, p := j, p // capture loop variables
+		eg.Go(func() error {
+			embedding, err := embedder.Embed(egCtx, p.candidate.Text)
+			if err != nil {
+				return fmt.Errorf("embed chunk %d: %w", p.idx, err)
+			}
+			ch := &types.Chunk{
+				ID:         types.NewMemoryID(),
+				MemoryID:   m.ID,
+				ChunkText:  p.candidate.Text,
+				ChunkIndex: p.idx,
+				ChunkHash:  p.hash,
+				ChunkType:  p.candidate.ChunkType,
+				Project:    e.project,
+				Embedding:  embedding,
+			}
+			if p.candidate.HasHeading {
+				heading := p.candidate.SectionHeading
+				ch.SectionHeading = &heading
+			}
+			chunks[j] = ch
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 	return chunks, nil
 }
@@ -499,11 +527,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
 	}
 
-	// Update access timestamps.
+	// Batch-update access timestamps (#117 — replaces N+1 TouchMemory calls).
+	touchIDs := make([]string, len(results))
+	for i, r := range results {
+		touchIDs[i] = r.Memory.ID
+	}
+	if err := e.backend.TouchMemories(ctx, touchIDs); err != nil {
+		slog.Warn("touch memories failed", "err", err)
+	}
 	for _, r := range results {
-		if err := e.backend.TouchMemory(ctx, r.Memory.ID); err != nil {
-			slog.Warn("touch memory failed", "id", r.Memory.ID, "err", err)
-		}
 		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
 			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
 		}

@@ -1,0 +1,11 @@
+FROM cgr.dev/chainguard/postgres:latest-dev AS builder
+USER root
+RUN apk add --no-cache pgvector-18
+
+FROM cgr.dev/chainguard/postgres:latest
+USER root
+COPY --from=builder /usr/lib/postgresql18/vector.so /usr/lib/postgresql18/vector.so
+COPY --from=builder /usr/lib/postgresql18/bitcode/vector /usr/lib/postgresql18/bitcode/vector
+COPY --from=builder /usr/share/postgresql18/extension/vector*.sql /usr/share/postgresql18/extension/
+COPY --from=builder /usr/share/postgresql18/extension/vector.control /usr/share/postgresql18/extension/vector.control
+USER postgres

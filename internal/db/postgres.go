@@ -676,6 +676,19 @@ func (b *PostgresBackend) TouchMemory(ctx context.Context, id string) error {
 	return err
 }
 
+// TouchMemories batch-updates access_count and last_accessed for multiple memories
+// in a single query (#117), replacing the N+1 TouchMemory calls in RecallWithOpts.
+func (b *PostgresBackend) TouchMemories(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := b.pool.Exec(ctx,
+		"UPDATE memories SET access_count=access_count+1, last_accessed=$1 WHERE id=ANY($2)",
+		time.Now().UTC(), ids,
+	)
+	return err
+}
+
 // ── Chunk CRUD ────────────────────────────────────────────────────────────────
 
 func (b *PostgresBackend) StoreChunks(ctx context.Context, chunks []*types.Chunk) error {
@@ -884,13 +897,22 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 	return hits, rows.Err()
 }
 
+// ChunkEmbeddingDistance returns the minimum cosine distance between any chunk of
+// memAID and any chunk of memBID. Uses a LATERAL join so the HNSW index on
+// chunks.embedding is used for each probe — O(N·log M) instead of O(N×M) (#114).
 func (b *PostgresBackend) ChunkEmbeddingDistance(ctx context.Context, memAID, memBID string) (float64, error) {
 	var dist *float64
 	err := b.pool.QueryRow(ctx, `
-		SELECT MIN(ca.embedding <=> cb.embedding)
-		FROM chunks ca, chunks cb
-		WHERE ca.memory_id = $1 AND cb.memory_id = $2
-		  AND ca.embedding IS NOT NULL AND cb.embedding IS NOT NULL`,
+		SELECT MIN(sq.dist)
+		FROM chunks ca
+		JOIN LATERAL (
+			SELECT ca.embedding <=> cb.embedding AS dist
+			FROM chunks cb
+			WHERE cb.memory_id = $2 AND cb.embedding IS NOT NULL
+			ORDER BY dist ASC
+			LIMIT 1
+		) sq ON true
+		WHERE ca.memory_id = $1 AND ca.embedding IS NOT NULL`,
 		memAID, memBID,
 	).Scan(&dist)
 	if err != nil {
@@ -950,112 +972,94 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 	return err
 }
 
+// GetConnected performs BFS from memoryID via a single recursive CTE (#113).
+// Returns all connected memories up to maxHops hops away, with the shortest-path
+// metadata (rel_type, direction, strength) for each discovered node.
 func (b *PostgresBackend) GetConnected(ctx context.Context, memoryID string, maxHops int) ([]ConnectedResult, error) {
-	visited := map[string]struct{}{memoryID: {}}
-	var results []ConnectedResult
-	frontier := []string{memoryID}
-
-	for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
-		type pending struct {
-			nid       string
-			relType   string
-			direction string
-			strength  float64
-		}
-		var batch []pending
-
-		// Outgoing edges
-		rows, err := b.pool.Query(ctx,
-			"SELECT target_id, rel_type, strength FROM relationships WHERE source_id=ANY($1) AND project=$2",
-			frontier, b.project,
-		)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var nid, rt string
-			var strength float64
-			if err := rows.Scan(&nid, &rt, &strength); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if _, seen := visited[nid]; !seen {
-				visited[nid] = struct{}{}
-				batch = append(batch, pending{nid, rt, "outgoing", strength})
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-
-		// Incoming edges
-		rows, err = b.pool.Query(ctx,
-			"SELECT source_id, rel_type, strength FROM relationships WHERE target_id=ANY($1) AND project=$2",
-			frontier, b.project,
-		)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var nid, rt string
-			var strength float64
-			if err := rows.Scan(&nid, &rt, &strength); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if _, seen := visited[nid]; !seen {
-				visited[nid] = struct{}{}
-				batch = append(batch, pending{nid, rt, "incoming", strength})
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-
-		if len(batch) == 0 {
-			break
-		}
-
-		// Resolve new nodes in one query.
-		newIDs := make([]string, len(batch))
-		for i, p := range batch {
-			newIDs[i] = p.nid
-		}
-		memRows, err := b.pool.Query(ctx, "SELECT * FROM memories WHERE id=ANY($1) AND valid_to IS NULL", newIDs)
-		if err != nil {
-			return nil, err
-		}
-		memByID := map[string]*types.Memory{}
-		for memRows.Next() {
-			m, err := rowToMemory(memRows)
-			if err != nil {
-				memRows.Close()
-				return nil, err
-			}
-			memByID[m.ID] = m
-		}
-		memRows.Close()
-		if err := memRows.Err(); err != nil {
-			return nil, err
-		}
-
-		frontier = frontier[:0]
-		for _, p := range batch {
-			if m, ok := memByID[p.nid]; ok {
-				results = append(results, ConnectedResult{
-					Memory:    m,
-					RelType:   p.relType,
-					Direction: p.direction,
-					Strength:  p.strength,
-				})
-				frontier = append(frontier, p.nid)
-			}
-		}
+	if maxHops <= 0 {
+		return nil, nil
 	}
+	rows, err := b.pool.Query(ctx, `
+WITH RECURSIVE bfs(neighbor_id, rel_type, direction, strength, hop, path) AS (
+  -- Hop 1: direct outgoing neighbors of the seed node.
+  SELECT target_id, rel_type, 'outgoing'::text, strength, 1,
+         ARRAY[$1::text, target_id::text]
+  FROM relationships
+  WHERE source_id = $1 AND project = $2
+  UNION ALL
+  -- Hop 1: direct incoming neighbors of the seed node.
+  SELECT source_id, rel_type, 'incoming'::text, strength, 1,
+         ARRAY[$1::text, source_id::text]
+  FROM relationships
+  WHERE target_id = $1 AND project = $2
+  UNION ALL
+  -- Deeper hops: expand outgoing from current frontier, skip visited nodes.
+  SELECT r.target_id, r.rel_type, 'outgoing'::text, r.strength, b.hop + 1,
+         b.path || r.target_id::text
+  FROM relationships r
+  JOIN bfs b ON b.neighbor_id = r.source_id
+  WHERE r.project = $2 AND b.hop < $3 AND NOT r.target_id = ANY(b.path)
+  UNION ALL
+  -- Deeper hops: expand incoming from current frontier, skip visited nodes.
+  SELECT r.source_id, r.rel_type, 'incoming'::text, r.strength, b.hop + 1,
+         b.path || r.source_id::text
+  FROM relationships r
+  JOIN bfs b ON b.neighbor_id = r.target_id
+  WHERE r.project = $2 AND b.hop < $3 AND NOT r.source_id = ANY(b.path)
+)
+SELECT DISTINCT ON (bfs.neighbor_id)
+  bfs.neighbor_id, bfs.rel_type, bfs.direction, bfs.strength,
+  m.id, m.content, m.memory_type, m.project, m.tags, m.importance,
+  m.access_count, m.last_accessed, m.created_at, m.updated_at,
+  m.immutable, m.expires_at, m.summary, m.content_hash, m.storage_mode,
+  m.search_vector, m.valid_from, m.valid_to, m.invalidation_reason,
+  m.dynamic_importance, m.retrieval_interval_hrs, m.next_review_at,
+  m.times_retrieved, m.times_useful, m.retrieval_precision, m.episode_id
+FROM bfs
+JOIN memories m ON m.id = bfs.neighbor_id AND m.valid_to IS NULL
+ORDER BY bfs.neighbor_id, bfs.hop ASC`,
+		memoryID, b.project, maxHops,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	return results, nil
+	var results []ConnectedResult
+	for rows.Next() {
+		var neighborID, relType, direction string
+		var strength float64
+		var m types.Memory
+		var tagsJSON []byte
+		var searchVector, invalidationReason *string
+		var expiresAt, validTo, nextReviewAt *time.Time
+		err := rows.Scan(
+			&neighborID, &relType, &direction, &strength,
+			&m.ID, &m.Content, &m.MemoryType, &m.Project, &tagsJSON, &m.Importance,
+			&m.AccessCount, &m.LastAccessed, &m.CreatedAt, &m.UpdatedAt,
+			&m.Immutable, &expiresAt, &m.Summary, &m.ContentHash, &m.StorageMode,
+			&searchVector, &m.ValidFrom, &validTo, &invalidationReason,
+			&m.DynamicImportance, &m.RetrievalIntervalHrs, &nextReviewAt,
+			&m.TimesRetrieved, &m.TimesUseful, &m.RetrievalPrecision, &m.EpisodeID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if tagsJSON != nil {
+			_ = json.Unmarshal(tagsJSON, &m.Tags)
+		}
+		m.ExpiresAt = expiresAt
+		m.ValidTo = validTo
+		m.InvalidationReason = invalidationReason
+		m.NextReviewAt = nextReviewAt
+		results = append(results, ConnectedResult{
+			Memory:    &m,
+			RelType:   relType,
+			Direction: direction,
+			Strength:  strength,
+		})
+	}
+	return results, rows.Err()
 }
 
 func (b *PostgresBackend) BoostEdgesForMemory(ctx context.Context, memoryID string, factor float64) (int, error) {
