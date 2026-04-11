@@ -1809,8 +1809,8 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
-		&r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
-		&r.SearchVector, &r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
+		&r.SearchVector, &r.Immutable, &r.ExpiresAt, &r.Summary, &r.ContentHash, &r.StorageMode,
+		&r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
 		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
 		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
 	)

@@ -40,11 +40,20 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 }
 
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
-func (s *Server) Start(ctx context.Context, host string, port int, apiKey string) error {
+// baseURL overrides the URL advertised in SSE endpoint events; when empty,
+// it defaults to http://<host>:<port>. Set this to the externally-reachable
+// address (e.g. http://127.0.0.1:8788) when the bind address is 0.0.0.0,
+// so MCP clients forward auth headers to the correct host.
+func (s *Server) Start(ctx context.Context, host string, port int, apiKey string, baseURL string) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	slog.Info("engram MCP server starting", "addr", addr)
 
-	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(fmt.Sprintf("http://%s", addr)))
+	advertised := baseURL
+	if advertised == "" {
+		advertised = fmt.Sprintf("http://%s", addr)
+	}
+	slog.Info("SSE base URL", "url", advertised)
+	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
 
 	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{

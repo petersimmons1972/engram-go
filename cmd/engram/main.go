@@ -43,6 +43,7 @@ func run() error {
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
+	baseURL := fs.String("base-url", envOr("ENGRAM_BASE_URL", ""), "External URL advertised in SSE events (e.g. http://127.0.0.1:8788); defaults to http://<host>:<port>")
 	apiKey := fs.String("api-key", envOr("ENGRAM_API_KEY", ""), "Bearer token for auth (required; set ENGRAM_API_KEY)")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
 	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = default 8h)")
@@ -150,7 +151,7 @@ func run() error {
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
-	return srv.Start(ctx, *host, *port, *apiKey)
+	return srv.Start(ctx, *host, *port, *apiKey, *baseURL)
 }
 
 // isPrivateIP reports whether ipStr is an IP address that falls within a
