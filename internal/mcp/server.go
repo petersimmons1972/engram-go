@@ -66,11 +66,18 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
 	})
 
-	// GET /setup-token — localhost-only; returns the current bearer token so MCP clients can
-	// self-configure without manual copy-paste. Security: same boundary as ~/.claude.json on disk.
+	// GET /setup-token — local-network only; returns the current bearer token so MCP
+	// clients can self-configure without manual copy-paste.
+	//
+	// Security rationale: the Docker port mapping `127.0.0.1:8788->8788/tcp` already
+	// restricts external access at the host-network level. Inside the container, requests
+	// arriving from the host appear as Docker gateway IPs (172.x.x.x, 10.x.x.x) rather
+	// than 127.0.0.1 due to NAT. We accept RFC1918 addresses because they can only reach
+	// this port via the loopback-bound Docker port mapping — not from the network.
+	// The token is equivalent in sensitivity to ~/.claude.json which is already on disk.
 	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
-		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if host != "127.0.0.1" && host != "::1" {
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !isLocalAddress(remoteHost) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -126,6 +133,33 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string) http.Handler 
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isLocalAddress reports whether the IP string is a loopback or RFC1918 private address.
+// Used by /setup-token to accept requests arriving via Docker's NAT gateway (which presents
+// as a Docker bridge IP, not 127.0.0.1, even when the port is host-loopback-bound).
+func isLocalAddress(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	local := []string{
+		"127.0.0.0/8",    // loopback
+		"::1/128",        // IPv6 loopback
+		"10.0.0.0/8",     // RFC1918 — Docker bridge networks (10.x.x.x)
+		"172.16.0.0/12",  // RFC1918 — Docker default bridge (172.17-31.x.x)
+		"192.168.0.0/16", // RFC1918 — Docker custom networks
+	}
+	for _, cidr := range local {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) registerTools() {
