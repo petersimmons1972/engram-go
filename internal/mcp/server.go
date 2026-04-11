@@ -144,6 +144,16 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		})
 	})
 
+	// GET /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource —
+	// Return 404 to tell Claude Code this server does not use MCP OAuth (spec 2025-03-26).
+	// Without these handlers, the catch-all auth middleware returns 401, which Claude Code
+	// misinterprets as "OAuth required" and shows a "needs authentication" dialog every session.
+	notFound := func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}
+	mux.HandleFunc("/.well-known/oauth-authorization-server", notFound)
+	mux.HandleFunc("/.well-known/oauth-protected-resource", notFound)
+
 	// All other routes require Bearer authentication and per-IP rate limiting (#140).
 	rl := newRateLimiter()
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
