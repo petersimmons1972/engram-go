@@ -412,14 +412,10 @@ func splitSentences(text string) []string {
 	var parts []string
 	prev := 0
 	for _, loc := range locs {
-		// The match includes the punctuation char and the trailing whitespace.
-		// We want to keep the punctuation with the preceding sentence.
-		// loc[0] is the start of the punctuation char (which is part of the sentence),
-		// but our regex starts AFTER the punctuation (lookbehind equivalent: match the
-		// whitespace after [.!?]). So the split point is loc[0] for the sentence end.
-		// Actually sentenceSplitRE matches the whitespace AFTER [.!?], so loc[0] is
-		// the space. The punctuation at loc[0]-1 should stay with the sentence.
-		part := strings.TrimSpace(text[prev:loc[0]])
+		// sentenceSplitRE matches [.!?]\s+ so loc[0] is the punctuation char and
+		// loc[1] is just past the trailing whitespace. Slicing to loc[1] keeps the
+		// punctuation attached to the sentence; TrimSpace strips the whitespace.
+		part := strings.TrimSpace(text[prev:loc[1]])
 		if part != "" {
 			parts = append(parts, part)
 		}

@@ -79,7 +79,7 @@ func Ingest(dir string) ([]*types.Memory, error) {
 		now := time.Now().UTC()
 		m := &types.Memory{
 			ID:           types.NewMemoryID(),
-			Content:      string(data),
+			Content:      stripFrontMatter(string(data)),
 			MemoryType:   types.MemoryTypeContext,
 			Importance:   2,
 			StorageMode:  "document",
@@ -91,6 +91,21 @@ func Ingest(dir string) ([]*types.Memory, error) {
 		return nil
 	})
 	return memories, err
+}
+
+// stripFrontMatter removes YAML front matter (--- ... ---) from the beginning of s.
+// If no front matter is present the input is returned unchanged.
+func stripFrontMatter(s string) string {
+	const delim = "---\n"
+	if !strings.HasPrefix(s, delim) {
+		return s
+	}
+	rest := s[len(delim):]
+	idx := strings.Index(rest, "\n---\n")
+	if idx < 0 {
+		return s // malformed — leave as-is
+	}
+	return strings.TrimSpace(rest[idx+len("\n---\n"):])
 }
 
 // splitSections splits a markdown document on ## headings into per-section memories.
