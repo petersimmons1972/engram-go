@@ -3,6 +3,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -187,9 +189,14 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`)
 			return
 		}
-		got := []byte(r.Header.Get("Authorization"))
-		want := []byte("Bearer " + apiKey)
-		if subtle.ConstantTimeCompare(got, want) != 1 {
+		// ConstantTimeCompare leaks length when len(got) != len(want).
+		// Use ConstantTimeEq on the HMAC of each side so the comparison is
+		// always the same length regardless of input length (#129).
+		got := hmac.New(sha256.New, []byte(apiKey))
+		got.Write([]byte(r.Header.Get("Authorization")))
+		want := hmac.New(sha256.New, []byte(apiKey))
+		want.Write([]byte("Bearer " + apiKey))
+		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`)

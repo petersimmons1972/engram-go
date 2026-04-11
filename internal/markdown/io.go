@@ -4,6 +4,7 @@ package markdown
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,11 @@ func Ingest(dir string) ([]*types.Memory, error) {
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
-				return nil // skip unreadable directories, continue walk
+				// Log unreadable directories rather than silently skipping them
+				// so callers know the ingest result may be incomplete (#133).
+				slog.Warn("ingest: skipping unreadable directory",
+					"path", path, "err", err)
+				return nil
 			}
 			return err // abort on actual file-level errors
 		}

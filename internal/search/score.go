@@ -33,7 +33,10 @@ func RecencyDecay(hoursSince float64) float64 {
 //	importance=2 → 3/3 = 1.00 (neutral)
 //	importance=4 → 1/3 ≈ 0.33 (trivial)
 func ImportanceBoost(importance int) float64 {
-	return math.Max(0, float64(5-importance)) / 3.0
+	// Clamp to 0.1 floor so hand-inserted rows with importance>=5 still rank
+	// above zero — without this, importance=5 returns exactly 0.0 and the
+	// memory is invisible in composite scoring (#134).
+	return math.Max(0.1, float64(5-importance)) / 3.0
 }
 
 // CompositeScore combines vector, BM25, recency, precision, and importance signals

@@ -87,6 +87,12 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 	return e.embedder
 }
 
+// Embedder returns the current embedding client. Used by callers (e.g. consolidate
+// runner) that need the live embedder rather than a nil placeholder (#94).
+func (e *SearchEngine) Embedder() embed.Client {
+	return e.getEmbedder()
+}
+
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
 // and spaced-repetition importance decay). claudeClient may be nil, in which case
 // summarization falls back to Ollama. decayInterval controls how often the decay
@@ -1020,7 +1026,7 @@ func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK i
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := e.backend.StoreRetrievalEvent(ctx, event); err != nil {
-		slog.Warn("store retrieval event failed", "err", err)
+		slog.Warn("store retrieval event failed", "project", e.project, "err", err) // #96
 		return results, "", nil
 	}
 	return results, event.ID, nil

@@ -90,7 +90,7 @@ func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 	fmt.Fprintf(&sb, "Question: %s\n\n", question)
 
 	if len(ev.Conflicts) > 0 {
-		sb.WriteString("⚠️  CONFLICT NOTICE: The following memories contain contradicting claims:\n")
+		sb.WriteString("CONFLICT NOTICE: The following memories contain contradicting claims:\n") // #95: no emoji
 		for _, c := range ev.Conflicts {
 			fmt.Fprintf(&sb, "  CONFLICT: memory %s contradicts memory %s (strength %.2f)\n",
 				c.MemoryAID, c.MemoryBID, c.Strength)
@@ -99,7 +99,7 @@ func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 	}
 
 	if len(ev.InvalidatedSources) > 0 {
-		sb.WriteString("⚠️  INVALIDATED SOURCES (may be outdated): ")
+		sb.WriteString("INVALIDATED SOURCES (may be outdated): ") // #95: no emoji
 		sb.WriteString(strings.Join(ev.InvalidatedSources, ", "))
 		sb.WriteString("\n\n")
 	}

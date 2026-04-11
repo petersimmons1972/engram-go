@@ -47,7 +47,10 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 			defer wg.Done()
 			sem <- struct{}{}        // acquire slot
 			defer func() { <-sem }() // release slot
-			res, err := eng.Recall(ctx, query, topK, detail)
+			// Use RecallWithEvent so Feature 5 retrieval tracking is emitted
+			// for cross-project queries too (#92). The event IDs are not returned
+			// to the federated caller — they're stored per-project for local feedback.
+			res, _, err := eng.RecallWithEvent(ctx, query, topK, detail)
 			ch <- fanResult{res, err}
 		}()
 	}

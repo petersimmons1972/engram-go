@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -147,6 +148,12 @@ func getBool(args map[string]any, key string, def bool) bool {
 }
 
 // toStringSlice converts []any to []string, skipping non-string entries.
+// Applies per-tag and count limits to prevent tag injection attacks (#149).
+const (
+	maxTagCount  = 50
+	maxTagLength = 256
+)
+
 func toStringSlice(v any) []string {
 	arr, ok := v.([]any)
 	if !ok {
@@ -154,9 +161,17 @@ func toStringSlice(v any) []string {
 	}
 	result := make([]string, 0, len(arr))
 	for _, item := range arr {
-		if s, ok := item.(string); ok {
-			result = append(result, s)
+		s, ok := item.(string)
+		if !ok {
+			continue
 		}
+		if len(result) >= maxTagCount {
+			break // silently drop excess tags
+		}
+		if len(s) > maxTagLength {
+			s = s[:maxTagLength] // truncate oversized tag
+		}
+		result = append(result, s)
 	}
 	return result
 }
@@ -248,9 +263,13 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	if err != nil {
 		return nil, err
 	}
+	const maxBatchItems = 100 // guard against CPU/DB overload (#144)
 	items, _ := args["memories"].([]any)
 	if len(items) == 0 {
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
+	}
+	if len(items) > maxBatchItems {
+		return nil, fmt.Errorf("memory_store_batch: too many items (%d > max %d)", len(items), maxBatchItems)
 	}
 
 	// Validate all items before touching the database.
@@ -347,6 +366,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
+				// Log so callers know results may be partial (#130).
+				slog.Warn("handleMemoryRecall: skipping project — init failed",
+					"project", p, "err", err)
 				continue
 			}
 			engines = append(engines, h.Engine)
@@ -698,7 +720,7 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, nil)
+	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
 		InferRelationshipsMinSimilarity: minSim,
 		InferRelationshipsLimit:         limit,
@@ -925,6 +947,9 @@ func buildEvidenceMap(ctx context.Context, backend interface {
 	for _, m := range memories {
 		rels, err := backend.GetRelationships(ctx, project, m.ID)
 		if err != nil {
+			// Log so operators know confidence may be degraded (#132).
+			slog.Warn("buildEvidenceMap: GetRelationships failed — conflict confidence may be incomplete",
+				"project", project, "memory_id", m.ID, "err", err)
 			continue
 		}
 		for _, r := range rels {
