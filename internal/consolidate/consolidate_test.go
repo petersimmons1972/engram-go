@@ -458,3 +458,196 @@ func TestIsContradiction_NoFalsePositiveOnUnrelatedContent(t *testing.T) {
 	)
 	assert.False(t, got, "unrelated content must not trigger contradiction")
 }
+
+// ── AutoSupersede ─────────────────────────────────────────────────────────────
+
+// storeContradictingPair creates two memories with a contradicts edge between them
+// and stores chunks so vector search can return them. olderOffset is subtracted
+// from the current time to produce the older memory's CreatedAt.
+// Returns (newer, older) — the caller controls which should supersede which.
+func storeContradictingPair(t *testing.T, ctx context.Context, backend db.Backend, project string, olderOffset time.Duration) (newer, older *types.Memory) {
+	t.Helper()
+
+	// Older memory — created olderOffset in the past.
+	mOld := &types.Memory{
+		ID:         types.NewMemoryID(),
+		Content:    "PostgreSQL uses MVCC for concurrency control",
+		MemoryType: types.MemoryTypeArchitecture,
+		Project:    project,
+		Importance: 2,
+		StorageMode: "focused",
+	}
+	require.NoError(t, backend.StoreMemory(ctx, mOld))
+	// Back-date the older memory so the gap is clear.
+	_, err := backend.(*db.PostgresBackend).Pool().Exec(ctx,
+		"UPDATE memories SET created_at=$1, updated_at=$1 WHERE id=$2",
+		time.Now().UTC().Add(-olderOffset), mOld.ID,
+	)
+	require.NoError(t, err)
+
+	// Newer memory — created "now" (StoreMemory sets created_at=NOW()).
+	mNew := &types.Memory{
+		ID:         types.NewMemoryID(),
+		Content:    "PostgreSQL does not use MVCC for concurrency control",
+		MemoryType: types.MemoryTypeArchitecture,
+		Project:    project,
+		Importance: 2,
+		StorageMode: "focused",
+	}
+	require.NoError(t, backend.StoreMemory(ctx, mNew))
+
+	// Identical embeddings so vector search returns this pair.
+	vec := make([]float32, 768)
+	for i := range vec {
+		vec[i] = 0.5
+	}
+	require.NoError(t, backend.StoreChunks(ctx, []*types.Chunk{
+		{ID: types.NewMemoryID(), MemoryID: mOld.ID, ChunkText: mOld.Content, ChunkIndex: 0,
+			ChunkHash: "hash-sup-old-" + mOld.ID, ChunkType: "sentence_window", Project: project, Embedding: vec},
+	}))
+	require.NoError(t, backend.StoreChunks(ctx, []*types.Chunk{
+		{ID: types.NewMemoryID(), MemoryID: mNew.ID, ChunkText: mNew.Content, ChunkIndex: 0,
+			ChunkHash: "hash-sup-new-" + mNew.ID, ChunkType: "sentence_window", Project: project, Embedding: vec},
+	}))
+
+	// Manually create the contradicts edge (as DetectContradictions would).
+	require.NoError(t, backend.StoreRelationship(ctx, &types.Relationship{
+		ID:       types.NewMemoryID(),
+		SourceID: mOld.ID,
+		TargetID: mNew.ID,
+		RelType:  types.RelTypeContradicts,
+		Strength: 0.95,
+		Project:  project,
+	}))
+
+	return mNew, mOld
+}
+
+// TestAutoSupersede_NewerSupersedes verifies that when two memories have a
+// contradicts edge and the newer is >24 h younger, AutoSupersede:
+//  1. Creates a supersedes edge from newer → older.
+//  2. Soft-deletes the older memory (ValidTo is set).
+//  3. Returns count = 1.
+func TestAutoSupersede_NewerSupersedes(t *testing.T) {
+	project := uniqueProject("consolidate-supersede-basic")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+
+	mNew, mOld := storeContradictingPair(t, ctx, backend, project, 48*time.Hour)
+
+	count, err := runner.AutoSupersede(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "AutoSupersede must supersede exactly one memory")
+
+	// Verify supersedes edge exists: newer → older.
+	rels, err := backend.GetRelationships(ctx, project, mNew.ID)
+	require.NoError(t, err)
+	foundSupersedes := false
+	for _, rel := range rels {
+		if rel.RelType == types.RelTypeSupersedes && rel.SourceID == mNew.ID && rel.TargetID == mOld.ID {
+			foundSupersedes = true
+		}
+	}
+	assert.True(t, foundSupersedes, "a 'supersedes' edge from newer → older must exist after AutoSupersede")
+
+	// Verify older memory is soft-deleted (ValidTo is set).
+	oldMem, err := backend.GetMemory(ctx, mOld.ID)
+	require.NoError(t, err)
+	// GetMemory filters valid_to IS NULL — so a soft-deleted record returns nil.
+	assert.Nil(t, oldMem, "older memory must be soft-deleted after AutoSupersede")
+}
+
+// TestAutoSupersede_WithinThreshold_NoAction verifies that when two contradicting
+// memories are only 12 h apart, no supersession occurs.
+func TestAutoSupersede_WithinThreshold_NoAction(t *testing.T) {
+	project := uniqueProject("consolidate-supersede-threshold")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+
+	_, mOld := storeContradictingPair(t, ctx, backend, project, 12*time.Hour)
+
+	count, err := runner.AutoSupersede(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "AutoSupersede must not supersede memories within the 24 h threshold")
+
+	// Older memory must still be active.
+	oldMem, err := backend.GetMemory(ctx, mOld.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, oldMem, "older memory must remain active when within the 24 h threshold")
+}
+
+// TestAutoSupersede_SkipsNonContradicts verifies that a relates_to edge between
+// two memories is not treated as a supersession candidate.
+func TestAutoSupersede_SkipsNonContradicts(t *testing.T) {
+	project := uniqueProject("consolidate-supersede-skip")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+
+	// Two memories with only a relates_to edge (no contradicts).
+	m1 := &types.Memory{
+		ID: types.NewMemoryID(), Content: "Go uses goroutines for concurrency",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
+	}
+	m2 := &types.Memory{
+		ID: types.NewMemoryID(), Content: "Go goroutines are lightweight threads managed by the runtime",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
+	}
+	require.NoError(t, backend.StoreMemory(ctx, m1))
+	require.NoError(t, backend.StoreMemory(ctx, m2))
+	require.NoError(t, backend.StoreRelationship(ctx, &types.Relationship{
+		ID: types.NewMemoryID(), SourceID: m1.ID, TargetID: m2.ID,
+		RelType: types.RelTypeRelatesTo, Strength: 0.9, Project: project,
+	}))
+
+	count, err := runner.AutoSupersede(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "AutoSupersede must ignore non-contradicts edges")
+}
+
+// TestAutoSupersede_AlreadySuperseded verifies that a memory already soft-deleted
+// is not superseded a second time.
+func TestAutoSupersede_AlreadySuperseded(t *testing.T) {
+	project := uniqueProject("consolidate-supersede-already")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+
+	mNew, mOld := storeContradictingPair(t, ctx, backend, project, 48*time.Hour)
+
+	// Pre-soft-delete the older memory.
+	ok, err := backend.SoftDeleteMemory(ctx, project, mOld.ID, "pre-deleted")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// AutoSupersede should be a no-op — the target is already gone.
+	count, err := runner.AutoSupersede(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "AutoSupersede must skip already soft-deleted memories")
+
+	// No new supersedes edge should appear on mNew.
+	rels, err := backend.GetRelationships(ctx, project, mNew.ID)
+	require.NoError(t, err)
+	for _, rel := range rels {
+		assert.NotEqual(t, types.RelTypeSupersedes, rel.RelType,
+			"no supersedes edge must be created when older memory is already deleted")
+	}
+}

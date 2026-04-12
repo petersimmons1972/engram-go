@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -149,6 +150,26 @@ func sameVersionSet(a, b []string) bool {
 type RunOptions struct {
 	InferRelationshipsMinSimilarity float64
 	InferRelationshipsLimit         int
+
+	// LLM contradiction detection (opt-in).
+	// When LLMContradictionDetection is true and OllamaURL is non-empty,
+	// DetectContradictions runs a second pass using the local Ollama model to
+	// classify high-similarity pairs that the heuristic missed. This catches
+	// competing affirmative claims ("model is X" vs "model is Y") that carry no
+	// negation, version, or temporal markers.
+	LLMContradictionDetection bool
+	OllamaURL                 string
+	OllamaModel               string
+	// LLMMaxCalls caps how many Ollama calls are made per DetectContradictions
+	// cycle to bound latency. Zero or negative means use the default (10).
+	LLMMaxCalls int
+
+	// AutoSupersede opts into automatic supersession: when a contradiction is
+	// detected and one memory is >24 h newer than the other, create a
+	// "supersedes" edge from the newer to the older and soft-delete the older.
+	// Opt-in because it is a destructive action — callers must set this
+	// explicitly; the default (false) leaves both memories active.
+	AutoSupersede bool
 }
 
 // Runner executes consolidation strategies against a single project.
@@ -252,14 +273,34 @@ func (r *Runner) InferRelationships(ctx context.Context, minSimilarity float64, 
 	return created, nil
 }
 
+// uncaughtPair is a high-similarity memory pair that the heuristic did not
+// flag as a contradiction. It is queued for the optional LLM second pass.
+type uncaughtPair struct {
+	sourceID string
+	targetID string
+	textA    string
+	textB    string
+	strength float64
+}
+
 // DetectContradictions scans all memory pairs with cosine similarity >= minSimilarity
 // and creates a "contradicts" edge when the text content signals opposing claims.
-// It skips pairs that already have any relationship edge (same guard as InferRelationships).
+// It skips pairs that already have a "contradicts" relationship edge.
 // Returns the number of new contradicts edges created.
 //
-// Contradiction detection is purely pattern-based (no LLM). See isContradiction for
-// the three heuristics. False negatives are acceptable; false positives are not.
+// The primary detection is pattern-based (no LLM). See isContradiction for the
+// three heuristics. When called from RunAll with LLMContradictionDetection=true,
+// pairs that the heuristic misses are passed to a local Ollama model for a
+// second opinion. Use DetectContradictions directly (without RunOptions) when
+// the LLM pass is not needed.
 func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64, limit int) (int, error) {
+	return r.detectContradictions(ctx, minSimilarity, limit, RunOptions{})
+}
+
+// detectContradictions is the internal implementation of DetectContradictions
+// that accepts RunOptions so RunAll can pass LLM settings without changing the
+// public API signature.
+func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64, limit int, opts RunOptions) (int, error) {
 	chunks, err := r.backend.GetAllChunksWithEmbeddings(ctx, r.project, limit)
 	if err != nil {
 		return 0, fmt.Errorf("consolidate: DetectContradictions: GetAllChunksWithEmbeddings: %w", err)
@@ -275,6 +316,10 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 
 	processed := make(map[pairKey]bool)
 	created := 0
+
+	// uncaught collects pairs that passed the similarity threshold but were not
+	// flagged by the heuristic. They are candidates for the LLM second pass.
+	var uncaught []uncaughtPair
 
 	for memID, chunk := range memChunks {
 		// Load existing contradicts edges — only skip pairs that already have a
@@ -320,8 +365,18 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 				continue
 			}
 
-			// Only create the edge when the text content signals opposing claims.
+			// Heuristic pass — pattern-based, no LLM.
 			if !isContradiction(chunk.ChunkText, hit.ChunkText) {
+				// Queue for LLM second pass if enabled.
+				if opts.LLMContradictionDetection && opts.OllamaURL != "" {
+					uncaught = append(uncaught, uncaughtPair{
+						sourceID: memID,
+						targetID: hit.MemoryID,
+						textA:    chunk.ChunkText,
+						textB:    hit.ChunkText,
+						strength: similarity,
+					})
+				}
 				processed[key] = true
 				continue
 			}
@@ -342,7 +397,153 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 		}
 	}
 
+	// LLM second pass — classify pairs that the heuristic missed.
+	// Best-effort: errors from individual LLM calls are logged and skipped so
+	// a transient Ollama failure does not abort the entire consolidation run.
+	if opts.LLMContradictionDetection && opts.OllamaURL != "" && len(uncaught) > 0 {
+		maxCalls := opts.LLMMaxCalls
+		if maxCalls <= 0 {
+			maxCalls = 10
+		}
+		llmCalls := 0
+		for _, pair := range uncaught {
+			if llmCalls >= maxCalls {
+				break
+			}
+			isContra, err := ClassifyContradictionLLM(ctx, pair.textA, pair.textB, opts.OllamaURL, opts.OllamaModel)
+			if err != nil {
+				// Best-effort: skip this pair, keep going.
+				continue
+			}
+			llmCalls++
+			if !isContra {
+				continue
+			}
+			rel := &types.Relationship{
+				ID:       types.NewMemoryID(),
+				SourceID: pair.sourceID,
+				TargetID: pair.targetID,
+				RelType:  types.RelTypeContradicts,
+				Strength: pair.strength,
+				Project:  r.project,
+			}
+			if err := r.backend.StoreRelationship(ctx, rel); err != nil {
+				return created, fmt.Errorf("consolidate: DetectContradictions: LLM pass StoreRelationship: %w", err)
+			}
+			created++
+		}
+	}
+
 	return created, nil
+}
+
+// supersedeThreshold is the minimum age gap between two contradicting memories
+// required for AutoSupersede to act. Pairs closer than this are ambiguous —
+// they may have been recorded in the same session from different sources —
+// so we leave them for human review rather than silently discarding one.
+const supersedeThreshold = 24 * time.Hour
+
+// AutoSupersede resolves contradictions where one memory is unambiguously newer
+// than the other. For every "contradicts" edge in this project it:
+//
+//  1. Fetches both memories.
+//  2. Skips the pair if either memory is already soft-deleted.
+//  3. Skips the pair if the age gap between CreatedAt timestamps is <= 24 h.
+//  4. Creates a "supersedes" edge from the newer memory to the older (skips if
+//     the edge already exists — StoreRelationship is ON CONFLICT DO UPDATE, so
+//     an existing supersedes edge is simply a no-op here).
+//  5. Soft-deletes the older memory with reason "superseded by <newerID>".
+//
+// Returns the number of memories that were superseded (soft-deleted) this run.
+func (r *Runner) AutoSupersede(ctx context.Context) (int, error) {
+	// Collect all memory IDs for this project so we can look up their edges.
+	allIDs, err := r.backend.GetAllMemoryIDs(ctx, r.project)
+	if err != nil {
+		return 0, fmt.Errorf("consolidate: AutoSupersede: GetAllMemoryIDs: %w", err)
+	}
+
+	// Walk every memory, gather all contradicts edges.  Use a canonical pair key
+	// to avoid processing the same (A,B) pair twice when both A and B are in the
+	// allIDs map.
+	seenPairs := make(map[pairKey]bool)
+	superseded := 0
+
+	for memID := range allIDs {
+		rels, err := r.backend.GetRelationships(ctx, r.project, memID)
+		if err != nil {
+			return superseded, fmt.Errorf("consolidate: AutoSupersede: GetRelationships(%s): %w", memID, err)
+		}
+
+		for _, rel := range rels {
+			if rel.RelType != types.RelTypeContradicts {
+				continue
+			}
+
+			key := canonical(rel.SourceID, rel.TargetID)
+			if seenPairs[key] {
+				continue
+			}
+			seenPairs[key] = true
+
+			// Fetch both memories.  GetMemory only returns active (valid_to IS NULL)
+			// records, so a nil result means the memory has already been soft-deleted.
+			memA, err := r.backend.GetMemory(ctx, rel.SourceID)
+			if err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: GetMemory(%s): %w", rel.SourceID, err)
+			}
+			memB, err := r.backend.GetMemory(ctx, rel.TargetID)
+			if err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: GetMemory(%s): %w", rel.TargetID, err)
+			}
+
+			// Skip if either memory has already been soft-deleted.
+			if memA == nil || memB == nil {
+				continue
+			}
+
+			// Determine which is newer.  Use absolute difference so the direction
+			// of the contradicts edge does not affect the outcome.
+			diff := memA.CreatedAt.Sub(memB.CreatedAt)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff <= supersedeThreshold {
+				// Too close in time — ambiguous, leave for human review.
+				continue
+			}
+
+			// Assign newer / older.
+			var newer, older *types.Memory
+			if memA.CreatedAt.After(memB.CreatedAt) {
+				newer, older = memA, memB
+			} else {
+				newer, older = memB, memA
+			}
+
+			// Create the supersedes edge (newer → older).  StoreRelationship uses
+			// ON CONFLICT DO UPDATE so calling it on an already-existing edge is safe.
+			supRel := &types.Relationship{
+				ID:       types.NewMemoryID(),
+				SourceID: newer.ID,
+				TargetID: older.ID,
+				RelType:  types.RelTypeSupersedes,
+				Strength: 1.0,
+				Project:  r.project,
+			}
+			if err := r.backend.StoreRelationship(ctx, supRel); err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: StoreRelationship: %w", err)
+			}
+
+			// Soft-delete the older memory.
+			reason := "superseded by " + newer.ID
+			if _, err := r.backend.SoftDeleteMemory(ctx, r.project, older.ID, reason); err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: SoftDeleteMemory(%s): %w", older.ID, err)
+			}
+			superseded++
+		}
+	}
+
+	return superseded, nil
 }
 
 // RunAll executes all configured consolidation strategies and returns a stats map.
@@ -359,13 +560,24 @@ func (r *Runner) RunAll(ctx context.Context, opts RunOptions) (map[string]any, e
 		return nil, fmt.Errorf("consolidate: RunAll: %w", err)
 	}
 
-	contradictions, err := r.DetectContradictions(ctx, minSim, limit)
+	// Pass the full RunOptions to detectContradictions so the LLM second pass
+	// receives the Ollama URL and model without a public API change.
+	contradictions, err := r.detectContradictions(ctx, minSim, limit, opts)
 	if err != nil {
 		return nil, fmt.Errorf("consolidate: RunAll: DetectContradictions: %w", err)
+	}
+
+	superseded := 0
+	if opts.AutoSupersede {
+		superseded, err = r.AutoSupersede(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("consolidate: RunAll: AutoSupersede: %w", err)
+		}
 	}
 
 	return map[string]any{
 		"inferred_relationships":  inferred,
 		"detected_contradictions": contradictions,
+		"auto_superseded":         superseded,
 	}, nil
 }

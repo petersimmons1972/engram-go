@@ -84,6 +84,13 @@ func (b *PostgresBackend) Close() {
 	b.pool.Close()
 }
 
+// Pool returns the underlying connection pool. Intended for integration test
+// helpers that need to issue raw SQL (e.g. back-dating created_at for time-based
+// test scenarios). Not part of the Backend interface.
+func (b *PostgresBackend) Pool() *pgxpool.Pool {
+	return b.pool
+}
+
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 	// Serialize concurrent project initialization with a per-project advisory lock (#105).
 	// Two backends for the same project initializing simultaneously would both pass the
