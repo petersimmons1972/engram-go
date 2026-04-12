@@ -45,7 +45,7 @@ The server starts on port 8788. Cold start: under 200ms. Memory at idle: 18 MB.
 
 <p align="center"><img src="docs/architecture.svg" alt="Engram Architecture" width="900"></p>
 
-Your AI client speaks MCP over SSE. Engram exposes 28 tools — store, recall, connect, correct, diagnose, episode management, cross-project federation, and more. PostgreSQL with pgvector stores everything. Ollama (local) runs the embeddings. When Ollama is unavailable, search falls back to BM25 and recency. All tools stay functional.
+Your AI client speaks MCP over SSE. Engram exposes 31 tools — store, recall, connect, correct, diagnose, episode management, cross-project federation, and lightweight safety verification wrappers for constraint checks before acting. PostgreSQL with pgvector stores everything. Ollama (local) runs the embeddings. When Ollama is unavailable, search falls back to BM25 and recency. All tools stay functional.
 
 ---
 
@@ -57,7 +57,7 @@ Your AI client speaks MCP over SSE. Engram exposes 28 tools — store, recall, c
 | [How It Works](docs/how-it-works.md) | Four-signal search, knowledge graph, context efficiency |
 | [Getting Started](docs/getting-started.md) | Install and connect in 5 minutes |
 | [Connecting Your IDE](docs/connecting.md) | Claude Code, Cursor, VS Code, Windsurf, Claude Desktop |
-| [All 28 Tools](docs/tools.md) | MCP tool reference with usage examples |
+| [All 31 Tools](docs/tools.md) | MCP tool reference with usage examples |
 | [Claude Advisor](docs/claude-advisor.md) | AI-powered summarization, consolidation, re-ranking |
 | [Operations](docs/operations.md) | Backup, security, data portability |
 
@@ -65,7 +65,7 @@ Your AI client speaks MCP over SSE. Engram exposes 28 tools — store, recall, c
 
 ## v3.0 vs v2 vs v1
 
-v1 was Python. v2 rewrote in Go. v3.0 adds required authentication, auto-episode starts on every SSE connection, and 28 tools.
+v1 was Python. v2 rewrote in Go. v3.0 adds required authentication, auto-episode starts on every SSE connection, and 31 tools.
 
 | | v1 (Python) | v2 (Go) | v3.0 (Go) |
 |---|---|---|---|

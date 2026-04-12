@@ -74,7 +74,7 @@
   <!-- Code lines -->
   <text x="638" y="158" font-family="'Courier New', monospace" font-size="13" fill="#3fb950">make setup</text>
   <!-- Annotation two lines -->
-  <text x="630" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">28 tools now available</text>
+  <text x="630" y="206" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">31 tools now available</text>
   <text x="630" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8b949e">in every Claude Code session</text>
 
   <!-- Bottom strip text: ASCII only, no Unicode -->

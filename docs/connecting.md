@@ -2,7 +2,7 @@
 
 Engram speaks MCP over Server-Sent Events. Any MCP-compatible client that supports SSE transport works.
 
-The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 28 tools, and they appear in your model context.
+The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the available tools, and they appear in your model context.
 
 ---
 
@@ -35,7 +35,7 @@ Verify the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
+You should see `engram` listed with 30 tools (31 if `ANTHROPIC_API_KEY` is set). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
 
 ---
 
@@ -175,8 +175,8 @@ The SSE transport is a long-lived HTTP connection. Some reverse proxies and fire
 **"Authorization required" error.**
 You have `ENGRAM_API_KEY` set but the IDE is not sending the header. Check the IDE config and confirm the header key is `Authorization` and the value starts with `Bearer `.
 
-**Wrong number of tools (expect 27 or 28).**
-`memory_reason` is only registered when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 27 tools. With it, you see 28. Set the key and restart `engram-go`:
+**Wrong number of tools (expect 30 or 31).**
+`memory_reason` is only registered when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 30 tools. With it, you see 31. Set the key and restart `engram-go`:
 
 ```bash
 docker compose restart engram-go
@@ -185,4 +185,4 @@ docker compose restart engram-go
 ---
 
 **Previous:** [Getting Started](getting-started.md) — prerequisites, startup, and configuration reference.  
-**Next:** [Tools Reference](tools.md) — all 28 tools with parameters and examples.
+**Next:** [Tools Reference](tools.md) — all 31 tools with parameters and examples.

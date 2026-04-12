@@ -1,4 +1,4 @@
-# All 28 Tools
+# All 31 Tools
 
 You open a session. The codebase is the same as yesterday but you have no memory of it. Before writing a line, you need to know: what decisions did we make about auth? Are there any known bugs in this module? What was the next thing we planned to do?
 
@@ -435,6 +435,51 @@ Run this periodically on active projects — monthly or after a major work sessi
 
 ---
 
+## Safety Compatibility Wrappers
+
+Engram now exposes three lightweight safety wrappers that sit on top of the existing memory store. They are intentionally narrow: they do not add a second policy database, and they do not replace `memory_recall`. Instead, they read high-signal memories — typically `importance=0` or `importance=1` items with tags like `constraint`, `policy`, `env:production`, `action:ddl`, or `requires_approval` — and turn them into a pre-action safety check.
+
+### get_constraints
+
+Returns the most relevant policy and constraint memories for a query, or the highest-signal constraint-like memories in a project when no query is provided.
+
+```python
+get_constraints(
+    query="Create index on the production users table",
+    project="my-app"
+)
+```
+
+Use this when you want the raw boundary records before deciding what to do next.
+
+### check_constraints
+
+Checks a proposed action against Engram memories that look like constraints or policy records and returns a lightweight decision (`proceed`, `warn`, `require_approval`, `block`) plus the matched memories.
+
+```python
+check_constraints(
+    proposed_action="Create index on the production users table",
+    project="my-app"
+)
+```
+
+This is the fast path for "does anything in memory say this action is dangerous or approval-gated?"
+
+### verify_before_acting
+
+Runs the same constraint lookup as `check_constraints`, then layers on risk baselines and freshness checks. If the action is inherently dangerous — force-push to main, destructive SQL on production, direct schema change on production — the tool escalates the decision even when memory coverage is thin.
+
+```python
+verify_before_acting(
+    proposed_action="DELETE FROM events on the production database",
+    project="my-app"
+)
+```
+
+This is the best default when an agent is about to take an action rather than answer a question.
+
+---
+
 ## Memory Types Reference
 
 | Type | Use it for | Example |
@@ -454,4 +499,4 @@ Filtering by type is a hard filter — `memory_types=["error"]` returns only err
 
 ---
 
-*28 tools total: 27 registered unconditionally + `memory_reason` when `ANTHROPIC_API_KEY` is set.*
+*31 tools total: 30 registered unconditionally + `memory_reason` when `ANTHROPIC_API_KEY` is set.*

@@ -287,6 +287,18 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryRecall(ctx, pool, req, cfg)
 			}},
+		{"get_constraints", "List high-signal policy and constraint memories relevant to a query or project",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleGetConstraints(ctx, pool, req)
+			}},
+		{"check_constraints", "Check a proposed action against recalled constraints and policy memories",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleCheckConstraints(ctx, pool, req)
+			}},
+		{"verify_before_acting", "Run a lightweight pre-action verification gate over constraints, freshness, and risk",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleVerifyBeforeActing(ctx, pool, req)
+			}},
 		{"memory_list", "List memories with optional filters",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryList(ctx, pool, req)

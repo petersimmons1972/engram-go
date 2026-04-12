@@ -104,8 +104,8 @@ For architecture diagrams: component boxes should align on a 40px or 60px grid. 
 docs/hero.svg             — hero banner (needs v3.0 update: aria-label, tagline, badge count)
 docs/scoring.svg          — four-signal scoring (needs v3.0 footer update)
 docs/architecture.svg     — system architecture (needs v3.0 footer update)
-docs/ide-ecosystem.svg    — IDE connection diagram (needs v3.0 + 28 tools update)
-docs/quick-start-flow.svg — getting started flow (needs 28 tools update)
+docs/ide-ecosystem.svg    — IDE connection diagram (needs v3.0 footer update)
+docs/quick-start-flow.svg — getting started flow
 docs/session-workflow.svg — three-moment session pattern
 docs/knowledge-graph.svg  — graph traversal visualization
 docs/db-schema.svg        — five-table schema

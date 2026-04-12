@@ -101,7 +101,7 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
+You should see `engram` listed with 30 tools (31 if `ANTHROPIC_API_KEY` is set). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
 
 ---
 
