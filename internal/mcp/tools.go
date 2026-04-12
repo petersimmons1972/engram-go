@@ -367,6 +367,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		engines := make([]*search.SearchEngine, 0, len(projectNames))
 		var firstHandle *EngineHandle // retained for conflict enrichment
+		var firstProject string       // project name that firstHandle was initialized for
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
@@ -377,6 +378,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			}
 			if firstHandle == nil {
 				firstHandle = h
+				firstProject = p
 			}
 			engines = append(engines, h.Engine)
 		}
@@ -389,7 +391,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			// All projects share the same Postgres instance, so the backend from
 			// the first successfully-initialized engine can serve cross-project
 			// GetRelationships and GetMemory calls (#154).
-			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), projectNames[0], results)
+			// EnrichWithConflicts uses each result's Memory.Project for the
+			// per-memory lookup; firstProject is the fallback for the rare empty case.
+			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), firstProject, results)
 			out["conflicting_results"] = conflicts
 			out["conflict_count"] = len(conflicts)
 		}

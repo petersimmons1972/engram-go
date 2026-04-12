@@ -327,14 +327,30 @@ func CallHandleMemoryIngest(
 
 	var res IngestResult
 	if v, ok := out["ingested"]; ok {
-		res.Ingested = int(v.(float64))
+		f, ok := v.(float64)
+		if !ok {
+			t.Fatalf("ingested: expected float64, got %T", v)
+		}
+		res.Ingested = int(f)
 	}
 	if v, ok := out["skipped"]; ok {
-		res.Skipped = int(v.(float64))
+		f, ok := v.(float64)
+		if !ok {
+			t.Fatalf("skipped: expected float64, got %T", v)
+		}
+		res.Skipped = int(f)
 	}
 	if raw, ok := out["ids"]; ok {
-		for _, id := range raw.([]any) {
-			res.IDs = append(res.IDs, id.(string))
+		slice, ok := raw.([]any)
+		if !ok {
+			t.Fatalf("ids: expected []any, got %T", raw)
+		}
+		for _, id := range slice {
+			s, ok := id.(string)
+			if !ok {
+				t.Fatalf("ids element: expected string, got %T", id)
+			}
+			res.IDs = append(res.IDs, s)
 		}
 	}
 	return res

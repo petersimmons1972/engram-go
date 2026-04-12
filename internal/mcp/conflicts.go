@@ -59,7 +59,15 @@ func EnrichWithConflicts(
 			continue
 		}
 
-		rels, err := backend.GetRelationships(ctx, project, r.Memory.ID)
+		// Use the memory's own project for the relationship lookup so that
+		// federated results (which span multiple projects) are each scoped
+		// correctly. Fall back to the caller-supplied project only when the
+		// memory's Project field is empty (which the schema prevents in practice).
+		proj := r.Memory.Project
+		if proj == "" {
+			proj = project
+		}
+		rels, err := backend.GetRelationships(ctx, proj, r.Memory.ID)
 		if err != nil {
 			slog.Warn("EnrichWithConflicts: GetRelationships failed",
 				"memory_id", r.Memory.ID, "err", err)
