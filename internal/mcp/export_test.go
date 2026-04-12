@@ -153,6 +153,58 @@ func CallHandleMemoryRecall(
 	return out
 }
 
+// CallHandleMemoryRecallFederated invokes handleMemoryRecall on the federated
+// path (projects list) and returns the decoded output map. conflictSlice
+// entries in "conflicting_results" are re-hydrated to []types.ConflictingResult
+// so callers can make typed assertions.
+func CallHandleMemoryRecallFederated(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	projects []string,
+	query string,
+	includeConflicts bool,
+) map[string]any {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects":          projects,
+		"query":             query,
+		"top_k":             float64(10),
+		"detail":            "full",
+		"include_conflicts": includeConflicts,
+	}
+
+	result, err := handleMemoryRecall(ctx, pool, req, Config{})
+	if err != nil {
+		t.Fatalf("handleMemoryRecall (federated): %v", err)
+	}
+
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content items")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		t.Fatalf("decode tool result JSON: %v", err)
+	}
+
+	// Re-hydrate conflicting_results to []types.ConflictingResult if present.
+	if raw, ok := out["conflicting_results"]; ok {
+		b, _ := json.Marshal(raw)
+		var cr []types.ConflictingResult
+		if err := json.Unmarshal(b, &cr); err == nil {
+			out["conflicting_results"] = cr
+		}
+	}
+	return out
+}
+
 // CallHandleMemoryResummarize invokes handleMemoryResummarize for tests and
 // returns (cleared count, message). Bridges the mcp_test package to the
 // unexported handler.
