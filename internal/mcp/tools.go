@@ -386,6 +386,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	rerank := getBool(args, "rerank", false)
+	includeConflicts := getBool(args, "include_conflicts", false)
 	var opts search.RecallOpts
 	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
@@ -393,21 +394,27 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 
 	// Use RecallWithEvent to log the retrieval; fall back to RecallWithOpts when
 	// re-ranking is requested (RecallWithEvent does not support a custom reranker).
+	var results []types.SearchResult
+	var eventID string
 	if opts.Reranker != nil {
-		results, err := h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
+		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err
 		}
-		return toolResult(map[string]any{"results": results, "count": len(results)})
+	} else {
+		results, eventID, err = h.Engine.RecallWithEvent(ctx, query, topK, detail)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	results, eventID, err := h.Engine.RecallWithEvent(ctx, query, topK, detail)
-	if err != nil {
-		return nil, err
-	}
 	out := map[string]any{"results": results, "count": len(results)}
 	if eventID != "" {
 		out["event_id"] = eventID
+	}
+	if includeConflicts {
+		conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
+		out["conflicting_results"] = conflicts
 	}
 	return toolResult(out)
 }
@@ -716,6 +723,9 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	project := getString(args, "project", "default")
 	minSim := getFloat(args, "min_similarity", 0.7)
 	limit := getInt(args, "limit", 500)
+	if limit < 1 || limit > 5000 {
+		limit = 500
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err

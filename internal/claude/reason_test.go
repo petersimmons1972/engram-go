@@ -147,6 +147,94 @@ func TestReasonSystem_ContainsRejectionInstruction(t *testing.T) {
 		"reasonSystem must instruct Claude to name rejected alternatives when conflicts exist")
 }
 
+// TestReasonWithConflictAwareness_CallsAPI verifies the conflict-aware path
+// hits the Claude API with a prompt containing conflict annotations.
+func TestReasonWithConflictAwareness_CallsAPI(t *testing.T) {
+	var capturedBody struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(textResponse("conflict-aware answer"))
+	}))
+	defer srv.Close()
+
+	c, err := claude.New("test-key")
+	require.NoError(t, err)
+	c.BaseURL = srv.URL
+
+	ev := claude.EvidenceMap{
+		Memories: []*types.Memory{
+			makeMemory("m1", "PostgreSQL uses MVCC"),
+			makeMemory("m2", "PostgreSQL does not use MVCC"),
+		},
+		Conflicts: []claude.ConflictPair{
+			{MemoryAID: "m1", MemoryBID: "m2", Strength: 0.9},
+		},
+		Confidence: 0.5,
+	}
+	result, err := c.ReasonWithConflictAwareness(context.Background(), "Does Postgres use MVCC?", ev)
+	require.NoError(t, err)
+	require.Equal(t, "conflict-aware answer", result)
+
+	// Prompt must contain conflict annotations with content excerpts.
+	prompt := capturedBody.Messages[0].Content
+	require.Contains(t, prompt, "CONFLICT")
+	require.Contains(t, prompt, "CLAIM A")
+	require.Contains(t, prompt, "CLAIM B")
+	require.Contains(t, prompt, "MVCC")
+}
+
+// TestReasonWithConflictAwareness_TruncatesConflicts verifies that when memories
+// exceed the cap (20), conflicts referencing truncated memories are filtered out.
+func TestReasonWithConflictAwareness_TruncatesConflicts(t *testing.T) {
+	var capturedBody struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(textResponse("truncated answer"))
+	}))
+	defer srv.Close()
+
+	c, err := claude.New("test-key")
+	require.NoError(t, err)
+	c.BaseURL = srv.URL
+
+	// Create 25 memories — only first 20 will survive the cap.
+	memories := make([]*types.Memory, 25)
+	for i := range memories {
+		memories[i] = makeMemory("mem-"+strings.Repeat("0", 3)+string(rune('A'+i)), "content")
+	}
+
+	ev := claude.EvidenceMap{
+		Memories: memories,
+		Conflicts: []claude.ConflictPair{
+			// This conflict is between memories 0 and 1 — both within cap.
+			{MemoryAID: memories[0].ID, MemoryBID: memories[1].ID, Strength: 0.8},
+			// This conflict references memory 22 — beyond the 20 cap.
+			{MemoryAID: memories[0].ID, MemoryBID: memories[22].ID, Strength: 0.7},
+		},
+		Confidence: 0.5,
+	}
+	_, err = c.ReasonWithConflictAwareness(context.Background(), "test", ev)
+	require.NoError(t, err)
+
+	prompt := capturedBody.Messages[0].Content
+	// The in-cap conflict should appear.
+	require.Contains(t, prompt, memories[0].ID)
+	require.Contains(t, prompt, memories[1].ID)
+	// The out-of-cap memory should NOT appear in the conflict section.
+	require.NotContains(t, prompt, memories[22].ID,
+		"conflict referencing a memory beyond the 20-cap must be filtered out")
+}
+
 func TestReasonOverMemories_AdvisorMaxUsesIsTwo(t *testing.T) {
 	var capturedBody struct {
 		Tools []struct {

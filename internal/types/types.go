@@ -284,3 +284,14 @@ type FTSResult struct {
 	Memory *Memory `json:"memory"`
 	Score  float64 `json:"score"`
 }
+
+// ConflictingResult represents a memory that contradicts one of the recall
+// results, discovered by following "contradicts" edges in the relationship
+// graph. Returned in the conflicting_results array when include_conflicts=true
+// is passed to memory_recall.
+type ConflictingResult struct {
+	Memory        *Memory `json:"memory"`
+	ContradictsID string  `json:"contradicts_id"` // ID of the recalled memory this contradicts
+	Strength      float64 `json:"strength"`        // contradiction edge strength
+	MatchedChunk  string  `json:"matched_chunk"`   // first 500 bytes of content
+}

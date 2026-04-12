@@ -50,10 +50,24 @@ func (c *Client) ReasonOverMemories(ctx context.Context, question string, memori
 
 // ReasonWithConflictAwareness synthesizes an answer from an EvidenceMap, using a
 // conflict-aware prompt so Claude acknowledges uncertainty when contradictions exist.
+//
+// When the memory set exceeds maxMemoriesInReason, both Memories and Conflicts are
+// trimmed so conflict annotations never reference memory IDs absent from the listing.
 func (c *Client) ReasonWithConflictAwareness(ctx context.Context, question string, ev EvidenceMap) (string, error) {
-	memories := ev.Memories
-	if len(memories) > maxMemoriesInReason {
-		ev.Memories = memories[:maxMemoriesInReason]
+	if len(ev.Memories) > maxMemoriesInReason {
+		kept := make(map[string]bool, maxMemoriesInReason)
+		for _, m := range ev.Memories[:maxMemoriesInReason] {
+			kept[m.ID] = true
+		}
+		ev.Memories = ev.Memories[:maxMemoriesInReason]
+		// Filter conflicts to only include pairs where both IDs survive the cap.
+		filtered := ev.Conflicts[:0:0] // new slice, no shared backing
+		for _, c := range ev.Conflicts {
+			if kept[c.MemoryAID] && kept[c.MemoryBID] {
+				filtered = append(filtered, c)
+			}
+		}
+		ev.Conflicts = filtered
 	}
 	prompt := BuildConflictAwarePrompt(question, ev)
 	return c.Complete(ctx, reasonSystem, prompt, "claude-sonnet-4-6", "claude-opus-4-6", 2, 2048)

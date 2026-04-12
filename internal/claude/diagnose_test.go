@@ -44,7 +44,8 @@ func TestDiagnoseMemories_WithContradicts(t *testing.T) {
 	assert.Equal(t, "m1", result.Conflicts[0].MemoryAID)
 	assert.Equal(t, "m2", result.Conflicts[0].MemoryBID)
 	assert.InDelta(t, 0.9, result.Conflicts[0].Strength, 0.001)
-	assert.Less(t, result.Confidence, 1.0, "confidence must drop when conflicts exist")
+	assert.InDelta(t, 0.5, result.Confidence, 0.001,
+		"confidence with 1 conflict: 1/(1+1) = 0.5")
 }
 
 // TestDiagnoseMemories_InvalidatedSources verifies that memories with ValidTo set
