@@ -283,3 +283,59 @@ func CallHandleMemoryCorrectTagsOnly(
 		t.Fatalf("handleMemoryCorrect (tags-only): %v", err)
 	}
 }
+
+// IngestResult holds the decoded output of a memory_ingest call.
+type IngestResult struct {
+	Ingested int
+	Skipped  int
+	IDs      []string
+}
+
+// CallHandleMemoryIngest invokes handleMemoryIngest and returns decoded counts.
+// dataDir is set as Config.DataDir (the allowed root); path is the ingest path
+// passed as the "path" argument.
+func CallHandleMemoryIngest(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project, dataDir, path string,
+) IngestResult {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": project,
+		"path":    path,
+	}
+
+	cfg := Config{DataDir: dataDir}
+	result, err := handleMemoryIngest(ctx, pool, req, cfg)
+	if err != nil {
+		t.Fatalf("handleMemoryIngest: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content items")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		t.Fatalf("decode tool result JSON: %v", err)
+	}
+
+	var res IngestResult
+	if v, ok := out["ingested"]; ok {
+		res.Ingested = int(v.(float64))
+	}
+	if v, ok := out["skipped"]; ok {
+		res.Skipped = int(v.(float64))
+	}
+	if raw, ok := out["ids"]; ok {
+		for _, id := range raw.([]any) {
+			res.IDs = append(res.IDs, id.(string))
+		}
+	}
+	return res
+}
