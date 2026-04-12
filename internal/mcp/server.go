@@ -381,6 +381,19 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryAdopt(ctx, pool, req)
 			}},
+		// Safety constraint verification tools
+		{"get_constraints", "List constraint and policy memories relevant to an optional query",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleGetConstraints(ctx, pool, req)
+			}},
+		{"check_constraints", "Classify a proposed action and return matching constraints with a verification decision",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleCheckConstraints(ctx, pool, req)
+			}},
+		{"verify_before_acting", "Run the full constraint verification pipeline and return a proceed/warn/require_approval/block decision",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleVerifyBeforeActing(ctx, pool, req)
+			}},
 	}
 
 	for _, t := range tools {
