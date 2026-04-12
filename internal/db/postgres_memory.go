@@ -534,7 +534,7 @@ func (b *PostgresBackend) GetIntegrityStats(ctx context.Context, project string)
 	if err := b.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM memories
 		WHERE project=$1 AND valid_to IS NULL AND content_hash IS NOT NULL
-		AND content_hash != encode(sha256(content::bytea),'hex')`, project,
+		AND content_hash != encode(sha256(convert_to(content,'UTF8')),'hex')`, project,
 	).Scan(&stats.Corrupt); err != nil {
 		return stats, err
 	}

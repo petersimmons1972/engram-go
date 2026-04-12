@@ -4,10 +4,11 @@
 -- for all new writes. Memories stored before that change have NULL hashes,
 -- which causes GetIntegrityStats to report 0% coverage.
 --
--- Postgres's built-in sha256() function produces the same value as the Go
--- contentHash() helper in postgres_memory.go: encode(sha256(content::bytea),'hex').
+-- convert_to(content, 'UTF8') returns raw UTF-8 bytes, matching Go's
+-- sha256.Sum256([]byte(content)). content::bytea misinterprets backslashes
+-- as bytea escape sequences and fails on content containing them.
 
 UPDATE memories
-SET content_hash = encode(sha256(content::bytea), 'hex')
+SET content_hash = encode(sha256(convert_to(content, 'UTF8')), 'hex')
 WHERE content_hash IS NULL
   AND valid_to IS NULL;
