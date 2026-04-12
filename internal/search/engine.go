@@ -1024,9 +1024,11 @@ func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK i
 		return nil, "", err
 	}
 
-	resultIDs := make([]string, len(results))
-	for i, r := range results {
-		resultIDs[i] = r.Memory.ID
+	resultIDs := make([]string, 0, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			resultIDs = append(resultIDs, r.Memory.ID)
+		}
 	}
 
 	event := &types.RetrievalEvent{

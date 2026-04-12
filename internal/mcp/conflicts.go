@@ -10,6 +10,7 @@ package mcp
 import (
 	"context"
 	"log/slog"
+	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -71,9 +72,16 @@ func EnrichWithConflicts(
 			}
 
 			// Identify the other endpoint of the contradiction.
-			otherID := rel.TargetID
-			if rel.TargetID == r.Memory.ID {
+			// Use explicit branch for each case; skip if the edge doesn't
+			// involve the current memory at all (defensive against bad backend data).
+			var otherID string
+			switch r.Memory.ID {
+			case rel.SourceID:
+				otherID = rel.TargetID
+			case rel.TargetID:
 				otherID = rel.SourceID
+			default:
+				continue // edge does not involve this memory — skip
 			}
 
 			// Skip memories already in primary results or already emitted.
@@ -92,10 +100,15 @@ func EnrichWithConflicts(
 				continue
 			}
 
-			// Truncate content to 500 bytes for the matched_chunk preview.
+			// Truncate content to 500 bytes for the matched_chunk preview,
+			// walking back to the nearest valid UTF-8 rune boundary.
 			chunk := otherMem.Content
 			if len(chunk) > 500 {
-				chunk = chunk[:500]
+				b := []byte(chunk)[:500]
+				for !utf8.Valid(b) {
+					b = b[:len(b)-1]
+				}
+				chunk = string(b)
 			}
 
 			conflicts = append(conflicts, types.ConflictingResult{

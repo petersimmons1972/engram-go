@@ -411,11 +411,11 @@ func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64
 				break
 			}
 			isContra, err := ClassifyContradictionLLM(ctx, pair.textA, pair.textB, opts.OllamaURL, opts.OllamaModel)
+			llmCalls++ // count every attempt — erroring calls still consume latency budget
 			if err != nil {
 				// Best-effort: skip this pair, keep going.
 				continue
 			}
-			llmCalls++
 			if !isContra {
 				continue
 			}

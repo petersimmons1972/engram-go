@@ -7,6 +7,7 @@ package claude
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -103,17 +104,11 @@ func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 
 			// Include content excerpts so Claude can name what it is rejecting.
 			if mA, ok := memByID[c.MemoryAID]; ok {
-				excerpt := mA.Content
-				if len(excerpt) > 200 {
-					excerpt = excerpt[:200] + "..."
-				}
+				excerpt := truncateUTF8(mA.Content, 200) + "..."
 				fmt.Fprintf(&sb, "    CLAIM A [%s]: %s\n", mA.ID, excerpt)
 			}
 			if mB, ok := memByID[c.MemoryBID]; ok {
-				excerpt := mB.Content
-				if len(excerpt) > 200 {
-					excerpt = excerpt[:200] + "..."
-				}
+				excerpt := truncateUTF8(mB.Content, 200) + "..."
 				fmt.Fprintf(&sb, "    CLAIM B [%s]: %s\n", mB.ID, excerpt)
 			}
 		}
@@ -137,4 +132,17 @@ func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// truncateUTF8 returns s truncated to at most maxBytes bytes, stopping at the
+// nearest valid UTF-8 rune boundary so the result is always valid UTF-8.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	b := []byte(s)[:maxBytes]
+	for !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
 }
