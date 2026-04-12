@@ -346,6 +346,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		topK = 10
 	}
 	detail := getString(args, "detail", "summary")
+	includeConflicts := getBool(args, "include_conflicts", false)
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames := toStringSlice(args["projects"])
@@ -363,6 +364,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			projectNames = all
 		}
 		engines := make([]*search.SearchEngine, 0, len(projectNames))
+		var firstHandle *EngineHandle // retained for conflict enrichment
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
@@ -371,13 +373,25 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 					"project", p, "err", err)
 				continue
 			}
+			if firstHandle == nil {
+				firstHandle = h
+			}
 			engines = append(engines, h.Engine)
 		}
 		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
 		if err != nil {
 			return nil, err
 		}
-		return toolResult(map[string]any{"results": results, "count": len(results)})
+		out := map[string]any{"results": results, "count": len(results)}
+		if includeConflicts && firstHandle != nil {
+			// All projects share the same Postgres instance, so the backend from
+			// the first successfully-initialized engine can serve cross-project
+			// GetRelationships and GetMemory calls (#154).
+			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), projectNames[0], results)
+			out["conflicting_results"] = conflicts
+			out["conflict_count"] = len(conflicts)
+		}
+		return toolResult(out)
 	}
 
 	// Single-project path.
@@ -386,7 +400,6 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	rerank := getBool(args, "rerank", false)
-	includeConflicts := getBool(args, "include_conflicts", false)
 	var opts search.RecallOpts
 	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
