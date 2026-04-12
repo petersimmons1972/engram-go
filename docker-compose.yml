@@ -83,7 +83,7 @@ services:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:-engram}@postgres:5432/engram
       - OLLAMA_URL=http://ollama:11434
       - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-nomic-embed-text}
-      - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.1:latest}
+      - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # Advertise the host-visible URL so Claude Code forwards auth headers correctly.
       # Without this, SSE events say http://0.0.0.0:8788 but Claude Code's auth
       # headers are tied to 127.0.0.1 — causing 401s on every MCP message POST.
