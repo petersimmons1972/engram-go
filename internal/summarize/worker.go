@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,14 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/db"
 )
+
+// ErrModelNotFound is returned by SummarizeContent when Ollama responds with
+// HTTP 404 — meaning the requested model has not been pulled yet. The worker
+// backs off for modelNotFoundBackoff before retrying so it does not spam logs
+// or burn connections every 30 seconds. (#151)
+var ErrModelNotFound = errors.New("ollama model not found")
+
+const modelNotFoundBackoff = 10 * time.Minute
 
 // ClaudeCompleter is the subset of claude.Client used for summarization.
 type ClaudeCompleter interface {
@@ -79,6 +88,9 @@ func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (st
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("%w: %s (model=%q)", ErrModelNotFound, strings.TrimSpace(string(respBody)), model)
+		}
 		return "", fmt.Errorf("ollama generate: HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -148,14 +160,15 @@ func SummarizeOneWithClaude(ctx context.Context, backend db.Backend, memoryID st
 
 // Worker is a background goroutine that fills summary IS NULL rows.
 type Worker struct {
-	backend      db.Backend
-	project      string
-	ollamaURL    string
-	model        string
-	enabled      bool
-	claudeClient ClaudeCompleter
-	cancel       context.CancelFunc
-	done         chan struct{}
+	backend             db.Backend
+	project             string
+	ollamaURL           string
+	model               string
+	enabled             bool
+	claudeClient        ClaudeCompleter
+	cancel              context.CancelFunc
+	done                chan struct{}
+	modelNotFoundUntil  time.Time // backoff expiry after ErrModelNotFound (#151)
 }
 
 // NewWorker creates a Worker. enabled=false makes Start a no-op.
@@ -247,6 +260,10 @@ func (w *Worker) runOnce(ctx context.Context) {
 	if w.backend == nil {
 		return
 	}
+	// Skip the entire batch while in model-not-found backoff (#151).
+	if !w.modelNotFoundUntil.IsZero() && time.Now().Before(w.modelNotFoundUntil) {
+		return
+	}
 	rows, err := w.backend.GetMemoriesPendingSummary(ctx, w.project, batchSize)
 	if err != nil {
 		slog.Warn("summarize fetch failed", "err", err)
@@ -264,9 +281,19 @@ func (w *Worker) runOnce(ctx context.Context) {
 			summary, err = SummarizeContent(ctx, row.Content, w.ollamaURL, w.model)
 		}
 		if err != nil {
+			if errors.Is(err, ErrModelNotFound) {
+				// Log once at ERROR level then back off — do not spam on every tick (#151).
+				slog.Error("summarize model not found — backing off",
+					"project", w.project, "model", w.model,
+					"backoff", modelNotFoundBackoff, "err", err)
+				w.modelNotFoundUntil = time.Now().Add(modelNotFoundBackoff)
+				return
+			}
 			slog.Warn("summarize failed", "id", row.ID, "err", err)
 			continue
 		}
+		// Successful summarization — clear any previous backoff.
+		w.modelNotFoundUntil = time.Time{}
 		if err := w.backend.StoreSummary(ctx, row.ID, summary); err != nil {
 			slog.Warn("store summary failed", "id", row.ID, "err", err)
 		}
