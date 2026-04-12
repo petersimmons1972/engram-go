@@ -392,14 +392,40 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
 
-	// Use RecallWithEvent to log the retrieval; fall back to RecallWithOpts when
-	// re-ranking is requested (RecallWithEvent does not support a custom reranker).
+	// Use RecallWithEvent to log the retrieval; on the rerank path we call
+	// RecallWithOpts (which supports a custom Reranker) and then manually
+	// record the retrieval event + warm times_retrieved so the feedback loop
+	// and precision signal work regardless of which path was taken.
 	var results []types.SearchResult
 	var eventID string
 	if opts.Reranker != nil {
 		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err
+		}
+		// Post-hoc event recording — mirrors RecallWithEvent internals.
+		rerankIDs := make([]string, 0, len(results))
+		for _, r := range results {
+			if r.Memory != nil {
+				rerankIDs = append(rerankIDs, r.Memory.ID)
+			}
+		}
+		if len(rerankIDs) > 0 {
+			event := &types.RetrievalEvent{
+				ID:        types.NewMemoryID(),
+				Project:   project,
+				Query:     query,
+				ResultIDs: rerankIDs,
+				CreatedAt: time.Now().UTC(),
+			}
+			if storeErr := h.Engine.Backend().StoreRetrievalEvent(ctx, event); storeErr != nil {
+				slog.Warn("store retrieval event (rerank path) failed", "project", project, "err", storeErr)
+			} else {
+				eventID = event.ID
+				if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, rerankIDs); incErr != nil {
+					slog.Warn("auto-increment times_retrieved (rerank path) failed", "project", project, "err", incErr)
+				}
+			}
 		}
 	} else {
 		results, eventID, err = h.Engine.RecallWithEvent(ctx, query, topK, detail)
@@ -758,10 +784,13 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	llmMaxCalls := getInt(args, "llm_max_calls", 10)
 	autoSupersede := getBool(args, "auto_supersede", false)
 
+	contradictionLimit := getInt(args, "contradiction_limit", 0) // 0 → falls back to limit
+
 	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
 		InferRelationshipsMinSimilarity: minSim,
 		InferRelationshipsLimit:         limit,
+		ContradictionDetectionLimit:     contradictionLimit,
 		LLMContradictionDetection:       llmDetect,
 		OllamaURL:                       cfg.OllamaURL,
 		OllamaModel:                     llmModel,

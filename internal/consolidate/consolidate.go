@@ -150,6 +150,10 @@ func sameVersionSet(a, b []string) bool {
 type RunOptions struct {
 	InferRelationshipsMinSimilarity float64
 	InferRelationshipsLimit         int
+	// ContradictionDetectionLimit caps the number of chunks scanned during
+	// DetectContradictions independently of InferRelationshipsLimit.
+	// Zero means fall back to InferRelationshipsLimit.
+	ContradictionDetectionLimit int
 
 	// LLM contradiction detection (opt-in).
 	// When LLMContradictionDetection is true and OllamaURL is non-empty,
@@ -562,7 +566,12 @@ func (r *Runner) RunAll(ctx context.Context, opts RunOptions) (map[string]any, e
 
 	// Pass the full RunOptions to detectContradictions so the LLM second pass
 	// receives the Ollama URL and model without a public API change.
-	contradictions, err := r.detectContradictions(ctx, minSim, limit, opts)
+	// Use ContradictionDetectionLimit when set; fall back to InferRelationshipsLimit.
+	cdLimit := opts.ContradictionDetectionLimit
+	if cdLimit <= 0 {
+		cdLimit = limit
+	}
+	contradictions, err := r.detectContradictions(ctx, minSim, cdLimit, opts)
 	if err != nil {
 		return nil, fmt.Errorf("consolidate: RunAll: DetectContradictions: %w", err)
 	}
