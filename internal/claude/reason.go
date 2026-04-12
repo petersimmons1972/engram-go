@@ -13,7 +13,20 @@ const (
 	maxMemoryContentInReason = 1000
 )
 
-const reasonSystem = "You are a reasoning engine operating over a structured memory store. Reason over the provided memories to answer the question. Cite memory IDs where relevant. If uncertain, escalate to your advisor."
+const reasonSystem = "You are a reasoning engine operating over a structured memory store. " +
+	"Reason over the provided memories to answer the question. Cite memory IDs where relevant. " +
+	"IMPORTANT: If conflicts or contradicting claims exist among the memories, you MUST explicitly " +
+	"name the rejected alternatives and state why they were rejected. " +
+	"Format rejected claims as: 'Note: [rejected claim from memory ID] is not correct because [reason]. " +
+	"The authoritative source is [memory ID].' " +
+	"If uncertain about which claim is authoritative, state both and flag the uncertainty. " +
+	"If uncertain about the answer entirely, escalate to your advisor."
+
+// ReasonSystemPrompt returns the system prompt used by all reasoning operations.
+// Exposed for testing so the constant cannot silently regress.
+func ReasonSystemPrompt() string {
+	return reasonSystem
+}
 
 // ReasonOverMemories recalls and synthesizes an answer from memories.
 // It limits the memory set to maxMemoriesInReason (20) entries, truncates each

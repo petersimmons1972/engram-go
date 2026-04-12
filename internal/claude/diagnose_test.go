@@ -81,3 +81,46 @@ func TestConflictAwarePrompt_WithConflicts(t *testing.T) {
 	assert.Contains(t, prompt, "m2", "prompt must name the conflicting memory IDs")
 	assert.Contains(t, prompt, "What does MVCC do?", "question must appear in prompt")
 }
+
+// TestConflictAwarePrompt_IncludesRejectionInstruction verifies that
+// BuildConflictAwarePrompt instructs Claude to explicitly name rejected
+// alternatives when conflicts are present.
+func TestConflictAwarePrompt_IncludesRejectionInstruction(t *testing.T) {
+	m1 := &types.Memory{ID: "m1", Content: "X uses MVCC", Project: "test"}
+	m2 := &types.Memory{ID: "m2", Content: "X does not use MVCC", Project: "test"}
+
+	evidence := claude.EvidenceMap{
+		Memories: []*types.Memory{m1, m2},
+		Conflicts: []claude.ConflictPair{
+			{MemoryAID: "m1", MemoryBID: "m2", Strength: 0.85},
+		},
+		Confidence: 0.5,
+	}
+
+	prompt := claude.BuildConflictAwarePrompt("Does X use MVCC?", evidence)
+	assert.Contains(t, prompt, "explicitly name", "prompt must instruct Claude to explicitly name rejected alternatives")
+}
+
+// TestConflictAwarePrompt_IncludesConflictingContent verifies that
+// BuildConflictAwarePrompt includes actual memory content for both sides of
+// a conflict, not just their IDs.
+func TestConflictAwarePrompt_IncludesConflictingContent(t *testing.T) {
+	m1 := &types.Memory{ID: "m1", Content: "X uses MVCC", Project: "test"}
+	m2 := &types.Memory{ID: "m2", Content: "X does not use MVCC", Project: "test"}
+
+	evidence := claude.EvidenceMap{
+		Memories: []*types.Memory{m1, m2},
+		Conflicts: []claude.ConflictPair{
+			{MemoryAID: "m1", MemoryBID: "m2", Strength: 0.85},
+		},
+		Confidence: 0.5,
+	}
+
+	prompt := claude.BuildConflictAwarePrompt("Does X use MVCC?", evidence)
+	// Both content excerpts must appear in the conflict section, not just IDs.
+	assert.Contains(t, prompt, "X uses MVCC", "prompt must include CLAIM A content")
+	assert.Contains(t, prompt, "X does not use MVCC", "prompt must include CLAIM B content")
+	// Content must be labeled as CLAIM A / CLAIM B so Claude can reference them.
+	assert.Contains(t, prompt, "CLAIM A", "prompt must label the first conflicting claim")
+	assert.Contains(t, prompt, "CLAIM B", "prompt must label the second conflicting claim")
+}

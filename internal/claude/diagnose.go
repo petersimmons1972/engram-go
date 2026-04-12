@@ -90,12 +90,35 @@ func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 	fmt.Fprintf(&sb, "Question: %s\n\n", question)
 
 	if len(ev.Conflicts) > 0 {
+		// Build a lookup so content excerpts can be inlined alongside each conflict.
+		memByID := make(map[string]*types.Memory, len(ev.Memories))
+		for _, m := range ev.Memories {
+			memByID[m.ID] = m
+		}
+
 		sb.WriteString("CONFLICT NOTICE: The following memories contain contradicting claims:\n") // #95: no emoji
 		for _, c := range ev.Conflicts {
 			fmt.Fprintf(&sb, "  CONFLICT: memory %s contradicts memory %s (strength %.2f)\n",
 				c.MemoryAID, c.MemoryBID, c.Strength)
+
+			// Include content excerpts so Claude can name what it is rejecting.
+			if mA, ok := memByID[c.MemoryAID]; ok {
+				excerpt := mA.Content
+				if len(excerpt) > 200 {
+					excerpt = excerpt[:200] + "..."
+				}
+				fmt.Fprintf(&sb, "    CLAIM A [%s]: %s\n", mA.ID, excerpt)
+			}
+			if mB, ok := memByID[c.MemoryBID]; ok {
+				excerpt := mB.Content
+				if len(excerpt) > 200 {
+					excerpt = excerpt[:200] + "..."
+				}
+				fmt.Fprintf(&sb, "    CLAIM B [%s]: %s\n", mB.ID, excerpt)
+			}
 		}
-		fmt.Fprintf(&sb, "  Overall confidence in this evidence set: %.0f%%\n\n", ev.Confidence*100)
+		fmt.Fprintf(&sb, "  Overall confidence in this evidence set: %.0f%%\n", ev.Confidence*100)
+		sb.WriteString("\nYou MUST explicitly name which claims you are rejecting and cite the authoritative memory ID.\n\n")
 	}
 
 	if len(ev.InvalidatedSources) > 0 {

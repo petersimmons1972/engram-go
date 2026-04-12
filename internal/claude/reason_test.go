@@ -137,6 +137,16 @@ func TestReasonOverMemories_EmptyMemories(t *testing.T) {
 	require.True(t, called, "API must be called even with an empty memory list")
 }
 
+// TestReasonSystem_ContainsRejectionInstruction guards against silent regression
+// of the reasonSystem constant. The instruction to name rejected alternatives
+// is load-bearing behavior for noise resistance — it must always be present.
+func TestReasonSystem_ContainsRejectionInstruction(t *testing.T) {
+	// ReasonSystemPrompt exposes the private constant for assertion.
+	prompt := claude.ReasonSystemPrompt()
+	require.Contains(t, prompt, "explicitly name the rejected alternatives",
+		"reasonSystem must instruct Claude to name rejected alternatives when conflicts exist")
+}
+
 func TestReasonOverMemories_AdvisorMaxUsesIsTwo(t *testing.T) {
 	var capturedBody struct {
 		Tools []struct {
