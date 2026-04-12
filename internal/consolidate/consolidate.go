@@ -277,17 +277,23 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 	created := 0
 
 	for memID, chunk := range memChunks {
-		// Load existing connections — skip any pair that already has an edge.
+		// Load existing contradicts edges — only skip pairs that already have a
+		// "contradicts" edge. We intentionally do NOT skip pairs with "relates_to"
+		// because InferRelationships runs first in RunAll and creates relates_to for
+		// the same high-similarity pairs we need to check.
 		rels, err := r.backend.GetRelationships(ctx, r.project, memID)
 		if err != nil {
 			return created, fmt.Errorf("consolidate: DetectContradictions: GetRelationships(%s): %w", memID, err)
 		}
-		connected := make(map[string]bool, len(rels))
+		alreadyContradicts := make(map[string]bool, len(rels))
 		for _, rel := range rels {
+			if rel.RelType != types.RelTypeContradicts {
+				continue
+			}
 			if rel.SourceID == memID {
-				connected[rel.TargetID] = true
+				alreadyContradicts[rel.TargetID] = true
 			} else {
-				connected[rel.SourceID] = true
+				alreadyContradicts[rel.SourceID] = true
 			}
 		}
 
@@ -309,7 +315,7 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 				processed[key] = true
 				continue
 			}
-			if connected[hit.MemoryID] {
+			if alreadyContradicts[hit.MemoryID] {
 				processed[key] = true
 				continue
 			}
