@@ -522,6 +522,17 @@ func (b *PostgresBackend) UpdateMemoryHash(ctx context.Context, memoryID, hash s
 	return err
 }
 
+// ExistsWithContentHash returns true if a non-invalidated memory with the
+// given SHA-256 hex content hash already exists in the project. Used by
+// handleMemoryIngest to skip duplicate content without storing it again.
+func (b *PostgresBackend) ExistsWithContentHash(ctx context.Context, project, hash string) (bool, error) {
+	var exists bool
+	err := b.pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM memories WHERE project=$1 AND valid_to IS NULL AND content_hash=$2)",
+		project, hash).Scan(&exists)
+	return exists, err
+}
+
 func (b *PostgresBackend) GetIntegrityStats(ctx context.Context, project string) (IntegrityStats, error) {
 	var stats IntegrityStats
 	if err := b.pool.QueryRow(ctx, "SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&stats.Total); err != nil {

@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -921,14 +923,28 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	var ids []string
+	var ingested, skipped int
 	for _, m := range memories {
 		m.Project = project
+		// Compute content hash using the same algorithm as StoreMemory (SHA-256 hex).
+		hashBytes := sha256.Sum256([]byte(m.Content))
+		hash := hex.EncodeToString(hashBytes[:])
+		exists, err := h.Engine.Backend().ExistsWithContentHash(ctx, project, hash)
+		if err != nil {
+			return nil, fmt.Errorf("dedup check: %w", err)
+		}
+		if exists {
+			skipped++
+			slog.Debug("handleMemoryIngest: skipping duplicate", "hash", hash[:8], "project", project)
+			continue
+		}
 		if err := h.Engine.Store(ctx, m); err != nil {
 			return nil, err
 		}
 		ids = append(ids, m.ID)
+		ingested++
 	}
-	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
+	return toolResult(map[string]any{"ingested": ingested, "skipped": skipped, "ids": ids})
 }
 
 // handleMemoryEpisodeStart creates a new episode for a project.
