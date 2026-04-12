@@ -69,6 +69,8 @@ func (c *Client) ReasonWithConflictAwareness(ctx context.Context, question strin
 		}
 		ev.Conflicts = filtered
 	}
+	// BuildConflictAwarePrompt inserts memory content verbatim — see its trust boundary
+	// note before adding new memory sources to this call path.
 	prompt := BuildConflictAwarePrompt(question, ev)
 	return c.Complete(ctx, reasonSystem, prompt, "claude-sonnet-4-6", "claude-opus-4-6", 2, 2048)
 }

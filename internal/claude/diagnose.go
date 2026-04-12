@@ -85,6 +85,11 @@ func DiagnoseMemories(memories []*types.Memory, rels []types.Relationship) Evide
 // BuildConflictAwarePrompt builds a reasoning prompt that explicitly annotates
 // known conflicts so Claude can acknowledge uncertainty rather than silently
 // picking one version.
+//
+// TRUST BOUNDARY: memory Content is inserted verbatim into the LLM prompt.
+// All callers must ensure memories originate from trusted sources (i.e., stored
+// by Claude agents, not ingested from external/untrusted text). External content
+// passed here creates a prompt injection surface.
 func BuildConflictAwarePrompt(question string, ev EvidenceMap) string {
 	var sb strings.Builder
 
