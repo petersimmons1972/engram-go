@@ -3,6 +3,7 @@ package claude_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,10 +104,11 @@ func TestReasonOverMemories_LimitsMemories(t *testing.T) {
 	require.NoError(t, err)
 	c.BaseURL = srv.URL
 
-	// Create 30 memories.
+	// Create 30 memories. Use fmt.Sprintf for zero-padded IDs — rune arithmetic
+	// breaks for i >= 10 because '0'+10 == ':' (ASCII 58), not a digit.
 	memories := make([]*types.Memory, 30)
 	for i := 0; i < 30; i++ {
-		memories[i] = makeMemory("mem-id-"+strings.Repeat("0", 2-len(string(rune('0'+i))))+string(rune('0'+i)), "content")
+		memories[i] = makeMemory(fmt.Sprintf("mem-id-%02d", i), "content")
 	}
 	_, err = c.ReasonOverMemories(context.Background(), "test question", memories)
 	require.NoError(t, err)
