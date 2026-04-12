@@ -323,6 +323,42 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	assert.True(t, found, "contradicting memory m2 must appear in conflicting_results")
 }
 
+// TestHandleMemoryRecall_IncludesFeedbackHint verifies that when
+// handleMemoryRecall returns an event_id (single-project, non-rerank path),
+// the response also contains a feedback_hint key so callers know how to
+// submit outcome feedback.
+func TestHandleMemoryRecall_IncludesFeedbackHint(t *testing.T) {
+	dsn := testRecallDSN(t)
+	ctx := context.Background()
+	proj := fmt.Sprintf("test-feedback-hint-%d", time.Now().UnixNano())
+
+	pool := internalmcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
+
+	h, err := pool.Get(ctx, proj)
+	require.NoError(t, err)
+
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "Feedback hint: recall responses must advertise the feedback API.",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	require.NoError(t, h.Engine.Store(ctx, m))
+
+	out := internalmcp.CallHandleMemoryRecallFull(ctx, t, pool, proj, "feedback hint recall API", nil)
+
+	eventID, hasEventID := out["event_id"]
+	require.True(t, hasEventID, "recall response must contain event_id on the single-project path")
+	require.NotEmpty(t, eventID, "event_id must be non-empty")
+
+	hint, hasHint := out["feedback_hint"]
+	require.True(t, hasHint, "recall response must contain feedback_hint when event_id is present")
+	hintStr, ok := hint.(string)
+	require.True(t, ok, "feedback_hint must be a string")
+	require.NotEmpty(t, hintStr, "feedback_hint string must not be empty")
+}
+
 // TestHandleMemoryRecall_IncludeConflicts_FalseByDefault verifies that the
 // conflicting_results key is absent when include_conflicts is not set.
 func TestHandleMemoryRecall_IncludeConflicts_FalseByDefault(t *testing.T) {

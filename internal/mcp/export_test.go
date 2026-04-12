@@ -55,6 +55,50 @@ func NewTestPoolWithDSN(t *testing.T, ctx context.Context, dsn, project string) 
 	return pool
 }
 
+// CallHandleMemoryRecallFull invokes handleMemoryRecall with full argument
+// control and returns the decoded output map. Use this when you need to
+// inspect keys beyond what CallHandleMemoryRecall exposes.
+func CallHandleMemoryRecallFull(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project, query string,
+	args map[string]any,
+) map[string]any {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	merged := map[string]any{
+		"project": project,
+		"query":   query,
+		"top_k":   float64(10),
+		"detail":  "full",
+	}
+	for k, v := range args {
+		merged[k] = v
+	}
+	req.Params.Arguments = merged
+
+	result, err := handleMemoryRecall(ctx, pool, req, Config{})
+	if err != nil {
+		t.Fatalf("handleMemoryRecall: %v", err)
+	}
+
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content items")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		t.Fatalf("decode tool result JSON: %v", err)
+	}
+	return out
+}
+
 // CallHandleMemoryRecall invokes handleMemoryRecall for tests and returns
 // the decoded output map. It bridges between the mcp_test package and the
 // unexported handleMemoryRecall function.
@@ -107,4 +151,83 @@ func CallHandleMemoryRecall(
 		}
 	}
 	return out
+}
+
+// CallHandleMemoryResummarize invokes handleMemoryResummarize for tests and
+// returns (cleared count, message). Bridges the mcp_test package to the
+// unexported handler.
+func CallHandleMemoryResummarize(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project string,
+) (int, string) {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"project": project}
+
+	result, err := handleMemoryResummarize(ctx, pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryResummarize: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content items")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		t.Fatalf("decode tool result JSON: %v", err)
+	}
+	cleared := int(out["cleared"].(float64))
+	message := out["message"].(string)
+	return cleared, message
+}
+
+// CallHandleMemoryCorrect invokes handleMemoryCorrect to update the content of a
+// memory. Used by integration tests to trigger the summary-clearing code path.
+func CallHandleMemoryCorrect(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project, memoryID, newContent string,
+) {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":   project,
+		"memory_id": memoryID,
+		"content":   newContent,
+	}
+	_, err := handleMemoryCorrect(ctx, pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryCorrect: %v", err)
+	}
+}
+
+// CallHandleMemoryCorrectTagsOnly invokes handleMemoryCorrect updating only tags
+// (no content change). Used to verify the summary is NOT cleared in this case.
+func CallHandleMemoryCorrectTagsOnly(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project, memoryID string,
+	tags []string,
+) {
+	t.Helper()
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":   project,
+		"memory_id": memoryID,
+		"tags":      tags,
+	}
+	_, err := handleMemoryCorrect(ctx, pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryCorrect (tags-only): %v", err)
+	}
 }

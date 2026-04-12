@@ -199,6 +199,10 @@ type Backend interface {
 	StoreSummary(ctx context.Context, memoryID, summary string) error
 	// GetPendingSummaryCount returns the count of memories with summary IS NULL.
 	GetPendingSummaryCount(ctx context.Context, project string) (int, error)
+	// ClearSummaries sets summary = NULL for all active memories in a project,
+	// causing the background summarize worker to regenerate them on its next tick.
+	// Returns the number of rows affected.
+	ClearSummaries(ctx context.Context, project string) (int, error)
 	// GetMemoriesMissingHash returns (id, content) for memories with no content_hash.
 	GetMemoriesMissingHash(ctx context.Context, project string, limit int) ([]IDContent, error)
 	// UpdateMemoryHash sets the content_hash field for a memory.

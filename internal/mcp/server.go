@@ -315,6 +315,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemorySummarize(ctx, pool, req, cfg)
 			}},
+		{"memory_resummarize", "Clear all summaries for a project — they regenerate automatically within 60s",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryResummarize(ctx, pool, req)
+			}},
 		{"memory_status", "Return project statistics",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryStatus(ctx, pool, req)
@@ -329,7 +333,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemorySleep(ctx, pool, req)
+				return handleMemorySleep(ctx, pool, req, cfg)
 			}},
 		// Feature 6: Episodic Memory
 		{"memory_episode_start", "Start a named episode to group memories from this session",

@@ -176,8 +176,9 @@ func (b *PostgresBackend) UpdateMemory(
 	if content != nil {
 		hash := contentHash(m.Content)
 		m.ContentHash = &hash
+		// Clear the summary so the background worker regenerates it with the new content.
 		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5 WHERE id=$6 AND project=$7",
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL WHERE id=$6 AND project=$7",
 			m.Content, tagsJSON, m.Importance, now, hash, id, b.project,
 		)
 	} else {
@@ -591,4 +592,17 @@ func (b *PostgresBackend) GetPendingSummaryCount(ctx context.Context, project st
 		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL", project,
 	).Scan(&count)
 	return count, err
+}
+
+// ClearSummaries sets summary = NULL for all active memories in a project,
+// causing the background summarize worker to regenerate them on its next tick.
+// Returns the number of rows affected.
+func (b *PostgresBackend) ClearSummaries(ctx context.Context, project string) (int, error) {
+	result, err := b.pool.Exec(ctx,
+		"UPDATE memories SET summary = NULL WHERE project = $1 AND valid_to IS NULL AND summary IS NOT NULL",
+		project)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
 }

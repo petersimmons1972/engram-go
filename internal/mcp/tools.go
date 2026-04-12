@@ -411,6 +411,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	out := map[string]any{"results": results, "count": len(results)}
 	if eventID != "" {
 		out["event_id"] = eventID
+		out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
 	}
 	if includeConflicts {
 		conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
@@ -653,6 +654,25 @@ func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.Call
 	return toolResult(map[string]any{"status": "summarized", "memory_id": id})
 }
 
+// handleMemoryResummarize clears all summaries for a project so the background
+// worker regenerates them with the current model on its next tick (within 60s).
+func handleMemoryResummarize(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	cleared, err := h.Engine.Backend().ClearSummaries(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("clear summaries: %w", err)
+	}
+	return toolResult(map[string]any{
+		"cleared": cleared,
+		"message": fmt.Sprintf("Cleared %d summaries for project %q — they will regenerate within 60s", cleared, project),
+	})
+}
+
 // handleMemoryStatus returns aggregate statistics for a project's memory store.
 func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
@@ -718,7 +738,8 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 }
 
 // handleMemorySleep runs the full sleep-consolidation cycle (Feature 3).
-func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// cfg is passed so the handler can read OllamaURL for the LLM second pass.
+func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	minSim := getFloat(args, "min_similarity", 0.7)
@@ -730,10 +751,22 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
+	// Optional LLM contradiction detection params (opt-in, default off).
+	// OllamaURL comes from server config; model and call cap are per-request.
+	llmDetect := getBool(args, "llm_contradiction_detection", false)
+	llmModel := getString(args, "llm_model", "llama3.2:3b")
+	llmMaxCalls := getInt(args, "llm_max_calls", 10)
+	autoSupersede := getBool(args, "auto_supersede", false)
+
 	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
 		InferRelationshipsMinSimilarity: minSim,
 		InferRelationshipsLimit:         limit,
+		LLMContradictionDetection:       llmDetect,
+		OllamaURL:                       cfg.OllamaURL,
+		OllamaModel:                     llmModel,
+		LLMMaxCalls:                     llmMaxCalls,
+		AutoSupersede:                   autoSupersede,
 	})
 	if err != nil {
 		return nil, err

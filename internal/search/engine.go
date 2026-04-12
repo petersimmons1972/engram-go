@@ -1040,6 +1040,17 @@ func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK i
 		slog.Warn("store retrieval event failed", "project", e.project, "err", err) // #96
 		return results, "", nil
 	}
+
+	// Auto-increment times_retrieved for all returned memories so the
+	// retrieval precision signal warms up without requiring explicit
+	// memory_feedback calls for the denominator.
+	if len(resultIDs) > 0 {
+		// Best-effort: do not fail the recall if the increment fails.
+		if err := e.backend.IncrementTimesRetrieved(ctx, resultIDs); err != nil {
+			slog.Warn("auto-increment times_retrieved failed", "project", e.project, "err", err)
+		}
+	}
+
 	return results, event.ID, nil
 }
 

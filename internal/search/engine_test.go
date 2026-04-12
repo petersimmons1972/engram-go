@@ -184,3 +184,50 @@ func TestSearchEngine_Status(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stats)
 }
+
+// TestRecallWithEvent_IncrementsTimesRetrieved verifies that RecallWithEvent
+// auto-increments times_retrieved on every returned memory so that the
+// retrieval precision signal (times_useful / times_retrieved) warms up
+// without waiting for explicit memory_feedback calls.
+func TestRecallWithEvent_IncrementsTimesRetrieved(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-auto-increment"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m := &types.Memory{
+		Content:     "Auto-increment times_retrieved on every recall",
+		MemoryType:  types.MemoryTypePattern,
+		Project:     engine.Project(),
+		Importance:  2,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine.Store(ctx, m))
+
+	// Verify baseline: times_retrieved starts at 0.
+	before, err := engine.Backend().GetMemory(ctx, m.ID)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	baselineRetrieved := before.TimesRetrieved
+
+	// Call RecallWithEvent — this should auto-increment times_retrieved.
+	results, eventID, err := engine.RecallWithEvent(ctx, "auto-increment times retrieved", 10, "normal")
+	require.NoError(t, err)
+	require.NotEmpty(t, eventID, "RecallWithEvent must return a non-empty event_id")
+
+	// Confirm our memory was in the result set.
+	found := false
+	for _, r := range results {
+		if r.Memory != nil && r.Memory.ID == m.ID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "stored memory must appear in recall results")
+
+	// times_retrieved must be incremented by exactly 1.
+	after, err := engine.Backend().GetMemory(ctx, m.ID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.Equal(t, baselineRetrieved+1, after.TimesRetrieved,
+		"times_retrieved must be auto-incremented by RecallWithEvent without explicit feedback")
+}
