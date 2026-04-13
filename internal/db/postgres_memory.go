@@ -14,7 +14,10 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-func contentHash(content string) string {
+// ContentHash returns the canonical SHA-256 hex digest for a memory's content.
+// Used by both the storage layer and the ingest dedup path to guarantee
+// identical hash values from the same input string.
+func ContentHash(content string) string {
 	h := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("%x", h)
 }
@@ -37,7 +40,7 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 	m.UpdatedAt = now
 	m.LastAccessed = now
 	m.Project = b.project
-	hash := contentHash(m.Content)
+	hash := ContentHash(m.Content)
 	m.ContentHash = &hash
 
 	tagsJSON, err := json.Marshal(m.Tags)
@@ -89,7 +92,7 @@ func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memo
 	}
 	// Integrity check
 	if m.ContentHash != nil {
-		expected := contentHash(m.Content)
+		expected := ContentHash(m.Content)
 		if *m.ContentHash != expected {
 			slog.Warn("INTEGRITY: content_hash mismatch",
 				"id", m.ID,
@@ -174,7 +177,7 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 
 	if content != nil {
-		hash := contentHash(m.Content)
+		hash := ContentHash(m.Content)
 		m.ContentHash = &hash
 		// Clear the summary so the background worker regenerates it with the new content.
 		_, err = tx.Exec(ctx,
@@ -259,7 +262,7 @@ func (b *PostgresBackend) MergeMemoriesAtomic(ctx context.Context, project, winn
 
 	if newContent != "" {
 		now := time.Now().UTC()
-		hash := contentHash(newContent)
+		hash := ContentHash(newContent)
 		if _, err := tx.Exec(ctx,
 			"UPDATE memories SET content=$1, content_hash=$2, updated_at=$3 WHERE id=$4 AND project=$5",
 			newContent, hash, now, winnerID, project,
