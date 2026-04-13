@@ -48,9 +48,11 @@ func isContradiction(contentA, contentB string) bool {
 	b := strings.ToLower(contentB)
 
 	// Heuristic 1 — negation opposition.
-	// Require both texts to share at least 3 significant words before checking
-	// negation asymmetry, to keep the false-positive rate low.
-	if sharedWordCount(a, b) >= 3 {
+	// Require both texts to share at least 5 significant words before checking
+	// negation asymmetry. Threshold raised from 3→5 (#156) because "is not" is
+	// a very common phrase; three shared words is insufficient to establish that
+	// two sentences are about the same subject. False negatives are preferred.
+	if sharedWordCount(a, b) >= 5 {
 		aNeg := containsAny(a, negationPhrases)
 		bNeg := containsAny(b, negationPhrases)
 		if aNeg != bNeg {
@@ -77,7 +79,9 @@ func isContradiction(contentA, contentB string) bool {
 	if (aPast && bPresent && !bPast) || (bPast && aPresent && !aPast) {
 		// Only flag as contradictory if they also share vocabulary — otherwise any
 		// historical sentence paired with any current sentence would trigger.
-		if sharedWordCount(a, b) >= 3 {
+		// Threshold raised from 3→5 (#156): three shared words is not enough to
+		// confirm the sentences describe the same subject. False negatives preferred.
+		if sharedWordCount(a, b) >= 5 {
 			return true
 		}
 	}

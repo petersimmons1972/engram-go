@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -346,6 +348,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		topK = 10
 	}
 	detail := getString(args, "detail", "summary")
+	includeConflicts := getBool(args, "include_conflicts", false)
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames := toStringSlice(args["projects"])
@@ -363,6 +366,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			projectNames = all
 		}
 		engines := make([]*search.SearchEngine, 0, len(projectNames))
+		var firstHandle *EngineHandle // retained for conflict enrichment
+		var firstProject string       // project name that firstHandle was initialized for
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
@@ -371,13 +376,28 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 					"project", p, "err", err)
 				continue
 			}
+			if firstHandle == nil {
+				firstHandle = h
+				firstProject = p
+			}
 			engines = append(engines, h.Engine)
 		}
 		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
 		if err != nil {
 			return nil, err
 		}
-		return toolResult(map[string]any{"results": results, "count": len(results)})
+		out := map[string]any{"results": results, "count": len(results)}
+		if includeConflicts && firstHandle != nil {
+			// All projects share the same Postgres instance, so the backend from
+			// the first successfully-initialized engine can serve cross-project
+			// GetRelationships and GetMemory calls (#154).
+			// EnrichWithConflicts uses each result's Memory.Project for the
+			// per-memory lookup; firstProject is the fallback for the rare empty case.
+			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), firstProject, results)
+			out["conflicting_results"] = conflicts
+			out["conflict_count"] = len(conflicts)
+		}
+		return toolResult(out)
 	}
 
 	// Single-project path.
@@ -386,7 +406,6 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	rerank := getBool(args, "rerank", false)
-	includeConflicts := getBool(args, "include_conflicts", false)
 	var opts search.RecallOpts
 	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
@@ -921,14 +940,28 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	var ids []string
+	var ingested, skipped int
 	for _, m := range memories {
 		m.Project = project
+		// Compute content hash using the same algorithm as StoreMemory (SHA-256 hex).
+		hashBytes := sha256.Sum256([]byte(m.Content))
+		hash := hex.EncodeToString(hashBytes[:])
+		exists, err := h.Engine.Backend().ExistsWithContentHash(ctx, project, hash)
+		if err != nil {
+			return nil, fmt.Errorf("dedup check: %w", err)
+		}
+		if exists {
+			skipped++
+			slog.Debug("handleMemoryIngest: skipping duplicate", "hash", hash[:8], "project", project)
+			continue
+		}
 		if err := h.Engine.Store(ctx, m); err != nil {
 			return nil, err
 		}
 		ids = append(ids, m.ID)
+		ingested++
 	}
-	return toolResult(map[string]any{"ingested": len(ids), "ids": ids})
+	return toolResult(map[string]any{"ingested": ingested, "skipped": skipped, "ids": ids})
 }
 
 // handleMemoryEpisodeStart creates a new episode for a project.

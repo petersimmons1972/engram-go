@@ -397,9 +397,9 @@ func TestIsContradiction_NegationOpposition(t *testing.T) {
 		a, b string
 		want bool
 	}{
-		{"clear negation", "PostgreSQL uses MVCC for concurrency control", "PostgreSQL does not use MVCC for concurrency control", true},
-		{"negation with isn't", "the service is ready for production", "the service isn't ready for production", true},
-		{"negation with never", "Tailscale always reconnects after sleep", "Tailscale never reconnects after sleep", true},
+		{"clear negation", "PostgreSQL uses MVCC for concurrency control and transaction isolation", "PostgreSQL does not use MVCC for concurrency control and transaction isolation", true},
+		{"negation with isn't", "the authentication service is ready for production deployment today", "the authentication service isn't ready for production deployment today", true},
+		{"negation with never", "Tailscale client always reconnects after sleep with valid credentials", "Tailscale client never reconnects after sleep with valid credentials", true},
 		{"both have negation — not contradictory", "service does not start automatically", "service does not initialize correctly", false},
 		{"neither has negation — not contradictory", "Go uses goroutines for concurrency", "Go uses goroutines effectively", false},
 		{"too few shared words", "database uses MVCC", "network does not use MVCC", false},
@@ -436,8 +436,8 @@ func TestIsContradiction_TemporalSupersession(t *testing.T) {
 		a, b string
 		want bool
 	}{
-		{"was vs is", "the security team was responsible for auth middleware", "the platform team is responsible for auth middleware", true},
-		{"previously vs currently", "the authentication service previously used Redis for session caching", "the authentication service currently uses Memcached for session caching", true},
+		{"was vs is", "the security team was responsible for auth middleware validation checks", "the platform team is responsible for auth middleware validation checks", true},
+		{"previously vs currently", "the authentication service previously used Redis for session caching storage", "the authentication service currently uses Redis for session caching storage", true},
 		{"used to vs now", "the platform team used to deploy services with Ansible automation", "the platform team now deploys services with Terraform automation", true},
 		{"both past tense — not contradictory", "the service was built with Java", "the service was tested with JUnit", false},
 		{"both present tense — not contradictory", "the service is built with Go", "the service is tested with Go", false},
@@ -457,6 +457,65 @@ func TestIsContradiction_NoFalsePositiveOnUnrelatedContent(t *testing.T) {
 		"PostgreSQL uses WAL for transaction logging recovery",
 	)
 	assert.False(t, got, "unrelated content must not trigger contradiction")
+}
+
+// ── False-positive regression tests (#156) ────────────────────────────────────
+// Design intent: false negatives are preferred over false positives.
+// When uncertain, do NOT flag as contradiction.
+
+// TestIsContradiction_FalsePositive_UnrelatedNegation guards against the case
+// where two unrelated sentences both contain a negation phrase and happen to
+// share enough significant words to cross the shared-word threshold. They are
+// NOT contradictions because they describe entirely different subjects.
+func TestIsContradiction_FalsePositive_UnrelatedNegation(t *testing.T) {
+	got := consolidate.IsContradiction(
+		"The API is not rate limited for internal services.",
+		"The database is not cached in this environment.",
+	)
+	assert.False(t, got, "two unrelated negation sentences must not be flagged as contradictions")
+}
+
+// TestIsContradiction_FalsePositive_VersionDifferentContext guards against
+// version-conflict false positives where the same version pattern appears in
+// two sentences about entirely different subjects (JWT vs React).
+func TestIsContradiction_FalsePositive_VersionDifferentContext(t *testing.T) {
+	got := consolidate.IsContradiction(
+		"Authentication uses JWT v2.0 for token signing.",
+		"The UI framework requires React v2.1 compatibility mode.",
+	)
+	assert.False(t, got, "different contexts with incidentally similar version numbers must not be flagged")
+}
+
+// TestIsContradiction_FalsePositive_TemporalUnrelated guards against the case
+// where one sentence has a past-tense marker and the other a present-tense
+// marker, but they describe entirely different subjects. The shared-word
+// threshold must be high enough to prevent this from triggering.
+func TestIsContradiction_FalsePositive_TemporalUnrelated(t *testing.T) {
+	got := consolidate.IsContradiction(
+		"The old system was deprecated last year.",
+		"The new deployment pipeline is running smoothly.",
+	)
+	assert.False(t, got, "past/present tense sentences about different subjects must not be flagged")
+}
+
+// TestIsContradiction_TruePositive_NegationOpposition preserves detection of
+// the canonical negation case: same subject, one affirmative, one negative.
+func TestIsContradiction_TruePositive_NegationOpposition(t *testing.T) {
+	got := consolidate.IsContradiction(
+		"The rate limiter is enabled on all production endpoints.",
+		"The rate limiter is not enabled on production endpoints.",
+	)
+	assert.True(t, got, "direct negation of the same claim must be flagged as contradiction")
+}
+
+// TestIsContradiction_TruePositive_VersionConflict preserves detection of the
+// canonical version-conflict case: same service, different version numbers.
+func TestIsContradiction_TruePositive_VersionConflict(t *testing.T) {
+	got := consolidate.IsContradiction(
+		"The service requires postgres v14.2 for JSON path queries.",
+		"The service requires postgres v15.1 for JSON path queries.",
+	)
+	assert.True(t, got, "conflicting version numbers for the same component must be flagged")
 }
 
 // ── AutoSupersede ─────────────────────────────────────────────────────────────

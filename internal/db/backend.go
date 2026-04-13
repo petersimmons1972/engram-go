@@ -207,6 +207,9 @@ type Backend interface {
 	GetMemoriesMissingHash(ctx context.Context, project string, limit int) ([]IDContent, error)
 	// UpdateMemoryHash sets the content_hash field for a memory.
 	UpdateMemoryHash(ctx context.Context, memoryID, contentHash string) error
+	// ExistsWithContentHash returns true if a non-invalidated memory with the
+	// given SHA-256 hex content hash exists in the project.
+	ExistsWithContentHash(ctx context.Context, project, hash string) (bool, error)
 	// GetIntegrityStats returns total, hashed, and corrupt counts for a project.
 	GetIntegrityStats(ctx context.Context, project string) (IntegrityStats, error)
 
