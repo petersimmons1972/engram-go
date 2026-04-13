@@ -50,6 +50,15 @@ func (s *conflictStubBackend) GetRelationships(_ context.Context, _ string, memo
 	return s.relationships[memoryID], nil
 }
 
+// GetRelationshipsBatch returns edges for multiple memory IDs in one call.
+func (s *conflictStubBackend) GetRelationshipsBatch(_ context.Context, _ string, ids []string) (map[string][]types.Relationship, error) {
+	result := make(map[string][]types.Relationship, len(ids))
+	for _, id := range ids {
+		result[id] = s.relationships[id]
+	}
+	return result, nil
+}
+
 // GetMemory returns the memory by ID (ignores project scope for test simplicity).
 func (s *conflictStubBackend) GetMemory(_ context.Context, id string) (*types.Memory, error) {
 	m, ok := s.memories[id]
@@ -242,6 +251,10 @@ func TestEnrichWithConflicts_TruncatesLongContent(t *testing.T) {
 type errorStubBackend struct{}
 
 func (e *errorStubBackend) GetRelationships(_ context.Context, _, _ string) ([]types.Relationship, error) {
+	return nil, fmt.Errorf("simulated backend failure")
+}
+
+func (e *errorStubBackend) GetRelationshipsBatch(_ context.Context, _ string, _ []string) (map[string][]types.Relationship, error) {
 	return nil, fmt.Errorf("simulated backend failure")
 }
 

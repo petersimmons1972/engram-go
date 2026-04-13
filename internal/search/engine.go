@@ -66,6 +66,23 @@ type MergeDecision struct {
 	MergedContent string `json:"merged_content,omitempty"`
 }
 
+// bestHit holds the best vector chunk match for a single memory ID.
+// Consolidating five parallel maps into one struct reduces map lookups by 5×
+// and reduces per-call heap allocations in the RecallWithOpts inner loop
+// (at the cost of slightly larger per-call bytes due to pre-allocated bucket capacity).
+//
+// sectionHeading is a borrowed pointer — it points into the VectorHit returned
+// by the database scan and must not outlive the enclosing Recall call. This is
+// safe because bestHit is stack-scoped to RecallWithOpts and not retained after
+// the function returns.
+type bestHit struct {
+	cosine         float64
+	chunkText      string
+	chunkIndex     int
+	sectionHeading *string // borrowed; see struct comment
+	chunkID        string
+}
+
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
@@ -368,22 +385,22 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	// Build per-memory best cosine from vector hits.
 	// pgvector returns cosine distance (0-2); convert to similarity (1-0).
-	bestCosine := make(map[string]float64)
-	bestChunkText := make(map[string]string)
-	bestChunkIndex := make(map[string]int)
-	bestChunkSection := make(map[string]*string)
-	bestChunkID := make(map[string]string)
+	// bestHits consolidates five parallel maps into one struct map, halving
+	// hash lookups and reducing allocations in this hot inner loop.
+	bestHits := make(map[string]bestHit, len(vecHits))
 	uniqueIDs := make([]string, 0, len(vecHits))
 	seen := make(map[string]bool, len(vecHits))
 
 	for _, h := range vecHits {
 		cosine := 1.0 - h.Distance
-		if cosine > bestCosine[h.MemoryID] {
-			bestCosine[h.MemoryID] = cosine
-			bestChunkText[h.MemoryID] = h.ChunkText
-			bestChunkIndex[h.MemoryID] = h.ChunkIndex
-			bestChunkSection[h.MemoryID] = h.SectionHeading
-			bestChunkID[h.MemoryID] = h.ChunkID
+		if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
+			bestHits[h.MemoryID] = bestHit{
+				cosine:         cosine,
+				chunkText:      h.ChunkText,
+				chunkIndex:     h.ChunkIndex,
+				sectionHeading: h.SectionHeading,
+				chunkID:        h.ChunkID,
+			}
 		}
 		if !seen[h.MemoryID] {
 			seen[h.MemoryID] = true
@@ -423,8 +440,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		if maxBM25 > 0 {
 			bm25 = ftsScores[id] / maxBM25
 		}
+		hit := bestHits[id]
 		input := ScoreInput{
-			Cosine:             bestCosine[id],
+			Cosine:             hit.cosine,
 			BM25:               bm25,
 			HoursSince:         hoursSince(m.LastAccessed),
 			Importance:         m.Importance,
@@ -436,10 +454,10 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		result := types.SearchResult{
 			Memory:     m,
 			Score:      score,
-			ChunkScore: bestCosine[id],
+			ChunkScore: hit.cosine,
 			ScoreBreakdown: func() map[string]float64 {
 				bd := map[string]float64{
-					"cosine":  bestCosine[id],
+					"cosine":  hit.cosine,
 					"bm25":    bm25,
 					"recency": RecencyDecay(input.HoursSince),
 				}
@@ -453,9 +471,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				}
 				return bd
 			}(),
-			MatchedChunk:        bestChunkText[id],
-			MatchedChunkIndex:   bestChunkIndex[id],
-			MatchedChunkSection: bestChunkSection[id],
+			MatchedChunk:        hit.chunkText,
+			MatchedChunkIndex:   hit.chunkIndex,
+			MatchedChunkSection: hit.sectionHeading,
 		}
 		switch detail {
 		case "id_only":
@@ -514,16 +532,24 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Fetch relationships for the final topK results and populate connected
-	// memory objects via a single batched GetMemoriesByIDs call.
+	// Fetch relationships for the final topK results in a single batch query,
+	// replacing the prior N+1 loop (one GetRelationships call per result).
+	topKIDs := make([]string, len(results))
+	for i, r := range results {
+		topKIDs[i] = r.Memory.ID
+	}
+	relsMap, err := e.backend.GetRelationshipsBatch(ctx, e.project, topKIDs)
+	if err != nil {
+		// best-effort: proceed with empty relationship sets rather than failing recall
+		slog.Warn("GetRelationshipsBatch failed, proceeding without relationships", "err", err)
+		relsMap = make(map[string][]types.Relationship)
+	}
+
 	var allRels [][]types.Relationship
 	var neighborIDs []string
 	neighborSet := make(map[string]struct{})
 	for i := range results {
-		rels, err := e.backend.GetRelationships(ctx, e.project, results[i].Memory.ID)
-		if err != nil {
-			rels = nil
-		}
+		rels := relsMap[results[i].Memory.ID]
 		allRels = append(allRels, rels)
 		for _, r := range rels {
 			neighborID := r.TargetID
@@ -558,8 +584,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		slog.Warn("touch memories failed", "err", err)
 	}
 	for _, r := range results {
-		if chunkID, ok := bestChunkID[r.Memory.ID]; ok {
-			_ = e.backend.UpdateChunkLastMatched(ctx, chunkID)
+		// hit.chunkID != "" guards against calling UpdateChunkLastMatched with
+		// an empty ID. FTS-only results (not in bestHits) are correctly skipped
+		// via the ok check; vector hits with an empty ChunkID (unusual but valid)
+		// are skipped via the chunkID check. This is a strict improvement over
+		// the prior code, which would have called UpdateChunkLastMatched("").
+		if hit, ok := bestHits[r.Memory.ID]; ok && hit.chunkID != "" {
+			_ = e.backend.UpdateChunkLastMatched(ctx, hit.chunkID)
 		}
 	}
 
