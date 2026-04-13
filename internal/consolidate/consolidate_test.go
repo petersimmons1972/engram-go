@@ -437,7 +437,10 @@ func TestIsContradiction_TemporalSupersession(t *testing.T) {
 		want bool
 	}{
 		{"was vs is", "the security team was responsible for auth middleware validation checks", "the platform team is responsible for auth middleware validation checks", true},
-		{"previously vs currently", "the authentication service previously used Redis for session caching storage", "the authentication service currently uses Redis for session caching storage", true},
+		// Cross-service temporal conflict: Redis → Memcached. Shares 5 significant
+		// words (authentication, service, session, caching, storage) which meets
+		// the >=5 threshold while the service names differ.
+		{"previously vs currently", "the authentication service previously used Redis for session caching storage", "the authentication service currently uses Memcached for session caching storage", true},
 		{"used to vs now", "the platform team used to deploy services with Ansible automation", "the platform team now deploys services with Terraform automation", true},
 		{"both past tense — not contradictory", "the service was built with Java", "the service was tested with JUnit", false},
 		{"both present tense — not contradictory", "the service is built with Go", "the service is tested with Go", false},

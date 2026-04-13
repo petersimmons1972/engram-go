@@ -2,8 +2,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +11,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/markdown"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -461,6 +460,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if includeConflicts {
 		conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
 		out["conflicting_results"] = conflicts
+		out["conflict_count"] = len(conflicts)
 	}
 	return toolResult(out)
 }
@@ -943,16 +943,14 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	var ingested, skipped int
 	for _, m := range memories {
 		m.Project = project
-		// Compute content hash using the same algorithm as StoreMemory (SHA-256 hex).
-		hashBytes := sha256.Sum256([]byte(m.Content))
-		hash := hex.EncodeToString(hashBytes[:])
-		exists, err := h.Engine.Backend().ExistsWithContentHash(ctx, project, hash)
+		contentHash := db.ContentHash(m.Content)
+		exists, err := h.Engine.Backend().ExistsWithContentHash(ctx, project, contentHash)
 		if err != nil {
 			return nil, fmt.Errorf("dedup check: %w", err)
 		}
 		if exists {
 			skipped++
-			slog.Debug("handleMemoryIngest: skipping duplicate", "hash", hash[:8], "project", project)
+			slog.Debug("handleMemoryIngest: skipping duplicate", "hash", contentHash[:8], "project", project)
 			continue
 		}
 		if err := h.Engine.Store(ctx, m); err != nil {
