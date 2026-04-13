@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -20,6 +21,9 @@ import (
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
+
+	// Register pprof HTTP handlers at /debug/pprof/ (localhost only).
+	_ "net/http/pprof"
 )
 
 func main() {
@@ -159,6 +163,17 @@ func run() error {
 			"consolidate", *claudeConsolidate,
 			"rerank", *claudeRerank)
 	}
+
+	// Start pprof profiling server on localhost:6060.
+	// Bound to loopback only — not reachable from outside the host.
+	// Requires no auth because it's loopback-only and the API key protects
+	// the MCP port; operators can SSH-forward if they need remote access.
+	go func() {
+		slog.Info("pprof listening", "addr", "localhost:6060")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			slog.Warn("pprof server stopped", "err", err)
+		}
+	}()
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)

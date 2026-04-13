@@ -229,3 +229,51 @@ func (b *PostgresBackend) GetRelationships(ctx context.Context, project, memoryI
 	}
 	return rels, rows.Err()
 }
+
+// GetRelationshipsBatch fetches all relationship edges for a set of memory IDs
+// in a single round-trip, replacing the N+1 per-result loop in RecallWithOpts.
+// Results are grouped by the requested ID so each caller can look up its own
+// edges without further iteration over the full result set.
+func (b *PostgresBackend) GetRelationshipsBatch(ctx context.Context, project string, ids []string) (map[string][]types.Relationship, error) {
+	if len(ids) == 0 {
+		return make(map[string][]types.Relationship), nil
+	}
+
+	result := make(map[string][]types.Relationship, len(ids))
+	for _, id := range ids {
+		result[id] = nil // pre-populate so every requested ID has a key
+	}
+
+	rows, err := b.pool.Query(ctx, `
+		SELECT id, source_id, target_id, rel_type, strength, project, created_at
+		FROM relationships
+		WHERE project = $1 AND (source_id = ANY($2) OR target_id = ANY($2))`,
+		project, ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// idSet enables O(1) membership checks when appending rows to result slices.
+	// Without this, the inner lookup would be O(rows × len(ids)).
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		idSet[id] = struct{}{}
+	}
+
+	for rows.Next() {
+		var r types.Relationship
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.RelType, &r.Strength, &r.Project, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		if _, ok := idSet[r.SourceID]; ok {
+			result[r.SourceID] = append(result[r.SourceID], r)
+		}
+		// Guard r.TargetID != r.SourceID prevents self-loops from being appended twice.
+		if _, ok := idSet[r.TargetID]; ok && r.TargetID != r.SourceID {
+			result[r.TargetID] = append(result[r.TargetID], r)
+		}
+	}
+	return result, rows.Err()
+}

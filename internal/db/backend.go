@@ -121,6 +121,12 @@ type Backend interface {
 	// GetRelationships returns all relationship edges where memoryID is either
 	// the source or the target, scoped to project.
 	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
+	// GetRelationshipsBatch returns all relationship edges for a set of memory IDs
+	// in a single query, grouped by the requested ID (each ID appears as both
+	// source and target lookup, matching GetRelationships semantics). The returned
+	// map contains an entry for every requested ID; IDs with no relationships have
+	// an empty slice. An empty ids input returns an empty map immediately.
+	GetRelationshipsBatch(ctx context.Context, project string, ids []string) (map[string][]types.Relationship, error)
 
 	// ── Temporal versioning ─────────────────────────────────────────────────
 
