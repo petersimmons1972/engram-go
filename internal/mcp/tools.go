@@ -906,14 +906,19 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 		return nil, err
 	}
 	var ids []string
+	skipped := 0
 	for _, m := range memories {
+		if isOperationalConfig(m.Content) {
+			skipped++
+			continue
+		}
 		m.Project = project
 		if err := h.Engine.Store(ctx, m); err != nil {
 			return nil, err
 		}
 		ids = append(ids, m.ID)
 	}
-	return toolResult(map[string]any{"imported": len(ids), "ids": ids})
+	return toolResult(map[string]any{"imported": len(ids), "skipped": skipped, "ids": ids})
 }
 
 // handleMemoryIngest reads markdown files from a directory and stores each as a memory.
@@ -942,6 +947,10 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	var ids []string
 	var ingested, skipped int
 	for _, m := range memories {
+		if isOperationalConfig(m.Content) {
+			skipped++
+			continue
+		}
 		m.Project = project
 		contentHash := db.ContentHash(m.Content)
 		exists, err := h.Engine.Backend().ExistsWithContentHash(ctx, project, contentHash)
