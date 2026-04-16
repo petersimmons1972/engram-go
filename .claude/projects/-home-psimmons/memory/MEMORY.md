@@ -1,31 +1,30 @@
 # Learning Index
 
-**Last Updated**: 2026-04-11T14:11:18Z
-**Session**: 20260411-101118
+**Last Updated**: 2026-04-16T00:24:43Z
+**Session**: 20260415-202443
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-04-05: ops: fix memory template — prune stale data + Key Lessons → Engram pointer
-- 2026-04-05: ops: compress AGENTS.md + prune MEMORY.md — ~1.8k tokens saved per session
-- 2026-04-05: ops: archive 15 more generals — 42→28 active agents
-- 2026-04-04: ops: archive 14 more generals — 56→42 active agents
-- 2026-04-04: ops: archive 8 redundant generals — 64→56 active agents
+- 2026-04-14: ops: archive writer armies profiles + remove writer agent definitions
+- 2026-04-14: ops: update AGENTS.md + bench-roster — writers moved to /write skill (Step 12)
+- 2026-04-11: feat: add K8s CronJob to auto-sync Postgres SSL cert from cert-manager
+- 2026-04-11: ops: save session state — Stage 6 gates batch 1 complete, 7 fixes pending
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  4 modified, 0 staged
+**Uncommitted**: ⚠️  5 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  8 OK, 0 failed, 3 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  11 OK, 0 failed, 2 warnings
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh`
 
-**J-2 Intelligence**: J-2 INTEL [2026-04-11T10:00]: Pods In Error State (WARNING, 68 patrol(s))
+**J-2 Intelligence**: J-2: All clear
 
 ---
 
@@ -48,6 +47,8 @@ Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cac
 - URL validation patterns → memory/url-validation-patterns.md
 - Chart regression analysis → memory/chart-regression-2026-02-06.md
 - HTML processing patterns → memory/html-processing-patterns.md
+- Docker networking & port bindings → memory/docker-network-bindings.md
+- Debugging multi-component systems → memory/debugging-multi-component-systems.md
 - Projects catalog → [PROJECTS-CATALOG.md](/home/psimmons/PROJECTS-CATALOG.md)
 - Generals Accountability System → memory/generals-accountability-system.md
 

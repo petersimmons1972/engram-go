@@ -7,20 +7,24 @@ originSessionId: f13be8e1-9cae-4933-afaa-71fe701071a8
 ---
 # Active Priorities
 
-**Last Updated**: 2026-04-11
-**Current Focus**: Memory housekeeping → Visual QA cache invalidation → Go migration P1
+**Last Updated**: 2026-04-14
+**Current Focus**: Wave 3 QA campaign — Stage 7 feedback pipeline convergence
 
 ---
 
-## Just Completed (2026-04-11)
-- Closed #4217 (S1 vs PA Gate 14 CRIT-012) — v092 ships A-
-- Closed #4237 (PA vs CS Stage 7 B+ TCO precision) — v132 ships A- after range-based TCO edit (commit 86e0189)
-- Memory compression: lessons-learned.md 128L→55L, audio-pipewire-zoom.md 66L→28L, project_engram_go_cutover.md 50L→22L
-- Added `Category:` front matter to 20 memory files
+## Just Completed (2026-04-14)
+- Removed 8 fabricated CyberArk acquisition entries from `dossiers/microsoft_defender_vs_paloalto_cortex.json` — closed #4509, #4502
+- MD_v_PAN v123: A- / ships, 0 CyberArk references
+- S1_v_PAN v099: A- / ships, circuit reset to 0
+- S1_v_MD dossier: removed 2 "Defender for Business" name references (Gate 36 fix) — filed #4524
+- Ran auto_triage on 6 CS_v_S1 v292 issues — 5 accepted, 1 rejected
 
 ## Pending (priority order)
-- [ ] **Visual QA cache invalidation** — spec at `docs/superpowers/specs/2026-04-10-visual-qa-cache-invalidation-design.md`. Five files to create (migration 003, store.py additions, loop.py hook, unit tests, integration tests). Unblocks #4234, #4235.
-- [ ] **Go migration P2 — Stage 6 gates** — plan `~/.claude/plans/snoopy-seeking-dragonfly.md`. Worktree: `mig/p2-stage-6-gates`. **Task 5 batch 1 DONE** (commit `6931a73` — 19 gates, 68 tests). **7 code fixes dispatched, not yet confirmed** (Gate 29 viewBox, Gate 20 substring, Gate 36 regex loop, dead code, unsafe rune, stale comment, dead import). **Batch 2 still stubbed** (11 gates: 9, 10, 14-19, 25, 26, 28). Tasks 6-9 pending (CLI wiring, adapter, parity tests, checkpoint).
+- [ ] **#4517 (severity/blocker)** — CS_v_S1 DELIVERY_CHECKLIST_FAILED code bug. `FinalFormatValidator._check_citation_distribution_quality` fires CRITICAL when >20% of H2 sections lack citations, blocking reports that graded A-/ships. Fix before triggering v293.
+- [ ] **#4524** — S1_v_MD Gate 36 dossier fix done; trigger v110 regen to confirm clean
+- [ ] **Dispatcher run** — one pass picks up all queued accepted issues: CS_v_S1 (5), MD_v_PAN (~12), S1_v_PAN (5), S1_v_MD (1). Run AFTER #4517 is fixed so CS_v_S1 v293 doesn't re-fail delivery.
+- [ ] **Visual QA cache invalidation** — spec at `docs/superpowers/specs/2026-04-10-visual-qa-cache-invalidation-design.md`. Unblocks #4234, #4235.
+- [ ] **Go migration P2 — Stage 6 gates** — plan `~/.claude/plans/snoopy-seeking-dragonfly.md`. Batch 2 still stubbed (11 gates).
 
 ## Blocked/Deferred
 | Task                       | Status                                      |

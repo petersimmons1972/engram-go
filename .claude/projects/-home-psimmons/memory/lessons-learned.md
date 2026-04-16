@@ -33,6 +33,9 @@ Full detail in Engram: `memory_recall("<topic>", project="<project>")`. This fil
 - CLAUDE.md rules are invisible to Stage 3 LLM — mirror founder rules in `domain-knowledge/`
 - Regen anti-pattern: regen→feedback→fix→regen never closes — categorize must-fix-before-regen vs regen-only FIRST
 - Stage 6 gates are pure Python on saved artifacts — replay in ~60s via `bin/validate-existing.py`
+- Dossier is the fabrication vector — Stage 3 trusts dossier unconditionally; forbidden terms or invented facts in manifest entries reproduce verbatim in prose regardless of domain-knowledge rules. Fix = dossier surgery, not feedback constraints.
+- QUALITY-GATE-FAILED HTML_NOT_FOUND = Stage 6 hard block (gate deleted HTML before Stage 7 ran). DELIVERY_CHECKLIST_FAILED = passed Stage 6 + grading (A-), blocked by post-grade delivery checklist. These are distinct failure modes with different fixes.
+- Gate 36 (non-flagship tier) is triggered by dossier manifest entries naming forbidden product tiers — check dossier before investigating Stage 3 prompt compliance
 
 ## Clearwatch — Chart Quality
 - CISO 3-Gate: business value, vendor differentiation, provable with research. Portfolio-wide, not single-report
@@ -73,6 +76,12 @@ Full detail in Engram: `memory_recall("<topic>", project="<project>")`. This fil
 - `urllib.request.urlopen()` default UA gets 403 from Cloudflare — use `Mozilla/5.0` UA header
 - Every plan needs an explicit validation checklist, never "verify it works"
 - TDD with failing test first prevents spec drift
+
+## Writers Phase 1 (2026-04-14)
+- argparse at module scope causes `SystemExit(2)` on import — always guard `parse_args()` behind `if __name__ == "__main__"`
+- When replacing hardcoded maps with registry/dynamic lookups, verify what keys real data files use — not what the old code expected (hyphenated full-names vs bare keys caused silent data loss)
+- YAML multi-writer reviewer attribution: line numbers in multi-entry files mislead — grep for the writer's key to confirm which entry the reviewer actually meant
+- Updating one step in a multi-step pipeline: scan all downstream steps for references to the same data — labels like "full content" become misleading after upstream changes
 
 ## Signing Discipline
 - Sign the code manifest, not just docs — Ed25519, one key per project, one verify script
