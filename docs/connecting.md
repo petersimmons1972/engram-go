@@ -102,6 +102,29 @@ Note the key is `serverUrl`, not `url` — Windsurf uses a slightly different fi
 
 ---
 
+## Opencode
+
+Add to `~/.config/opencode/opencode.json`. Create the file if it does not exist. Bearer authentication is required.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "engram": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8788/sse",
+      "headers": {
+        "Authorization": "Bearer your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+Copy your `ENGRAM_API_KEY` from `.env` for the header value. **Use `127.0.0.1`, not `localhost`** — Opencode validates that the connection origin matches the `endpoint` URL advertised in the SSE stream. Since Engram advertises `http://127.0.0.1:8788` (set via `ENGRAM_BASE_URL`), your client URL must match exactly. Restart Opencode after saving.
+
+---
+
 ## Claude Desktop
 
 Claude Desktop uses stdio transport, not SSE. It does not connect to a running server over a network port — it spawns a process and communicates over stdin/stdout. To bridge this, you tell Claude Desktop to `docker exec` into the running `engram-go-app` container and run the binary in stdio mode.

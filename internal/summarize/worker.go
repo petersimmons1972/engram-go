@@ -113,8 +113,8 @@ func SummarizeOne(ctx context.Context, backend db.Backend, memoryID, ollamaURL, 
 	if mem == nil {
 		return fmt.Errorf("memory %s not found", memoryID)
 	}
-	if mem.Summary != nil {
-		return nil // already summarized
+	if mem.Summary != nil && *mem.Summary != mem.Content {
+		return nil // already has a real summary
 	}
 	summary, err := SummarizeContent(ctx, mem.Content, ollamaURL, model)
 	if err != nil {
@@ -148,8 +148,8 @@ func SummarizeOneWithClaude(ctx context.Context, backend db.Backend, memoryID st
 	if mem == nil {
 		return fmt.Errorf("memory %s not found", memoryID)
 	}
-	if mem.Summary != nil {
-		return nil // already summarized
+	if mem.Summary != nil && *mem.Summary != mem.Content {
+		return nil // already has a real summary
 	}
 	summary, err := ClaudeSummarize(ctx, mem.Content, client)
 	if err != nil {

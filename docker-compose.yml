@@ -48,6 +48,26 @@ services:
       - ollama-data:/root/.ollama           # model files persist across restarts
     ports:
       - "127.0.0.1:11434:11434"
+    environment:
+      # ── AMD ROCm tuning (Navi 31 / gfx1100 — RX 7900 XT) ─────────────────
+      # Forces correct gfx1100 codepath; without this ROCm may use a slower
+      # fallback path on newer Navi cards.
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+      # Enables flash attention — significant throughput improvement on
+      # modern GPUs including gfx1100.
+      - OLLAMA_FLASH_ATTENTION=1
+      # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
+      # reload penalty after idle gaps between prompts.
+      - OLLAMA_KEEP_ALIVE=1h
+    healthcheck:
+      # Uses the ollama binary (already in the container) to verify the API is
+      # responsive AND that the embed model Engram depends on is present.
+      # start_period gives the server time to initialise before failures count.
+      test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     restart: unless-stopped
     #
     # ── NVIDIA GPU ───────────────────────────────────────────────────────────
@@ -71,9 +91,9 @@ services:
 
   engram-go:
     container_name: engram-go-app
-    image: engram-go:2.3.1
+    image: engram-go:2.3.2
     ports:
-      - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
+      - "0.0.0.0:${ENGRAM_PORT:-8788}:8788"
     env_file:
       - path: .env
         required: false
@@ -97,7 +117,7 @@ services:
       postgres:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Test database (CI only) ───────────────────────────────────────────────

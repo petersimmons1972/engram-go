@@ -351,6 +351,10 @@ func (s *stubBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memor
 
 func (s *stubBackend) Begin(_ context.Context) (db.Tx, error) { return nil, nil }
 
+func (s *stubBackend) ExistsWithContentHash(_ context.Context, _ string, _ string) (bool, error) {
+	return false, nil
+}
+
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)
 

@@ -575,7 +575,7 @@ func (b *PostgresBackend) GetAllMemoryIDs(ctx context.Context, project string) (
 
 func (b *PostgresBackend) GetMemoriesPendingSummary(ctx context.Context, project string, limit int) ([]IDContent, error) {
 	rows, err := b.pool.Query(ctx,
-		"SELECT id, content FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL LIMIT $2",
+		"SELECT id, content FROM memories WHERE project=$1 AND valid_to IS NULL AND (summary IS NULL OR summary = content) LIMIT $2",
 		project, limit,
 	)
 	if err != nil {
@@ -603,7 +603,7 @@ func (b *PostgresBackend) StoreSummary(ctx context.Context, memoryID, summary st
 func (b *PostgresBackend) GetPendingSummaryCount(ctx context.Context, project string) (int, error) {
 	var count int
 	err := b.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND summary IS NULL", project,
+		"SELECT COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL AND (summary IS NULL OR summary = content)", project,
 	).Scan(&count)
 	return count, err
 }
