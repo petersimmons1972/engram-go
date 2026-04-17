@@ -275,9 +275,13 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryStore(ctx, pool, req)
 			}},
-		{"memory_store_document", "Store a large document (<=500k chars, auto-chunked)",
+		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStoreDocument(ctx, pool, req)
+				return handleMemoryStoreDocument(ctx, pool, req, cfg)
+			}},
+		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryIngestDocumentStream(ctx, pool, req, cfg)
 			}},
 		{"memory_store_batch", "Store multiple memories in one call",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -432,6 +436,16 @@ func (s *Server) registerTools() {
 				mcpgo.WithDescription("Iterative recall+score+synthesis loop — returns a single grounded answer (A3)")),
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryExplore(ctx, pool, req, cfg)
+			},
+		)
+
+		// memory_query_document (A5): query a single large document by regex/substring
+		// or semantic recall and synthesize an answer with Claude.
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_query_document",
+				mcpgo.WithDescription("Query a large document stored in memory using regex/substring matching or semantic search. Returns relevant spans and an AI-synthesized answer.")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQueryDocument(ctx, pool, req, cfg)
 			},
 		)
 	}

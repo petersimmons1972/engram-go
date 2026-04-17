@@ -175,6 +175,12 @@ func (noopBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memory, 
 	return nil, nil
 }
 func (noopBackend) Begin(_ context.Context) (db.Tx, error) { return nil, nil }
+func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ string, _ int) ([]*types.Chunk, error) {
+	return nil, nil
+}
+func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)      { return "", nil }
+func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error     { return nil }
 
 var _ db.Backend = noopBackend{}
 

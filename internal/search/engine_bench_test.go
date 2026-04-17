@@ -149,6 +149,10 @@ func (s *stubBackend) TouchMemories(_ context.Context, _ []string) error { retur
 
 func (s *stubBackend) UpdateChunkLastMatched(_ context.Context, _ string) error { return nil }
 
+func (s *stubBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ string, _ int) ([]*types.Chunk, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) GetMeta(_ context.Context, _, _ string) (string, bool, error) {
 	return "", false, nil
 }
@@ -354,6 +358,12 @@ func (s *stubBackend) Begin(_ context.Context) (db.Tx, error) { return nil, nil 
 func (s *stubBackend) ExistsWithContentHash(_ context.Context, _ string, _ string) (bool, error) {
 	return false, nil
 }
+
+func (s *stubBackend) StoreDocument(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error) { return "", nil }
+func (s *stubBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error { return nil }
 
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)

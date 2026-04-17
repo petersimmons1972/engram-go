@@ -214,6 +214,26 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 	return hits, rows.Err()
 }
 
+// SearchChunksWithinMemory returns the nearest chunks by cosine distance to
+// queryVec, scoped to a single memory. Used by A5 memory_query_document's
+// semantic path to narrow vector search to one document's chunks.
+func (b *PostgresBackend) SearchChunksWithinMemory(ctx context.Context, embedding []float32, memoryID string, topK int) ([]*types.Chunk, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	rows, err := b.pool.Query(ctx, `
+		SELECT `+chunkCols+` FROM chunks c
+		WHERE c.memory_id = $2 AND c.embedding IS NOT NULL
+		ORDER BY c.embedding <=> $1::vector
+		LIMIT $3`,
+		pgvector.NewVector(embedding), memoryID, topK,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, rowToChunk)
+}
+
 // ChunkEmbeddingDistance returns the minimum cosine distance between any chunk of
 // memAID and any chunk of memBID. Uses a LATERAL join so the HNSW index on
 // chunks.embedding is used for each probe — O(N·log M) instead of O(N×M) (#114).

@@ -159,6 +159,8 @@ func run() error {
 		ExploreMaxIters:          envInt("ENGRAM_EXPLORE_MAX_ITERS", 5),
 		ExploreMaxWorkers:        envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8),
 		ExploreTokenBudget:       envInt("ENGRAM_EXPLORE_TOKEN_BUDGET", 20000),
+		MaxDocumentBytes:         envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024),
+		RawDocumentMaxBytes:      envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024),
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {

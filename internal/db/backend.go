@@ -91,6 +91,9 @@ type Backend interface {
 	// VectorSearch returns the nearest chunks to queryVec by cosine distance,
 	// using the HNSW index. Returns at most limit results.
 	VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error)
+	// SearchChunksWithinMemory returns the nearest chunks by cosine distance,
+	// scoped to a single memory. Used by A5 memory_query_document's semantic path.
+	SearchChunksWithinMemory(ctx context.Context, embedding []float32, memoryID string, topK int) ([]*types.Chunk, error)
 	// ChunkEmbeddingDistance returns the minimum cosine distance between any
 	// chunk of memA and any chunk of memB. Returns 2.0 (max distance) if
 	// either memory has no embedded chunks.
@@ -233,6 +236,19 @@ type Backend interface {
 	// RecallEpisode returns all memories associated with the given episode,
 	// ordered by created_at ascending (chronological).
 	RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error)
+
+	// ── Raw document storage (Tier-2 ingestion, A4) ─────────────────────────
+
+	// StoreDocument stores raw document content and returns the new document ID.
+	// The content is hashed with SHA-256 and stored alongside size and project.
+	StoreDocument(ctx context.Context, project, content string) (string, error)
+
+	// GetDocument retrieves raw document content by ID. Returns "" if not found.
+	GetDocument(ctx context.Context, id string) (string, error)
+
+	// SetMemoryDocumentID links a memory to a document by setting
+	// memories.document_id = documentID.
+	SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error
 
 	// ── Transactions ────────────────────────────────────────────────────────
 
