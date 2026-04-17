@@ -275,9 +275,13 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryStore(ctx, pool, req)
 			}},
-		{"memory_store_document", "Store a large document (<=500k chars, auto-chunked)",
+		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStoreDocument(ctx, pool, req)
+				return handleMemoryStoreDocument(ctx, pool, req, cfg)
+			}},
+		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryIngestDocumentStream(ctx, pool, req, cfg)
 			}},
 		{"memory_store_batch", "Store multiple memories in one call",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

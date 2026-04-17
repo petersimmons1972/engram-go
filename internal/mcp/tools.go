@@ -37,14 +37,22 @@ type Config struct {
 	// FetchMaxBytes caps the content returned by memory_fetch detail=full.
 	// Defaults to 65536 (64 KB). Set via ENGRAM_FETCH_MAX_BYTES env var.
 	FetchMaxBytes int
-	claudeClient  *claude.Client // set via Server.SetClaudeClient
-
 	// ExploreMaxIters caps memory_explore loop iterations (default 5).
 	ExploreMaxIters int
 	// ExploreMaxWorkers bounds FanOutReason concurrency (default 8).
 	ExploreMaxWorkers int
 	// ExploreTokenBudget caps cumulative scoring-call tokens (default 20000).
 	ExploreTokenBudget int
+	// MaxDocumentBytes is the Tier-1 streaming cap: content up to this size is
+	// chunked+embedded inline. Defaults to 8 MiB. Set via
+	// ENGRAM_MAX_DOCUMENT_BYTES env var.
+	MaxDocumentBytes int
+	// RawDocumentMaxBytes is the Tier-2 raw-storage cap: content up to this
+	// size is stored in the documents table as a handle-referenced blob.
+	// Above this size, ingestion is refused. Defaults to 50 MiB. Set via
+	// ENGRAM_RAW_DOCUMENT_MAX_BYTES env var.
+	RawDocumentMaxBytes int
+	claudeClient        *claude.Client // set via Server.SetClaudeClient
 }
 
 // backendFetcher is the narrow interface required by execFetch.
@@ -336,8 +344,17 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	return toolResult(map[string]any{"id": m.ID, "status": "stored"})
 }
 
-// handleMemoryStoreDocument stores a document-mode memory (whole document as one chunk).
-func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// handleMemoryStoreDocument stores a document-mode memory, auto-selecting a
+// storage tier based on content size:
+//
+//   - ≤ 500 KB (types.MaxContentLength): content is stored verbatim as
+//     Memory.Content and chunked inline (legacy behaviour).
+//   - ≤ MaxDocumentBytes (default 8 MiB): a synopsis is stored as
+//     Memory.Content and chunks are produced from the full body.
+//   - ≤ RawDocumentMaxBytes (default 50 MiB): the full body lands in the
+//     documents table; Memory.Content is a synopsis referencing document_id.
+//   - > RawDocumentMaxBytes: refused.
+func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	h, err := pool.Get(ctx, project)
@@ -348,9 +365,6 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
-	if len(content) > types.MaxContentLength {
-		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
-	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
 		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
@@ -359,19 +373,25 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if importance < 0 || importance > 4 {
 		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
 	}
+	maxDoc, rawMax := configOrDefaults(cfg)
 	m := &types.Memory{
-		ID:          types.NewMemoryID(),
-		Content:     content,
-		MemoryType:  memType,
-		Project:     project,
-		Importance:  importance,
-		Tags:        toStringSlice(args["tags"]),
-		StorageMode: "document",
+		ID:         types.NewMemoryID(),
+		MemoryType: memType,
+		Project:    project,
+		Importance: importance,
+		Tags:       toStringSlice(args["tags"]),
+		Immutable:  getBool(args, "immutable", false),
 	}
-	if err := h.Engine.Store(ctx, m); err != nil {
+	engine := h.Engine
+	deps := storeDocumentDeps{
+		engine:  engineStorerAdapter{store: engine.StoreWithRawBody},
+		backend: backendDocumentAdapter{b: engine.Backend()},
+	}
+	out, err := execStoreDocument(ctx, deps, m, content, maxDoc, rawMax)
+	if err != nil {
 		return nil, err
 	}
-	return toolResult(map[string]any{"id": m.ID, "status": "stored", "mode": "document"})
+	return toolResult(out)
 }
 
 // handleMemoryStoreBatch stores multiple memories in a single atomic call (#115).

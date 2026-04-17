@@ -160,6 +160,11 @@ type Memory struct {
 	// EpisodeID links this memory to the session episode during which it was stored.
 	// nil if the memory was stored outside of a named episode.
 	EpisodeID string `json:"episode_id,omitempty"`
+
+	// DocumentID links a Tier-2 ingested memory to the raw document content
+	// stored in the documents table. Empty for focused and document-mode
+	// memories that fit within the standard chunking pipeline.
+	DocumentID string `json:"document_id,omitempty"`
 }
 
 // Episode is a named session context that groups memories stored during one

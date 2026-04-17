@@ -234,6 +234,19 @@ type Backend interface {
 	// ordered by created_at ascending (chronological).
 	RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error)
 
+	// ── Raw document storage (Tier-2 ingestion, A4) ─────────────────────────
+
+	// StoreDocument stores raw document content and returns the new document ID.
+	// The content is hashed with SHA-256 and stored alongside size and project.
+	StoreDocument(ctx context.Context, project, content string) (string, error)
+
+	// GetDocument retrieves raw document content by ID. Returns "" if not found.
+	GetDocument(ctx context.Context, id string) (string, error)
+
+	// SetMemoryDocumentID links a memory to a document by setting
+	// memories.document_id = documentID.
+	SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error
+
 	// ── Transactions ────────────────────────────────────────────────────────
 
 	// Begin starts a new transaction.

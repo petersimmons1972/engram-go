@@ -355,6 +355,12 @@ func (s *stubBackend) ExistsWithContentHash(_ context.Context, _ string, _ strin
 	return false, nil
 }
 
+func (s *stubBackend) StoreDocument(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error) { return "", nil }
+func (s *stubBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error { return nil }
+
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)
 

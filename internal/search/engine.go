@@ -193,16 +193,25 @@ func (e *SearchEngine) Project() string { return e.project }
 // Correct (re-chunking after a content change). Embedding is done outside any
 // transaction because it is slow; callers are responsible for writing the
 // returned chunks inside a transaction.
-func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory) ([]*types.Chunk, error) {
+func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory, rawBody string) ([]*types.Chunk, error) {
+	// A4 Tier-1 synopsis support: when rawBody is non-empty, chunks are built
+	// from the full document body rather than the memory's (synopsis) Content.
+	// This keeps recall grounded in the original text even though Memory.Content
+	// is truncated to a synopsis for context-window friendliness.
+	chunkSource := m.Content
+	if rawBody != "" {
+		chunkSource = rawBody
+	}
+
 	// Produce chunk candidates. ChunkDocument returns []ChunkCandidate (with heading
 	// metadata). ChunkText returns plain []string which we wrap into candidates.
 	var candidates []chunk.ChunkCandidate
 	if m.StorageMode == "document" {
-		candidates = chunk.ChunkDocument(m.Content, 0 /* use package default */)
+		candidates = chunk.ChunkDocument(chunkSource, 0 /* use package default */)
 	} else {
 		// ChunkText(text, maxTokens, overlapTokens). Use same defaults as Python:
 		// 512 max tokens, 50 overlap.
-		for _, text := range chunk.ChunkText(m.Content, 512, 50) {
+		for _, text := range chunk.ChunkText(chunkSource, 512, 50) {
 			candidates = append(candidates, chunk.ChunkCandidate{
 				Text:      text,
 				ChunkType: "sentence_window",
@@ -212,7 +221,7 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 
 	// If ChunkText produced nothing (empty content edge case), store content as one chunk.
 	if len(candidates) == 0 {
-		candidates = []chunk.ChunkCandidate{{Text: m.Content, ChunkType: "sentence_window"}}
+		candidates = []chunk.ChunkCandidate{{Text: chunkSource, ChunkType: "sentence_window"}}
 	}
 
 	// Filter to new chunks only (deduplicate by hash) before embedding.
@@ -285,13 +294,25 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 // Store persists a memory: sets defaults, chunks content, deduplicates by hash,
 // embeds new chunks, and writes everything inside a single transaction.
 func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
+	return e.StoreWithRawBody(ctx, m, "")
+}
+
+// StoreWithRawBody is like Store, but chunks the given rawBody (rather than
+// m.Content) when non-empty. Used by Tier-1 large-document ingestion: the
+// memory carries a synopsis in Content while chunks are produced from the
+// full body so semantic recall stays grounded in the original text.
+func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, rawBody string) error {
 	if m.ID == "" {
 		m.ID = types.NewMemoryID()
 	}
 	m.Project = e.project
 
+	effectiveSize := len(m.Content)
+	if rawBody != "" {
+		effectiveSize = len(rawBody)
+	}
 	if m.StorageMode == "" {
-		if len(m.Content) > 10_000 {
+		if effectiveSize > 10_000 {
 			m.StorageMode = "document"
 		} else {
 			m.StorageMode = "focused"
@@ -302,7 +323,7 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 		return err
 	}
 
-	chunks, err := e.storeChunksForMemory(ctx, m)
+	chunks, err := e.storeChunksForMemory(ctx, m, rawBody)
 	if err != nil {
 		return err
 	}
@@ -354,7 +375,7 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 				m.StorageMode = "focused"
 			}
 		}
-		chunks, err := e.storeChunksForMemory(ctx, m)
+		chunks, err := e.storeChunksForMemory(ctx, m, "")
 		if err != nil {
 			return fmt.Errorf("prepare memory %q: %w", m.ID, err)
 		}
@@ -753,7 +774,7 @@ func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, 
 	// for new ones inside a single transaction. This prevents orphaned memories
 	// (no chunks, no vector) if the embedder fails after the delete.
 	if content != nil {
-		chunks, err := e.storeChunksForMemory(ctx, mem)
+		chunks, err := e.storeChunksForMemory(ctx, mem, "")
 		if err != nil {
 			return nil, fmt.Errorf("re-chunk after correct: %w", err)
 		}
