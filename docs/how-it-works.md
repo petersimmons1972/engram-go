@@ -87,6 +87,64 @@ At scale, summary mode reduces context consumption by roughly 13× compared to f
 
 <p align="center"><img src="context-reduction.svg" alt="Context reduction: summary vs full" width="900"></p>
 
+### Handle Mode
+
+When an agent calls `memory_recall`, the default response contains full memory objects (content, scores, metadata). For high-volume sessions, this inflates context. Handle mode returns lightweight references instead:
+
+```json
+{
+  "handles": [
+    {"id": "mem-abc123", "summary": "Auth token refresh logic", "score": 0.91, "memory_type": "pattern"},
+    {"id": "mem-def456", "summary": "Postgres connection pool timeout", "score": 0.87, "memory_type": "error"}
+  ],
+  "count": 2,
+  "fetch_hint": "call memory_fetch with id and detail=summary|chunk|full"
+}
+```
+
+Handle mode is the **default** since the A6 configuration change. To get full content, pass `mode="full"` explicitly or set `ENGRAM_RECALL_DEFAULT_MODE=full`.
+
+To expand a specific handle into full content, call `memory_fetch` with the ID and the desired detail level:
+
+| `detail=` | Returns |
+|-----------|---------|
+| `"summary"` | 1–2 sentence generated summary |
+| `"chunk"` | The matched chunk text |
+| `"full"` | Complete original content |
+
+Handle mode trades recall immediacy for context efficiency: an agent can scan 20 handles for ~1 KB, then fetch only the 2–3 memories it actually needs.
+
+### Memory Explore: Iterative Synthesis
+
+`memory_explore` answers open-ended questions by running multiple rounds of recall, scoring confidence after each round, and stopping when it has enough signal to synthesize an answer — or after a configured maximum number of iterations.
+
+The loop:
+1. Recall memories relevant to the question.
+2. Score confidence (0–1): "Do I have enough signal to answer well?"
+3. If confidence ≥ 0.8 (or iterations exhausted): synthesize an answer grounded in the recalled memories.
+4. If confidence < 0.8: refine the query and repeat from step 1.
+
+The result is a single synthesis response:
+```json
+{
+  "answer": "The connection pool is configured at 10 max connections...",
+  "sources": ["mem-abc123", "mem-def456"],
+  "confidence": 0.92,
+  "iterations": 2
+}
+```
+
+**When to use `memory_explore` vs `memory_recall`:**
+
+| Use case | Tool |
+|----------|------|
+| You know what you're looking for | `memory_recall` — single fast lookup |
+| Open-ended question, uncertain what's stored | `memory_explore` — iterative synthesis |
+| You need a synthesized answer, not a list of memories | `memory_explore` |
+| You want raw memory objects to reason over yourself | `memory_recall` with `mode="full"` |
+
+Configuration env vars: `ENGRAM_EXPLORE_MAX_ITERS` (default 5), `ENGRAM_EXPLORE_MAX_WORKERS` (default 8), `ENGRAM_EXPLORE_TOKEN_BUDGET` (default 20000).
+
 ### Importance Multipliers
 
 Five levels, applied as multipliers on the final composite score. The formula is `(5 - importance_level) / 3.0`:
@@ -170,6 +228,62 @@ Six types let agents and queries filter by context.
 Filtering by type is a hard filter, not a weight. `memory_recall("database", memory_types=["error"])` returns only errors — nothing of any other type, regardless of relevance score.
 
 Use types consistently. The value compounds: once you have stored 50 `error` memories, querying them by type before starting a debugging session gives you a cheap checklist of everything that has gone wrong before.
+
+---
+
+## Large Document Storage
+
+`memory_store_document` and `memory_ingest` store documents by size tier. The tier is selected automatically — no configuration required.
+
+| Tier | Size range | Storage strategy |
+|------|-----------|-----------------|
+| **Tier-0** (small) | ≤ ~500 KB | Stored verbatim in `Memory.Content`. Standard chunking and embedding. |
+| **Tier-1** (synopsis) | 500 KB – 8 MB | A synopsis (first 8 KB + outline of headings) is stored as `Memory.Content`. The full body is chunked and embedded for semantic recall. The synopsis keeps context consumption manageable while recall stays grounded in the full document. |
+| **Tier-2** (raw document) | 8 MB – 50 MB | Synopsis stored as memory. Full raw body parked in a separate `documents` table and linked via `document_id`. Chunks are NOT generated inline — instead, use `memory_query_document` to run regex, substring, or semantic searches against the raw body. |
+| **Rejected** | > 50 MB | Returns an error. Use chunked streaming ingest (`memory_ingest` with `action=start/append/finish`) to split the payload and stay under the cap. |
+
+**Querying large documents:** For Tier-2 memories, call `memory_query_document` with the memory ID and a question. It extracts relevant spans from the raw body and synthesizes an answer:
+
+```python
+memory_query_document(
+    project="myproject",
+    memory_id="mem-abc123",
+    question="What are the retry backoff parameters?",
+    filter={"substrings": ["retry", "backoff"]},
+    window_chars=4000
+)
+```
+
+Tier boundaries are configurable via `ENGRAM_MAX_DOCUMENT_BYTES` (Tier-1/Tier-2 boundary, default 8 MB) and `ENGRAM_RAW_DOCUMENT_MAX_BYTES` (Tier-2 cap, default 50 MB).
+
+---
+
+## Configuration Reference
+
+All Engram configuration is via environment variables (not CLI flags — secrets in flags are visible in `/proc/cmdline`).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | (required) | PostgreSQL DSN |
+| `ENGRAM_API_KEY` | (required) | Bearer token for MCP endpoint authentication |
+| `ANTHROPIC_API_KEY` | — | Enables Claude-powered features (explore synthesis, re-ranking, consolidation) |
+| `OLLAMA_URL` | `http://ollama:11434` | Ollama embedding server |
+| `ENGRAM_OLLAMA_MODEL` | `nomic-embed-text` | Embedding model (must produce 768-dim vectors) |
+| `ENGRAM_PORT` | `8788` | MCP SSE port |
+| `ENGRAM_HOST` | `0.0.0.0` | Bind address |
+| `ENGRAM_RECALL_DEFAULT_MODE` | `handle` | Default recall mode: `handle` (references) or `full` (complete objects) |
+| `ENGRAM_EXPLORE_MAX_ITERS` | `5` | Maximum iterations for `memory_explore` |
+| `ENGRAM_EXPLORE_MAX_WORKERS` | `8` | Parallel recall workers per explore iteration |
+| `ENGRAM_EXPLORE_TOKEN_BUDGET` | `20000` | Token budget for explore synthesis |
+| `ENGRAM_MAX_DOCUMENT_BYTES` | `8388608` (8 MB) | Tier-1/Tier-2 boundary for document ingest |
+| `ENGRAM_RAW_DOCUMENT_MAX_BYTES` | `52428800` (50 MB) | Maximum document size before rejection |
+| `ENGRAM_FETCH_MAX_BYTES` | `65536` (64 KB) | Byte cap for `memory_fetch` with `detail=full` |
+| `ENGRAM_SUMMARIZE_MODEL` | `llama3.2` | Ollama model for background summarization |
+| `ENGRAM_SUMMARIZE_ENABLED` | `true` | Enable background summarization worker |
+| `ENGRAM_CLAUDE_SUMMARIZE` | `false` | Use Claude instead of Ollama for summarization |
+| `ENGRAM_CLAUDE_CONSOLIDATE` | `false` | Use Claude for near-duplicate detection in consolidation |
+| `ENGRAM_CLAUDE_RERANK` | `false` | Enable Claude re-ranking of recall results |
+| `ENGRAM_DECAY_INTERVAL` | `8h` | How often the importance decay worker runs |
 
 ---
 
