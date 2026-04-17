@@ -132,6 +132,29 @@ func TestHandleMemoryAggregate_InvalidBy(t *testing.T) {
 	})
 }
 
+// TestHandleMemoryAggregate_LimitClamping verifies that passing limit=-1 does not
+// produce an error at the MCP handler boundary. The handler silently clamps any
+// limit < 1 to 20 before forwarding to the engine, so the call must succeed and
+// return a valid aggregate response with a "rows" key.
+func TestHandleMemoryAggregate_LimitClamping(t *testing.T) {
+	ctx := context.Background()
+	// Use the noopBackend-backed pool so this test runs without a real database.
+	pool := mcp.NewTestNoopPool(t)
+
+	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
+		"project": "test",
+		"by":      "tag",
+		"limit":   float64(-1),
+	})
+
+	require.NotNil(t, out, "response must not be nil")
+
+	rows, ok := out["rows"]
+	require.True(t, ok, "response must include 'rows' key")
+	_, isSlice := rows.([]any)
+	require.True(t, isSlice, "'rows' must be a []any, got %T", rows)
+}
+
 // ── memory_feedback with failure_class tests ──────────────────────────────────
 
 // TestHandleMemoryFeedback_WithClass calls memory_feedback with a valid

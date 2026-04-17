@@ -356,6 +356,13 @@ func CallHandleMemoryIngest(
 	return res
 }
 
+// NewTestNoopPool returns an EnginePool backed by a noopBackend + noopEmbedder.
+// Use this in unit tests that do not require a real PostgreSQL database.
+func NewTestNoopPool(t *testing.T) *EnginePool {
+	t.Helper()
+	return newTestExplorePool(t)
+}
+
 // CallHandleMemoryAggregate invokes handleMemoryAggregate with the given
 // arguments and returns the decoded output map. Fatals on any error.
 func CallHandleMemoryAggregate(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
