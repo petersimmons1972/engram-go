@@ -36,11 +36,17 @@ Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts c
 - Before touching infrastructure: `memory_recall("infrastructure patterns lessons", project="homelab")`
 - Before a Clearwatch change: `memory_recall("<feature area>", project="clearwatch")`
 
+**Retrieval quality feedback — ALWAYS do this:**
+- After `memory_recall` returns useful results → call `memory_feedback` with the IDs that actually helped
+- After `memory_recall` returns nothing (or wrong results) for a query where context should exist → store a miss: `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`
+- This feeds real retrieval quality data to Peter's memory benchmarking work. Do it every time without exception.
+
 **After completing meaningful work — store it:**
 - Decisions made and why → `memory_store(content, memory_type="decision", project="<project>")`
 - Bugs fixed and root cause → `memory_store(content, memory_type="error", project="<project>")`
 - Patterns established → `memory_store(content, memory_type="pattern", project="<project>")`
 - Session summary at end → `memory_store(content, memory_type="context", project="global", importance=1)`
+- **Never store:** transient operational state (service down, DNS failing, migration blocked, health status) — these become stale facts that mislead future sessions. File a GitHub Issue instead.
 
 **Fallback only:** If Engram is unreachable, fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
 
@@ -54,6 +60,9 @@ Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts c
 - **Stay in scope.** >15 min tangent → file GitHub Issue, keep moving. <15 min → fix and note it.
 - `superpowers:verification-before-completion` before claiming done.
 - **Graceful degradation:** For research-heavy dispatches (multi-tool, expected >8 turns), add to the dispatch brief: "If you reach turn 8 of 10 without a complete answer, stop tool calls and return a partial summary labeled `PARTIAL:` with what you have gathered. Do not wait for perfect information."
+- **Two escalation modes — use the right one:**
+  - **Partial-work escalation:** Agent made real progress, got stuck — preserve the partial output and hand off with context. Never discard useful work.
+  - **Hard-failure escalation:** Infrastructure or tooling broke before meaningful work happened — dead letter it, retry from scratch. Don't try to salvage.
 
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
@@ -68,6 +77,21 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 - File issues FIRST, then report status.
 - **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
 
+## CLI Tool Preferences
+- **HTTP requests:** use `xh` not `curl` — cleaner output, no flags needed for JSON
+- **kubectl shortcuts:** check `just --list` before typing raw kubectl commands; use `just <recipe>` when one exists
+- **Multi-pod logs:** use `stern <name> -n <ns>` not `kubectl logs` when tailing across multiple pods
+- **Security reviews:** always run `semgrep scan --config auto <path>` as first step before manual review
+- **Git diffs:** `git diff --staged` output is automatically rendered by delta (line numbers included)
+- **Structural code search:** use `ast-grep --pattern 'def func_name($$$)'` to locate functions precisely — avoids reading large files just to find insertion points. Installed at `/home/linuxbrew/.linuxbrew/bin/ast-grep`
+- **JSON field extraction:** use `gron dossier.json | grep field_name` to pull single fields from large JSON without loading the whole file into context. Installed at `/home/linuxbrew/.linuxbrew/bin/gron`
+- **YAML field extraction:** `kubectl get deploy -n NS -o yaml | yq '.items[] | {"name":.metadata.name,"replicas":.spec.replicas}'` — 1123 lines → ~36 (97% reduction). Full patterns → `~/TOOLS.md`
+- **kubectl output cleanup:** `kubectl get X -o yaml | kubectl-neat` — use for full-spec copy/templating; prefer `yq` for targeted field reads. Installed at `~/bin/kubectl-neat`
+- **Large data files + multi-file queries:** `duckdb -c "SELECT ... FROM read_json('/tmp/pod-*.json')"` — SQL on CSV/JSON/Parquet with glob support. Full patterns → `~/TOOLS.md`
+- **JSON modification without jq syntax:** `gron file.json | sed 's/old/new/' | gron --ungron` — round-trip modify. Full patterns → `~/TOOLS.md`
+- **Code refactoring previews:** `ast-grep --pattern 'X' --rewrite 'Y' src/` shows diff; `--update-all` applies. Full patterns → `~/TOOLS.md`
+- **Codebase size:** use `tokei pipeline/` for a one-call language/file/line breakdown before diving into an unfamiliar subsystem. Installed at `/home/linuxbrew/.linuxbrew/bin/tokei`
+
 ## Critical Rules
 **NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup
 **ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
@@ -75,7 +99,7 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 ## Self-Learning & Autonomous Bug Fixing
 - **Never ask permission for:** bug fixes (fix, test, commit, report after) · feedback integration
 - **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`
-- **Escalate only if:** same bug 3+ times or circular token loops
+- **Escalate only if:** same error appears **twice** — max 2 attempts per agentic step; on the third occurrence, escalate instead of retrying · circular token loops
 - **Do ask permission for:** resource-intensive ops, actions with external visibility
 
 ## Project Priority Stack
@@ -88,6 +112,7 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 - STOP and notify founder if: >$5 compute · production deployment · push to main/master · data loss · agent stuck >45 min · same error 3+ times
 
 ## Reference
-**Skills:** Debug → `superpowers:systematic-debugging` | Implement → `superpowers:brainstorming`
-**Web Search:** `https://searxng.petersimmons.com/search?q={query}&format=json` | Fallback: WebSearch tool
+**Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
+**Skills:** Debug → `superpowers:systematic-debugging` | Implement → `superpowers:brainstorming` | GitHub docs → `github-docs` (skill at `~/.claude/skills/github-docs/SKILL.md`)
+**Web Search:** ALWAYS use `search "query"` (`~/bin/search`) — hits local SearxNG (K8s deployment, `default/searxng`, 2 replicas, scales via `kubectl scale deploy/searxng -n default --replicas=N`). Aggregates Google + DuckDuckGo + Startpage. Use `--full` for snippets, `--limit N` for more results. NEVER use the WebSearch tool unless SearxNG is unreachable.
 **Learning:** Detail → topic file | one-liner → MEMORY.md | rule → CLAUDE.md | `~/.claude/projects/-home-psimmons/memory/`
