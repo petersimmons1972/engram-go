@@ -98,17 +98,17 @@
     dominant-baseline="auto"
     letter-spacing="0.3">Persistent Memory for AI Agents</text>
 
-  <!-- Tagline: version and stack -->
+  <!-- Tagline: LOCAL-ONLY — the key differentiator -->
   <text
     x="600"
     y="185"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="16"
-    font-weight="500"
-    fill="#3fb950"
+    font-size="15"
+    font-weight="600"
+    fill="#ff6b6b"
     text-anchor="middle"
     dominant-baseline="auto"
-    letter-spacing="0.8">v3.0  |  Go.  Fast.  Reliable.</text>
+    letter-spacing="0.5">v3.0  ·  LOCAL-ONLY  ·  No cloud accounts  ·  No API keys  ·  No telemetry</text>
 
   <!-- Badge 1 label -->
   <text
