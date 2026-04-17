@@ -287,6 +287,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryRecall(ctx, pool, req, cfg)
 			}},
+		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryFetch(ctx, pool, req, cfg)
+			}},
 		{"memory_list", "List memories with optional filters",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryList(ctx, pool, req)

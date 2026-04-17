@@ -264,6 +264,21 @@ type ConnectedMemory struct {
 	Strength  float64 `json:"strength"`
 }
 
+// Handle is a lightweight reference returned by handle-mode recall.
+// The caller fetches content on demand via memory_fetch, keeping the transcript
+// free of large memory payloads until they are actually needed.
+type Handle struct {
+	ID          string  `json:"id"`
+	Project     string  `json:"project"`
+	Summary     string  `json:"summary"`       // "" if not yet summarized
+	Score       float64 `json:"score"`
+	StorageMode string  `json:"storage_mode"`
+	ChunkCount  int     `json:"chunk_count"`   // 0 if unknown at recall time
+	Bytes       int     `json:"bytes"`         // len(content)
+	IsHandle    bool    `json:"is_handle"`     // always true; signals paged-out result
+	FetchHint   string  `json:"fetch_hint"`    // human-readable usage hint
+}
+
 // MemoryStats summarizes the contents of the store. Returned by the status endpoint.
 type MemoryStats struct {
 	TotalMemories       int            `json:"total_memories"`

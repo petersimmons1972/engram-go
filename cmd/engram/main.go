@@ -154,6 +154,8 @@ func run() error {
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
 		DataDir:                  *dataDir,
+		RecallDefaultMode:        envOr("ENGRAM_RECALL_DEFAULT_MODE", ""),
+		FetchMaxBytes:            envInt("ENGRAM_FETCH_MAX_BYTES", 65536),
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {

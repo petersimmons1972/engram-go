@@ -29,8 +29,121 @@ type Config struct {
 	// DataDir is the base directory for all file-system operations (export,
 	// import, ingest). Paths provided by callers are validated to stay within
 	// this directory. Must be set; file-operation tools return an error if empty.
-	DataDir      string
-	claudeClient *claude.Client // set via Server.SetClaudeClient
+	DataDir string
+	// RecallDefaultMode controls the default recall response format.
+	// "" or "full" returns complete SearchResults; "handle" returns lightweight
+	// Handle references. Set via ENGRAM_RECALL_DEFAULT_MODE env var.
+	RecallDefaultMode string
+	// FetchMaxBytes caps the content returned by memory_fetch detail=full.
+	// Defaults to 65536 (64 KB). Set via ENGRAM_FETCH_MAX_BYTES env var.
+	FetchMaxBytes int
+	claudeClient  *claude.Client // set via Server.SetClaudeClient
+}
+
+// backendFetcher is the narrow interface required by execFetch.
+// Satisfied by db.Backend; declared separately so tests can inject a stub.
+type backendFetcher interface {
+	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
+}
+
+// execFetch is the testable core of handleMemoryFetch.
+// detail: "summary" | "chunk" | "full"
+// requestedChunkIDs: when non-empty, only those chunk IDs are returned (chunk mode only).
+// maxBytes: byte cap applied to content in full mode; 0 means no cap.
+func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
+	m, err := f.GetMemory(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, fmt.Errorf("memory %q not found", id)
+	}
+
+	switch detail {
+	case "chunk":
+		chunks, err := f.GetChunksForMemory(ctx, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(requestedChunkIDs) > 0 {
+			want := make(map[string]bool, len(requestedChunkIDs))
+			for _, cid := range requestedChunkIDs {
+				want[cid] = true
+			}
+			filtered := chunks[:0]
+			for _, c := range chunks {
+				if want[c.ID] {
+					filtered = append(filtered, c)
+				}
+			}
+			chunks = filtered
+		}
+		return map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"chunks":      chunks,
+			"chunk_count": len(chunks),
+		}, nil
+
+	case "full":
+		content := m.Content
+		truncated := false
+		if maxBytes > 0 && len(content) > maxBytes {
+			content = content[:maxBytes]
+			truncated = true
+		}
+		out := map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"content":     content,
+			"truncated":   truncated,
+		}
+		if m.Summary != nil {
+			out["summary"] = *m.Summary
+		}
+		return out, nil
+
+	default: // "summary" and anything unrecognised
+		sum := ""
+		if m.Summary != nil {
+			sum = *m.Summary
+		}
+		return map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"summary":     sum,
+		}, nil
+	}
+}
+
+// handleMemoryFetch implements the memory_fetch MCP tool.
+func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	id := getString(args, "id", "")
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	detail := getString(args, "detail", "summary")
+	chunkIDs := toStringSlice(args["chunk_ids"])
+	maxBytes := cfg.FetchMaxBytes
+	if maxBytes == 0 {
+		maxBytes = 65536
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	result, err := execFetch(ctx, h.Engine.Backend(), id, detail, maxBytes, chunkIDs)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(result)
 }
 
 // claudeMergeAdapter adapts *claude.Client to search.MergeReviewer by converting
@@ -348,6 +461,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
+	mode := getString(args, "mode", cfg.RecallDefaultMode)
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames := toStringSlice(args["projects"])
@@ -384,6 +498,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
 		if err != nil {
 			return nil, err
+		}
+		if mode == "handle" {
+			return toolResult(map[string]any{
+				"handles":    search.ToHandles(results),
+				"count":      len(results),
+				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+			})
 		}
 		out := map[string]any{"results": results, "count": len(results)}
 		if includeConflicts && firstHandle != nil {
@@ -452,6 +573,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 	}
 
+	if mode == "handle" {
+		return toolResult(map[string]any{
+			"handles":    search.ToHandles(results),
+			"count":      len(results),
+			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+		})
+	}
 	out := map[string]any{"results": results, "count": len(results)}
 	if eventID != "" {
 		out["event_id"] = eventID
