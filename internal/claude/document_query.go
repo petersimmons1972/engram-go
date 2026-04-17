@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // DocumentQuery holds the parsed args for a memory_query_document request.
@@ -143,25 +144,38 @@ func QueryDocument(ctx context.Context, c *Client, content string, q DocumentQue
 		}, nil
 	}
 
-	// Apply token budget — stop accumulating once we cross the char cap,
-	// but include the span that tipped us over so callers see a complete window.
+	// Apply token budget — truncate any span whose text would push total past
+	// charCap so callers receive content that strictly fits within the budget.
+	// Truncated=true signals that at least one span was cut short or omitted.
 	charCap := q.TokenBudget * charsPerToken
 	spans := make([]DocumentSpan, 0, len(merged))
 	total := 0
 	truncated := false
-	for i, m := range merged {
+	for _, m := range merged {
 		text := content[m.start:m.end]
+		if charCap > 0 && total+len(text) > charCap {
+			remaining := charCap - total
+			if remaining > 0 {
+				// Walk back to a valid UTF-8 rune boundary.
+				for remaining > 0 && !utf8.RuneStart(text[remaining]) {
+					remaining--
+				}
+				text = text[:remaining]
+				spans = append(spans, DocumentSpan{
+					Offset:  m.start,
+					Text:    text,
+					Matched: m.matched,
+				})
+			}
+			truncated = true
+			break
+		}
 		spans = append(spans, DocumentSpan{
 			Offset:  m.start,
 			Text:    text,
 			Matched: m.matched,
 		})
 		total += len(text)
-		// Fix #186: only mark truncated when more spans remain after this one.
-		if total > charCap && i < len(merged)-1 {
-			truncated = true
-			break
-		}
 	}
 
 	// Build the user prompt by concatenating spans with dividers.
