@@ -1213,13 +1213,10 @@ func (e *SearchEngine) FeedbackWithEventAndClass(ctx context.Context, eventID st
 	if err := e.backend.RecordFeedbackWithClass(ctx, eventID, usefulIDs, failureClass); err != nil {
 		return err
 	}
-	// Only boost edges when the retrieval was actually useful (no failure class).
-	if failureClass == "" {
-		if len(usefulIDs) > 0 {
-			return e.Feedback(ctx, usefulIDs)
-		}
+	if failureClass != "" || len(usefulIDs) == 0 {
+		return nil
 	}
-	return nil
+	return e.Feedback(ctx, usefulIDs)
 }
 
 // Aggregate returns aggregated memory statistics grouped by the given dimension.
@@ -1231,9 +1228,12 @@ func (e *SearchEngine) Aggregate(ctx context.Context, by, filter string, limit i
 	case "tag", "type":
 		return e.backend.AggregateMemories(ctx, e.project, by, filter, limit)
 	case "failure_class":
+		if filter != "" {
+			return nil, fmt.Errorf("aggregate: filter not supported for failure_class")
+		}
 		return e.backend.AggregateFailureClasses(ctx, e.project, limit)
 	default:
-		return nil, fmt.Errorf("aggregate: unsupported by value %q — must be tag, type, or failure_class", by)
+		return nil, fmt.Errorf("aggregate: unsupported by %q (must be tag, type, or failure_class)", by)
 	}
 }
 
