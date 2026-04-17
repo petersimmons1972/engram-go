@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
@@ -151,4 +152,76 @@ func TestExecQueryDocument_NoClaudeClient(t *testing.T) {
 		claude.DocumentQuery{Project: "p", MemoryID: "m1", Question: "q"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Claude")
+}
+
+// ── handleMemoryQueryDocument: MCP entry-point tests ─────────────────────────
+// These tests hit the MCP handler directly (not execQueryDocument) so the
+// argument-parsing, claudeClient-presence, and early-validation paths in the
+// outer handler get coverage. A real EnginePool is not needed because every
+// error case returns before pool.Get is called.
+
+func qdReq(args map[string]any) mcpgo.CallToolRequest {
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	return req
+}
+
+func TestHandleMemoryQueryDocument_NoClaudeClient(t *testing.T) {
+	_, err := handleMemoryQueryDocument(context.Background(), nil,
+		qdReq(map[string]any{"project": "p", "memory_id": "m1", "question": "q"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Claude")
+}
+
+func TestHandleMemoryQueryDocument_MissingProject(t *testing.T) {
+	c, srv := newQDStubClaude(t, "ok")
+	defer srv.Close()
+	_, err := handleMemoryQueryDocument(context.Background(), nil,
+		qdReq(map[string]any{"memory_id": "m1", "question": "q"}),
+		Config{claudeClient: c})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "project")
+}
+
+func TestHandleMemoryQueryDocument_MissingMemoryID(t *testing.T) {
+	c, srv := newQDStubClaude(t, "ok")
+	defer srv.Close()
+	_, err := handleMemoryQueryDocument(context.Background(), nil,
+		qdReq(map[string]any{"project": "p", "question": "q"}),
+		Config{claudeClient: c})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory_id")
+}
+
+func TestHandleMemoryQueryDocument_MissingQuestion(t *testing.T) {
+	c, srv := newQDStubClaude(t, "ok")
+	defer srv.Close()
+	_, err := handleMemoryQueryDocument(context.Background(), nil,
+		qdReq(map[string]any{"project": "p", "memory_id": "m1"}),
+		Config{claudeClient: c})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "question")
+}
+
+// Exercises the filter-object parsing branch. Missing memory_id trips the
+// validator but only after filter is parsed, so we get coverage on the
+// nested-map decode path.
+func TestHandleMemoryQueryDocument_FilterParsed(t *testing.T) {
+	c, srv := newQDStubClaude(t, "ok")
+	defer srv.Close()
+	_, err := handleMemoryQueryDocument(context.Background(), nil,
+		qdReq(map[string]any{
+			"project":  "p",
+			"question": "q",
+			// memory_id intentionally omitted so the call short-circuits
+			// before pool.Get — we only need the filter-parse lines covered.
+			"filter": map[string]any{
+				"regex":      "^err",
+				"substrings": []any{"failed"},
+			},
+		}),
+		Config{claudeClient: c})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory_id")
 }

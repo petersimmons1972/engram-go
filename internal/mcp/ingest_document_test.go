@@ -14,6 +14,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -445,6 +446,135 @@ func TestHandleStream_AppendUnknownUpload(t *testing.T) {
 		Config{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown upload_id")
+}
+
+// TestEngineStorerAdapter covers the tiny trampoline used to plug a
+// *search.SearchEngine into the memoryStorer interface. No SearchEngine is
+// needed — the adapter just forwards to the supplied func.
+func TestEngineStorerAdapter(t *testing.T) {
+	var gotRaw string
+	var gotID string
+	a := engineStorerAdapter{store: func(_ context.Context, m *types.Memory, rawBody string) error {
+		gotID = m.ID
+		gotRaw = rawBody
+		return nil
+	}}
+	err := a.StoreWithRawBody(context.Background(), &types.Memory{ID: "m1"}, "raw")
+	require.NoError(t, err)
+	require.Equal(t, "m1", gotID)
+	require.Equal(t, "raw", gotRaw)
+}
+
+// TestBackendDocumentAdapter covers the db.Backend → documentStorer adapter.
+// backendStub satisfies enough of db.Backend for StoreDocument and
+// SetMemoryDocumentID to be exercised.
+type backendStubForAdapter struct {
+	db.Backend
+	storeCalls  int
+	linkCalls   int
+	lastProject string
+	lastMem     string
+	lastDoc     string
+}
+
+func (b *backendStubForAdapter) StoreDocument(_ context.Context, project, _ string) (string, error) {
+	b.storeCalls++
+	b.lastProject = project
+	return "doc-id", nil
+}
+
+func (b *backendStubForAdapter) SetMemoryDocumentID(_ context.Context, memID, docID string) error {
+	b.linkCalls++
+	b.lastMem = memID
+	b.lastDoc = docID
+	return nil
+}
+
+func TestBackendDocumentAdapter(t *testing.T) {
+	bs := &backendStubForAdapter{}
+	a := backendDocumentAdapter{b: bs}
+	id, err := a.StoreDocument(context.Background(), "proj", "body")
+	require.NoError(t, err)
+	require.Equal(t, "doc-id", id)
+	require.Equal(t, 1, bs.storeCalls)
+	require.Equal(t, "proj", bs.lastProject)
+
+	err = a.SetMemoryDocumentID(context.Background(), "mem-1", "doc-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, bs.linkCalls)
+	require.Equal(t, "mem-1", bs.lastMem)
+	require.Equal(t, "doc-1", bs.lastDoc)
+}
+
+// TestRunStreamIngest_PoolError exercises runStreamIngest's error path when
+// the engine pool cannot produce a handle. This drives the function's
+// opening statements (pool.Get + error return) so the coverage profile
+// no longer shows 0% for runStreamIngest. The happy path requires a live
+// SearchEngine and is covered by e2e tests.
+func TestRunStreamIngest_PoolError(t *testing.T) {
+	pool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
+		return nil, fmt.Errorf("factory refused")
+	})
+	_, err := runStreamIngest(context.Background(), pool, "p", "body", Config{}, 8*1024*1024, 50*1024*1024)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "factory refused")
+}
+
+// TestHandleStream_FinishProjectMismatch verifies the A4 project-isolation
+// guard: finish called under a different project than start must be
+// rejected so a caller cannot silently park a body in the wrong project.
+func TestHandleStream_FinishProjectMismatch(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "mismatch", "project": "A"}),
+		Config{})
+	require.NoError(t, err)
+
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "finish", "upload_id": "mismatch", "project": "B"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "project mismatch")
+}
+
+// TestHandleStream_AppendProjectMismatch: same guard on the append path.
+func TestHandleStream_AppendProjectMismatch(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "mm-app", "project": "A"}),
+		Config{})
+	require.NoError(t, err)
+
+	data := base64.StdEncoding.EncodeToString([]byte("x"))
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "mm-app", "part": float64(0), "data": data, "project": "B"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "project mismatch")
+}
+
+// TestBuildSynopsis_UTF8BoundarySafe verifies we never return a synopsis
+// that ends mid-rune. A single 3-byte rune placed straddling the cut point
+// must be dropped (or the full rune preserved) — never split.
+func TestBuildSynopsis_UTF8BoundarySafe(t *testing.T) {
+	// Build content where the byte at synopsisPrefixBytes lands inside a
+	// multi-byte rune. "€" is 3 bytes (0xE2 0x82 0xAC). Pad ASCII so the
+	// euro sign starts at byte (synopsisPrefixBytes - 1) — the naive byte
+	// cut would slice between bytes 1 and 2 of the rune.
+	pad := strings.Repeat("a", synopsisPrefixBytes-1)
+	content := pad + "€" + strings.Repeat("b", 1000)
+
+	syn := buildSynopsis(content)
+	require.True(t, len(syn) < len(content))
+	// The returned prefix must be valid UTF-8 end-to-end. strings.ToValidUTF8
+	// is a no-op on valid input; if any byte is a lone continuation, the
+	// result shrinks. We compare lengths to detect that case.
+	require.Equal(t, len([]rune(syn)), len([]rune(strings.ToValidUTF8(syn, ""))),
+		"synopsis must not end mid-rune")
 }
 
 // Fix 4: Tier-1 response carries "summary" (string) not "summary_bytes" (int).

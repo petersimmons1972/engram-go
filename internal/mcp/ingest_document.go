@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -71,7 +72,16 @@ func buildSynopsis(content string) string {
 	if len(content) <= synopsisPrefixBytes {
 		return content
 	}
-	prefix := content[:synopsisPrefixBytes]
+	// Walk backward from the naive byte cut to the nearest UTF-8 rune start so
+	// we never emit a synopsis that splits a multi-byte rune. Postgres rejects
+	// invalid UTF-8 on INSERT, and a mid-rune cut is the easiest way to hit
+	// that failure in the wild (any document containing non-ASCII at the
+	// boundary triggers it).
+	cut := synopsisPrefixBytes
+	for cut > 0 && !utf8.RuneStart(content[cut]) {
+		cut--
+	}
+	prefix := content[:cut]
 
 	// Extract heading lines. We scan line-by-line from the full content so
 	// headings beyond the 8 KiB prefix still surface in the outline.
@@ -409,6 +419,14 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		if err != nil {
 			return nil, err
 		}
+		// Project isolation: reject cross-project appends. A caller who started
+		// the upload under project A cannot feed parts under project B and
+		// silently ingest into the wrong project on finish. Only enforce when
+		// the caller explicitly passed a project arg — an omitted project arg
+		// falls through to the session's project without complaint.
+		if _, passed := args["project"]; passed && sess.project != "" && project != sess.project {
+			return nil, fmt.Errorf("project mismatch: upload started with project %q, got %q", sess.project, project)
+		}
 		sess.mu.Lock()
 		if part != sess.nextPart {
 			sess.mu.Unlock()
@@ -439,11 +457,18 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		if err != nil {
 			return nil, err
 		}
+		// Project isolation: the finish call must match the project the session
+		// was started under. Without this, a caller can start under "A" and
+		// finish under "B", parking the body in the wrong project. Only
+		// enforce when the caller explicitly passed a project arg.
+		if _, passed := args["project"]; passed && sess.project != "" && project != sess.project {
+			return nil, fmt.Errorf("project mismatch: upload started with project %q, got %q", sess.project, project)
+		}
 		sess.mu.Lock()
 		body := string(sess.buf)
 		sess.mu.Unlock()
 		dropUpload(uploadID)
-		return runStreamIngest(ctx, pool, project, body, cfg, maxDoc, rawMax)
+		return runStreamIngest(ctx, pool, sess.project, body, cfg, maxDoc, rawMax)
 
 	default:
 		return nil, fmt.Errorf("unknown action %q (expected start|append|finish)", action)

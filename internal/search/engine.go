@@ -293,6 +293,10 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 
 // Store persists a memory: sets defaults, chunks content, deduplicates by hash,
 // embeds new chunks, and writes everything inside a single transaction.
+//
+// Store uses m.Content as the chunk source. For large documents where the
+// memory carries only a synopsis in Content, use StoreWithRawBody instead and
+// pass the original body so chunks stay grounded in the full text.
 func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 	return e.StoreWithRawBody(ctx, m, "")
 }
@@ -301,6 +305,27 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 // m.Content) when non-empty. Used by Tier-1 large-document ingestion: the
 // memory carries a synopsis in Content while chunks are produced from the
 // full body so semantic recall stays grounded in the original text.
+//
+// When to pass each value:
+//   - Normal memories (focused, or document-mode that fits in Content):
+//     pass rawBody="". Chunks are built from m.Content.
+//   - Tier-1 synopsis ingestion (A4): pass rawBody=<full original body>.
+//     m.Content carries the synopsis; chunks come from the full body.
+//   - Tier-2 raw-document ingestion (A4): pass rawBody="". The full body is
+//     already parked in the documents table; chunks are built from the
+//     synopsis in m.Content and recall goes through memory_query_document.
+//   - Correct() re-chunking: passes rawBody="" because the caller is updating
+//     the authoritative content field. Callers that want to preserve a
+//     synopsis/body split across corrections must re-issue StoreWithRawBody
+//     with the full body themselves — there is no persisted raw body to
+//     recover from once a memory is stored with only a synopsis in Content.
+//
+// TODO(structural): the rawBody="" sentinel couples the API to an easily-
+// forgotten caller contract. A cleaner shape would thread RawBody through
+// *types.Memory (json:"-" so it is not serialised) or split into a dedicated
+// StoreSynopsis(ctx, m, body) method. Keeping the sentinel for now to avoid
+// cascading schema/test churn; re-evaluate once A4/A5 ship and the callers
+// settle.
 func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, rawBody string) error {
 	if m.ID == "" {
 		m.ID = types.NewMemoryID()
