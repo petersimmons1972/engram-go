@@ -454,5 +454,14 @@ func (s *Server) registerTools() {
 				return handleMemoryQueryDocument(ctx, pool, req, cfg)
 			},
 		)
+
+		// memory_ask (P2): retrieval-augmented question answering with numbered citations.
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_ask",
+				mcpgo.WithDescription("Answer a question using stored memories as context. Returns answer + numbered citations.")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAsk(ctx, pool, req, cfg)
+			},
+		)
 	}
 }

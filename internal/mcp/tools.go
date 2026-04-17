@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/markdown"
+	"github.com/petersimmons1972/engram/internal/rag"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -53,7 +55,10 @@ type Config struct {
 	// Above this size, ingestion is refused. Defaults to 50 MiB. Set via
 	// ENGRAM_RAW_DOCUMENT_MAX_BYTES env var.
 	RawDocumentMaxBytes int
-	claudeClient        *claude.Client // set via Server.SetClaudeClient
+	// RAGMaxTokens caps the context window assembled for memory_ask prompt
+	// synthesis. Defaults to 4096. Set via ENGRAM_RAG_MAX_TOKENS env var.
+	RAGMaxTokens int
+	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
 // backendFetcher is the narrow interface required by execFetch.
@@ -1537,5 +1542,64 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 
 	data, _ := json.Marshal(result)
+	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+// handleMemoryAsk performs retrieval-augmented question answering over stored
+// memories using the rag.Asker pipeline. Requires a Claude client.
+func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+
+	question := strings.TrimSpace(getString(args, "question", ""))
+	if question == "" {
+		return mcpgo.NewToolResultError("question: required"), nil
+	}
+	project := getString(args, "project", "")
+	if project == "" {
+		return mcpgo.NewToolResultError("project: required"), nil
+	}
+
+	// Guard before any resource allocation.
+	if cfg.claudeClient == nil {
+		return mcpgo.NewToolResultError("memory_ask requires Claude (set ENGRAM_CLAUDE_KEY)"), nil
+	}
+
+	topK := getInt(args, "top_k", 0)
+	if topK < 0 {
+		return mcpgo.NewToolResultError("top_k: must be >= 0"), nil
+	}
+	if topK > 100 {
+		topK = 100
+	}
+	// topK == 0 means "use default" — pass 0 to Asker.TopK so Ask applies defaultTopK=10.
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("get engine for %q: %w", project, err)
+	}
+
+	maxTokens := cfg.RAGMaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
+	asker := rag.Asker{
+		Engine: h.Engine,
+		Client: cfg.claudeClient,
+		Budget: rag.ContextBudget{MaxTokens: maxTokens},
+		TopK:   topK,
+	}
+
+	result, err := asker.Ask(ctx, question)
+	if err != nil {
+		return nil, fmt.Errorf("ask: %w", err)
+	}
+
+	out := map[string]any{
+		"answer":               result.Answer,
+		"citations":            result.Citations,
+		"context_tokens_used":  result.ContextTokensUsed,
+	}
+	data, _ := json.Marshal(out)
 	return mcpgo.NewToolResultText(string(data)), nil
 }
