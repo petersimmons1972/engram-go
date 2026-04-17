@@ -4,7 +4,7 @@ package mcp
 // cases not covered by fetch_exec_test.go (GetMemory error propagation and the
 // maxBytes=0 no-truncation guarantee).
 //
-// Uses newTestExplorePool from explore_handler_test.go for the recall tests.
+// Uses newTestNoopPool from explore_handler_test.go for the recall tests.
 
 import (
 	"context"
@@ -82,7 +82,7 @@ func parseRecallResult(t *testing.T, res *mcpgo.CallToolResult) map[string]any {
 // TestHandleMemoryRecall_HandleMode_EmptyQuery: empty query is rejected before
 // mode branching with a Go error (not a tool-error result).
 func TestHandleMemoryRecall_HandleMode_EmptyQuery(t *testing.T) {
-	pool := newTestExplorePool(t)
+	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project": "test",
@@ -99,7 +99,7 @@ func TestHandleMemoryRecall_HandleMode_EmptyQuery(t *testing.T) {
 // returns zero results; response must contain handles + count + fetch_hint and
 // must NOT contain a results key.
 func TestHandleMemoryRecall_HandleMode_EmptyResults(t *testing.T) {
-	pool := newTestExplorePool(t)
+	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project": "test",
@@ -130,7 +130,7 @@ func TestHandleMemoryRecall_HandleMode_EmptyResults(t *testing.T) {
 // full mode) must return results key and must not return handles key.
 // Scope: single-project, non-rerank, non-federated, no conflicts enrichment.
 func TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey(t *testing.T) {
-	pool := newTestExplorePool(t)
+	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project": "test",

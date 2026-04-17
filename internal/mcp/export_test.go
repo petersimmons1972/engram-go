@@ -360,7 +360,7 @@ func CallHandleMemoryIngest(
 // Use this in unit tests that do not require a real PostgreSQL database.
 func NewTestNoopPool(t *testing.T) *EnginePool {
 	t.Helper()
-	return newTestExplorePool(t)
+	return newTestNoopPool(t)
 }
 
 // CallHandleMemoryAggregate invokes handleMemoryAggregate with the given

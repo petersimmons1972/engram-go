@@ -207,9 +207,9 @@ var _ embed.Client = noopEmbedder{}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// newTestExplorePool builds an EnginePool backed by a noopBackend + noopEmbedder.
+// newTestNoopPool builds an EnginePool backed by a noopBackend + noopEmbedder.
 // Suitable for unit tests that do not require real search results.
-func newTestExplorePool(t *testing.T) *EnginePool {
+func newTestNoopPool(t *testing.T) *EnginePool {
 	t.Helper()
 	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
 		engine := search.New(ctx, noopBackend{}, noopEmbedder{}, project,
@@ -226,7 +226,7 @@ func newTestExplorePool(t *testing.T) *EnginePool {
 // tool error (isError:true content) when question is empty, without making any
 // backend or Claude API calls.
 func TestHandleMemoryExplore_EmptyQuestion(t *testing.T) {
-	pool := newTestExplorePool(t)
+	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project":  "test",
@@ -269,7 +269,7 @@ func TestHandleMemoryExplore_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	c.BaseURL = srv.URL
 
-	pool := newTestExplorePool(t)
+	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project":  "test",
