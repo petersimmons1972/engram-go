@@ -1305,6 +1305,97 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	return mcpgo.NewToolResultText(string(data)), nil
 }
 
+// exploreScopedRecaller wraps a Recaller and a scope, filtering recalled
+// memories to those matching the scope constraints. Filtering is post-recall
+// since the underlying search engine does not expose scope-aware APIs.
+type exploreScopedRecaller struct {
+	inner claude.Recaller
+	scope claude.ExploreScope
+}
+
+func (s *exploreScopedRecaller) Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error) {
+	results, err := s.inner.Recall(ctx, query, topK, detail)
+	if err != nil {
+		return nil, err
+	}
+	// If no scope constraints are set, return results as-is.
+	if len(s.scope.Tags) == 0 && s.scope.EpisodeID == "" && s.scope.Since == nil && s.scope.Until == nil {
+		return results, nil
+	}
+	filtered := results[:0]
+	for _, r := range results {
+		if r.Memory == nil {
+			continue
+		}
+		m := r.Memory
+		// Episode filter.
+		if s.scope.EpisodeID != "" && m.EpisodeID != s.scope.EpisodeID {
+			continue
+		}
+		// Time filters.
+		if s.scope.Since != nil && m.CreatedAt.Before(*s.scope.Since) {
+			continue
+		}
+		if s.scope.Until != nil && m.CreatedAt.After(*s.scope.Until) {
+			continue
+		}
+		// Tag filter: memory must contain all requested tags.
+		if len(s.scope.Tags) > 0 {
+			tagSet := make(map[string]bool, len(m.Tags))
+			for _, t := range m.Tags {
+				tagSet[t] = true
+			}
+			match := true
+			for _, want := range s.scope.Tags {
+				if !tagSet[want] {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered, nil
+}
+
+// exploreMemFetcher implements claude.MemoryFetcher using the engine backend.
+type exploreMemFetcher struct {
+	backend backendFetcher
+}
+
+func (f *exploreMemFetcher) FetchMemory(ctx context.Context, _ string, id string) (*types.Memory, error) {
+	return f.backend.GetMemory(ctx, id)
+}
+
+// parseExploreScope extracts the optional scope sub-object from MCP args.
+func parseExploreScope(args map[string]any) claude.ExploreScope {
+	raw, ok := args["scope"]
+	if !ok {
+		return claude.ExploreScope{}
+	}
+	scopeMap, ok := raw.(map[string]any)
+	if !ok {
+		return claude.ExploreScope{}
+	}
+	var scope claude.ExploreScope
+	scope.Tags = toStringSlice(scopeMap["tags"])
+	scope.EpisodeID = getString(scopeMap, "episode_id", "")
+	if since := getString(scopeMap, "since", ""); since != "" {
+		if t, err := time.Parse(time.RFC3339, since); err == nil {
+			scope.Since = &t
+		}
+	}
+	if until := getString(scopeMap, "until", ""); until != "" {
+		if t, err := time.Parse(time.RFC3339, until); err == nil {
+			scope.Until = &t
+		}
+	}
+	return scope
+}
+
 // handleMemoryExplore runs the iterative recall+score+synthesis loop (A3).
 func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
@@ -1336,19 +1427,30 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		budget = 20000
 	}
 	includeTrace := getBool(args, "include_trace", false)
+	scope := parseExploreScope(args)
 
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("get engine for %q: %w", project, err)
 	}
 
-	result, err := claude.Explore(ctx, cfg.claudeClient, h.Engine, h.Engine.Backend(), claude.ExploreRequest{
+	// Wrap the engine in a scope-filtering recaller.
+	recaller := claude.Recaller(h.Engine)
+	if len(scope.Tags) > 0 || scope.EpisodeID != "" || scope.Since != nil || scope.Until != nil {
+		recaller = &exploreScopedRecaller{inner: h.Engine, scope: scope}
+	}
+
+	// Wrap the backend as a MemoryFetcher for full-detail corpus upgrade.
+	fetcher := &exploreMemFetcher{backend: h.Engine.Backend()}
+
+	result, err := claude.Explore(ctx, cfg.claudeClient, recaller, fetcher, h.Engine.Backend(), claude.ExploreRequest{
 		Project:             project,
 		Question:            question,
 		MaxIterations:       maxIter,
 		ConfidenceThreshold: threshold,
 		TokenBudget:         budget,
 		IncludeTrace:        includeTrace,
+		Scope:               scope,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("explore: %w", err)

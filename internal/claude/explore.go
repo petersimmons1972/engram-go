@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -28,6 +29,23 @@ type RelationshipGetter interface {
 	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
 }
 
+// MemoryFetcher retrieves a single memory by ID at full detail.
+// Passed to Explore to upgrade corpus entries to full content before synthesis.
+// Implementations may ignore the project parameter if the backend is project-agnostic.
+type MemoryFetcher interface {
+	FetchMemory(ctx context.Context, project, memoryID string) (*types.Memory, error)
+}
+
+// ExploreScope constrains which memories are eligible for recall during Explore.
+// All non-zero fields are applied as AND conditions. Applied by the handler via
+// a scopedRecaller wrapper — Explore itself does not filter.
+type ExploreScope struct {
+	Tags      []string   `json:"tags,omitempty"`
+	EpisodeID string     `json:"episode_id,omitempty"`
+	Since     *time.Time `json:"since,omitempty"`
+	Until     *time.Time `json:"until,omitempty"`
+}
+
 // ExploreRequest is the input envelope for Explore.
 type ExploreRequest struct {
 	Project             string
@@ -36,6 +54,7 @@ type ExploreRequest struct {
 	ConfidenceThreshold float64
 	TokenBudget         int
 	IncludeTrace        bool
+	Scope               ExploreScope
 }
 
 // TraceStep records one iteration of the explore loop for debugging.
@@ -101,9 +120,12 @@ func (b *budgetTracker) exhausted() bool  { return b.budget > 0 && b.used >= b.b
 //   - Stops when confidence >= threshold && gaps empty, or iter >= max_iterations,
 //     or tokens >= budget (sets Truncated=true), or refined_query == previous,
 //     or two consecutive zero-new-memory iterations.
+//   - If fetcher is non-nil, corpus entries are upgraded to full-detail content
+//     after the loop completes and before synthesis (best-effort: errors keep
+//     the summary-level content).
 //   - Returns a grounded answer; ungrounded UUID-like citations are stripped and
 //     reported as warnings.
-func Explore(ctx context.Context, c *Client, r Recaller, rels RelationshipGetter, req ExploreRequest) (*ExploreResult, error) {
+func Explore(ctx context.Context, c *Client, r Recaller, fetcher MemoryFetcher, rels RelationshipGetter, req ExploreRequest) (*ExploreResult, error) {
 	if c == nil {
 		return nil, fmt.Errorf("explore: claude client is nil")
 	}
@@ -245,6 +267,18 @@ func Explore(ctx context.Context, c *Client, r Recaller, rels RelationshipGetter
 
 	result.Iterations = iter
 	result.Truncated = truncated
+
+	// Final synthesis: upgrade corpus entries to full-detail content so the
+	// synthesis call has the richest possible evidence. Best-effort: on any
+	// fetch error the summary-level memory is retained.
+	if fetcher != nil {
+		for _, id := range corpusOrder {
+			full, err := fetcher.FetchMemory(ctx, req.Project, id)
+			if err == nil && full != nil {
+				corpus[id] = &corpusEntry{mem: full}
+			}
+		}
+	}
 
 	// Build ordered memory list.
 	memories := make([]*types.Memory, 0, len(corpusOrder))
