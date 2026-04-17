@@ -294,11 +294,13 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 // Store persists a memory: sets defaults, chunks content, deduplicates by hash,
 // embeds new chunks, and writes everything inside a single transaction.
 //
-// Store uses m.Content as the chunk source. For large documents where the
-// memory carries only a synopsis in Content, use StoreWithRawBody instead and
-// pass the original body so chunks stay grounded in the full text.
+// When m.RawBody is non-empty, Store uses it as the chunk source instead of
+// m.Content. Set m.RawBody before calling Store when m.Content holds only a
+// synopsis: this keeps recall grounded in the full text while the synopsis
+// stays context-window friendly. When m.RawBody is empty the behaviour is
+// identical to the previous version — chunks come from m.Content.
 func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
-	return e.StoreWithRawBody(ctx, m, "")
+	return e.StoreWithRawBody(ctx, m, m.RawBody)
 }
 
 // StoreWithRawBody is like Store, but chunks the given rawBody (rather than
@@ -320,12 +322,6 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 //     with the full body themselves — there is no persisted raw body to
 //     recover from once a memory is stored with only a synopsis in Content.
 //
-// TODO(structural): the rawBody="" sentinel couples the API to an easily-
-// forgotten caller contract. A cleaner shape would thread RawBody through
-// *types.Memory (json:"-" so it is not serialised) or split into a dedicated
-// StoreSynopsis(ctx, m, body) method. Keeping the sentinel for now to avoid
-// cascading schema/test churn; re-evaluate once A4/A5 ship and the callers
-// settle.
 func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, rawBody string) error {
 	if m.ID == "" {
 		m.ID = types.NewMemoryID()

@@ -231,3 +231,58 @@ func TestRecallWithEvent_IncrementsTimesRetrieved(t *testing.T) {
 	require.Equal(t, baselineRetrieved+1, after.TimesRetrieved,
 		"times_retrieved must be auto-incremented by RecallWithEvent without explicit feedback")
 }
+
+// TestStore_RawBodyUsedForChunking verifies that Store() honours m.RawBody: when
+// RawBody is non-empty, chunks must be built from the raw body (the full original
+// text) rather than from m.Content (which holds only a synopsis). This tests the
+// fix for #191: Store() previously called StoreWithRawBody(m, "") unconditionally,
+// silently discarding any RawBody the caller set on the Memory.
+func TestStore_RawBodyUsedForChunking(t *testing.T) {
+	proj := uniqueProject("test-rawbody")
+	engine := newTestEngine(t, proj)
+	t.Cleanup(func() { engine.Close() })
+
+	ctx := context.Background()
+
+	// synopsis is what a Tier-1 ingest would store in Memory.Content — a short
+	// excerpt that fits in the context window.
+	synopsis := "Short synopsis: document discusses Go concurrency."
+	// rawBody is the original full content whose tokens should appear in chunks.
+	rawBody := "Go concurrency is built on goroutines and channels. " +
+		"Goroutines are lightweight threads managed by the Go runtime. " +
+		"Channels provide a typed conduit for communication between goroutines."
+
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     synopsis,
+		RawBody:     rawBody,
+		MemoryType:  types.MemoryTypeContext,
+		Importance:  2,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine.Store(ctx, m))
+
+	// Retrieve all chunks for this memory and assert they come from rawBody,
+	// not from the synopsis.
+	chunks, err := engine.Backend().GetAllChunksWithEmbeddings(ctx, proj, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks, "at least one chunk must be stored")
+
+	for _, c := range chunks {
+		if c.MemoryID != m.ID {
+			continue
+		}
+		require.Contains(t, rawBody, c.ChunkText,
+			"chunk text must come from RawBody, not from the synopsis Content")
+		require.NotContains(t, synopsis, c.ChunkText[:min(len(c.ChunkText), len(synopsis))],
+			"chunk text must not be a substring of the synopsis alone")
+	}
+}
+
+// min is a local helper for Go 1.20 compatibility (builtin min arrived in 1.21).
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
