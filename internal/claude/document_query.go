@@ -160,12 +160,16 @@ func QueryDocument(ctx context.Context, c *Client, content string, q DocumentQue
 				for remaining > 0 && !utf8.RuneStart(text[remaining]) {
 					remaining--
 				}
-				text = text[:remaining]
-				spans = append(spans, DocumentSpan{
-					Offset:  m.start,
-					Text:    text,
-					Matched: m.matched,
-				})
+				// Re-check: walk-back can reduce remaining to 0 when the span
+				// window starts mid-rune. Skip the append in that case.
+				if remaining > 0 {
+					text = text[:remaining]
+					spans = append(spans, DocumentSpan{
+						Offset:  m.start,
+						Text:    text,
+						Matched: m.matched,
+					})
+				}
 			}
 			truncated = true
 			break

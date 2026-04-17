@@ -222,6 +222,42 @@ func TestQueryDocument_EmptyContent(t *testing.T) {
 	require.Equal(t, "No content available for this memory.", res.Answer)
 }
 
+// TestQueryDocument_UTF8BoundaryTruncation verifies that when the cap falls
+// inside a multi-byte rune the walk-back produces a valid UTF-8 string.
+func TestQueryDocument_UTF8BoundaryTruncation(t *testing.T) {
+	srv := newStubClaudeServer("ok")
+	defer srv.Close()
+	c, _ := claude.New("test")
+	c.BaseURL = srv.URL
+
+	// Each "é" is 2 bytes (U+00E9). Build content so that the cap lands
+	// in the middle of one of its bytes, forcing the walk-back to fire.
+	// charCap = TokenBudget*4 = 5*4 = 20 bytes.
+	// WindowChars=30 → span covers 30 bytes of multi-byte content.
+	// With 20-byte cap the slice point lands inside a 2-byte rune; walk-back
+	// must retreat to the preceding rune boundary.
+	content := strings.Repeat("é", 100) // each é = 2 bytes → 200 bytes total
+	q := claude.DocumentQuery{
+		Question:    "?",
+		FilterSubs:  []string{"é"},
+		WindowChars: 30,
+		TokenBudget: 5, // charCap = 20
+	}
+	res, err := claude.QueryDocument(context.Background(), c, content, q)
+	require.NoError(t, err)
+	require.True(t, res.Truncated)
+	require.NotEmpty(t, res.Spans)
+	for _, s := range res.Spans {
+		require.True(t, strings.ToValidUTF8(s.Text, "") == s.Text,
+			"span text must be valid UTF-8 after boundary truncation")
+	}
+	total := 0
+	for _, s := range res.Spans {
+		total += len(s.Text)
+	}
+	require.LessOrEqual(t, total, 20, "total bytes must not exceed charCap")
+}
+
 func TestQueryDocument_TokenBudget(t *testing.T) {
 	srv := newStubClaudeServer("ok")
 	defer srv.Close()
