@@ -15,7 +15,7 @@ kubectl get pods -A | grep -E "(Error|CrashLoop|Pending)" && echo "⚠️  Pod i
 
 echo -e "\n=== Public Services ==="
 # Nextcloud: 200 or 302 (redirect to login) are OK
-status=$(curl -s -o /dev/null -w "%{http_code}" https://nextcloud.petersimmons.com)
+status=$(xh --print=h --timeout 10 HEAD https://nextcloud.petersimmons.com 2>/dev/null | awk 'NR==1{print $2}')
 if [[ "$status" =~ ^(200|302)$ ]]; then
   echo "✅ https://nextcloud.petersimmons.com ($status)"
 else
@@ -23,7 +23,7 @@ else
 fi
 
 # Homepage: HTTPS only (no HTTP redirect configured)
-status=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" https://homepage.petersimmons.com)
+status=$(xh --print=h --timeout 10 HEAD https://homepage.petersimmons.com 2>/dev/null | awk 'NR==1{print $2}')
 if [ "$status" = "200" ]; then
   echo "✅ https://homepage.petersimmons.com"
 else
@@ -67,6 +67,30 @@ fi
 echo -e "\n=== DNS Servers ==="
 dig @192.168.0.231 google.com +short > /dev/null && echo "✅ Primary Pi-hole (231)" || echo "❌ Primary Pi-hole (231)"
 dig @192.168.0.232 google.com +short > /dev/null && echo "✅ Secondary Pi-hole (232)" || echo "❌ Secondary Pi-hole (232)"
+
+echo -e "\n=== Internal DNS Routing (CoreDNS → Unifi) ==="
+if kubectl get configmap coredns-custom -n kube-system &>/dev/null; then
+  echo "✅ coredns-custom ConfigMap present (*.petersimmons.com routes to Unifi)"
+else
+  echo "❌ coredns-custom ConfigMap MISSING — pods cannot resolve *.petersimmons.com"
+  echo "   Fix: kubectl apply the petersimmons.server block forwarding to 192.168.0.1"
+fi
+
+echo -e "\n=== Archived Deployments (DB-less CrashLoop Check) ==="
+# Find Deployments whose DB_HOST configmap key points to a StatefulSet with 0 replicas
+kubectl get deployment -A --no-headers 2>/dev/null | while read ns name ready up avail age; do
+  db_host=$(kubectl get deployment "$name" -n "$ns" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="DB_HOST")].value}' 2>/dev/null)
+  if [ -n "$db_host" ]; then
+    # Extract StatefulSet name from DB_HOST (svc format: <sts-name>.<ns>.svc.cluster.local)
+    sts_name=$(echo "$db_host" | cut -d. -f1)
+    sts_replicas=$(kubectl get statefulset "$sts_name" -n "$ns" -o jsonpath='{.spec.replicas}' 2>/dev/null)
+    deploy_replicas=$(kubectl get deployment "$name" -n "$ns" -o jsonpath='{.spec.replicas}' 2>/dev/null)
+    if [ "$sts_replicas" = "0" ] && [ "$deploy_replicas" != "0" ]; then
+      echo "⚠️  $ns/$name: DB StatefulSet '$sts_name' has 0 replicas but Deployment has $deploy_replicas — CrashLoop risk"
+    fi
+  fi
+done
+echo "✅ Archived deployment check complete"
 
 echo -e "\n=== TLS Certificates ==="
 # Check for certificates not ready for >7 days (will expire before renewal completes)
