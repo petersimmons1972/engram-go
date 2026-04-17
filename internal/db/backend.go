@@ -91,6 +91,9 @@ type Backend interface {
 	// VectorSearch returns the nearest chunks to queryVec by cosine distance,
 	// using the HNSW index. Returns at most limit results.
 	VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error)
+	// SearchChunksWithinMemory returns the nearest chunks by cosine distance,
+	// scoped to a single memory. Used by A5 memory_query_document's semantic path.
+	SearchChunksWithinMemory(ctx context.Context, embedding []float32, memoryID string, topK int) ([]*types.Chunk, error)
 	// ChunkEmbeddingDistance returns the minimum cosine distance between any
 	// chunk of memA and any chunk of memB. Returns 2.0 (max distance) if
 	// either memory has no embedded chunks.

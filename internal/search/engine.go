@@ -652,6 +652,34 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	return results, nil
 }
 
+// RecallWithinMemory returns up to topK chunks from a single memory's document
+// most semantically similar to query, projected into minimal *types.Memory
+// values so callers get the chunk text alongside the parent memory's ID.
+// Used by the A5 memory_query_document tool's semantic path.
+func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, memoryID string, topK int, detail string) ([]*types.Memory, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	queryVec, err := e.getEmbedder().Embed(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("embed query: %w", err)
+	}
+	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)
+	if err != nil {
+		return nil, err
+	}
+	_ = detail // currently all modes return the chunk text verbatim
+	out := make([]*types.Memory, 0, len(chunks))
+	for _, c := range chunks {
+		out = append(out, &types.Memory{
+			ID:       c.MemoryID,
+			Content:  c.ChunkText,
+			Project:  c.Project,
+		})
+	}
+	return out, nil
+}
+
 // checkEmbedderMeta ensures the stored embedder name matches the current client,
 // or registers it if this is the first store for the project.
 func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {

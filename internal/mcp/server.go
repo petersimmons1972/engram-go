@@ -438,5 +438,15 @@ func (s *Server) registerTools() {
 				return handleMemoryExplore(ctx, pool, req, cfg)
 			},
 		)
+
+		// memory_query_document (A5): query a single large document by regex/substring
+		// or semantic recall and synthesize an answer with Claude.
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_query_document",
+				mcpgo.WithDescription("Query a large document stored in memory using regex/substring matching or semantic search. Returns relevant spans and an AI-synthesized answer.")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQueryDocument(ctx, pool, req, cfg)
+			},
+		)
 	}
 }

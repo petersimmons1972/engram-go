@@ -149,6 +149,10 @@ func (s *stubBackend) TouchMemories(_ context.Context, _ []string) error { retur
 
 func (s *stubBackend) UpdateChunkLastMatched(_ context.Context, _ string) error { return nil }
 
+func (s *stubBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ string, _ int) ([]*types.Chunk, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) GetMeta(_ context.Context, _, _ string) (string, bool, error) {
 	return "", false, nil
 }
