@@ -176,7 +176,7 @@ func TestExplore_NoProgress(t *testing.T) {
 }
 
 func TestExplore_UngroundedCitationStripped(t *testing.T) {
-	ungrounded := "ffffffffffffffffffffffffffffffff"
+	ungrounded := "ffffffff-ffff-ffff-ffff-ffffffffffff"
 	var callCount int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&callCount, 1)
@@ -199,7 +199,7 @@ func TestExplore_UngroundedCitationStripped(t *testing.T) {
 	require.NoError(t, err)
 	c.BaseURL = srv.URL
 
-	goodID := strings.Repeat("a", 31) + "1"
+	goodID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	recaller := &mockRecaller{
 		calls: [][]types.SearchResult{
 			{makeResult(goodID, "m1")},

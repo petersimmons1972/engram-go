@@ -55,6 +55,8 @@ type ExploreRequest struct {
 	TokenBudget         int
 	IncludeTrace        bool
 	Scope               ExploreScope
+	// MaxWorkers caps FanOutReason concurrency. Defaults to 8 when zero or negative.
+	MaxWorkers int
 }
 
 // TraceStep records one iteration of the explore loop for debugging.
@@ -317,7 +319,11 @@ func Explore(ctx context.Context, c *Client, r Recaller, fetcher MemoryFetcher, 
 	if len(memories) == 0 {
 		answer, synthErr = c.ReasonOverMemories(ctx, req.Question, memories)
 	} else if len(memories) > exploreSynthThreshold {
-		answer, synthErr = FanOutReason(ctx, c, req.Question, memories, 8, 15)
+		maxWorkers := req.MaxWorkers
+		if maxWorkers < 1 {
+			maxWorkers = 8
+		}
+		answer, synthErr = FanOutReason(ctx, c, req.Question, memories, maxWorkers, 15)
 	} else {
 		answer, synthErr = c.ReasonWithConflictAwareness(ctx, req.Question, ev)
 	}
@@ -380,11 +386,11 @@ type corpusEntry struct {
 	mem *types.Memory
 }
 
-// citationPattern matches bare 32-char lowercase-hex identifiers on word
-// boundaries.
-var citationPattern = regexp.MustCompile(`\b[0-9a-f]{32}\b`)
+// citationPattern matches standard dashed UUID identifiers on word boundaries.
+// All memory IDs in this system use the canonical xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format.
+var citationPattern = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 
-// validateCitations scans answer for 32-char hex strings not in corpusIDs,
+// validateCitations scans answer for dashed UUID strings not in corpusIDs,
 // strips them, and returns warnings.
 func validateCitations(answer string, corpusIDs map[string]bool) (string, []string) {
 	var warnings []string

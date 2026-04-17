@@ -1451,6 +1451,7 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		TokenBudget:         budget,
 		IncludeTrace:        includeTrace,
 		Scope:               scope,
+		MaxWorkers:          cfg.ExploreMaxWorkers,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("explore: %w", err)
