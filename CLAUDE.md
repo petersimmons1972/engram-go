@@ -15,42 +15,69 @@
 - **Review mode — judge against the reference, not the current file:** When dispatching generals for adversarial review, include: "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
 
 ## Pre-Flight Protocol — MANDATORY
-Execute before ANY code changes or git operations. No exceptions.
-1. **ENVIRONMENT CHECK** — `git status`, `git branch`, `pwd`. Halt if unexpected.
-2. **REQUEST VERIFICATION** — Multi-step tasks: write one-paragraph summary of the request. Wait on ambiguous items.
-3. **BUG ACCOUNTABILITY** — All bugs found must be fixed or filed as GitHub Issues.
-4. **BRANCH VERIFICATION** — `git log --oneline -3` on target branch to confirm commits landed.
+
+Each step has an explicit trigger. Execute the step when its trigger fires. Do not execute a step outside its trigger.
+
+1. **ENVIRONMENT CHECK**
+   - **Trigger:** Before the first write operation of a session (any `git add`, `git commit`, `Edit`, `Write`, or `Bash` command that mutates state).
+   - **Action:** Run `git status`, `git branch`, `pwd`. Halt and report if any output is unexpected (wrong branch, uncommitted changes you didn't make, wrong directory).
+   - **Frequency:** Once per session unless branch or directory changes.
+
+2. **REQUEST VERIFICATION**
+   - **Trigger:** Before starting any task that requires 3+ distinct tool calls or 2+ files touched.
+   - **Action:** Write a one-paragraph restatement of what you understand the request to be. If any element is ambiguous, stop and ask one focused question before proceeding.
+   - **Skip:** Single-file reads, single-command answers, informational questions.
+
+3. **BUG ACCOUNTABILITY**
+   - **Trigger:** Immediately upon discovering any bug, before continuing other work.
+   - **Action:** Either (a) fix it now and file a closed GitHub Issue documenting the fix, or (b) file an open GitHub Issue and note the deferral. Never leave a bug undocumented.
+
+4. **BRANCH VERIFICATION**
+   - **Trigger:** After `git push` or after any `git commit` where commit landing is load-bearing for the next step.
+   - **Action:** Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding.
 
 ## Engram Memory — MANDATORY
 
-Engram is running at `http://localhost:8788/mcp`. Use it. Every session starts cold — Engram is how context survives.
+Engram is at `http://localhost:8788/mcp`. Each rule below has an explicit trigger. Execute when the trigger fires; do not execute outside its trigger.
 
-**Session start — do this before anything else:**
-1. `memory_recall("current project status recent work", project="global")` — what was happening
-2. `memory_recall("<topic of the request>", project="<relevant project>")` — targeted context
-   - Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
-   - When in doubt, also recall from `global`
+Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`.
 
-**During work — recall before deciding, not after:**
-- Before a technical decision: `memory_recall("<decision topic>", project="<project>")`
-- Before touching infrastructure: `memory_recall("infrastructure patterns lessons", project="homelab")`
-- Before a Clearwatch change: `memory_recall("<feature area>", project="clearwatch")`
+### Rule 1 — Session-start recall
+- **Trigger:** The first user message of a new conversation, before any other tool call.
+- **Action:** Call `memory_recall("current project status recent work", project="global")`, then `memory_recall("<topic of the request>", project="<relevant project>")`. If the relevant project is unclear, also recall from `global`.
+- **Frequency:** Once per conversation.
 
-**Retrieval quality feedback — ALWAYS do this:**
-- After `memory_recall` returns useful results → call `memory_feedback` with the IDs that actually helped
-- After `memory_recall` returns nothing (or wrong results) for a query where context should exist → store a miss: `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`
-- This feeds real retrieval quality data to Peter's memory benchmarking work. Do it every time without exception.
+### Rule 2 — Pre-decision recall
+- **Trigger:** Before one of these specific actions: (a) proposing an architecture or design, (b) choosing between 2+ implementation options, (c) modifying infrastructure (K8s, DNS, cert-manager, storage), (d) modifying a Clearwatch feature area.
+- **Action:** `memory_recall("<decision topic or feature area>", project="<relevant project>")`.
+- **Skip:** Read-only investigation, informational answers, trivial single-file edits.
 
-**After completing meaningful work — store it:**
-- Decisions made and why → `memory_store(content, memory_type="decision", project="<project>")`
-- Bugs fixed and root cause → `memory_store(content, memory_type="error", project="<project>")`
-- Patterns established → `memory_store(content, memory_type="pattern", project="<project>")`
-- Session summary at end → `memory_store(content, memory_type="context", project="global", importance=1)`
-- **Never store:** transient operational state (service down, DNS failing, migration blocked, health status) — these become stale facts that mislead future sessions. File a GitHub Issue instead.
+### Rule 3 — Retrieval feedback (every recall, no exceptions)
+- **Trigger:** Immediately after any `memory_recall` call returns.
+- **Action:**
+  - If results helped → call `memory_feedback` with the IDs that actually informed the answer.
+  - If results were absent or wrong for a query where context should exist → store a miss: `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`.
+- **Purpose:** Feeds retrieval-quality data to Peter's memory benchmarking. No exceptions.
 
-**Fallback only:** If Engram is unreachable, fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
+### Rule 4 — Post-work storage
+- **Trigger:** After completing one of these specific outcomes: (a) a bug fix committed, (b) an architectural decision made, (c) a pattern used 2+ times in this session, (d) end of a working session.
+- **Action:** `memory_store` with the appropriate `memory_type`:
+  - `decision` for architectural choices (include why)
+  - `error` for bug fixes (include root cause)
+  - `pattern` for patterns established
+  - `context` with `importance=1, project="global"` for session summary at end
 
-**Dispute tracking:** Before Eisenhower adjudicates any dispute, recall from Engram: `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do not adjudicate — escalate to founder. Store each adjudication as: `content="DISPUTE: <description> | VERDICT: <summary> | COUNT: N | LAST: <date>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
+### Rule 5 — Never-store exclusion (check before every store)
+- **Trigger:** Before any `memory_store` call.
+- **Action:** If the content is transient operational state with expected lifespan < 4 hours (service status, DNS state, build status, migration progress, health output), do NOT store. File a GitHub Issue instead.
+
+### Rule 6 — Fallback to filesystem
+- **Trigger:** Engram unreachable after one retry within 30 seconds.
+- **Action:** Fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
+
+### Rule 7 — Dispute tracking (Eisenhower only)
+- **Trigger:** Before Eisenhower adjudicates a user-raised dispute.
+- **Action:** `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do NOT adjudicate — escalate to founder. Store each adjudication as: `content="DISPUTE: <description> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
 
 ## Workflow
 - **Test first.** Failing test before first line of implementation. Run tests after EVERY edit. Never batch untested changes.
@@ -97,10 +124,11 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 **ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
 
 ## Self-Learning & Autonomous Bug Fixing
-- **Never ask permission for:** bug fixes (fix, test, commit, report after) · feedback integration
+- **Never ask permission for:** low-severity bug fixes (fix, test, commit, report after) · feedback integration
+- **Always ask permission for:** data-affecting fixes, breaking API changes, resource-intensive ops, actions with external visibility
 - **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`
-- **Escalate only if:** same error appears **twice** — max 2 attempts per agentic step; on the third occurrence, escalate instead of retrying · circular token loops
-- **Do ask permission for:** resource-intensive ops, actions with external visibility
+- **Retry limit:** Per agentic step, attempt 1 = initial try; attempt 2 = one retry after a fix. On the third occurrence of the same root cause (same stack trace or same explicit error message), escalate instead of retrying. Counter resets when the session ends or the root cause changes.
+- **Also escalate on:** circular token loops (same tool call + same result repeated 2+ times).
 
 ## Project Priority Stack
 1. **Clearwatch** — revenue: reports, cache, charts, grading
@@ -109,7 +137,13 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 
 ## Cost Guardrails & Wake-the-Founder Triggers
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
-- STOP and notify founder if: >$5 compute · production deployment · push to main/master · data loss · agent stuck >45 min · same error 3+ times
+- STOP and notify founder if:
+  - **>$5 compute** — cumulative estimated cost per request, estimated before execution
+  - **production deployment** — any kubectl/helm/terraform apply targeting prod namespaces or clusters
+  - **push to main/master** — any `git push` whose target ref is `main` or `master`
+  - **data loss risk** — any operation that deletes, truncates, or overwrites persistent data without a verified backup
+  - **agent stuck ≥45 min** — stuck = elapsed wall time ≥45 minutes since the last successful tool output (tool calls failing, loops repeating, or output unchanged)
+  - **same error 3+ times in this session** — same root cause measured by stack trace or explicit error message match; counter resets when the session ends or root cause changes
 
 ## Reference
 **Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
