@@ -217,3 +217,25 @@ func TestMemoryIDFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateFailureClass(t *testing.T) {
+	valid := []string{
+		"",
+		types.FailureClassVocabularyMismatch,
+		types.FailureClassAggregationFailure,
+		types.FailureClassStaleRanking,
+		types.FailureClassMissingContent,
+		types.FailureClassScopeMismatch,
+	}
+	for _, v := range valid {
+		if !types.ValidateFailureClass(v) {
+			t.Errorf("expected %q to be valid failure class", v)
+		}
+	}
+	invalid := []string{"unknown_class", "VOCABULARY_MISMATCH", "Vocabulary_Mismatch"}
+	for _, v := range invalid {
+		if types.ValidateFailureClass(v) {
+			t.Errorf("expected %q to be invalid failure class", v)
+		}
+	}
+}
