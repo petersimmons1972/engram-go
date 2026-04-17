@@ -38,6 +38,13 @@ type Config struct {
 	// Defaults to 65536 (64 KB). Set via ENGRAM_FETCH_MAX_BYTES env var.
 	FetchMaxBytes int
 	claudeClient  *claude.Client // set via Server.SetClaudeClient
+
+	// ExploreMaxIters caps memory_explore loop iterations (default 5).
+	ExploreMaxIters int
+	// ExploreMaxWorkers bounds FanOutReason concurrency (default 8).
+	ExploreMaxWorkers int
+	// ExploreTokenBudget caps cumulative scoring-call tokens (default 20000).
+	ExploreTokenBudget int
 }
 
 // backendFetcher is the narrow interface required by execFetch.
@@ -1295,5 +1302,58 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		"invalidated_sources": ev.InvalidatedSources,
 	}
 	data, _ := json.Marshal(out)
+	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+// handleMemoryExplore runs the iterative recall+score+synthesis loop (A3).
+func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	question := getString(args, "question", "")
+	if question == "" {
+		return mcpgo.NewToolResultError("question is required"), nil
+	}
+	if cfg.claudeClient == nil {
+		return mcpgo.NewToolResultError("memory_explore requires ANTHROPIC_API_KEY to be set"), nil
+	}
+
+	maxIter := getInt(args, "max_iterations", cfg.ExploreMaxIters)
+	if maxIter < 1 {
+		maxIter = 1
+	}
+	if maxIter > 10 {
+		maxIter = 10
+	}
+	threshold := getFloat(args, "confidence_threshold", 0.75)
+	if threshold < 0 {
+		threshold = 0
+	}
+	if threshold > 1 {
+		threshold = 1
+	}
+	budget := getInt(args, "token_budget", cfg.ExploreTokenBudget)
+	if budget <= 0 {
+		budget = 20000
+	}
+	includeTrace := getBool(args, "include_trace", false)
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("get engine for %q: %w", project, err)
+	}
+
+	result, err := claude.Explore(ctx, cfg.claudeClient, h.Engine, h.Engine.Backend(), claude.ExploreRequest{
+		Project:             project,
+		Question:            question,
+		MaxIterations:       maxIter,
+		ConfidenceThreshold: threshold,
+		TokenBudget:         budget,
+		IncludeTrace:        includeTrace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("explore: %w", err)
+	}
+
+	data, _ := json.Marshal(result)
 	return mcpgo.NewToolResultText(string(data)), nil
 }

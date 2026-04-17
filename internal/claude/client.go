@@ -51,6 +51,21 @@ func New(apiKey string) (*Client, error) {
 const claudeAPITimeout = 90 * time.Second
 
 func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, advisorModel string, advisorMaxUses, maxTokens int) (string, error) {
+	text, _, err := c.CompleteWithUsage(ctx, system, prompt, executorModel, advisorModel, advisorMaxUses, maxTokens)
+	return text, err
+}
+
+// TokenUsage reports token accounting for a single completion call.
+type TokenUsage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
+// Total returns the sum of input + output tokens.
+func (u TokenUsage) Total() int { return u.InputTokens + u.OutputTokens }
+
+// CompleteWithUsage is like Complete but also returns token usage from the response.
+func (c *Client) CompleteWithUsage(ctx context.Context, system, prompt, executorModel, advisorModel string, advisorMaxUses, maxTokens int) (string, TokenUsage, error) {
 	// Apply a per-request deadline if the caller's context has none.
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -77,12 +92,12 @@ func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, ad
 
 	encoded, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("claude: marshal request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("claude: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/messages", bytes.NewReader(encoded))
 	if err != nil {
-		return "", fmt.Errorf("claude: build request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("claude: build request: %w", err)
 	}
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -90,25 +105,29 @@ func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, ad
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("claude: HTTP request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("claude: HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("claude: HTTP %d: %s", resp.StatusCode, body)
+		return "", TokenUsage{}, fmt.Errorf("claude: HTTP %d: %s", resp.StatusCode, body)
 	}
 
 	var result messagesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("claude: decode response: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("claude: decode response: %w", err)
 	}
 
 	if len(result.Content) == 0 {
-		return "", fmt.Errorf("claude: empty content in response")
+		return "", TokenUsage{}, fmt.Errorf("claude: empty content in response")
 	}
 
-	return extractJSON(result.Content[0].Text), nil
+	usage := TokenUsage{
+		InputTokens:  result.Usage.InputTokens,
+		OutputTokens: result.Usage.OutputTokens,
+	}
+	return extractJSON(result.Content[0].Text), usage, nil
 }
 
 // extractJSON strips leading/trailing ```json / ``` markdown fences if present.
@@ -153,4 +172,8 @@ type messagesResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 }

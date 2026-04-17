@@ -427,5 +427,12 @@ func (s *Server) registerTools() {
 				return handleMemoryReason(ctx, pool, req, cfg)
 			},
 		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_explore",
+				mcpgo.WithDescription("Iterative recall+score+synthesis loop — returns a single grounded answer (A3)")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryExplore(ctx, pool, req, cfg)
+			},
+		)
 	}
 }

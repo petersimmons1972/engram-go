@@ -156,6 +156,9 @@ func run() error {
 		DataDir:                  *dataDir,
 		RecallDefaultMode:        envOr("ENGRAM_RECALL_DEFAULT_MODE", ""),
 		FetchMaxBytes:            envInt("ENGRAM_FETCH_MAX_BYTES", 65536),
+		ExploreMaxIters:          envInt("ENGRAM_EXPLORE_MAX_ITERS", 5),
+		ExploreMaxWorkers:        envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8),
+		ExploreTokenBudget:       envInt("ENGRAM_EXPLORE_TOKEN_BUDGET", 20000),
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {
