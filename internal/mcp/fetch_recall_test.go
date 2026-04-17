@@ -115,8 +115,9 @@ func TestHandleMemoryRecall_HandleMode_EmptyResults(t *testing.T) {
 	// Required keys.
 	_, hasHandles := out["handles"]
 	require.True(t, hasHandles, "handle mode must return 'handles' key")
-	_, hasCount := out["count"]
+	count, hasCount := out["count"]
 	require.True(t, hasCount, "handle mode must return 'count' key")
+	require.Equal(t, float64(0), count, "empty backend → count must be 0")
 	_, hasFetchHint := out["fetch_hint"]
 	require.True(t, hasFetchHint, "handle mode must return 'fetch_hint' key")
 
@@ -125,9 +126,10 @@ func TestHandleMemoryRecall_HandleMode_EmptyResults(t *testing.T) {
 	require.False(t, hasResults, "handle mode must NOT return 'results' key")
 }
 
-// TestHandleMemoryRecall_DefaultMode_ReturnsResults: RecallDefaultMode="" (default
-// full mode) must return results and must not return handles.
-func TestHandleMemoryRecall_DefaultMode_ReturnsResults(t *testing.T) {
+// TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey: RecallDefaultMode="" (default
+// full mode) must return results key and must not return handles key.
+// Scope: single-project, non-rerank, non-federated, no conflicts enrichment.
+func TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey(t *testing.T) {
 	pool := newTestExplorePool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
