@@ -1,8 +1,3 @@
-// ask_test.go — RED tests for Asker.Ask.
-//
-// These tests reference rag.Asker, rag.AskResult, and rag.Citation which do
-// not yet exist in the package. They will not compile until the implementation
-// is added. That is intentional: this file establishes the RED state for P2-T2.
 package rag_test
 
 import (
@@ -14,8 +9,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
-
-// ── stub implementations ──────────────────────────────────────────────────────
 
 // stubRecaller implements rag.Recaller. It returns a fixed list of results.
 type stubRecaller struct {
@@ -36,8 +29,6 @@ type stubCompleter struct {
 func (s *stubCompleter) Complete(_ context.Context, _, _, _, _ string, _, _ int) (string, error) {
 	return s.response, s.err
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 // TestAsker_ReturnsAnswerAndCitations verifies the happy path: two search
 // results produce an answer from the completer and two citations.
@@ -105,34 +96,8 @@ func TestAsker_ContextTokensUsed(t *testing.T) {
 		"ContextTokensUsed must equal len(MatchedChunk)/4")
 }
 
-// ── compile-time interface checks ─────────────────────────────────────────────
-
 // These assertions confirm that our stubs satisfy the interfaces Asker requires.
 // They will compile only once those interfaces are defined in the rag package.
 var _ rag.Recaller = (*stubRecaller)(nil)
 var _ rag.ClaudeCompleter = (*stubCompleter)(nil)
 
-// ── helpers re-used from prompt_test.go scope ─────────────────────────────────
-// Note: makeResult is defined in prompt_test.go within the same package.
-// We reference it directly. Both files share the rag_test package.
-//
-// If the build system compiles these files independently, duplicate the helper
-// here. For now, rely on the shared package scope.
-
-// makeResultLocal is a local copy to avoid dependency on the definition order
-// between test files in the same package when only this file is compiled.
-func makeResultLocal(id, excerpt string, score float64, createdAt time.Time) types.SearchResult {
-	return types.SearchResult{
-		Memory: &types.Memory{
-			ID:        id,
-			Content:   excerpt,
-			CreatedAt: createdAt,
-		},
-		Score:        score,
-		MatchedChunk: excerpt,
-	}
-}
-
-// suppress unused-import warning — makeResultLocal is defined above but
-// makeResult from prompt_test.go is used in TestAsker_ReturnsAnswerAndCitations.
-var _ = makeResultLocal

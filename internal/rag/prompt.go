@@ -10,14 +10,6 @@ import (
 const systemPrompt = `You are a memory assistant. Answer the question using only the provided memory excerpts. Cite your sources using [N] notation. If no excerpts are relevant, say so.`
 
 // AssemblePrompt builds the user-facing prompt from the question and context chunks.
-// Format:
-//
-//	Question: <question>
-//	[1] (timestamp) excerpt_text
-//	[2] (timestamp) excerpt_text
-//	...
-//
-//	Answer based on the above excerpts.
 func AssemblePrompt(question string, chunks []types.SearchResult) string {
 	var sb strings.Builder
 

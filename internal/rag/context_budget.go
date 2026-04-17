@@ -25,22 +25,20 @@ func (b ContextBudget) Trim(results []types.SearchResult) []types.SearchResult {
 		result types.SearchResult
 	}
 
-	indexed_ := make([]indexed, len(results))
+	items := make([]indexed, len(results))
 	for i, r := range results {
-		indexed_[i] = indexed{idx: i, result: r}
+		items[i] = indexed{idx: i, result: r}
 	}
 
-	// Sort copy by score descending to greedily pick highest-value chunks first.
-	sorted := make([]indexed, len(indexed_))
-	copy(sorted, indexed_)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].result.Score > sorted[j].result.Score
+	// Sort by score descending to greedily pick highest-value chunks first.
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].result.Score > items[j].result.Score
 	})
 
 	// Greedily accumulate until budget exhausted.
 	remaining := b.MaxTokens
-	selected := make([]indexed, 0, len(sorted))
-	for _, item := range sorted {
+	selected := make([]indexed, 0, len(items))
+	for _, item := range items {
 		cost := len(item.result.MatchedChunk) / 4
 		if cost > remaining {
 			continue

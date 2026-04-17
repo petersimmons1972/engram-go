@@ -6,6 +6,11 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+const (
+	defaultTopK         = 10
+	defaultAnswerTokens = 2048
+)
+
 // Recaller is a minimal interface for recall — allows testability.
 type Recaller interface {
 	Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error)
@@ -28,7 +33,7 @@ type Asker struct {
 func (a Asker) Ask(ctx context.Context, question string) (*AskResult, error) {
 	topK := a.TopK
 	if topK <= 0 {
-		topK = 10
+		topK = defaultTopK
 	}
 
 	results, err := a.Engine.Recall(ctx, question, topK, "full")
@@ -53,7 +58,7 @@ func (a Asker) Ask(ctx context.Context, question string) (*AskResult, error) {
 
 	prompt := AssemblePrompt(question, trimmed)
 
-	answer, err := a.Client.Complete(ctx, systemPrompt, prompt, "claude-sonnet-4-6", "", 0, 2048)
+	answer, err := a.Client.Complete(ctx, systemPrompt, prompt, "claude-sonnet-4-6", "", 0, defaultAnswerTokens)
 	if err != nil {
 		return nil, err
 	}
