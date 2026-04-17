@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -213,7 +214,8 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 			// Best-effort — memory + document are both persisted and the
 			// INSERT already linked them. This UPDATE would only matter if
 			// a caller bypassed StoreMemoryTx.
-			_ = err
+			slog.Warn("SetMemoryDocumentID belt-and-braces update failed",
+				"memory_id", m.ID, "document_id", docID, "err", err)
 		}
 		return map[string]any{
 			"id":          m.ID,

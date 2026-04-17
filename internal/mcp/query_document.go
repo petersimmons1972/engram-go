@@ -78,14 +78,10 @@ func resolveDocumentContent(ctx context.Context, deps queryDocumentDeps, mem *ty
 		}
 		return doc, nil
 	}
-	if q.Semantic || mem.Content != "" {
-		// Fall back to chunk reconstruction via semantic recall.
-		// For Tier-0/Tier-1 content, mem.Content holds either the full text
-		// (focused) or the synopsis (document). Prefer chunks when the caller
-		// explicitly asks for semantic, otherwise use stored content directly.
-		if !q.Semantic {
-			return mem.Content, nil
-		}
+	// For Tier-0/Tier-1: prefer stored content unless caller explicitly
+	// wants semantic chunk recall.
+	if !q.Semantic {
+		return mem.Content, nil
 	}
 	return recallChunks(ctx, deps, q)
 }
