@@ -11,9 +11,18 @@ type ContextBudget struct {
 	MaxTokens int
 }
 
-// Trim returns the highest-scoring subset of results that fit within MaxTokens.
-// Token estimate: len(result.MatchedChunk) / 4 per chunk.
-// Results are returned in their original rank order (index order from the input).
+// tokenCost estimates the token cost of a string as len(s)/4, floored at 1.
+func tokenCost(s string) int {
+	c := len(s) / 4
+	if c < 1 {
+		return 1
+	}
+	return c
+}
+
+// Trim greedily selects results in descending-score order until MaxTokens is
+// exhausted, then returns the selected results in their original input order.
+// Token estimate: tokenCost(result.MatchedChunk) per chunk.
 func (b ContextBudget) Trim(results []types.SearchResult) []types.SearchResult {
 	if b.MaxTokens <= 0 || len(results) == 0 {
 		return []types.SearchResult{}
@@ -39,10 +48,7 @@ func (b ContextBudget) Trim(results []types.SearchResult) []types.SearchResult {
 	remaining := b.MaxTokens
 	selected := make([]indexed, 0, len(items))
 	for i := range items {
-		cost := len(items[i].result.MatchedChunk) / 4
-		if cost < 1 {
-			cost = 1
-		}
+		cost := tokenCost(items[i].result.MatchedChunk)
 		if cost > remaining {
 			continue
 		}

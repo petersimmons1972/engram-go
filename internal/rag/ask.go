@@ -9,6 +9,7 @@ import (
 const (
 	defaultTopK         = 10
 	defaultAnswerTokens = 2048
+	defaultModel        = "claude-sonnet-4-6"
 )
 
 // Recaller is a minimal interface for recall — allows testability.
@@ -26,7 +27,8 @@ type Asker struct {
 	Engine Recaller
 	Client ClaudeCompleter
 	Budget ContextBudget
-	TopK   int // default 10 if 0
+	TopK   int    // default 10 if 0
+	Model  string // generation model; defaults to defaultModel if empty
 }
 
 // Ask recalls relevant memories, trims them to budget, and asks Claude to answer.
@@ -54,19 +56,18 @@ func (a Asker) Ask(ctx context.Context, question string) (*AskResult, error) {
 		return &AskResult{Answer: "No relevant memories found.", Citations: []Citation{}}, nil
 	}
 
-	// Count context tokens from trimmed chunks (floor at 1 per chunk, matching ContextBudget).
 	contextTokens := 0
 	for _, chunk := range trimmed {
-		cost := len(chunk.MatchedChunk) / 4
-		if cost < 1 {
-			cost = 1
-		}
-		contextTokens += cost
+		contextTokens += tokenCost(chunk.MatchedChunk)
 	}
 
 	prompt := AssemblePrompt(question, trimmed)
 
-	answer, err := a.Client.Complete(ctx, systemPrompt, prompt, "claude-sonnet-4-6", "", 0, defaultAnswerTokens)
+	model := a.Model
+	if model == "" {
+		model = defaultModel
+	}
+	answer, err := a.Client.Complete(ctx, systemPrompt, prompt, model, "", 0, defaultAnswerTokens)
 	if err != nil {
 		return nil, err
 	}
