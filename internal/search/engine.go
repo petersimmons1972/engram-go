@@ -1222,8 +1222,11 @@ func (e *SearchEngine) FeedbackWithEventAndClass(ctx context.Context, eventID st
 // Aggregate returns aggregated memory statistics grouped by the given dimension.
 // Supported values for by: "tag", "type", "failure_class".
 // filter is an optional prefix/value filter (not applicable for failure_class).
-// limit caps the number of rows returned.
+// limit caps the number of rows returned; limit < 1 is treated as the default (20).
 func (e *SearchEngine) Aggregate(ctx context.Context, by, filter string, limit int) ([]types.AggregateRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
 	switch by {
 	case "tag", "type":
 		return e.backend.AggregateMemories(ctx, e.project, by, filter, limit)

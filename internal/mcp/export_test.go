@@ -356,6 +356,13 @@ func CallHandleMemoryIngest(
 	return res
 }
 
+// NewTestNoopPool returns an EnginePool backed by a noopBackend + noopEmbedder.
+// Use this in unit tests that do not require a real PostgreSQL database.
+func NewTestNoopPool(t *testing.T) *EnginePool {
+	t.Helper()
+	return newTestExplorePool(t)
+}
+
 // CallHandleMemoryAggregate invokes handleMemoryAggregate with the given
 // arguments and returns the decoded output map. Fatals on any error.
 func CallHandleMemoryAggregate(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
@@ -392,9 +399,10 @@ func CallHandleMemoryAggregateExpectError(ctx context.Context, t *testing.T, poo
 	}
 }
 
-// CallHandleMemoryFeedbackWithClass verifies that a valid failure_class passes
-// MCP boundary validation. Errors from the DB layer (e.g. event not found) are
-// silently ignored — the test only cares that no class-validation error is raised.
+// CallHandleMemoryFeedbackWithClass tests MCP boundary validation only
+// (failure_class format and event_id requirement). It does not validate DB state.
+// DB errors (e.g. event not found, unknown event_id) are expected and silently
+// skipped — a nil return means the handler's input parsing accepted the arguments.
 func CallHandleMemoryFeedbackWithClass(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}

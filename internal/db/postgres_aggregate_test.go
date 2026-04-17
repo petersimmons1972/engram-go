@@ -126,6 +126,28 @@ func TestAggregateMemories_ByType(t *testing.T) {
 	require.Equal(t, 1, errRow.Count)
 }
 
+// TestAggregateMemories_ByType_SingleTypeOnly inserts memories that all share the
+// same memory_type ("context") and asserts that AggregateMemories returns exactly
+// one row — absent types must be excluded, not zero-filled.
+func TestAggregateMemories_ByType_SingleTypeOnly(t *testing.T) {
+	proj := uniqueProject("agg-bytype-single")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	storeMemoryWithType(t, b, proj, "context memory one", types.MemoryTypeContext)
+	storeMemoryWithType(t, b, proj, "context memory two", types.MemoryTypeContext)
+	storeMemoryWithType(t, b, proj, "context memory three", types.MemoryTypeContext)
+
+	rows, err := b.AggregateMemories(ctx, proj, "type", "", 20)
+	require.NoError(t, err)
+
+	require.Len(t, rows, 1, "only one type present — expect exactly one row")
+
+	ctxRow := findRowByLabel(rows, types.MemoryTypeContext)
+	require.NotNil(t, ctxRow, "expected row with label=context")
+	require.Equal(t, 3, ctxRow.Count, "all three inserted memories must be counted")
+}
+
 // TestAggregateMemories_EmptyProject calls AggregateMemories on a project
 // that has no memories and asserts a non-nil empty slice is returned.
 func TestAggregateMemories_EmptyProject(t *testing.T) {

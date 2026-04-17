@@ -132,36 +132,58 @@ func TestHandleMemoryAggregate_InvalidBy(t *testing.T) {
 	})
 }
 
+// TestHandleMemoryAggregate_LimitClamping verifies that passing a representative
+// non-positive limit (limit=-1) does not produce an error at the MCP handler
+// boundary. The handler silently clamps limit < 1 to 20 before forwarding to
+// the engine, so the call must succeed and return a valid aggregate response with a "rows" key.
+func TestHandleMemoryAggregate_LimitClamping(t *testing.T) {
+	ctx := context.Background()
+	// Use the noopBackend-backed pool so this test runs without a real database.
+	pool := mcp.NewTestNoopPool(t)
+
+	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
+		"project": "test",
+		"by":      "tag",
+		"limit":   float64(-1),
+	})
+
+	require.NotNil(t, out, "response must not be nil")
+
+	rows, ok := out["rows"]
+	require.True(t, ok, "response must include 'rows' key")
+	_, isSlice := rows.([]any)
+	require.True(t, isSlice, "'rows' must be a []any, got %T", rows)
+}
+
 // ── memory_feedback with failure_class tests ──────────────────────────────────
 
 // TestHandleMemoryFeedback_WithClass calls memory_feedback with a valid
-// failure_class="vocabulary_mismatch". A fake event_id is used; the handler
-// may return an error about the event not being found (acceptable), but it
-// must NOT return an error about an invalid failure_class.
+// failure_class="vocabulary_mismatch". A syntactically valid UUID is used for
+// event_id so UUID validation passes; the handler may still return an error
+// about the event not being found in the DB (acceptable), but it must NOT
+// return an error about an invalid failure_class or invalid UUID format.
 func TestHandleMemoryFeedback_WithClass(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN_agg(t)
 	proj := uniqueProject_agg("fb-class")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
-	// We use a fake event_id. The valid-class path must not reject the class
-	// itself; any error must be about the missing event, not about the class value.
 	out := mcp.CallHandleMemoryFeedbackWithClass(ctx, t, pool, map[string]any{
 		"project":       proj,
-		"event_id":      "fake-event-123",
+		"event_id":      "00000000-0000-0000-0000-000000000001",
 		"memory_ids":    []any{},
 		"failure_class": "vocabulary_mismatch",
 	})
 
-	// If we reach here without a fatal, the handler accepted the class.
-	// The status field must be present (success path) or we just confirmed
-	// no class-validation error was raised.
+	// nil means a DB-level error (event not found) — acceptable at this layer.
+	// A non-nil result means the full path succeeded.
 	_ = out
 }
 
 // TestHandleMemoryFeedback_InvalidClass calls memory_feedback with an
 // unrecognised failure_class value. The handler must reject it at the MCP
 // boundary — before any DB access — and return an error.
+// Uses a valid UUID for event_id so UUID validation does not mask the class error.
 func TestHandleMemoryFeedback_InvalidClass(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN_agg(t)
@@ -170,8 +192,23 @@ func TestHandleMemoryFeedback_InvalidClass(t *testing.T) {
 
 	mcp.CallHandleMemoryFeedbackWithClassExpectError(ctx, t, pool, map[string]any{
 		"project":       proj,
-		"event_id":      "fake-event-123",
+		"event_id":      "00000000-0000-0000-0000-000000000001",
 		"memory_ids":    []any{},
 		"failure_class": "not_a_valid_class",
+	})
+}
+
+// TestHandleMemoryFeedback_InvalidEventID verifies that a non-UUID event_id is
+// rejected at the MCP boundary before any DB access. Uses the noop pool since
+// UUID validation fires before any database interaction.
+func TestHandleMemoryFeedback_InvalidEventID(t *testing.T) {
+	ctx := context.Background()
+	pool := mcp.NewTestNoopPool(t)
+
+	mcp.CallHandleMemoryFeedbackWithClassExpectError(ctx, t, pool, map[string]any{
+		"project":       "test",
+		"event_id":      "fake-event-123",
+		"memory_ids":    []any{},
+		"failure_class": "vocabulary_mismatch",
 	})
 }
