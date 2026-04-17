@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Two Memories: Engram-Go and Iusztin GraphRAG, Compared</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ================================================
+   Mucha palette + magazine typography
+   ================================================ */
+:root {
+  --parchment:   #F5EFE0;
+  --parchment-dark: #EDE4CC;
+  --forest:      #2F4F2F;
+  --forest-mid:  #3D6B3D;
+  --wine:        #722F37;
+  --wine-light:  #8B3A44;
+  --gold:        #B8860B;
+  --gold-light:  #D4AF37;
+  --ink:         #1A1209;
+  --ink-mid:     #3A2E1A;
+  --ink-light:   #5C4D30;
+  --cream-rule:  #D9CEAF;
+  --body-max:    1100px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 18px; }
+
+body {
+  background: var(--parchment);
+  color: var(--ink);
+  font-family: 'Inter', 'Source Sans 3', system-ui, sans-serif;
+  font-weight: 400;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Layout ---- */
+.spread {
+  max-width: var(--body-max);
+  margin: 0 auto;
+  padding: 0 2rem 4rem;
+}
+
+/* ---- Masthead ---- */
+.masthead {
+  text-align: center;
+  padding: 3.5rem 0 1.5rem;
+  border-bottom: 2px solid var(--forest);
+  margin-bottom: 0;
+}
+
+.masthead-kicker {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 1.1rem;
+}
+
+.masthead h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(2rem, 4.5vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--forest);
+  margin-bottom: 0.8rem;
+  letter-spacing: -0.01em;
+}
+
+.masthead h1 em {
+  color: var(--wine);
+  font-style: italic;
+}
+
+.masthead .subtitle {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 1.05rem;
+  color: var(--ink-light);
+  margin-bottom: 1.4rem;
+}
+
+.masthead-meta {
+  font-size: 0.72rem;
+  color: var(--ink-light);
+  letter-spacing: 0.08em;
+}
+
+/* ---- Botanical divider SVG ---- */
+.botanical-divider {
+  display: block;
+  margin: 2.2rem auto;
+  width: 100%;
+  max-width: 680px;
+  height: 40px;
+}
+
+.section-divider {
+  display: block;
+  margin: 2.8rem auto;
+  width: 100%;
+  max-width: 520px;
+  height: 32px;
+}
+
+/* ---- Section labels ---- */
+.section-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.5rem;
+}
+
+/* ---- Section heads ---- */
+.section-head {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
+  font-weight: 700;
+  color: var(--forest);
+  line-height: 1.2;
+  margin-bottom: 0.3rem;
+}
+
+.section-byline {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 0.88rem;
+  color: var(--wine);
+  margin-bottom: 1.4rem;
+}
+
+/* ---- Drop cap ---- */
+.drop-cap::first-letter {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 4.2rem;
+  font-weight: 700;
+  color: var(--wine);
+  float: left;
+  line-height: 0.82;
+  margin-right: 0.12em;
+  margin-top: 0.06em;
+}
+
+/* ---- Body text ---- */
+p { margin-bottom: 1.1rem; }
+
+/* ---- Pull quote ---- */
+.pull-quote {
+  border-left: 4px solid var(--gold);
+  border-right: 4px solid var(--gold);
+  padding: 1.4rem 2rem;
+  margin: 2.4rem 0;
+  background: var(--parchment-dark);
+  text-align: center;
+}
+
+.pull-quote blockquote {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 1.22rem;
+  color: var(--forest);
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+
+.pull-quote cite {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+/* ---- Design Diff table ---- */
+.diff-table-wrap {
+  overflow-x: auto;
+  margin: 1.6rem 0;
+}
+
+table.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+table.diff-table thead th {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 0.7rem 1rem;
+  text-align: left;
+  border-bottom: 2px solid var(--forest);
+  background: var(--parchment-dark);
+  color: var(--forest);
+}
+
+table.diff-table thead th:first-child {
+  width: 18%;
+  color: var(--ink-light);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+table.diff-table thead th:nth-child(2) { color: var(--forest); }
+table.diff-table thead th:nth-child(3) { color: var(--wine); }
+
+table.diff-table tbody td {
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--cream-rule);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+table.diff-table tbody td:first-child {
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+  white-space: nowrap;
+}
+
+table.diff-table tbody tr:nth-child(even) td {
+  background: rgba(0,0,0,0.025);
+}
+
+/* ---- Pro/con cards ---- */
+.pro-con-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin: 1.6rem 0;
+}
+
+@media (max-width: 700px) {
+  .pro-con-grid { grid-template-columns: 1fr; }
+}
+
+.pro-con-card {
+  background: var(--parchment-dark);
+  border-top: 3px solid var(--forest);
+  padding: 1.4rem 1.4rem 1rem;
+}
+
+.pro-con-card.iusztin { border-top-color: var(--wine); }
+
+.pro-con-card h4 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--forest);
+}
+
+.pro-con-card.iusztin h4 { color: var(--wine); }
+
+.pro-con-item {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.pro-con-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 0.05em;
+}
+
+.confidence-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.1em 0.4em;
+  border-radius: 2px;
+  margin-left: 0.3em;
+  vertical-align: middle;
+}
+
+.conf-high { background: var(--forest); color: #fff; }
+.conf-med  { background: var(--gold);   color: #fff; }
+.conf-low  { background: var(--ink-light); color: #fff; }
+
+.source-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--cream-rule);
+  border-radius: 2px;
+  margin-left: 0.2em;
+  color: var(--ink-light);
+  vertical-align: middle;
+}
+
+/* ---- Theft flow ---- */
+.theft-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1.5rem;
+  align-items: start;
+  margin: 1.6rem 0;
+}
+
+@media (max-width: 700px) {
+  .theft-grid { grid-template-columns: 1fr; }
+  .theft-arrow { display: none; }
+}
+
+.theft-col h4 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid var(--cream-rule);
+}
+
+.theft-col.engram h4 { color: var(--forest); border-color: var(--forest); }
+.theft-col.iusztin h4 { color: var(--wine); border-color: var(--wine); }
+
+.theft-item {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.theft-num {
+  flex-shrink: 0;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--gold);
+  line-height: 1.3;
+}
+
+/* ---- Verdict section ---- */
+.verdict-block {
+  background: var(--parchment-dark);
+  border: 1px solid var(--cream-rule);
+  padding: 1.6rem 1.8rem;
+  margin: 1rem 0;
+}
+
+.verdict-block h4 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--forest);
+  margin-bottom: 0.6rem;
+}
+
+.verdict-block.paradigm h4 { color: var(--wine); }
+
+/* ---- Anti-pattern audit ---- */
+.audit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin: 1.6rem 0;
+}
+
+@media (max-width: 700px) {
+  .audit-grid { grid-template-columns: 1fr; }
+}
+
+.audit-card {
+  font-size: 0.82rem;
+}
+
+.audit-card h4 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid var(--cream-rule);
+}
+
+.audit-card.engram h4 { color: var(--forest); }
+.audit-card.iusztin h4 { color: var(--wine); }
+
+.anti-pattern {
+  margin-bottom: 0.8rem;
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--cream-rule);
+  line-height: 1.5;
+}
+
+.anti-pattern.severe { border-left-color: var(--wine); }
+.anti-pattern.moderate { border-left-color: var(--gold); }
+.anti-pattern.none { border-left-color: var(--forest); }
+
+.anti-pattern strong {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+  margin-bottom: 0.2em;
+}
+
+.break-line {
+  background: var(--wine);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.3em 0.7em;
+  margin-top: 0.8rem;
+  display: inline-block;
+}
+
+/* ---- Chart annotation ---- */
+.chart-annotation {
+  font-size: 0.78rem;
+  color: var(--ink-light);
+  font-style: italic;
+  text-align: center;
+  margin-top: 0.5rem;
+  margin-bottom: 1.2rem;
+}
+
+/* ---- Chart container ---- */
+.chart-wrap {
+  margin: 1.6rem 0 0.4rem;
+  background: var(--parchment-dark);
+  border: 1px solid var(--cream-rule);
+  padding: 1rem;
+}
+
+.chart-wrap svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ---- Closing pull quote ---- */
+.closing-quote {
+  margin: 3rem 0 2rem;
+  padding: 2rem 2.5rem;
+  border-top: 3px solid var(--forest);
+  border-bottom: 3px solid var(--forest);
+  text-align: center;
+  background: var(--parchment-dark);
+}
+
+.closing-quote blockquote {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  color: var(--forest);
+  margin-bottom: 0.8rem;
+}
+
+.closing-quote cite {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+/* ---- Footer ---- */
+footer {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--ink-light);
+  padding: 1.5rem 0 2rem;
+  border-top: 1px solid var(--cream-rule);
+  letter-spacing: 0.05em;
+}
+
+/* ---- Print ---- */
+@media print {
+  body { background: #fff; }
+  .chart-wrap { border: 1px solid #ccc; }
+  .spread { padding: 0 1cm; }
+}
+</style>
+</head>
+<body>
+<article class="spread">
+
+<!-- ================================================
+     MASTHEAD
+     ================================================ -->
+<header class="masthead">
+  <div class="masthead-kicker">Field Report &mdash; AI Memory Architecture</div>
+  <h1>Two Memories:<br><em>Engram-Go and Iusztin&rsquo;s GraphRAG, Compared</em></h1>
+  <p class="subtitle">A field report on what code reveals that a blog post cannot</p>
+  <p class="masthead-meta">Analysis drawn from ~22,000 LOC Go inspection (Engram-Go) and a single Substack note (Iusztin). April 2026.</p>
+</header>
+
+<!-- Botanical header divider -->
+<svg class="botanical-divider" viewBox="0 0 680 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="20" x2="240" y2="20" stroke="#B8860B" stroke-width="0.8" opacity="0.5"/>
+  <line x1="440" y1="20" x2="680" y2="20" stroke="#B8860B" stroke-width="0.8" opacity="0.5"/>
+  <ellipse cx="340" cy="20" rx="6" ry="6" fill="#B8860B" opacity="0.7"/>
+  <ellipse cx="310" cy="20" rx="3.5" ry="3.5" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5"/>
+  <ellipse cx="370" cy="20" rx="3.5" ry="3.5" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5"/>
+  <path d="M280,20 Q295,8 310,20" stroke="#2F4F2F" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M370,20 Q385,8 400,20" stroke="#2F4F2F" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M255,20 Q265,30 275,20" stroke="#2F4F2F" stroke-width="1" fill="none" opacity="0.4"/>
+  <path d="M405,20 Q415,30 425,20" stroke="#2F4F2F" stroke-width="1" fill="none" opacity="0.4"/>
+  <ellipse cx="268" cy="15" rx="4" ry="2.5" fill="#2F4F2F" opacity="0.3" transform="rotate(-20 268 15)"/>
+  <ellipse cx="412" cy="15" rx="4" ry="2.5" fill="#2F4F2F" opacity="0.3" transform="rotate(20 412 15)"/>
+</svg>
+
+<!-- ================================================
+     SECTION 1: EDITOR'S NOTE
+     ================================================ -->
+<section id="editors-note">
+  <div class="section-label">Editor&rsquo;s Note</div>
+  <h2 class="section-head">Evidence Asymmetry: The Honest Caveat</h2>
+  <p class="section-byline">Why this comparison is the best currently possible, and not yet fully fair</p>
+
+  <p class="drop-cap">Every claim about Engram-Go in this report was drawn from source code: approximately 22,000 lines of Go, eleven SQL migrations, and a live MCP server. The storage schema, the five-signal scoring formula, the spaced-repetition decay worker, the sleep-cycle consolidation pipeline &mdash; each of these was read from a file path that can be cited. The claims about Iusztin&rsquo;s GraphRAG system were drawn from a single Substack note. One publicly-available note, describing a design. No repository was inspected. No scoring function was read. No migration file was opened.</p>
+
+  <p>This asymmetry is the headline. When one side of a comparison is a system you have examined and the other is a system you have been told about, you are not comparing two systems. You are comparing a system against its own public story. The public story of any system is curated. Code is not. Code contains the decisions the author made after the design document was written, including the ones they would prefer not to explain.</p>
+
+  <p>Iusztin&rsquo;s design may well have a scoring function, a feedback loop, a consolidation strategy, and embedding fallbacks. If it does, they are not disclosed in the available source. Every claim tagged <code>[NOTE]</code> in this report means the claim came from the Substack note. Every claim tagged <code>[CODE]</code> means it came from inspected source. Every claim tagged <code>[INFERENCE]</code> means it came from neither &mdash; it is a reasonable inference from known behavior of the underlying technologies, stated as such. The reader should weight accordingly.</p>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 2: DESIGN DIFF TABLE
+     ================================================ -->
+<section id="design-diff">
+  <div class="section-label">Design Diff</div>
+  <h2 class="section-head">Side-by-Side: Architecture at a Glance</h2>
+  <p class="section-byline">What each system chose, and what those choices cost</p>
+
+  <!-- CHART A: Storage Topology -->
+  <div class="chart-wrap">
+    <svg viewBox="0 0 1060 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Storage topology diagram showing Engram-Go six-table PostgreSQL schema on left and Iusztin single-collection MongoDB schema on right">
+
+      <!-- Background panels -->
+      <rect x="0" y="0" width="1060" height="340" fill="#EDE4CC"/>
+      <rect x="20" y="20" width="490" height="300" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+      <rect x="550" y="20" width="490" height="300" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+
+      <!-- Panel labels -->
+      <text x="265" y="50" font-family="'Playfair Display', Georgia, serif" font-size="15" font-weight="700" fill="#2F4F2F" text-anchor="middle">Engram-Go</text>
+      <text x="265" y="66" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">PostgreSQL + pgvector, 6 core tables</text>
+      <text x="795" y="50" font-family="'Playfair Display', Georgia, serif" font-size="15" font-weight="700" fill="#722F37" text-anchor="middle">Iusztin GraphRAG</text>
+      <text x="795" y="66" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">MongoDB, unified knowledge_graph collection</text>
+
+      <!-- Engram-Go: central memories table -->
+      <rect x="185" y="80" width="160" height="36" rx="3" fill="#2F4F2F" opacity="0.85"/>
+      <text x="265" y="100" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#F5EFE0" text-anchor="middle">memories</text>
+      <text x="265" y="112" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">id, content, embedding</text>
+
+      <!-- Engram-Go: surrounding tables -->
+      <rect x="40" y="150" width="130" height="34" rx="3" fill="#3D6B3D" opacity="0.75"/>
+      <text x="105" y="169" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">chunks</text>
+      <text x="105" y="180" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">handle / summary / full</text>
+
+      <rect x="185" y="150" width="130" height="34" rx="3" fill="#3D6B3D" opacity="0.75"/>
+      <text x="250" y="169" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">relationships</text>
+      <text x="250" y="180" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">source / target / weight</text>
+
+      <rect x="330" y="150" width="130" height="34" rx="3" fill="#3D6B3D" opacity="0.75"/>
+      <text x="395" y="169" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">episodes</text>
+      <text x="395" y="180" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">session grouping</text>
+
+      <rect x="40" y="240" width="160" height="34" rx="3" fill="#B8860B" opacity="0.65"/>
+      <text x="120" y="258" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1209" text-anchor="middle">retrieval_events</text>
+      <text x="120" y="270" font-family="Inter, sans-serif" font-size="10" fill="#1A1209" text-anchor="middle">times_useful / retrieved</text>
+
+      <rect x="220" y="240" width="130" height="34" rx="3" fill="#B8860B" opacity="0.65"/>
+      <text x="285" y="258" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1209" text-anchor="middle">documents</text>
+      <text x="285" y="270" font-family="Inter, sans-serif" font-size="10" fill="#1A1209" text-anchor="middle">tiered ingestion store</text>
+
+      <rect x="360" y="240" width="110" height="34" rx="3" fill="#722F37" opacity="0.65"/>
+      <text x="415" y="258" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">memory_ops</text>
+      <text x="415" y="270" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0" text-anchor="middle">bi-temporal log</text>
+
+      <!-- FK arrows engram -->
+      <line x1="185" y1="103" x2="170" y2="155" stroke="#2F4F2F" stroke-width="1.2" stroke-dasharray="3,2"/>
+      <line x1="265" y1="116" x2="250" y2="150" stroke="#2F4F2F" stroke-width="1.2" stroke-dasharray="3,2"/>
+      <line x1="340" y1="103" x2="355" y2="155" stroke="#2F4F2F" stroke-width="1.2" stroke-dasharray="3,2"/>
+      <line x1="185" y1="116" x2="150" y2="240" stroke="#B8860B" stroke-width="1" stroke-dasharray="2,3" opacity="0.7"/>
+      <line x1="290" y1="116" x2="290" y2="240" stroke="#B8860B" stroke-width="1" stroke-dasharray="2,3" opacity="0.7"/>
+      <line x1="340" y1="116" x2="390" y2="240" stroke="#722F37" stroke-width="1" stroke-dasharray="2,3" opacity="0.7"/>
+
+      <!-- FK arrowheads -->
+      <polygon points="168,152 172,148 175,156" fill="#2F4F2F" opacity="0.7"/>
+      <polygon points="248,147 252,143 255,151" fill="#2F4F2F" opacity="0.7"/>
+      <polygon points="353,152 357,148 360,156" fill="#2F4F2F" opacity="0.7"/>
+
+      <!-- Iusztin: single collection center -->
+      <ellipse cx="795" cy="165" rx="95" ry="68" fill="#722F37" opacity="0.12" stroke="#722F37" stroke-width="1.5"/>
+      <rect x="730" y="140" width="130" height="50" rx="4" fill="#722F37" opacity="0.8"/>
+      <text x="795" y="161" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#F5EFE0" text-anchor="middle">knowledge_graph</text>
+      <text x="795" y="175" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0" text-anchor="middle">unified collection</text>
+
+      <!-- Iusztin: three indexes -->
+      <rect x="570" y="80" width="100" height="30" rx="3" fill="#8B3A44" opacity="0.7"/>
+      <text x="620" y="99" font-family="Inter, sans-serif" font-size="11" fill="#F5EFE0" text-anchor="middle">text index</text>
+
+      <rect x="570" y="210" width="100" height="30" rx="3" fill="#8B3A44" opacity="0.7"/>
+      <text x="620" y="229" font-family="Inter, sans-serif" font-size="11" fill="#F5EFE0" text-anchor="middle">vector index</text>
+
+      <rect x="900" y="145" width="100" height="30" rx="3" fill="#8B3A44" opacity="0.7"/>
+      <text x="950" y="164" font-family="Inter, sans-serif" font-size="11" fill="#F5EFE0" text-anchor="middle">graph index</text>
+
+      <!-- Radiating lines from collection to indexes -->
+      <line x1="730" y1="155" x2="670" y2="95" stroke="#722F37" stroke-width="1.5" opacity="0.6"/>
+      <line x1="730" y1="175" x2="670" y2="225" stroke="#722F37" stroke-width="1.5" opacity="0.6"/>
+      <line x1="860" y1="160" x2="900" y2="160" stroke="#722F37" stroke-width="1.5" opacity="0.6"/>
+
+      <!-- Index label text -->
+      <text x="795" y="268" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle" font-style="italic">$graphLookup: 100MB/stage cap</text>
+      <text x="795" y="282" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle" font-style="italic">No disclosed feedback or temporal tables</text>
+
+      <!-- Center divider rule -->
+      <line x1="530" y1="30" x2="530" y2="310" stroke="#D9CEAF" stroke-width="1.5" stroke-dasharray="4,4"/>
+    </svg>
+  </div>
+  <p class="chart-annotation"><em>What this answers: which system's storage model imposes structural ceilings at scale, and where the coupling risks sit.</em></p>
+
+  <div class="diff-table-wrap">
+    <table class="diff-table">
+      <thead>
+        <tr>
+          <th>Axis</th>
+          <th>Engram-Go [CODE]</th>
+          <th>Iusztin GraphRAG [NOTE]</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Storage</td>
+          <td>PostgreSQL + pgvector, 6+ tables (memories, chunks, relationships, documents, episodes, retrieval_events)</td>
+          <td>MongoDB unified <code>knowledge_graph</code> collection</td>
+        </tr>
+        <tr>
+          <td>Embeddings</td>
+          <td>Ollama local, 768-dim; BM25 + recency fallback when Ollama unavailable</td>
+          <td>Voyage AI (cloud-hosted)</td>
+        </tr>
+        <tr>
+          <td>Graph</td>
+          <td>Edges-in-Postgres; recursive CTE multi-hop traversal</td>
+          <td>Indexed inside unified collection; progressive expansion tool</td>
+        </tr>
+        <tr>
+          <td>Scoring</td>
+          <td>5-signal composite: vector 0.45 + BM25 0.30 + recency 0.10 + precision 0.15 + importance boost</td>
+          <td>Not disclosed</td>
+        </tr>
+        <tr>
+          <td>MCP tools</td>
+          <td>28 tools across 7 categories</td>
+          <td>3: query, expand, ingest</td>
+        </tr>
+        <tr>
+          <td>Ingestion</td>
+          <td>Tiered: &le;500KB inline / 500KB-8MB synopsis / 8MB-50MB document / &gt;50MB reject</td>
+          <td>Entity + relationship extraction + deduplication pipeline</td>
+        </tr>
+        <tr>
+          <td>Consolidation</td>
+          <td>Sleep cycle: MinHash LSH + LLM contradiction detection + auto-supersede</td>
+          <td>Not disclosed</td>
+        </tr>
+        <tr>
+          <td>Feedback loop</td>
+          <td><code>retrieval_events</code> table; times_useful / times_retrieved feeds precision signal</td>
+          <td>Not disclosed</td>
+        </tr>
+        <tr>
+          <td>Temporal</td>
+          <td>Bi-temporal (valid_from / valid_to); memory_timeline as-of queries</td>
+          <td>Not disclosed</td>
+        </tr>
+        <tr>
+          <td>Spaced repetition</td>
+          <td><code>dynamic_importance</code> &times; 0.95 every 8h; retrieval_interval growth</td>
+          <td>Not present [NOTE-absent]</td>
+        </tr>
+        <tr>
+          <td>Auth</td>
+          <td>Bearer token required (v3.0)</td>
+          <td>Not disclosed</td>
+        </tr>
+        <tr>
+          <td>Deployment</td>
+          <td>Local-first, single-node</td>
+          <td>Cloud-dependent (MongoDB Atlas + Voyage AI)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 3: PRO/CON - LAYTON'S MATRIX
+     ================================================ -->
+<section id="layton">
+  <div class="section-label">Pro / Con</div>
+  <h2 class="section-head">Layton&rsquo;s Intelligence Matrix</h2>
+  <p class="section-byline">Five strengths and five liabilities per design, confidence-graded and source-tagged</p>
+
+  <!-- CHART B: Scoring Ring -->
+  <div class="chart-wrap">
+    <svg viewBox="0 0 1060 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Engram-Go five-signal scoring ring showing weighted components, alongside Iusztin undisclosed scoring placeholder">
+
+      <!-- Background -->
+      <rect x="0" y="0" width="1060" height="320" fill="#EDE4CC"/>
+
+      <!-- Left panel: Engram-Go scoring ring -->
+      <rect x="20" y="15" width="490" height="290" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+      <text x="265" y="45" font-family="'Playfair Display', Georgia, serif" font-size="15" font-weight="700" fill="#2F4F2F" text-anchor="middle">Engram-Go: 5-Signal Composite</text>
+
+      <!-- Ring segments, center cx=265, cy=175, outer r=100, inner r=58 -->
+      <!-- Segment 1: vector 0.45 = 162 deg, starts at -90 (top), ends at 72 -->
+      <!-- Computing arc paths from top (270 deg in standard math = -90 svg) -->
+      <!-- We use degrees from top, clockwise. Total = 360 -->
+      <!-- vector 0.45 -> 162 deg: from -90 to 72 -->
+      <!-- BM25 0.30 -> 108 deg: from 72 to 180 -->
+      <!-- precision 0.15 -> 54 deg: from 180 to 234 -->
+      <!-- recency 0.10 -> 36 deg: from 234 to 270 -->
+      <!-- importance: floating badge outside ring -->
+
+      <!-- Helper: arc from angle a1 to a2 (degrees from top, clockwise), cx=265, cy=175, r_out=100, r_in=58 -->
+      <!-- Segment vector 0.45 (162 deg): top(-90) to 72 degrees from top = angles 270 to 72+270-360=342... -->
+      <!-- Let me use svg angles directly: 0=right, angles from top = standard - 90 -->
+      <!-- From top clockwise: vector starts at -90, ends at -90+162=72 deg svg angle -->
+      <!-- svg: x = cx + r*cos(a), y = cy + r*sin(a) -->
+      <!-- vector: a1=-90, a2=72. cos(-90)=0, sin(-90)=-1. cos(72)=0.309, sin(72)=0.951 -->
+      <!-- outer: start(265+100*0, 175+100*-1)=(265,75). end(265+100*0.309,175+100*0.951)=(295.9,270.1) -->
+      <!-- inner: start(265+58*0,175+58*-1)=(265,117). end(265+58*0.309,175+58*0.951)=(282.9,230.2) -->
+      <path d="M 265,75
+               A 100,100 0 1 1 295.9,270.1
+               L 282.9,230.2
+               A 58,58 0 1 0 265,117
+               Z"
+            fill="#2F4F2F" opacity="0.85"/>
+
+      <!-- BM25 0.30 (108 deg): a1=72, a2=72+108=180 -->
+      <!-- cos(72)=0.309, sin(72)=0.951; cos(180)=-1, sin(180)=0 -->
+      <!-- outer: (295.9,270.1) to (265-100,175)=(165,175) -->
+      <!-- inner: (282.9,230.2) to (265-58,175)=(207,175) -->
+      <path d="M 295.9,270.1
+               A 100,100 0 0 1 165,175
+               L 207,175
+               A 58,58 0 0 0 282.9,230.2
+               Z"
+            fill="#3D6B3D" opacity="0.8"/>
+
+      <!-- precision 0.15 (54 deg): a1=180, a2=234 -->
+      <!-- cos(180)=-1, sin(180)=0; cos(234)=-0.588, sin(234)=-0.809 -->
+      <!-- outer: (165,175) to (265+100*(-0.588), 175+100*(-0.809))=(206.2,93.9) -->
+      <!-- inner: (207,175) to (265+58*(-0.588), 175+58*(-0.809))=(230.9,128.1) -->
+      <path d="M 165,175
+               A 100,100 0 0 1 206.2,93.9
+               L 230.9,128.1
+               A 58,58 0 0 0 207,175
+               Z"
+            fill="#B8860B" opacity="0.8"/>
+
+      <!-- recency 0.10 (36 deg): a1=234, a2=270 -->
+      <!-- cos(234)=-0.588, sin(234)=-0.809; cos(270)=0, sin(270)=-1 -->
+      <!-- outer: (206.2,93.9) to (265,75) -->
+      <!-- inner: (230.9,128.1) to (265,117) -->
+      <path d="M 206.2,93.9
+               A 100,100 0 0 1 265,75
+               L 265,117
+               A 58,58 0 0 0 230.9,128.1
+               Z"
+            fill="#722F37" opacity="0.75"/>
+
+      <!-- Center donut hole label -->
+      <text x="265" y="170" font-family="'Playfair Display', Georgia, serif" font-size="13" font-weight="700" fill="#2F4F2F" text-anchor="middle">Scoring</text>
+      <text x="265" y="186" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">Composite</text>
+
+      <!-- Segment labels -->
+      <!-- vector label: midpoint at angle (72-90)/2 = approx -9 deg = cos(-9)=0.988, sin(-9)=-0.156, r=130 -->
+      <text x="388" y="175" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F" text-anchor="start">Vector</text>
+      <text x="388" y="189" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#2F4F2F" text-anchor="start">0.45</text>
+
+      <!-- BM25 label: midpoint at 126 deg, r=130: cos(126)=-0.588, sin(126)=0.809 -->
+      <text x="130" y="252" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#3D6B3D" text-anchor="end">BM25</text>
+      <text x="130" y="266" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#3D6B3D" text-anchor="end">0.30</text>
+
+      <!-- precision label: midpoint at 207 deg, r=130: cos(207)=-0.891, sin(207)=-0.454 -->
+      <text x="148" y="122" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#B8860B" text-anchor="end">Precision</text>
+      <text x="148" y="136" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#B8860B" text-anchor="end">0.15</text>
+
+      <!-- recency label: midpoint at 252 deg, r=130: cos(252)=-0.309, sin(252)=-0.951 -->
+      <text x="238" y="68" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#722F37" text-anchor="middle">Recency 0.10</text>
+
+      <!-- importance floating badge -->
+      <rect x="310" y="100" width="130" height="38" rx="3" fill="#722F37" opacity="0.15" stroke="#722F37" stroke-width="1"/>
+      <text x="375" y="117" font-family="Inter, sans-serif" font-size="11" fill="#722F37" text-anchor="middle" font-weight="600">+ Importance</text>
+      <text x="375" y="131" font-family="Inter, sans-serif" font-size="10" fill="#722F37" text-anchor="middle">dynamic boost (floating)</text>
+      <line x1="310" y1="120" x2="295" y2="140" stroke="#722F37" stroke-width="1" stroke-dasharray="2,2"/>
+
+      <!-- Right panel: Iusztin undisclosed -->
+      <rect x="550" y="15" width="490" height="290" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+      <text x="795" y="45" font-family="'Playfair Display', Georgia, serif" font-size="15" font-weight="700" fill="#722F37" text-anchor="middle">Iusztin GraphRAG: Scoring</text>
+
+      <!-- Question mark composition -->
+      <circle cx="795" cy="165" r="90" fill="none" stroke="#D9CEAF" stroke-width="2" stroke-dasharray="6,4"/>
+      <text x="795" y="195" font-family="'Playfair Display', Georgia, serif" font-size="90" font-weight="700" fill="#722F37" opacity="0.15" text-anchor="middle">?</text>
+      <text x="795" y="175" font-family="'Playfair Display', Georgia, serif" font-size="18" font-weight="700" fill="#722F37" text-anchor="middle" opacity="0.6">Not Disclosed</text>
+      <text x="795" y="196" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">No scoring formula, weights,</text>
+      <text x="795" y="210" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">or signal composition described</text>
+      <text x="795" y="228" font-family="Inter, sans-serif" font-size="10" fill="#5C4D30" text-anchor="middle" font-style="italic">in the available Substack note.</text>
+
+      <!-- Honest note at bottom -->
+      <text x="795" y="278" font-family="Inter, sans-serif" font-size="10" fill="#B8860B" text-anchor="middle" font-style="italic">Source tag: [NOTE-absent] - absence of disclosure, not proof of absence</text>
+    </svg>
+  </div>
+  <p class="chart-annotation"><em>What this answers: where each system invests its retrieval intelligence, and how much of that investment is legible to an outside observer.</em></p>
+
+  <div class="pro-con-grid">
+    <div class="pro-con-card">
+      <h4>Engram-Go &mdash; Strengths</h4>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>5-signal composite scoring with measurable weights is a retrievable, tunable system &mdash; not a black box. Precision signal compounds over use.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Spaced-repetition decay prevents memory rot; retrieval feedback makes the system improve from use without re-training.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Bi-temporal versioning gives complete audit trail; memory_timeline enables as-of queries no other disclosed system offers.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Tiered ingestion handles real workloads gracefully; &gt;50MB is rejected with signal rather than silently mangled.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Local-first deployment: no cloud dependency, no Voyage API bill, no data egress. Operates fully air-gapped.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+    </div>
+
+    <div class="pro-con-card">
+      <h4>Engram-Go &mdash; Liabilities</h4>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>28-tool surface is a cognitive and orchestration tax. Each tool the LLM must learn is a failure surface.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>Ollama local embeddings ceiling: state-of-the-art retrieval benchmarks favor cloud models by a widening margin.
+          <span class="confidence-tag conf-med">MED</span><span class="source-tag">INFERENCE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>Graph edges in Postgres; recursive CTE traversal hits query planner cost at 4+ hops and 10k+ edges.
+          <span class="confidence-tag conf-med">MED</span><span class="source-tag">INFERENCE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>11 migrations make schema evolution expensive; sunk structural cost inhibits architectural pivots.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>Graph is sparse: only memory_connect populates edges. No automatic entity extraction means the graph requires deliberate agent behavior.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">CODE</span></span>
+      </div>
+    </div>
+
+    <div class="pro-con-card iusztin">
+      <h4>Iusztin GraphRAG &mdash; Strengths</h4>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>3-tool surface is the minimal viable interface; orchestrators fail less, prompt costs stay low, debug traces stay readable.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">NOTE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Pre-ingestion entity + relationship extraction builds a richer graph from day one without explicit agent calls.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">NOTE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Voyage AI produces state-of-the-art embeddings; retrieval quality floor is likely higher than Ollama defaults.
+          <span class="confidence-tag conf-med">MED</span><span class="source-tag">INFERENCE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Entity deduplication during ingestion prevents graph fragmentation; aliases collapse to canonical nodes at write time.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">NOTE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#722F37"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/><rect x="8.25" y="4" width="1.5" height="10" fill="#F5EFE0"/></svg>
+        <span>Progressive expansion tool: graph traversal depth controlled by orchestrator at query time, not baked into storage.
+          <span class="confidence-tag conf-med">MED</span><span class="source-tag">NOTE</span></span>
+      </div>
+    </div>
+
+    <div class="pro-con-card iusztin">
+      <h4>Iusztin GraphRAG &mdash; Liabilities</h4>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>No disclosed feedback loop. Memory cannot improve from use. Retrieved memories that were wrong leave no trace.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">NOTE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>MongoDB $graphLookup capped at 100MB per stage; the graph engine is real, the graph scale is not.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">INFERENCE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>Voyage AI is a single uncontrolled external dependency; no fallback described. Voyage outage = retrieval outage.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">INFERENCE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>No disclosed consolidation strategy. Contradictions accumulate without a sleep-cycle equivalent.
+          <span class="confidence-tag conf-low">LOW</span><span class="source-tag">NOTE</span></span>
+      </div>
+      <div class="pro-con-item">
+        <svg class="pro-con-icon" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2F4F2F"/><rect x="4" y="8.5" width="10" height="1.5" fill="#F5EFE0"/></svg>
+        <span>Cloud-dependent deployment: MongoDB Atlas + Voyage AI means data sovereignty, latency, and cost all pass through third-party control.
+          <span class="confidence-tag conf-high">HIGH</span><span class="source-tag">NOTE</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 4: MUTUAL THEFT - GALLAND
+     ================================================ -->
+<section id="galland">
+  <div class="section-label">Tactical Recommendations</div>
+  <h2 class="section-head">The Mutual Theft List</h2>
+  <p class="section-byline">Galland&rsquo;s four recommendations per side: what each design should steal from the other</p>
+
+  <!-- CHART E: Mutual Theft Flow -->
+  <div class="chart-wrap">
+    <svg viewBox="0 0 1060 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mutual theft flow diagram showing four recommendations each system should adopt from the other">
+      <rect x="0" y="0" width="1060" height="280" fill="#EDE4CC"/>
+      <rect x="20" y="15" width="380" height="255" fill="#F5EFE0" rx="4" stroke="#2F4F2F" stroke-width="1.5"/>
+      <rect x="660" y="15" width="380" height="255" fill="#F5EFE0" rx="4" stroke="#722F37" stroke-width="1.5"/>
+
+      <!-- Headers -->
+      <text x="210" y="44" font-family="'Playfair Display', Georgia, serif" font-size="13" font-weight="700" fill="#2F4F2F" text-anchor="middle">Engram-Go steals from Iusztin</text>
+      <text x="850" y="44" font-family="'Playfair Display', Georgia, serif" font-size="13" font-weight="700" fill="#722F37" text-anchor="middle">Iusztin steals from Engram-Go</text>
+
+      <!-- Left column items -->
+      <rect x="35" y="57" width="20" height="20" rx="2" fill="#2F4F2F" opacity="0.8"/>
+      <text x="46" y="71" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">1</text>
+      <text x="65" y="68" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F">Pre-ingestion entity extraction</text>
+      <text x="65" y="82" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Graph sparse because only memory_connect</text>
+      <text x="65" y="95" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">populates it. Fix at write time.</text>
+
+      <rect x="35" y="112" width="20" height="20" rx="2" fill="#2F4F2F" opacity="0.8"/>
+      <text x="46" y="126" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">2</text>
+      <text x="65" y="123" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F">Entity deduplication pipeline</text>
+      <text x="65" y="137" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Prerequisite for #1. Aliases fragment the</text>
+      <text x="65" y="150" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">graph. Collapse at write, not query time.</text>
+
+      <rect x="35" y="167" width="20" height="20" rx="2" fill="#2F4F2F" opacity="0.8"/>
+      <text x="46" y="181" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">3</text>
+      <text x="65" y="178" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F">Simplified 3-tool front door</text>
+      <text x="65" y="192" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Expose alongside the 28. Orchestrators</text>
+      <text x="65" y="205" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">default to simple; experts use deep surface.</text>
+
+      <rect x="35" y="222" width="20" height="20" rx="2" fill="#2F4F2F" opacity="0.8"/>
+      <text x="46" y="236" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">4</text>
+      <text x="65" y="233" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F">Configurable embedding provider</text>
+      <text x="65" y="247" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Voyage (or equivalent) behind existing</text>
+      <text x="65" y="260" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">interface. One swap, 0.45-weight upgrade.</text>
+
+      <!-- Right column items -->
+      <rect x="675" y="57" width="20" height="20" rx="2" fill="#722F37" opacity="0.8"/>
+      <text x="686" y="71" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">1</text>
+      <text x="705" y="68" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#722F37">Retrieval feedback loop</text>
+      <text x="705" y="82" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">times_useful / times_retrieved. The single</text>
+      <text x="705" y="95" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">move Iusztin cannot ignore. Memory compounds.</text>
+
+      <rect x="675" y="112" width="20" height="20" rx="2" fill="#722F37" opacity="0.8"/>
+      <text x="686" y="126" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">2</text>
+      <text x="705" y="123" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#722F37">Sleep-cycle consolidation</text>
+      <text x="705" y="137" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">MinHash LSH + LLM contradiction detection.</text>
+      <text x="705" y="150" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Without this, contradictions accumulate silently.</text>
+
+      <rect x="675" y="167" width="20" height="20" rx="2" fill="#722F37" opacity="0.8"/>
+      <text x="686" y="181" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">3</text>
+      <text x="705" y="178" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#722F37">Spaced-repetition decay</text>
+      <text x="705" y="192" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">dynamic_importance x 0.95 / 8h. Memory</text>
+      <text x="705" y="205" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">that is not used fades. This is correct behavior.</text>
+
+      <rect x="675" y="222" width="20" height="20" rx="2" fill="#722F37" opacity="0.8"/>
+      <text x="686" y="236" font-family="'Playfair Display', Georgia, serif" font-size="12" font-weight="700" fill="#F5EFE0" text-anchor="middle">4</text>
+      <text x="705" y="233" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#722F37">Tiered storage: handle/summary/full</text>
+      <text x="705" y="247" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Context window explodes during expansion.</text>
+      <text x="705" y="260" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30">Tiering preserves window. Critical at scale.</text>
+
+      <!-- Center exchange arrows -->
+      <path d="M 406,100 C 480,100 580,100 654,100" stroke="#B8860B" stroke-width="1.5" fill="none"/>
+      <polygon points="650,96 660,100 650,104" fill="#B8860B"/>
+      <path d="M 654,160 C 580,160 480,160 406,160" stroke="#B8860B" stroke-width="1.5" fill="none"/>
+      <polygon points="410,156 400,160 410,164" fill="#B8860B"/>
+      <text x="530" y="138" font-family="Inter, sans-serif" font-size="10" fill="#B8860B" text-anchor="middle" font-weight="600">MUTUAL THEFT</text>
+    </svg>
+  </div>
+  <p class="chart-annotation"><em>What this answers: the four highest-leverage moves each team should make in the next development cycle.</em></p>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 5: YAMAMOTO'S PARADIGM VERDICT
+     ================================================ -->
+<section id="yamamoto">
+  <div class="section-label">Paradigm Verdict</div>
+  <h2 class="section-head">Yamamoto&rsquo;s Limit Analysis</h2>
+  <p class="section-byline">Where each design cannot win, and what the decade turns on</p>
+
+  <div class="verdict-block">
+    <h4>What Engram-Go cannot win at</h4>
+    <p>The edge-table graph at 10-hop / 1M-node scale: recursive CTE traversal in Postgres is not a graph database. It will plan expensively and execute slowly against a graph that size. The embedding ceiling of local-only Ollama is a second hard limit; state-of-the-art retrieval models are not local, and the 0.45 vector weight means the primary path is the weak path at frontier scale.</p>
+  </div>
+
+  <div class="verdict-block">
+    <h4>What Iusztin cannot win at</h4>
+    <p>MongoDB's $graphLookup is capped at 100MB per aggregation pipeline stage. The graph is real; the graph engine is not a graph engine. No feedback loop means memory does not compound from use &mdash; the system is as good on day 1,000 as it was on day 1. A thin tool surface is excellent until orchestrator quality degrades; three tools provide no fallback path when the primary fails.</p>
+  </div>
+
+  <div class="verdict-block paradigm">
+    <h4>Each design&rsquo;s paradigm bet</h4>
+    <p><strong>Engram-Go</strong> bets that memory is a first-class operational system that improves from use. Retrieval feedback, spaced repetition, sleep-cycle consolidation &mdash; these are the behaviors of a system that treats memory as something alive. The complexity is load-bearing: each feature compounds the others.</p>
+    <p><strong>Iusztin</strong> bets that memory is a lookup layer and intelligence lives in the orchestrator. This is a structurally simpler bet. It is also more fragile: when the orchestrator fails, the memory system has no residual capacity to compensate.</p>
+  </div>
+
+  <div class="pull-quote">
+    <blockquote>The substrate absorbs the intelligence. Iusztin must replace itself entirely to gain what Engram-Go already has; Engram-Go must replace one substrate component to escape its ceiling. That asymmetry determines the decade.</blockquote>
+    <cite>&mdash; Yamamoto&rsquo;s Paradigm Limit Analysis</cite>
+  </div>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 6: KULIK'S AUDIT
+     ================================================ -->
+<section id="kulik">
+  <div class="section-label">Independent Audit</div>
+  <h2 class="section-head">Kulik&rsquo;s Zero-Context Anti-Pattern Audit</h2>
+  <p class="section-byline">Five anti-patterns applied to each design by a reviewer who received only the raw inputs</p>
+
+  <div class="audit-grid">
+    <div class="audit-card engram">
+      <h4>Engram-Go</h4>
+      <div class="anti-pattern severe">
+        <strong>Complexity-as-expertise (SEVERE)</strong>
+        28 tools, a 5-signal scoring moat, 11 migrations. The complexity is real and most of it is load-bearing. But the surface reads as expertise before it reads as utility.
+      </div>
+      <div class="anti-pattern moderate">
+        <strong>Metric surrogate (MODERATE)</strong>
+        Precision measures agent satisfaction with retrieved results, not retrieval accuracy against ground truth. No external ground truth exists.
+      </div>
+      <div class="anti-pattern moderate">
+        <strong>Inverted load-bearing (MODERATE)</strong>
+        Ollama is presented as swappable but is the primary 0.45-weight retrieval path. The fallback is a different system (BM25), not a degraded version of the same system.
+      </div>
+      <div class="anti-pattern moderate">
+        <strong>Sunk process (MODERATE)</strong>
+        11 migrations make architectural pivots expensive. The schema is the architecture. Changing one requires changing both.
+      </div>
+      <div class="anti-pattern moderate">
+        <strong>Failure-obscuring degradation (MODERATE)</strong>
+        BM25+recency fallback activates silently when Ollama is unavailable. No error signal surfaces to the orchestrator.
+      </div>
+      <div class="break-line">Most likely to break at scale:</div>
+      <p style="font-size:0.82rem; margin-top: 0.6rem; line-height:1.5">The scoring formula will gradually optimize for agent chattiness rather than memory accuracy. No external ground truth exists to detect the drift. The system will be confident and wrong.</p>
+    </div>
+
+    <div class="audit-card iusztin">
+      <h4>Iusztin GraphRAG</h4>
+      <div class="anti-pattern none">
+        <strong>Complexity-as-expertise (NONE OBSERVED)</strong>
+        The 3-tool surface is honest about its scope. No structural over-engineering visible in the disclosed design.
+      </div>
+      <div class="anti-pattern moderate">
+        <strong>Metric surrogate (INSUFFICIENT INFO)</strong>
+        No feedback loop disclosed. Cannot assess whether the design measures what it optimizes, because what it optimizes is not disclosed.
+      </div>
+      <div class="anti-pattern severe">
+        <strong>Inverted load-bearing (SEVERE)</strong>
+        Voyage AI is a third-party cloud dependency with no described fallback. This is worse than Ollama: the operator does not control it, cannot run it locally, cannot pin its version.
+      </div>
+      <div class="anti-pattern none">
+        <strong>Sunk process (NONE)</strong>
+        Too early to assess. No migration history in the disclosed design. This may change.
+      </div>
+      <div class="anti-pattern none">
+        <strong>Failure-obscuring degradation (NONE)</strong>
+        Blunt failure (Voyage down = retrieval down) is diagnostically superior to silent degradation. This is a SPOF, but it is a visible one.
+      </div>
+      <div class="break-line">Most likely to break at scale:</div>
+      <p style="font-size:0.82rem; margin-top: 0.6rem; line-height:1.5">The entire retrieval stack is one uncontrolled external dependency with no described fallback or embedding-version migration strategy. When Voyage changes its models, existing embeddings become incompatible. No migration path disclosed.</p>
+    </div>
+  </div>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 7: ARNOLD'S CAPABILITY MATRIX
+     ================================================ -->
+<section id="arnold">
+  <div class="section-label">Capability Matrix</div>
+  <h2 class="section-head">Arnold&rsquo;s 8-Axis Comparison: Engram-Go Leads on 5 of 8 Axes, Iusztin on 2</h2>
+  <p class="section-byline">Storage simplicity, graph depth, embedding flexibility, entity extraction, temporal reasoning, adaptive ranking, tool breadth, operational isolation</p>
+
+  <!-- CHART C: Tool Surface Bar -->
+  <div class="chart-wrap">
+    <svg viewBox="0 0 1060 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tool surface comparison: Engram-Go 28 tools in 7 categories versus Iusztin 3 tools">
+      <rect x="0" y="0" width="1060" height="220" fill="#EDE4CC"/>
+      <rect x="20" y="15" width="1020" height="195" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+
+      <text x="530" y="42" font-family="'Playfair Display', Georgia, serif" font-size="14" font-weight="700" fill="#1A1209" text-anchor="middle">Tool Surface: Engram-Go 28 (7 categories) vs. Iusztin 3</text>
+
+      <!-- Engram-Go stacked bar, baseline y=160, total width=560 for 28 tools -->
+      <!-- Each tool = 560/28 = 20px wide. Categories: -->
+      <!-- Ingestion 5: 100px; Retrieval 3: 60px; Graph 2: 40px; Mutation 4: 80px; Consolidation 4: 80px; Episodic 4: 80px; Metadata 6: 120px -->
+      <text x="60" y="72" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2F4F2F" text-anchor="start">Engram-Go</text>
+      <text x="60" y="87" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start">28 tools</text>
+
+      <!-- Ingestion 5 -->
+      <rect x="200" y="75" width="100" height="60" fill="#2F4F2F" opacity="0.85" rx="2"/>
+      <text x="250" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">Ingestion</text>
+      <text x="250" y="117" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">5 tools</text>
+
+      <!-- Retrieval 3 -->
+      <rect x="302" y="75" width="60" height="60" fill="#3D6B3D" opacity="0.85" rx="2"/>
+      <text x="332" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">Recall</text>
+      <text x="332" y="117" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">3</text>
+
+      <!-- Graph 2 -->
+      <rect x="364" y="75" width="40" height="60" fill="#5C7A5C" opacity="0.85" rx="2"/>
+      <text x="384" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">Graph</text>
+      <text x="384" y="117" font-family="Inter, sans-serif" font-size="10" fill="#D9CEAF" text-anchor="middle">2</text>
+
+      <!-- Mutation 4 -->
+      <rect x="406" y="75" width="80" height="60" fill="#B8860B" opacity="0.75" rx="2"/>
+      <text x="446" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1209" text-anchor="middle">Mutation</text>
+      <text x="446" y="117" font-family="Inter, sans-serif" font-size="10" fill="#1A1209" text-anchor="middle">4 tools</text>
+
+      <!-- Consolidation 4 -->
+      <rect x="488" y="75" width="80" height="60" fill="#D4AF37" opacity="0.75" rx="2"/>
+      <text x="528" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1209" text-anchor="middle">Consolidate</text>
+      <text x="528" y="117" font-family="Inter, sans-serif" font-size="10" fill="#1A1209" text-anchor="middle">4 tools</text>
+
+      <!-- Episodic 4 -->
+      <rect x="570" y="75" width="80" height="60" fill="#722F37" opacity="0.7" rx="2"/>
+      <text x="610" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">Episodic</text>
+      <text x="610" y="117" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0" text-anchor="middle">4 tools</text>
+
+      <!-- Metadata 6 -->
+      <rect x="652" y="75" width="120" height="60" fill="#8B3A44" opacity="0.65" rx="2"/>
+      <text x="712" y="103" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">Metadata</text>
+      <text x="712" y="117" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0" text-anchor="middle">6 tools</text>
+
+      <!-- Iusztin bar -->
+      <text x="60" y="162" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#722F37" text-anchor="start">Iusztin</text>
+      <text x="60" y="177" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start">3 tools</text>
+
+      <rect x="200" y="148" width="60" height="30" fill="#722F37" opacity="0.8" rx="2"/>
+      <text x="230" y="167" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">query</text>
+
+      <rect x="262" y="148" width="60" height="30" fill="#722F37" opacity="0.6" rx="2"/>
+      <text x="292" y="167" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">expand</text>
+
+      <rect x="324" y="148" width="60" height="30" fill="#722F37" opacity="0.45" rx="2"/>
+      <text x="354" y="167" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#F5EFE0" text-anchor="middle">ingest</text>
+
+      <text x="800" y="167" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start" font-style="italic">Minimal surface: lower orchestrator cost,</text>
+      <text x="800" y="181" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start" font-style="italic">higher brittleness when primary fails.</text>
+    </svg>
+  </div>
+  <p class="chart-annotation"><em>What this answers: how much cognitive load each system places on the orchestrator, and what failure modes that surface size creates.</em></p>
+
+  <!-- CHART D: Capability Radar -->
+  <div class="chart-wrap">
+    <svg viewBox="0 0 1060 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Capability radar chart comparing Engram-Go and Iusztin across 8 axes">
+      <rect x="0" y="0" width="1060" height="520" fill="#EDE4CC"/>
+      <rect x="20" y="15" width="1020" height="490" fill="#F5EFE0" rx="4" stroke="#D9CEAF" stroke-width="1"/>
+
+      <text x="530" y="45" font-family="'Playfair Display', Georgia, serif" font-size="14" font-weight="700" fill="#1A1209" text-anchor="middle">Capability Radar: Engram-Go Leads 5-2 Across 8 Axes</text>
+
+      <!-- ============================== -->
+      <!-- ENGRAM-GO radar: cx=320, cy=270, max r=160 -->
+      <!-- 8 axes, 45 degrees apart, starting from top (270 deg = -90 standard) -->
+      <!-- Axes (label, engram score 0-10, iusztin score 0-10): -->
+      <!-- 0: Storage simplicity: engram=4, iusztin=9 (mongo unified simpler) -->
+      <!-- 1: Graph depth: engram=6, iusztin=5 (both limited but different ways) -->
+      <!-- 2: Embedding flexibility: engram=5, iusztin=4 (ollama is swappable by design; voyage is locked) -->
+      <!-- 3: Entity extraction: engram=3, iusztin=9 (iusztin has it, engram doesnt) -->
+      <!-- 4: Temporal reasoning: engram=9, iusztin=2 (bitemporal vs not disclosed) -->
+      <!-- 5: Adaptive ranking: engram=9, iusztin=2 (5-signal + feedback vs not disclosed) -->
+      <!-- 6: Tool breadth: engram=9, iusztin=3 (28 vs 3) -->
+      <!-- 7: Operational isolation: engram=9, iusztin=3 (local-first vs cloud-dependent) -->
+
+      <!-- Radar for engram cx=320, cy=270, r_max=160 -->
+      <!-- Grid rings at 25%, 50%, 75%, 100% = r=40, 80, 120, 160 -->
+      <!-- angle for axis i = -90 + i*45 degrees -->
+      <!-- axis 0 (Storage simplicity): angle=-90, x=320+r*cos(-90)=320, y=270+r*sin(-90)=270-r -->
+      <!-- axis 1 (Graph depth): angle=-45, cos=-45=0.707, sin=-45=-0.707 -->
+      <!-- axis 2 (Embed flex): angle=0, cos=1, sin=0 -->
+      <!-- axis 3 (Entity extr): angle=45, cos=0.707, sin=0.707 -->
+      <!-- axis 4 (Temporal): angle=90, cos=0, sin=1 -->
+      <!-- axis 5 (Adaptive rank): angle=135, cos=-0.707, sin=0.707 -->
+      <!-- axis 6 (Tool breadth): angle=180, cos=-1, sin=0 -->
+      <!-- axis 7 (Op isolation): angle=225, cos=-0.707, sin=-0.707 -->
+
+      <!-- Grid rings (concentric octagon approximation via lines) -->
+      <!-- Ring 1 (r=40): -->
+      <polygon points="320,230 348.3,201.7 360,270 348.3,338.3 320,310 291.7,338.3 280,270 291.7,201.7"
+               fill="none" stroke="#D9CEAF" stroke-width="0.8" opacity="0.6"/>
+      <!-- Ring 2 (r=80): -->
+      <polygon points="320,190 376.6,213.4 400,270 376.6,326.6 320,350 263.4,326.6 240,270 263.4,213.4"
+               fill="none" stroke="#D9CEAF" stroke-width="0.8" opacity="0.6"/>
+      <!-- Ring 3 (r=120): -->
+      <polygon points="320,150 404.9,185.1 440,270 404.9,354.9 320,390 235.1,354.9 200,270 235.1,185.1"
+               fill="none" stroke="#D9CEAF" stroke-width="0.8" opacity="0.6"/>
+      <!-- Ring 4 (r=160): -->
+      <polygon points="320,110 433.1,156.9 480,270 433.1,383.1 320,430 206.9,383.1 160,270 206.9,156.9"
+               fill="none" stroke="#D9CEAF" stroke-width="1" opacity="0.5"/>
+
+      <!-- Axis lines -->
+      <line x1="320" y1="270" x2="320" y2="110" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="433" y2="157" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="480" y2="270" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="433" y2="383" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="320" y2="430" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="207" y2="383" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="160" y2="270" stroke="#D9CEAF" stroke-width="0.8"/>
+      <line x1="320" y1="270" x2="207" y2="157" stroke="#D9CEAF" stroke-width="0.8"/>
+
+      <!-- Engram-Go polygon (scores * 16 = r) -->
+      <!-- Storage simplicity=4: r=64, angle=-90: (320, 270-64)=(320,206) -->
+      <!-- Graph depth=6: r=96, angle=-45: (320+96*0.707, 270-96*0.707)=(387.9,202.1) -->
+      <!-- Embed flex=5: r=80, angle=0: (400, 270) -->
+      <!-- Entity extr=3: r=48, angle=45: (320+48*0.707, 270+48*0.707)=(353.9,303.9) -->
+      <!-- Temporal=9: r=144, angle=90: (320, 270+144)=(320,414) -->
+      <!-- Adaptive rank=9: r=144, angle=135: (320-144*0.707, 270+144*0.707)=(218.2,371.8) -->
+      <!-- Tool breadth=9: r=144, angle=180: (176, 270) -->
+      <!-- Op isolation=9: r=144, angle=225: (320-144*0.707, 270-144*0.707)=(218.2,168.2) -->
+      <polygon points="320,206 387.9,202.1 400,270 353.9,303.9 320,414 218.2,371.8 176,270 218.2,168.2"
+               fill="#2F4F2F" fill-opacity="0.25" stroke="#2F4F2F" stroke-width="2"/>
+
+      <!-- Iusztin polygon -->
+      <!-- Storage simplicity=9: r=144, angle=-90: (320, 270-144)=(320,126) -->
+      <!-- Graph depth=5: r=80, angle=-45: (320+80*0.707, 270-80*0.707)=(376.6,213.4) -->
+      <!-- Embed flex=4: r=64, angle=0: (384, 270) -->
+      <!-- Entity extr=9: r=144, angle=45: (320+144*0.707, 270+144*0.707)=(421.8,371.8) -->
+      <!-- Temporal=2: r=32, angle=90: (320,302) -->
+      <!-- Adaptive rank=2: r=32, angle=135: (320-32*0.707, 270+32*0.707)=(297.4,292.6) -->
+      <!-- Tool breadth=3: r=48, angle=180: (272, 270) -->
+      <!-- Op isolation=3: r=48, angle=225: (320-48*0.707, 270-48*0.707)=(286.1,235.9) -->
+      <polygon points="320,126 376.6,213.4 384,270 421.8,371.8 320,302 297.4,292.6 272,270 286.1,235.9"
+               fill="#722F37" fill-opacity="0.2" stroke="#722F37" stroke-width="2" stroke-dasharray="5,3"/>
+
+      <!-- Axis labels for Engram-Go radar -->
+      <text x="320" y="100" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">Storage simplicity</text>
+      <text x="448" y="150" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start">Graph depth</text>
+      <text x="492" y="274" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start">Embed flexibility</text>
+      <text x="442" y="398" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="start">Entity extraction</text>
+      <text x="320" y="448" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="middle">Temporal reasoning</text>
+      <text x="185" y="398" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Adaptive ranking</text>
+      <text x="145" y="274" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Tool breadth</text>
+      <text x="185" y="150" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Op. isolation</text>
+
+      <!-- Legend for engram-go radar -->
+      <rect x="50" y="65" width="14" height="3" fill="#2F4F2F"/>
+      <text x="70" y="72" font-family="Inter, sans-serif" font-size="12" fill="#2F4F2F" font-weight="600">Engram-Go</text>
+      <rect x="50" y="82" width="14" height="3" fill="#722F37" stroke="#722F37"/>
+      <text x="70" y="89" font-family="Inter, sans-serif" font-size="12" fill="#722F37" font-weight="600">Iusztin GraphRAG</text>
+
+      <!-- ============================== -->
+      <!-- Second radar: Iusztin cx=760, cy=270, same r_max=160 same data, separate panel for clarity -->
+      <!-- Actually use a bar chart approach for second panel to avoid clutter -->
+      <!-- Paired horizontal bars, right panel cx=760 -->
+
+      <!-- Right panel: paired bar chart for all 8 axes -->
+      <text x="760" y="65" font-family="'Playfair Display', Georgia, serif" font-size="13" font-weight="700" fill="#1A1209" text-anchor="middle">Axis-by-Axis Scores (out of 10)</text>
+
+      <!-- Bar rows: y positions -->
+      <!-- Row height = 42px, start y=90 -->
+      <!-- Axes: Storage simplicity, Graph depth, Embed flex, Entity extraction, Temporal, Adaptive ranking, Tool breadth, Op isolation -->
+      <!-- Engram scores: 4,6,5,3,9,9,9,9 -->
+      <!-- Iusztin scores: 9,5,4,9,2,2,3,3 -->
+
+      <!-- Each bar max width = 180px for score 10 = 18px per point -->
+      <!-- Left edge of bars: x=610 -->
+
+      <!-- Row 1: Storage simplicity -->
+      <text x="610" y="104" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Storage simplicity</text>
+      <rect x="614" y="92" width="72" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="692" y="103" font-family="Inter, sans-serif" font-size="10" fill="#2F4F2F">4</text>
+      <rect x="614" y="105" width="162" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="782" y="116" font-family="Inter, sans-serif" font-size="10" fill="#722F37">9</text>
+
+      <!-- Row 2: Graph depth -->
+      <text x="610" y="138" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Graph depth</text>
+      <rect x="614" y="126" width="108" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="728" y="137" font-family="Inter, sans-serif" font-size="10" fill="#2F4F2F">6</text>
+      <rect x="614" y="139" width="90" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="710" y="150" font-family="Inter, sans-serif" font-size="10" fill="#722F37">5</text>
+
+      <!-- Row 3: Embed flex -->
+      <text x="610" y="172" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Embed flexibility</text>
+      <rect x="614" y="160" width="90" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="710" y="171" font-family="Inter, sans-serif" font-size="10" fill="#2F4F2F">5</text>
+      <rect x="614" y="173" width="72" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="692" y="184" font-family="Inter, sans-serif" font-size="10" fill="#722F37">4</text>
+
+      <!-- Row 4: Entity extraction -->
+      <text x="610" y="206" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Entity extraction</text>
+      <rect x="614" y="194" width="54" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="674" y="205" font-family="Inter, sans-serif" font-size="10" fill="#2F4F2F">3</text>
+      <rect x="614" y="207" width="162" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="782" y="218" font-family="Inter, sans-serif" font-size="10" fill="#722F37">9</text>
+
+      <!-- Row 5: Temporal reasoning -->
+      <text x="610" y="240" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Temporal reasoning</text>
+      <rect x="614" y="228" width="162" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="782" y="239" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0">9</text>
+      <rect x="614" y="241" width="36" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="656" y="252" font-family="Inter, sans-serif" font-size="10" fill="#722F37">2</text>
+
+      <!-- Row 6: Adaptive ranking -->
+      <text x="610" y="274" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Adaptive ranking</text>
+      <rect x="614" y="262" width="162" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="782" y="273" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0">9</text>
+      <rect x="614" y="275" width="36" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="656" y="286" font-family="Inter, sans-serif" font-size="10" fill="#722F37">2</text>
+
+      <!-- Row 7: Tool breadth -->
+      <text x="610" y="308" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Tool breadth</text>
+      <rect x="614" y="296" width="162" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="782" y="307" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0">9</text>
+      <rect x="614" y="309" width="54" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="674" y="320" font-family="Inter, sans-serif" font-size="10" fill="#722F37">3</text>
+
+      <!-- Row 8: Op isolation -->
+      <text x="610" y="342" font-family="Inter, sans-serif" font-size="11" fill="#5C4D30" text-anchor="end">Op. isolation</text>
+      <rect x="614" y="330" width="162" height="11" fill="#2F4F2F" opacity="0.8" rx="1"/>
+      <text x="782" y="341" font-family="Inter, sans-serif" font-size="10" fill="#F5EFE0">9</text>
+      <rect x="614" y="343" width="54" height="11" fill="#722F37" opacity="0.7" rx="1"/>
+      <text x="674" y="354" font-family="Inter, sans-serif" font-size="10" fill="#722F37">3</text>
+
+      <!-- Legend right panel -->
+      <rect x="614" y="378" width="12" height="10" fill="#2F4F2F" opacity="0.8"/>
+      <text x="632" y="388" font-family="Inter, sans-serif" font-size="11" fill="#2F4F2F" font-weight="600">Engram-Go</text>
+      <rect x="720" y="378" width="12" height="10" fill="#722F37" opacity="0.7"/>
+      <text x="738" y="388" font-family="Inter, sans-serif" font-size="11" fill="#722F37" font-weight="600">Iusztin GraphRAG</text>
+
+      <text x="760" y="410" font-family="Inter, sans-serif" font-size="10" fill="#5C4D30" text-anchor="middle" font-style="italic">Scores are analytical estimates from available evidence.</text>
+      <text x="760" y="424" font-family="Inter, sans-serif" font-size="10" fill="#5C4D30" text-anchor="middle" font-style="italic">Iusztin undisclosed axes (Temporal, Adaptive, Op) scored 2 = not observed, not absent.</text>
+    </svg>
+  </div>
+  <p class="chart-annotation"><em>What this answers: which system to choose when a specific capability matters more than comprehensive coverage.</em></p>
+</section>
+
+<svg class="section-divider" viewBox="0 0 520 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="16" x2="190" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="330" y1="16" x2="520" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <rect x="230" y="11" width="10" height="10" fill="#B8860B" opacity="0.7" transform="rotate(45 235 16)"/>
+  <rect x="210" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 213 16)"/>
+  <rect x="300" y="13" width="6" height="6" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5" transform="rotate(45 303 16)"/>
+  <line x1="200" y1="16" x2="210" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+  <line x1="310" y1="16" x2="320" y2="16" stroke="#D9CEAF" stroke-width="1"/>
+</svg>
+
+<!-- ================================================
+     SECTION 8: CLOSING PULL QUOTE
+     ================================================ -->
+<section id="closing">
+  <div class="section-label">Closing</div>
+  <div class="closing-quote">
+    <blockquote>&ldquo;You cannot compare a system you have read against a system you have heard described, and claim the comparison is fair. It is not. It is the best comparison currently possible.&rdquo;</blockquote>
+    <cite>&mdash; Layton</cite>
+  </div>
+</section>
+
+<!-- Bottom botanical ornament -->
+<svg class="botanical-divider" viewBox="0 0 680 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <line x1="0" y1="20" x2="240" y2="20" stroke="#B8860B" stroke-width="0.8" opacity="0.5"/>
+  <line x1="440" y1="20" x2="680" y2="20" stroke="#B8860B" stroke-width="0.8" opacity="0.5"/>
+  <ellipse cx="340" cy="20" rx="6" ry="6" fill="#B8860B" opacity="0.7"/>
+  <ellipse cx="310" cy="20" rx="3.5" ry="3.5" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5"/>
+  <ellipse cx="370" cy="20" rx="3.5" ry="3.5" fill="none" stroke="#B8860B" stroke-width="1" opacity="0.5"/>
+  <path d="M280,20 Q295,8 310,20" stroke="#2F4F2F" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M370,20 Q385,8 400,20" stroke="#2F4F2F" stroke-width="1.2" fill="none" opacity="0.6"/>
+  <path d="M255,20 Q265,30 275,20" stroke="#2F4F2F" stroke-width="1" fill="none" opacity="0.4"/>
+  <path d="M405,20 Q415,30 425,20" stroke="#2F4F2F" stroke-width="1" fill="none" opacity="0.4"/>
+</svg>
+
+<footer>
+  <p>Field report prepared April 2026. Engram-Go claims sourced from ~22,000 LOC Go inspection. Iusztin claims sourced from Substack note. Full citation manifest at sources.md.</p>
+  <p>Evidence asymmetry acknowledged. Confidence tags: HIGH / MED / LOW. Source tags: [CODE] [NOTE] [INFERENCE].</p>
+</footer>
+
+</article>
+</body>
+</html>
