@@ -285,6 +285,18 @@ func (s *stubBackend) GetRetrievalEvent(_ context.Context, _ string) (*types.Ret
 
 func (s *stubBackend) RecordFeedback(_ context.Context, _ string, _ []string) error { return nil }
 
+func (s *stubBackend) RecordFeedbackWithClass(_ context.Context, _ string, _ []string, _ string) error {
+	return nil
+}
+
+func (s *stubBackend) AggregateMemories(_ context.Context, _, _, _ string, _ int) ([]types.AggregateRow, error) {
+	return nil, nil
+}
+
+func (s *stubBackend) AggregateFailureClasses(_ context.Context, _ string, _ int) ([]types.AggregateRow, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) IncrementTimesRetrieved(_ context.Context, _ []string) error { return nil }
 
 func (s *stubBackend) UpdateDynamicImportance(_ context.Context, _ string, _, _ float64) error {
