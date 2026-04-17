@@ -1,8 +1,33 @@
 package main
 
 import (
+	"os"
 	"testing"
 )
+
+func TestRecallDefaultModeDefault(t *testing.T) {
+	const key = "ENGRAM_RECALL_DEFAULT_MODE"
+
+	// Case 1: env var not set — should return the default "handle".
+	os.Unsetenv(key)
+	if got := envOr(key, "handle"); got != "handle" {
+		t.Errorf("envOr with unset var = %q, want %q", got, "handle")
+	}
+
+	// Case 2: env var set to "full" — should return "full".
+	os.Setenv(key, "full")
+	defer os.Unsetenv(key)
+	if got := envOr(key, "handle"); got != "full" {
+		t.Errorf("envOr with var=full = %q, want %q", got, "full")
+	}
+
+	// Case 3: env var set to "" (empty string) — envOr treats empty as unset,
+	// so the default "handle" must be returned.
+	os.Setenv(key, "")
+	if got := envOr(key, "handle"); got != "handle" {
+		t.Errorf("envOr with empty var = %q, want %q (default)", got, "handle")
+	}
+}
 
 func TestIsPrivateIP(t *testing.T) {
 	cases := []struct {
