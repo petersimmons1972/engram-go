@@ -154,7 +154,7 @@ func run() error {
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
 		DataDir:                  *dataDir,
-		RecallDefaultMode:        envOr("ENGRAM_RECALL_DEFAULT_MODE", ""),
+		RecallDefaultMode:        envOr("ENGRAM_RECALL_DEFAULT_MODE", "handle"),
 		FetchMaxBytes:            envInt("ENGRAM_FETCH_MAX_BYTES", 65536),
 		ExploreMaxIters:          envInt("ENGRAM_EXPLORE_MAX_ITERS", 5),
 		ExploreMaxWorkers:        envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8),

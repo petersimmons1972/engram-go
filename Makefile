@@ -1,4 +1,4 @@
-.PHONY: up down restart logs build test setup setup-dry-run init
+.PHONY: up down restart logs build test setup setup-dry-run init test-explore-soak
 
 ## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
 up:
@@ -64,3 +64,7 @@ setup-dry-run:
 test:
 	docker compose --profile test up -d test-postgres
 	go test -race ./...
+
+## Run the explore-context soak test (50 synthetic questions, p95 iters ≤4, p95 tokens ≤15K)
+test-explore-soak:
+	go test ./bench/... -v -run TestExploreContext -timeout 60s
