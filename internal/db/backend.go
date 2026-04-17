@@ -162,6 +162,19 @@ type Backend interface {
 	// once times_retrieved >= 5.
 	RecordFeedback(ctx context.Context, eventID string, usefulIDs []string) error
 
+	// RecordFeedbackWithClass is like RecordFeedback but also records a failure
+	// classification on the retrieval event. An empty failureClass stores NULL.
+	// The edge boost is intentionally omitted — misfired memories must not be reinforced.
+	RecordFeedbackWithClass(ctx context.Context, eventID string, usefulIDs []string, failureClass string) error
+
+	// AggregateMemories returns GROUP BY counts over the memories table.
+	// by must be "tag" or "type"; filter applies ILIKE on tag labels (tag mode only).
+	AggregateMemories(ctx context.Context, project, by, filter string, limit int) ([]types.AggregateRow, error)
+
+	// AggregateFailureClasses returns GROUP BY counts of non-NULL failure_class
+	// values in the retrieval_events table for the given project.
+	AggregateFailureClasses(ctx context.Context, project string, limit int) ([]types.AggregateRow, error)
+
 	// IncrementTimesRetrieved increments times_retrieved on the given memory IDs.
 	IncrementTimesRetrieved(ctx context.Context, ids []string) error
 
