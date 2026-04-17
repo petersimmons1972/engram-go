@@ -196,6 +196,24 @@ func TestRelationTypeConstants(t *testing.T) {
 	}
 }
 
+func TestFailureClassConstants(t *testing.T) {
+	cases := []struct {
+		got  string
+		want string
+	}{
+		{types.FailureClassVocabularyMismatch, "vocabulary_mismatch"},
+		{types.FailureClassAggregationFailure, "aggregation_failure"},
+		{types.FailureClassStaleRanking, "stale_ranking"},
+		{types.FailureClassMissingContent, "missing_content"},
+		{types.FailureClassScopeMismatch, "scope_mismatch"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
 func TestMaxContentLength(t *testing.T) {
 	if types.MaxContentLength != 500_000 {
 		t.Errorf("MaxContentLength = %d, want 500000", types.MaxContentLength)

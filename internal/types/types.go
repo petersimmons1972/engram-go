@@ -36,6 +36,7 @@ const (
 	VersionChangeInvalidate = "invalidate"
 )
 
+// FailureClass constants classify why a retrieval event failed. The set is closed — add new values via types migration only.
 const (
 	FailureClassVocabularyMismatch = "vocabulary_mismatch"
 	FailureClassAggregationFailure = "aggregation_failure"
