@@ -22,7 +22,7 @@ restart: build
 
 ## Build the engram-go Docker image
 build:
-	docker build -t engram-go:latest -t engram-go:2.3.2 .
+	docker build -t engram-go:latest -t engram-go:3.0.0 .
 
 ## Tail container logs
 logs:
