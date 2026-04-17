@@ -178,30 +178,29 @@ func TestQueryDocument_RegexTooLong(t *testing.T) {
 	require.Contains(t, err.Error(), "filter.regex exceeds")
 }
 
-// Fix #186: Truncated must be false when the span that tips the budget is the last one.
-func TestQueryDocument_TruncatedFalseOnLastSpan(t *testing.T) {
+// Fix #195: charCap is a hard limit — when the last span would push total past
+// the cap it is truncated to fit and Truncated=true is set.
+func TestQueryDocument_LastSpanTruncatedToFitCap(t *testing.T) {
 	srv := newStubClaudeServer("ok")
 	defer srv.Close()
 	c, _ := claude.New("test")
 	c.BaseURL = srv.URL
 
-	// Produce exactly two non-overlapping spans each 40 chars wide (WindowChars=40, half=20).
-	// Span 1: HIT at offset 500 → window [480,523) = 43 chars
-	// Span 2: HIT at offset 1003 → window [983,1043) = 40 chars if content is long enough
-	// Use budget=20 → charCap=80. Span1(43) + Span2(40) = 83 > 80, so the last (second)
-	// span tips the cap. With fix, Truncated stays false; without fix it would be true.
+	// Two ASCII spans; span1≈43 chars, span2≈43 chars, charCap=80.
+	// Span2 would push total to ~86 > 80, so it gets truncated to ~37 chars.
 	content := strings.Repeat("x", 500) + "HIT" + strings.Repeat("y", 500) + "HIT" + strings.Repeat("z", 100)
-	// Verify span2 is really the last: the content has exactly two HITs.
 	q := claude.DocumentQuery{
 		Question:    "?",
 		FilterSubs:  []string{"HIT"},
 		WindowChars: 40,
-		TokenBudget: 20, // charCap = 80; span1=43 + span2=40 = 83 > 80, last span tips cap
+		TokenBudget: 20, // charCap = 80
 	}
 	res, err := claude.QueryDocument(context.Background(), c, content, q)
 	require.NoError(t, err)
-	require.Len(t, res.Spans, 2, "both spans should be included")
-	require.False(t, res.Truncated, "should not be truncated when last span tips the budget")
+	require.Len(t, res.Spans, 2, "both spans present (second truncated, not dropped)")
+	require.True(t, res.Truncated, "Truncated must be true when a span was cut short")
+	total := len(res.Spans[0].Text) + len(res.Spans[1].Text)
+	require.LessOrEqual(t, total, 80, "total chars must not exceed charCap")
 }
 
 // Fix #188: Empty content must short-circuit with a canned answer, no LLM call.
@@ -221,6 +220,42 @@ func TestQueryDocument_EmptyContent(t *testing.T) {
 	require.NotNil(t, res)
 	require.Empty(t, res.Spans)
 	require.Equal(t, "No content available for this memory.", res.Answer)
+}
+
+// TestQueryDocument_UTF8BoundaryTruncation verifies that when the cap falls
+// inside a multi-byte rune the walk-back produces a valid UTF-8 string.
+func TestQueryDocument_UTF8BoundaryTruncation(t *testing.T) {
+	srv := newStubClaudeServer("ok")
+	defer srv.Close()
+	c, _ := claude.New("test")
+	c.BaseURL = srv.URL
+
+	// Each "é" is 2 bytes (U+00E9). Build content so that the cap lands
+	// in the middle of one of its bytes, forcing the walk-back to fire.
+	// charCap = TokenBudget*4 = 5*4 = 20 bytes.
+	// WindowChars=30 → span covers 30 bytes of multi-byte content.
+	// With 20-byte cap the slice point lands inside a 2-byte rune; walk-back
+	// must retreat to the preceding rune boundary.
+	content := strings.Repeat("é", 100) // each é = 2 bytes → 200 bytes total
+	q := claude.DocumentQuery{
+		Question:    "?",
+		FilterSubs:  []string{"é"},
+		WindowChars: 30,
+		TokenBudget: 5, // charCap = 20
+	}
+	res, err := claude.QueryDocument(context.Background(), c, content, q)
+	require.NoError(t, err)
+	require.True(t, res.Truncated)
+	require.NotEmpty(t, res.Spans)
+	for _, s := range res.Spans {
+		require.True(t, strings.ToValidUTF8(s.Text, "") == s.Text,
+			"span text must be valid UTF-8 after boundary truncation")
+	}
+	total := 0
+	for _, s := range res.Spans {
+		total += len(s.Text)
+	}
+	require.LessOrEqual(t, total, 20, "total bytes must not exceed charCap")
 }
 
 func TestQueryDocument_TokenBudget(t *testing.T) {
