@@ -1205,4 +1205,36 @@ func (e *SearchEngine) FeedbackWithEvent(ctx context.Context, eventID string, us
 	return nil
 }
 
+// FeedbackWithEventAndClass records which results from a retrieval event were useful,
+// annotating the event with an optional failure class. When failureClass is non-empty
+// the edge boost and spaced-repetition boost are skipped — misfired memories must not
+// be reinforced. When failureClass is empty the behaviour is identical to FeedbackWithEvent.
+func (e *SearchEngine) FeedbackWithEventAndClass(ctx context.Context, eventID string, usefulIDs []string, failureClass string) error {
+	if err := e.backend.RecordFeedbackWithClass(ctx, eventID, usefulIDs, failureClass); err != nil {
+		return err
+	}
+	if failureClass != "" || len(usefulIDs) == 0 {
+		return nil
+	}
+	return e.Feedback(ctx, usefulIDs)
+}
+
+// Aggregate returns aggregated memory statistics grouped by the given dimension.
+// Supported values for by: "tag", "type", "failure_class".
+// filter is an optional prefix/value filter (not applicable for failure_class).
+// limit caps the number of rows returned.
+func (e *SearchEngine) Aggregate(ctx context.Context, by, filter string, limit int) ([]types.AggregateRow, error) {
+	switch by {
+	case "tag", "type":
+		return e.backend.AggregateMemories(ctx, e.project, by, filter, limit)
+	case "failure_class":
+		if filter != "" {
+			return nil, fmt.Errorf("aggregate: filter not supported for failure_class")
+		}
+		return e.backend.AggregateFailureClasses(ctx, e.project, limit)
+	default:
+		return nil, fmt.Errorf("aggregate: unsupported by %q (must be tag, type, or failure_class)", by)
+	}
+}
+
 // SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).

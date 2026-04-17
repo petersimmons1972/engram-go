@@ -196,6 +196,24 @@ func TestRelationTypeConstants(t *testing.T) {
 	}
 }
 
+func TestFailureClassConstants(t *testing.T) {
+	cases := []struct {
+		got  string
+		want string
+	}{
+		{types.FailureClassVocabularyMismatch, "vocabulary_mismatch"},
+		{types.FailureClassAggregationFailure, "aggregation_failure"},
+		{types.FailureClassStaleRanking, "stale_ranking"},
+		{types.FailureClassMissingContent, "missing_content"},
+		{types.FailureClassScopeMismatch, "scope_mismatch"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
 func TestMaxContentLength(t *testing.T) {
 	if types.MaxContentLength != 500_000 {
 		t.Errorf("MaxContentLength = %d, want 500000", types.MaxContentLength)
@@ -214,6 +232,28 @@ func TestMemoryIDFormat(t *testing.T) {
 		parts := strings.Split(id, "-")
 		if len(parts) != 5 {
 			t.Errorf("UUID not in 8-4-4-4-12 format: %q", id)
+		}
+	}
+}
+
+func TestValidateFailureClass(t *testing.T) {
+	valid := []string{
+		"",
+		types.FailureClassVocabularyMismatch,
+		types.FailureClassAggregationFailure,
+		types.FailureClassStaleRanking,
+		types.FailureClassMissingContent,
+		types.FailureClassScopeMismatch,
+	}
+	for _, v := range valid {
+		if !types.ValidateFailureClass(v) {
+			t.Errorf("expected %q to be valid failure class", v)
+		}
+	}
+	invalid := []string{"unknown_class", "VOCABULARY_MISMATCH", "Vocabulary_Mismatch"}
+	for _, v := range invalid {
+		if types.ValidateFailureClass(v) {
+			t.Errorf("expected %q to be invalid failure class", v)
 		}
 	}
 }

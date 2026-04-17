@@ -894,15 +894,30 @@ func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
-	h, err := pool.Get(ctx, project)
-	if err != nil {
-		return nil, err
-	}
 	ids := toStringSlice(args["memory_ids"])
 	if len(ids) > 100 {
 		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
 	}
 	eventID := getString(args, "event_id", "")
+	failureClass := getString(args, "failure_class", "")
+	if failureClass != "" {
+		if !types.ValidateFailureClass(failureClass) {
+			return nil, fmt.Errorf("failure_class: invalid value %q", failureClass)
+		}
+		if eventID == "" {
+			return nil, fmt.Errorf("event_id is required when failure_class is set")
+		}
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if failureClass != "" {
+		if err := h.Engine.FeedbackWithEventAndClass(ctx, eventID, ids, failureClass); err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{"status": "recorded", "count": len(ids)})
+	}
 	if eventID != "" {
 		if err := h.Engine.FeedbackWithEvent(ctx, eventID, ids); err != nil {
 			return nil, err
@@ -913,6 +928,44 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		}
 	}
 	return toolResult(map[string]any{"status": "recorded", "count": len(ids)})
+}
+
+// handleMemoryAggregate groups memories by a given dimension (tag, type, or
+// failure_class) and returns counts with oldest/newest timestamps per label.
+func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	by := getString(args, "by", "")
+	if by == "" {
+		return nil, fmt.Errorf("by: required (tag, type, or failure_class)")
+	}
+	filter := getString(args, "filter", "")
+	limit := getInt(args, "limit", 20)
+	if limit < 1 || limit > 1000 {
+		limit = 20
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.Engine.Aggregate(ctx, by, filter, limit)
+	if err != nil {
+		return nil, err
+	}
+	rowsAny := make([]any, len(rows))
+	for i, r := range rows {
+		rowsAny[i] = map[string]any{
+			"label":  r.Label,
+			"count":  r.Count,
+			"oldest": r.Oldest,
+			"newest": r.Newest,
+		}
+	}
+	return toolResult(map[string]any{
+		"by":      by,
+		"project": project,
+		"rows":    rowsAny,
+	})
 }
 
 // handleMemoryConsolidate merges near-duplicate memories to reduce redundancy.

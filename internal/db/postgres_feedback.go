@@ -36,17 +36,21 @@ func (b *PostgresBackend) StoreRetrievalEvent(ctx context.Context, event *types.
 func (b *PostgresBackend) GetRetrievalEvent(ctx context.Context, id string) (*types.RetrievalEvent, error) {
 	var event types.RetrievalEvent
 	var resultIDsJSON, feedbackIDsJSON []byte
+	var failureClass *string
 	err := b.pool.QueryRow(ctx, `
-		SELECT id, project, query, result_ids, feedback_ids, created_at, feedback_at
+		SELECT id, project, query, result_ids, feedback_ids, created_at, feedback_at, failure_class
 		FROM retrieval_events WHERE id=$1`,
 		id,
 	).Scan(&event.ID, &event.Project, &event.Query, &resultIDsJSON, &feedbackIDsJSON,
-		&event.CreatedAt, &event.FeedbackAt)
+		&event.CreatedAt, &event.FeedbackAt, &failureClass)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if failureClass != nil {
+		event.FailureClass = *failureClass
 	}
 	if len(resultIDsJSON) > 0 {
 		if err := json.Unmarshal(resultIDsJSON, &event.ResultIDs); err != nil {
@@ -130,6 +134,79 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("RecordFeedback commit: %w", err)
+	}
+	return nil
+}
+
+// RecordFeedbackWithClass is like RecordFeedback but also sets failure_class on
+// the retrieval event. An empty failureClass stores NULL. The function does NOT
+// perform the edge boost present in RecordFeedback — wrong memories must not be
+// reinforced.
+func (b *PostgresBackend) RecordFeedbackWithClass(ctx context.Context, eventID string, usefulIDs []string, failureClass string) error {
+	event, err := b.GetRetrievalEvent(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("RecordFeedbackWithClass get event: %w", err)
+	}
+	if event == nil {
+		return fmt.Errorf("retrieval event %q not found", eventID)
+	}
+
+	feedbackIDsJSON, err := json.Marshal(usefulIDs)
+	if err != nil {
+		return fmt.Errorf("marshal feedback_ids: %w", err)
+	}
+
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("RecordFeedbackWithClass begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var fcParam interface{}
+	if failureClass != "" {
+		fcParam = failureClass
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE retrieval_events SET feedback_ids=$1, feedback_at=NOW(), failure_class=$3 WHERE id=$2`,
+		feedbackIDsJSON, eventID, fcParam,
+	); err != nil {
+		return fmt.Errorf("update retrieval event: %w", err)
+	}
+
+	// Increment times_retrieved on all result memories.
+	if len(event.ResultIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE memories SET times_retrieved = COALESCE(times_retrieved, 0) + 1 WHERE id = ANY($1)`,
+			event.ResultIDs,
+		); err != nil {
+			return fmt.Errorf("increment times_retrieved: %w", err)
+		}
+	}
+
+	// Increment times_useful on useful memories.
+	if len(usefulIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE memories SET times_useful = COALESCE(times_useful, 0) + 1 WHERE id = ANY($1)`,
+			usefulIDs,
+		); err != nil {
+			return fmt.Errorf("increment times_useful: %w", err)
+		}
+	}
+
+	// Recompute precision for result memories that have reached the threshold.
+	if len(event.ResultIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE memories
+			SET retrieval_precision = CAST(times_useful AS DOUBLE PRECISION) / times_retrieved
+			WHERE id = ANY($1) AND times_retrieved >= 5`,
+			event.ResultIDs,
+		); err != nil {
+			return fmt.Errorf("recompute precision: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("RecordFeedbackWithClass commit: %w", err)
 	}
 	return nil
 }

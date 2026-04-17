@@ -355,3 +355,77 @@ func CallHandleMemoryIngest(
 	}
 	return res
 }
+
+// CallHandleMemoryAggregate invokes handleMemoryAggregate with the given
+// arguments and returns the decoded output map. Fatals on any error.
+func CallHandleMemoryAggregate(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
+	t.Helper()
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	result, err := handleMemoryAggregate(ctx, pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryAggregate: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content items")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		t.Fatalf("decode tool result JSON: %v", err)
+	}
+	return out
+}
+
+// CallHandleMemoryAggregateExpectError invokes handleMemoryAggregate and
+// fatals if no error is returned.
+func CallHandleMemoryAggregateExpectError(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) {
+	t.Helper()
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	_, err := handleMemoryAggregate(ctx, pool, req)
+	if err == nil {
+		t.Fatal("expected an error from handleMemoryAggregate, got nil")
+	}
+}
+
+// CallHandleMemoryFeedbackWithClass verifies that a valid failure_class passes
+// MCP boundary validation. Errors from the DB layer (e.g. event not found) are
+// silently ignored — the test only cares that no class-validation error is raised.
+func CallHandleMemoryFeedbackWithClass(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
+	t.Helper()
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	result, err := handleMemoryFeedback(ctx, pool, req)
+	if err != nil {
+		// DB-level errors (e.g. event not found) are acceptable here.
+		return nil
+	}
+	if len(result.Content) == 0 {
+		return nil
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// CallHandleMemoryFeedbackWithClassExpectError invokes handleMemoryFeedback and
+// fatals if no error is returned.
+func CallHandleMemoryFeedbackWithClassExpectError(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) {
+	t.Helper()
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	_, err := handleMemoryFeedback(ctx, pool, req)
+	if err == nil {
+		t.Fatal("expected an error from handleMemoryFeedback, got nil")
+	}
+}

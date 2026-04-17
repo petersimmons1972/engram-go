@@ -337,6 +337,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryFeedback(ctx, pool, req)
 			}},
+		{"memory_aggregate", "Group and count memories by tag, type, or failure_class",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAggregate(ctx, pool, req)
+			}},
 		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryConsolidate(ctx, pool, req, cfg)

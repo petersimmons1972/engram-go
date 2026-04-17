@@ -123,6 +123,15 @@ func (noopBackend) GetRetrievalEvent(_ context.Context, _ string) (*types.Retrie
 	return nil, nil
 }
 func (noopBackend) RecordFeedback(_ context.Context, _ string, _ []string) error { return nil }
+func (noopBackend) RecordFeedbackWithClass(_ context.Context, _ string, _ []string, _ string) error {
+	return nil
+}
+func (noopBackend) AggregateMemories(_ context.Context, _, _, _ string, _ int) ([]types.AggregateRow, error) {
+	return nil, nil
+}
+func (noopBackend) AggregateFailureClasses(_ context.Context, _ string, _ int) ([]types.AggregateRow, error) {
+	return nil, nil
+}
 func (noopBackend) IncrementTimesRetrieved(_ context.Context, _ []string) error  { return nil }
 func (noopBackend) UpdateDynamicImportance(_ context.Context, _ string, _, _ float64) error {
 	return nil

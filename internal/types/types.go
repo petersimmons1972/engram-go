@@ -36,6 +36,30 @@ const (
 	VersionChangeInvalidate = "invalidate"
 )
 
+// FailureClass constants classify why a retrieval event failed. The set is closed — add new values via types migration only.
+const (
+	FailureClassVocabularyMismatch = "vocabulary_mismatch"
+	FailureClassAggregationFailure = "aggregation_failure"
+	FailureClassStaleRanking       = "stale_ranking"
+	FailureClassMissingContent     = "missing_content"
+	FailureClassScopeMismatch      = "scope_mismatch"
+)
+
+var validFailureClasses = map[string]bool{
+	FailureClassVocabularyMismatch: true,
+	FailureClassAggregationFailure: true,
+	FailureClassStaleRanking:       true,
+	FailureClassMissingContent:     true,
+	FailureClassScopeMismatch:      true,
+}
+
+func ValidateFailureClass(s string) bool {
+	if s == "" {
+		return true
+	}
+	return validFailureClasses[s]
+}
+
 // MaxContentLength is the maximum allowed length of memory content in bytes.
 // Mirrors Python MAX_CONTENT_LENGTH = 500_000.
 const MaxContentLength = 500_000
@@ -191,13 +215,14 @@ type Episode struct {
 
 // RetrievalEvent records one recall invocation and the caller's feedback.
 type RetrievalEvent struct {
-	ID          string     `json:"id"`
-	Project     string     `json:"project"`
-	Query       string     `json:"query"`
-	ResultIDs   []string   `json:"result_ids"`
-	FeedbackIDs []string   `json:"feedback_ids,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	FeedbackAt  *time.Time `json:"feedback_at,omitempty"`
+	ID           string     `json:"id"`
+	Project      string     `json:"project"`
+	Query        string     `json:"query"`
+	ResultIDs    []string   `json:"result_ids"`
+	FeedbackIDs  []string   `json:"feedback_ids,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	FeedbackAt   *time.Time `json:"feedback_at,omitempty"`
+	FailureClass string     `json:"failure_class,omitempty"`
 }
 
 // MemoryVersion is one entry in the bi-temporal history of a Memory.
@@ -325,4 +350,12 @@ type ConflictingResult struct {
 	ContradictsID string  `json:"contradicts_id"` // ID of the recalled memory this contradicts
 	Strength      float64 `json:"strength"`        // contradiction edge strength
 	MatchedChunk  string  `json:"matched_chunk"`   // first 500 bytes of content
+}
+
+// AggregateRow is one bucket in an aggregate query result.
+type AggregateRow struct {
+	Label  string    `json:"label"`
+	Count  int       `json:"count"`
+	Oldest time.Time `json:"oldest"`
+	Newest time.Time `json:"newest"`
 }
