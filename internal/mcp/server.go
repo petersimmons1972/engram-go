@@ -73,14 +73,16 @@ func (rl *rateLimiter) evict() {
 
 // Server wraps the MCP SSE server and owns the EnginePool.
 type Server struct {
-	pool *EnginePool
-	cfg  Config
-	mcp  *server.MCPServer
+	pool     *EnginePool
+	cfg      Config
+	mcp      *server.MCPServer
+	uploadMu sync.Mutex
+	uploads  map[string]*uploadSession
 }
 
 // NewServer constructs a Server with all MCP tools registered.
 func NewServer(pool *EnginePool, cfg Config) *Server {
-	s := &Server{pool: pool, cfg: cfg}
+	s := &Server{pool: pool, cfg: cfg, uploads: make(map[string]*uploadSession)}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithHooks(&server.Hooks{}),
@@ -281,7 +283,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryIngestDocumentStream(ctx, pool, req, cfg)
+				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
 		{"memory_store_batch", "Store multiple memories in one call",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

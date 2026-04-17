@@ -268,18 +268,19 @@ func (a backendDocumentAdapter) SetMemoryDocumentID(ctx context.Context, memoryI
 // ── memory_ingest_document_stream tool ──────────────────────────────────────
 
 // uploadSession holds assembled parts for an in-flight chunked upload. Keyed
-// by caller-chosen upload_id in uploadRegistry.
+// by caller-chosen upload_id in Server.uploads.
 type uploadSession struct {
 	mu      sync.Mutex
 	project string
 	buf     []byte
 	// nextPart is the expected index for the next Write; enforces ordering so
 	// callers cannot silently produce a corrupt blob by re-ordering parts.
-	nextPart  int
-	createdAt time.Time
+	nextPart     int
+	createdAt    time.Time
+	lastActivity time.Time // updated on every successful append; used for TTL eviction (#187)
 }
 
-// Caps on the in-memory upload registry. These exist so a misbehaving or
+// Caps on the per-Server upload registry. These exist so a misbehaving or
 // malicious caller cannot pin unbounded memory by starting sessions and never
 // finishing them.
 const (
@@ -288,20 +289,16 @@ const (
 	maxUploadIDLen    = 128
 )
 
-// uploadRegistry is process-local — chunked uploads do not survive a restart.
-// This matches the intent (large documents should be ingested in one burst or
-// retried from scratch on failure). All access must go through uploadRegistryMu.
-var (
-	uploadRegistryMu sync.Mutex
-	uploadRegistry   = make(map[string]*uploadSession)
-)
-
-// evictExpiredUploadsLocked drops sessions whose createdAt is older than the
-// TTL. Caller must hold uploadRegistryMu.
-func evictExpiredUploadsLocked(now time.Time) {
-	for id, s := range uploadRegistry {
-		if now.Sub(s.createdAt) > uploadSessionTTL {
-			delete(uploadRegistry, id)
+// evictExpiredUploadsLocked drops sessions whose lastActivity (falling back to
+// createdAt) is older than the TTL. Caller must hold s.uploadMu.
+func (s *Server) evictExpiredUploadsLocked(now time.Time) {
+	for id, sess := range s.uploads {
+		activity := sess.lastActivity
+		if activity.IsZero() {
+			activity = sess.createdAt
+		}
+		if now.Sub(activity) > uploadSessionTTL {
+			delete(s.uploads, id)
 		}
 	}
 }
@@ -309,37 +306,37 @@ func evictExpiredUploadsLocked(now time.Time) {
 // startUploadSession atomically evicts expired sessions, enforces the cap, and
 // creates a fresh session under uploadID. Returns an error if the cap has been
 // reached or if a session already exists for uploadID.
-func startUploadSession(uploadID, project string) (*uploadSession, error) {
-	uploadRegistryMu.Lock()
-	defer uploadRegistryMu.Unlock()
-	evictExpiredUploadsLocked(time.Now())
-	if _, exists := uploadRegistry[uploadID]; exists {
+func (s *Server) startUploadSession(uploadID, project string) (*uploadSession, error) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	s.evictExpiredUploadsLocked(time.Now())
+	if _, exists := s.uploads[uploadID]; exists {
 		return nil, fmt.Errorf("upload_id already in use")
 	}
-	if len(uploadRegistry) >= maxUploadSessions {
+	if len(s.uploads) >= maxUploadSessions {
 		return nil, fmt.Errorf("too many in-progress uploads")
 	}
-	s := &uploadSession{project: project, createdAt: time.Now()}
-	uploadRegistry[uploadID] = s
-	return s, nil
+	sess := &uploadSession{project: project, createdAt: time.Now()}
+	s.uploads[uploadID] = sess
+	return sess, nil
 }
 
 // lookupUploadSession returns an existing session or an error if missing.
-func lookupUploadSession(uploadID string) (*uploadSession, error) {
-	uploadRegistryMu.Lock()
-	defer uploadRegistryMu.Unlock()
-	evictExpiredUploadsLocked(time.Now())
-	s, ok := uploadRegistry[uploadID]
+func (s *Server) lookupUploadSession(uploadID string) (*uploadSession, error) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	s.evictExpiredUploadsLocked(time.Now())
+	sess, ok := s.uploads[uploadID]
 	if !ok {
 		return nil, fmt.Errorf("unknown upload_id %q (expired or never started)", uploadID)
 	}
-	return s, nil
+	return sess, nil
 }
 
-func dropUpload(uploadID string) {
-	uploadRegistryMu.Lock()
-	defer uploadRegistryMu.Unlock()
-	delete(uploadRegistry, uploadID)
+func (s *Server) dropUpload(uploadID string) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	delete(s.uploads, uploadID)
 }
 
 // handleMemoryIngestDocumentStream exposes two ingestion modes:
@@ -352,7 +349,11 @@ func dropUpload(uploadID string) {
 //
 // Either mode ends in a call to execStoreDocument so Tier-1 / Tier-2 routing
 // is shared with handleMemoryStoreDocument.
-func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+//
+// s carries the per-Server upload registry. When s is nil (unit tests that only
+// exercise the path/file branch) the chunked-upload actions will panic — tests
+// must supply a non-nil *Server for those code paths.
+func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
 	maxDoc, rawMax := configOrDefaults(cfg)
@@ -392,7 +393,7 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		if len(uploadID) == 0 || len(uploadID) > maxUploadIDLen {
 			return nil, fmt.Errorf("upload_id must be 1–%d characters", maxUploadIDLen)
 		}
-		if _, err := startUploadSession(uploadID, project); err != nil {
+		if _, err := s.startUploadSession(uploadID, project); err != nil {
 			return nil, err
 		}
 		return toolResult(map[string]any{
@@ -412,12 +413,17 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		if part < 0 {
 			return nil, fmt.Errorf("part is required for append (0-indexed)")
 		}
-		b64Data, _ := args["data"].(string)
+		// Fix #183: require a string 'data' field; reject missing/wrong-type values
+		// that would otherwise silently decode to zero bytes and advance the counter.
+		b64Data, ok := args["data"].(string)
+		if !ok {
+			return nil, fmt.Errorf("action=append requires a string 'data' field")
+		}
 		decoded, err := base64.StdEncoding.DecodeString(b64Data)
 		if err != nil {
 			return nil, fmt.Errorf("data must be base64-encoded: %w", err)
 		}
-		sess, err := lookupUploadSession(uploadID)
+		sess, err := s.lookupUploadSession(uploadID)
 		if err != nil {
 			return nil, err
 		}
@@ -435,12 +441,18 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 			return nil, fmt.Errorf("part out of order: expected %d, got %d", sess.nextPart, part)
 		}
 		if len(sess.buf)+len(decoded) > rawMax {
+			// Fix #189: zero buf under the lock before unlocking so a concurrent
+			// finish cannot race into runStreamIngest with a truncated body.
+			// After unlock the session is also removed from the registry.
+			wouldBeSize := len(sess.buf) + len(decoded)
+			sess.buf = nil
 			sess.mu.Unlock()
-			dropUpload(uploadID)
-			return nil, fmt.Errorf("document exceeds maximum size (%d bytes > %d)", len(sess.buf)+len(decoded), rawMax)
+			s.dropUpload(uploadID)
+			return nil, fmt.Errorf("document exceeds maximum size (%d bytes > %d)", wouldBeSize, rawMax)
 		}
 		sess.buf = append(sess.buf, decoded...)
 		sess.nextPart++
+		sess.lastActivity = time.Now() // Fix #187: reset TTL clock on every successful append
 		received := len(sess.buf)
 		partsReceived := sess.nextPart
 		sess.mu.Unlock()
@@ -455,7 +467,7 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		if uploadID == "" {
 			return nil, fmt.Errorf("upload_id is required for finish")
 		}
-		sess, err := lookupUploadSession(uploadID)
+		sess, err := s.lookupUploadSession(uploadID)
 		if err != nil {
 			return nil, err
 		}
@@ -467,9 +479,14 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 			return nil, fmt.Errorf("project mismatch: upload started with project %q, got %q", sess.project, project)
 		}
 		sess.mu.Lock()
+		// Fix #189: guard against a nil buf set by a concurrent overflow-eviction.
+		if sess.buf == nil {
+			sess.mu.Unlock()
+			return nil, fmt.Errorf("upload %q was aborted (size overflow in a concurrent append)", uploadID)
+		}
 		body := string(sess.buf)
 		sess.mu.Unlock()
-		dropUpload(uploadID)
+		s.dropUpload(uploadID)
 		return runStreamIngest(ctx, pool, sess.project, body, cfg, maxDoc, rawMax)
 
 	default:

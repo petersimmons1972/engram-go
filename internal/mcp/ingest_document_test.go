@@ -239,19 +239,16 @@ func TestConfigOrDefaults_RespectsSetValues(t *testing.T) {
 }
 
 // ── handleMemoryIngestDocumentStream: registry + action dispatch ──────────────
-// These tests exercise start/append validation and the uploadRegistry's TTL,
-// cap, and mutex without needing a live EnginePool. The finish action routes
-// into runStreamIngest which requires a real SearchEngine, covered by the
-// integration tests in e2e.
+// These tests exercise start/append validation and the per-Server upload map's
+// TTL, cap, and mutex without needing a live EnginePool. The finish action
+// routes into runStreamIngest which requires a real SearchEngine, covered by
+// the integration tests in e2e.
 
-// resetUploadRegistry wipes the process-global registry between tests.
-func resetUploadRegistry(t *testing.T) {
-	t.Helper()
-	uploadRegistryMu.Lock()
-	defer uploadRegistryMu.Unlock()
-	for k := range uploadRegistry {
-		delete(uploadRegistry, k)
-	}
+// newTestServer returns a minimal *Server suitable for upload-registry tests.
+// The EnginePool and MCP server fields are not initialised; only the upload map
+// is ready for use.
+func newTestServer() *Server {
+	return &Server{uploads: make(map[string]*uploadSession)}
 }
 
 func streamReq(args map[string]any) mcpgo.CallToolRequest {
@@ -276,11 +273,11 @@ func resultMap(t *testing.T, r *mcpgo.CallToolResult) map[string]any {
 // engine and is covered by e2e tests — this test stops after the second append
 // and verifies the registry state is exactly what finish would consume.
 func TestHandleStream_ChunkedUpload_AppendHappyPath(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
 	// start
-	out, err := handleMemoryIngestDocumentStream(ctx, nil,
+	out, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "uA", "project": "p"}),
 		Config{})
 	require.NoError(t, err)
@@ -288,7 +285,7 @@ func TestHandleStream_ChunkedUpload_AppendHappyPath(t *testing.T) {
 
 	// append part 0
 	part0 := base64.StdEncoding.EncodeToString([]byte("hello "))
-	out, err = handleMemoryIngestDocumentStream(ctx, nil,
+	out, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "uA", "part": float64(0), "data": part0}),
 		Config{})
 	require.NoError(t, err)
@@ -298,7 +295,7 @@ func TestHandleStream_ChunkedUpload_AppendHappyPath(t *testing.T) {
 
 	// append part 1
 	part1 := base64.StdEncoding.EncodeToString([]byte("world"))
-	out, err = handleMemoryIngestDocumentStream(ctx, nil,
+	out, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "uA", "part": float64(1), "data": part1}),
 		Config{})
 	require.NoError(t, err)
@@ -307,23 +304,23 @@ func TestHandleStream_ChunkedUpload_AppendHappyPath(t *testing.T) {
 	require.Equal(t, float64(11), m["bytes_received"])
 
 	// Session should hold the combined buffer, ready for finish.
-	sess, err := lookupUploadSession("uA")
+	sess, err := srv.lookupUploadSession("uA")
 	require.NoError(t, err)
 	require.Equal(t, "hello world", string(sess.buf))
 }
 
 // Test B: out-of-order part is rejected.
 func TestHandleStream_OutOfOrderPart(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "uB", "project": "p"}),
 		Config{})
 	require.NoError(t, err)
 
 	data := base64.StdEncoding.EncodeToString([]byte("x"))
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "uB", "part": float64(1), "data": data}),
 		Config{})
 	require.Error(t, err)
@@ -332,19 +329,19 @@ func TestHandleStream_OutOfOrderPart(t *testing.T) {
 
 // Test C: size overflow rejects append once accumulated bytes cross rawMax.
 func TestHandleStream_SizeOverflow(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
 	// Tight cap so the test finishes fast.
 	cfg := Config{MaxDocumentBytes: 1024, RawDocumentMaxBytes: 16}
 
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "uC", "project": "p"}),
 		cfg)
 	require.NoError(t, err)
 
 	big := base64.StdEncoding.EncodeToString(make([]byte, 32)) // 32 bytes > 16 cap
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "uC", "part": float64(0), "data": big}),
 		cfg)
 	require.Error(t, err)
@@ -353,11 +350,11 @@ func TestHandleStream_SizeOverflow(t *testing.T) {
 
 // Test D: upload_id length validation on start.
 func TestHandleStream_UploadIDValidation(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
 	// empty
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "", "project": "p"}),
 		Config{})
 	require.Error(t, err)
@@ -365,7 +362,7 @@ func TestHandleStream_UploadIDValidation(t *testing.T) {
 
 	// 129 chars (one over the cap)
 	tooLong := strings.Repeat("a", maxUploadIDLen+1)
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": tooLong, "project": "p"}),
 		Config{})
 	require.Error(t, err)
@@ -373,7 +370,7 @@ func TestHandleStream_UploadIDValidation(t *testing.T) {
 
 	// valid
 	valid := strings.Repeat("a", maxUploadIDLen)
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": valid, "project": "p"}),
 		Config{})
 	require.NoError(t, err)
@@ -381,19 +378,19 @@ func TestHandleStream_UploadIDValidation(t *testing.T) {
 
 // Test E: session cap.
 func TestHandleStream_TooManySessions(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
 	// Fill the registry directly to avoid making maxUploadSessions handler calls.
-	uploadRegistryMu.Lock()
+	srv.uploadMu.Lock()
 	now := time.Now()
 	for i := 0; i < maxUploadSessions; i++ {
 		id := fmt.Sprintf("sess-%d", i)
-		uploadRegistry[id] = &uploadSession{project: "p", createdAt: now}
+		srv.uploads[id] = &uploadSession{project: "p", createdAt: now}
 	}
-	uploadRegistryMu.Unlock()
+	srv.uploadMu.Unlock()
 
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "overflow", "project": "p"}),
 		Config{})
 	require.Error(t, err)
@@ -401,36 +398,38 @@ func TestHandleStream_TooManySessions(t *testing.T) {
 }
 
 // TTL eviction: stale sessions are dropped before the cap check, freeing slots.
+// The TTL is measured from lastActivity (Fix #187): sessions with stale
+// lastActivity must be evicted even if createdAt was recent.
 func TestHandleStream_TTLEviction(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
-	uploadRegistryMu.Lock()
+	srv.uploadMu.Lock()
 	stale := time.Now().Add(-(uploadSessionTTL + time.Minute))
 	for i := 0; i < maxUploadSessions; i++ {
 		id := fmt.Sprintf("stale-%d", i)
-		uploadRegistry[id] = &uploadSession{project: "p", createdAt: stale}
+		srv.uploads[id] = &uploadSession{project: "p", createdAt: stale}
 	}
-	uploadRegistryMu.Unlock()
+	srv.uploadMu.Unlock()
 
 	// All stale — a fresh start should succeed because eviction frees the slots.
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "fresh", "project": "p"}),
 		Config{})
 	require.NoError(t, err)
 
-	uploadRegistryMu.Lock()
-	_, ok := uploadRegistry["fresh"]
-	count := len(uploadRegistry)
-	uploadRegistryMu.Unlock()
+	srv.uploadMu.Lock()
+	_, ok := srv.uploads["fresh"]
+	count := len(srv.uploads)
+	srv.uploadMu.Unlock()
 	require.True(t, ok, "fresh session should be registered")
 	require.Equal(t, 1, count, "all stale sessions should have been evicted")
 }
 
 // Unknown action is rejected.
 func TestHandleStream_UnknownAction(t *testing.T) {
-	resetUploadRegistry(t)
-	_, err := handleMemoryIngestDocumentStream(context.Background(), nil,
+	srv := newTestServer()
+	_, err := handleMemoryIngestDocumentStream(context.Background(), srv, nil,
 		streamReq(map[string]any{"action": "upload", "upload_id": "x"}),
 		Config{})
 	require.Error(t, err)
@@ -439,9 +438,9 @@ func TestHandleStream_UnknownAction(t *testing.T) {
 
 // Append against an unknown upload_id (e.g. expired) is rejected.
 func TestHandleStream_AppendUnknownUpload(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	data := base64.StdEncoding.EncodeToString([]byte("x"))
-	_, err := handleMemoryIngestDocumentStream(context.Background(), nil,
+	_, err := handleMemoryIngestDocumentStream(context.Background(), srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "ghost", "part": float64(0), "data": data}),
 		Config{})
 	require.Error(t, err)
@@ -524,15 +523,15 @@ func TestRunStreamIngest_PoolError(t *testing.T) {
 // guard: finish called under a different project than start must be
 // rejected so a caller cannot silently park a body in the wrong project.
 func TestHandleStream_FinishProjectMismatch(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "mismatch", "project": "A"}),
 		Config{})
 	require.NoError(t, err)
 
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "finish", "upload_id": "mismatch", "project": "B"}),
 		Config{})
 	require.Error(t, err)
@@ -541,16 +540,16 @@ func TestHandleStream_FinishProjectMismatch(t *testing.T) {
 
 // TestHandleStream_AppendProjectMismatch: same guard on the append path.
 func TestHandleStream_AppendProjectMismatch(t *testing.T) {
-	resetUploadRegistry(t)
+	srv := newTestServer()
 	ctx := context.Background()
 
-	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "start", "upload_id": "mm-app", "project": "A"}),
 		Config{})
 	require.NoError(t, err)
 
 	data := base64.StdEncoding.EncodeToString([]byte("x"))
-	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
 		streamReq(map[string]any{"action": "append", "upload_id": "mm-app", "part": float64(0), "data": data, "project": "B"}),
 		Config{})
 	require.Error(t, err)
@@ -575,6 +574,124 @@ func TestBuildSynopsis_UTF8BoundarySafe(t *testing.T) {
 	// result shrinks. We compare lengths to detect that case.
 	require.Equal(t, len([]rune(syn)), len([]rune(strings.ToValidUTF8(syn, ""))),
 		"synopsis must not end mid-rune")
+}
+
+// ── New tests for issues #183, #187, #189, #190 ──────────────────────────────
+
+// Issue #190: Two Server instances must not share upload sessions.
+// A session started on s1 must be invisible to s2.
+func TestUploadRegistry_IsolatedPerServer(t *testing.T) {
+	s1 := newTestServer()
+	s2 := newTestServer()
+	ctx := context.Background()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, s1, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "isolated", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+
+	// s2 must not see s1's session.
+	data := base64.StdEncoding.EncodeToString([]byte("x"))
+	_, err = handleMemoryIngestDocumentStream(ctx, s2, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "isolated", "part": float64(0), "data": data}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown upload_id")
+}
+
+// Issue #187: lastActivity is updated on every successful append and is used
+// for TTL eviction. After an append, lastActivity must be after createdAt, and
+// a session whose lastActivity is recent must survive eviction even when
+// createdAt is old.
+func TestUploadSession_LastActivityUpdatedOnAppend(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+
+	before := time.Now()
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "la-test", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+
+	data := base64.StdEncoding.EncodeToString([]byte("hello"))
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "la-test", "part": float64(0), "data": data}),
+		Config{})
+	require.NoError(t, err)
+
+	sess, err := srv.lookupUploadSession("la-test")
+	require.NoError(t, err)
+	require.True(t, sess.lastActivity.After(before),
+		"lastActivity must be updated after a successful append")
+
+	// Simulate an old createdAt but recent lastActivity — session must NOT be evicted.
+	srv.uploadMu.Lock()
+	sess.createdAt = time.Now().Add(-(uploadSessionTTL + time.Minute))
+	srv.uploadMu.Unlock()
+
+	srv.uploadMu.Lock()
+	srv.evictExpiredUploadsLocked(time.Now())
+	_, stillPresent := srv.uploads["la-test"]
+	srv.uploadMu.Unlock()
+	require.True(t, stillPresent, "session with recent lastActivity must survive eviction even when createdAt is stale")
+}
+
+// Issue #189: concurrent append-overflow + finish. When an overflow is
+// detected, the session buffer is zeroed under the lock before dropUpload is
+// called. A finish that races in after the buf is zeroed must receive an error,
+// not silently ingest a truncated (nil) body.
+func TestUploadOverflow_ConcurrentFinishSeesError(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+
+	cfg := Config{MaxDocumentBytes: 1024, RawDocumentMaxBytes: 16}
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "race-id", "project": "p"}),
+		cfg)
+	require.NoError(t, err)
+
+	// Manually zero the buf (simulating what the overflow path does) so we can
+	// test finish without racing the real append goroutine.
+	srv.uploadMu.Lock()
+	sess := srv.uploads["race-id"]
+	srv.uploadMu.Unlock()
+	sess.mu.Lock()
+	sess.buf = nil
+	sess.mu.Unlock()
+
+	// finish must see the nil buf and return an error.
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "finish", "upload_id": "race-id", "project": "p"}),
+		cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "aborted")
+}
+
+// Issue #183: action=append with a missing 'data' field must return an error,
+// not silently advance the part counter with zero bytes.
+func TestAppend_MissingDataFieldReturnsError(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "no-data", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+
+	// append without a 'data' key
+	_, err = handleMemoryIngestDocumentStream(ctx, srv, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "no-data", "part": float64(0)}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires a string 'data' field")
+
+	// The part counter must not have advanced — the session's nextPart is still 0.
+	sess, lookupErr := srv.lookupUploadSession("no-data")
+	require.NoError(t, lookupErr)
+	sess.mu.Lock()
+	nextPart := sess.nextPart
+	sess.mu.Unlock()
+	require.Equal(t, 0, nextPart, "part counter must not advance on missing-data error")
 }
 
 // Fix 4: Tier-1 response carries "summary" (string) not "summary_bytes" (int).
