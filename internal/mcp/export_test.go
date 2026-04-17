@@ -356,6 +356,8 @@ func CallHandleMemoryIngest(
 	return res
 }
 
+// CallHandleMemoryAggregate invokes handleMemoryAggregate with the given
+// arguments and returns the decoded output map. Fatals on any error.
 func CallHandleMemoryAggregate(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) map[string]any {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}
@@ -378,6 +380,8 @@ func CallHandleMemoryAggregate(ctx context.Context, t *testing.T, pool *EnginePo
 	return out
 }
 
+// CallHandleMemoryAggregateExpectError invokes handleMemoryAggregate and
+// fatals if no error is returned.
 func CallHandleMemoryAggregateExpectError(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}

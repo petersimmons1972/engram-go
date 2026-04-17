@@ -894,10 +894,6 @@ func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project := getString(args, "project", "default")
-	h, err := pool.Get(ctx, project)
-	if err != nil {
-		return nil, err
-	}
 	ids := toStringSlice(args["memory_ids"])
 	if len(ids) > 100 {
 		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
@@ -911,6 +907,12 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		if eventID == "" {
 			return nil, fmt.Errorf("event_id is required when failure_class is set")
 		}
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if failureClass != "" {
 		if err := h.Engine.FeedbackWithEventAndClass(ctx, eventID, ids, failureClass); err != nil {
 			return nil, err
 		}
