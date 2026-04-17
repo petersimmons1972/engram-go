@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>engram-go: Document Storage and Chunking Strategy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --navy:      #0F172A;
+    --navy-mid:  #243B55;
+    --navy-light:#1e3349;
+    --cream:     #f8fafc;
+    --gray:      #94a3b8;
+    --gray-dark: #64748b;
+    --grid:      #334155;
+    --gold:      #FFAF18;
+    --gold-dim:  #D4A574;
+    --t0-gold:   #FFAF18;
+    --t1-blue:   #60a5fa;
+    --t2-purple: #A78BFA;
+    --t3-red:    #EF4444;
+  }
+
+  html { background: var(--navy); color: var(--cream); font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 16px; line-height: 1.6; }
+
+  body { max-width: 1200px; margin: 0 auto; padding: 0 2rem 4rem; }
+
+  /* ---- HEADER ---- */
+  .site-header {
+    border-bottom: 1px solid var(--grid);
+    padding: 2rem 0 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .site-header .wordmark {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.1rem;
+    color: var(--gold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .site-header .meta {
+    font-size: 0.78rem;
+    color: var(--gray-dark);
+    letter-spacing: 0.04em;
+  }
+
+  /* ---- HERO ---- */
+  .hero {
+    padding: 4rem 0 2.5rem;
+    border-bottom: 1px solid var(--grid);
+  }
+  .hero-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 1rem;
+  }
+  .hero h1 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--cream);
+    max-width: 820px;
+    margin-bottom: 1.5rem;
+  }
+  .hero h1 em {
+    font-style: italic;
+    color: var(--gold-dim);
+  }
+  .hero-lead {
+    font-size: 1.05rem;
+    color: var(--gray);
+    max-width: 680px;
+    line-height: 1.75;
+  }
+
+  /* ---- DIAGRAM ---- */
+  .diagram-section {
+    padding: 3rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gray-dark);
+    margin-bottom: 1.25rem;
+  }
+  .diagram-wrap {
+    background: var(--navy);
+    border: 1px solid var(--grid);
+    border-radius: 6px;
+    padding: 1px;
+    overflow: hidden;
+  }
+  .diagram-wrap svg { display: block; width: 100%; height: auto; }
+
+  /* ---- TIER GRID ---- */
+  .tiers-section {
+    padding: 3.5rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .tiers-section h2 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .section-intro {
+    color: var(--gray);
+    font-size: 0.95rem;
+    max-width: 600px;
+    margin-bottom: 2.5rem;
+  }
+  .tier-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.25rem;
+  }
+  .tier-card {
+    background: var(--navy-light);
+    border-radius: 6px;
+    padding: 1.5rem;
+    border-top: 3px solid;
+    position: relative;
+  }
+  .tier-card.t0 { border-color: var(--t0-gold); }
+  .tier-card.t1 { border-color: var(--t1-blue); }
+  .tier-card.t2 { border-color: var(--t2-purple); }
+  .tier-card.t3 { border-color: var(--t3-red); }
+  .tier-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  .t0 .tier-badge { color: var(--t0-gold); }
+  .t1 .tier-badge { color: var(--t1-blue); }
+  .t2 .tier-badge { color: var(--t2-purple); }
+  .t3 .tier-badge { color: var(--t3-red); }
+  .tier-card h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.15rem;
+    margin-bottom: 0.25rem;
+  }
+  .tier-range {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--gray);
+    margin-bottom: 1rem;
+    font-family: 'Inter', monospace;
+  }
+  .tier-card ul {
+    list-style: none;
+    font-size: 0.875rem;
+    color: var(--gray);
+    line-height: 1.8;
+  }
+  .tier-card ul li::before { content: "-- "; color: var(--grid); }
+  .tier-card code {
+    font-size: 0.8rem;
+    color: var(--gold-dim);
+    font-family: 'Courier New', monospace;
+  }
+
+  /* ---- TWO COLUMN RETRIEVAL ---- */
+  .retrieval-section {
+    padding: 3.5rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .retrieval-section h2 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .retrieval-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+  }
+  @media (max-width: 700px) { .retrieval-cols { grid-template-columns: 1fr; } }
+  .retrieval-card {
+    background: var(--navy-light);
+    border-radius: 6px;
+    padding: 1.75rem;
+    border: 1px solid var(--grid);
+  }
+  .retrieval-card h3 {
+    font-family: 'Courier New', monospace;
+    font-size: 0.95rem;
+    color: var(--gold);
+    margin-bottom: 1rem;
+  }
+  .retrieval-card p { font-size: 0.9rem; color: var(--gray); line-height: 1.7; margin-bottom: 0.75rem; }
+  .retrieval-card .tier-badge-inline {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin-right: 0.3rem;
+    vertical-align: middle;
+  }
+  .bi-t0 { background: rgba(255,175,24,0.15); color: var(--t0-gold); }
+  .bi-t1 { background: rgba(96,165,250,0.15); color: var(--t1-blue); }
+  .bi-t2 { background: rgba(167,139,250,0.15); color: var(--t2-purple); }
+
+  /* ---- DESIGN DECISIONS ---- */
+  .decisions-section {
+    padding: 3.5rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .decisions-section h2 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .decision-list { margin-top: 2.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
+  .decision-item {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--grid);
+    align-items: start;
+  }
+  @media (max-width: 700px) { .decision-item { grid-template-columns: 1fr; } }
+  .decision-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .decision-choice {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.05rem;
+    font-style: italic;
+    color: var(--gold-dim);
+    line-height: 1.4;
+  }
+  .decision-rationale { font-size: 0.9rem; color: var(--gray); line-height: 1.75; }
+  .decision-rationale strong { color: var(--cream); font-weight: 500; }
+  .decision-rationale code {
+    font-size: 0.82rem;
+    color: var(--gold-dim);
+    font-family: 'Courier New', monospace;
+    background: rgba(255,255,255,0.06);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }
+
+  /* ---- SOURCES ---- */
+  .sources-section {
+    padding: 3.5rem 0;
+  }
+  .sources-section h2 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .source-group { margin-top: 2rem; }
+  .source-group-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--gold);
+    border-bottom: 1px solid var(--grid);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .source-entry {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+    padding: 0.9rem 0;
+    border-bottom: 1px solid rgba(51,65,85,0.5);
+    align-items: baseline;
+  }
+  @media (max-width: 600px) { .source-entry { grid-template-columns: 1fr; } }
+  .source-entry:last-child { border-bottom: none; }
+  .source-title { font-size: 0.9rem; color: var(--cream); font-weight: 400; }
+  .source-title .source-author { display: block; font-size: 0.8rem; color: var(--gray); margin-top: 0.2rem; }
+  .source-title .source-note { display: block; font-size: 0.8rem; color: var(--gray-dark); margin-top: 0.2rem; font-style: italic; }
+  .source-ref {
+    font-size: 0.78rem;
+    color: var(--gray-dark);
+    text-align: right;
+    font-family: 'Courier New', monospace;
+  }
+  .source-ref a { color: var(--t1-blue); text-decoration: none; }
+  .source-ref a:hover { text-decoration: underline; }
+
+  /* ---- SYNOPSIS CALLOUT ---- */
+  .callout {
+    background: rgba(255,175,24,0.07);
+    border-left: 3px solid var(--gold);
+    border-radius: 0 4px 4px 0;
+    padding: 1.1rem 1.4rem;
+    margin: 2rem 0;
+    font-size: 0.9rem;
+    color: var(--gray);
+    line-height: 1.7;
+  }
+  .callout strong { color: var(--gold); font-weight: 600; }
+  .callout code {
+    font-size: 0.82rem;
+    color: var(--gold-dim);
+    font-family: 'Courier New', monospace;
+    background: rgba(255,255,255,0.06);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }
+
+  /* ---- FOOTER ---- */
+  .site-footer {
+    border-top: 1px solid var(--grid);
+    padding: 2rem 0;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--gray-dark);
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <span class="wordmark">engram-go</span>
+  <span class="meta">Document Storage Strategy &bull; v4.x &bull; 2026-04-17</span>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <p class="hero-eyebrow">Architecture Reference</p>
+  <h1>Four tiers. One document.<br/><em>Zero wasted context.</em></h1>
+  <p class="hero-lead">
+    How engram-go decides where a document lives, what gets indexed, and what gets
+    handed to the language model when you ask a question about it. Every byte from
+    the first write to the last recall, traced end-to-end.
+  </p>
+</section>
+
+<!-- DIAGRAM -->
+<section class="diagram-section">
+  <p class="section-label">Architecture Diagram</p>
+  <div class="diagram-wrap">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1310 670">
+      <rect width="1310" height="670" fill="#0F172A"/>
+      <rect x="20" y="500" width="1270" height="158" rx="4" fill="#0d1421"/>
+      <line x1="40" y1="112" x2="488" y2="112" stroke="#334155" stroke-width="1.5"/>
+      <polygon points="484,107 494,112 484,117" fill="#334155"/>
+      <line x1="650" y1="140" x2="650" y2="165" stroke="#334155" stroke-width="1.5"/>
+      <line x1="165" y1="165" x2="1135" y2="165" stroke="#334155" stroke-width="1.5"/>
+      <line x1="165" y1="165" x2="165" y2="175" stroke="#334155" stroke-width="1.5"/>
+      <line x1="490" y1="165" x2="490" y2="175" stroke="#334155" stroke-width="1.5"/>
+      <line x1="810" y1="165" x2="810" y2="175" stroke="#334155" stroke-width="1.5"/>
+      <line x1="1135" y1="165" x2="1135" y2="175" stroke="#334155" stroke-width="1.5"/>
+      <line x1="165" y1="240" x2="165" y2="265" stroke="#334155" stroke-width="1.5"/>
+      <line x1="490" y1="240" x2="490" y2="265" stroke="#334155" stroke-width="1.5"/>
+      <line x1="810" y1="240" x2="810" y2="265" stroke="#334155" stroke-width="1.5"/>
+      <line x1="165" y1="380" x2="165" y2="400" stroke="#334155" stroke-width="1.5"/>
+      <line x1="490" y1="380" x2="490" y2="400" stroke="#334155" stroke-width="1.5"/>
+      <line x1="810" y1="380" x2="810" y2="400" stroke="#334155" stroke-width="1.5"/>
+      <line x1="165" y1="480" x2="165" y2="500" stroke="#334155" stroke-width="1.5"/>
+      <line x1="490" y1="480" x2="490" y2="500" stroke="#334155" stroke-width="1.5"/>
+      <line x1="810" y1="480" x2="810" y2="500" stroke="#334155" stroke-width="1.5"/>
+      <polygon points="160,262 165,268 170,262" fill="#334155"/>
+      <polygon points="485,262 490,268 495,262" fill="#334155"/>
+      <polygon points="805,262 810,268 815,262" fill="#334155"/>
+      <polygon points="160,397 165,403 170,397" fill="#334155"/>
+      <polygon points="485,397 490,403 495,397" fill="#334155"/>
+      <polygon points="805,397 810,403 815,397" fill="#334155"/>
+      <rect x="490" y="85" width="320" height="55" rx="4" fill="#243B55" stroke="#FFAF18" stroke-width="1.5"/>
+      <rect x="30" y="175" width="270" height="65" rx="4" fill="#243B55" stroke="#FFAF18" stroke-width="2"/>
+      <rect x="355" y="175" width="270" height="65" rx="4" fill="#243B55" stroke="#60a5fa" stroke-width="2"/>
+      <rect x="675" y="175" width="270" height="65" rx="4" fill="#243B55" stroke="#A78BFA" stroke-width="2"/>
+      <rect x="1000" y="175" width="270" height="65" rx="4" fill="#243B55" stroke="#EF4444" stroke-width="2"/>
+      <rect x="30" y="265" width="270" height="115" rx="3" fill="#1e3349" stroke="#FFAF18" stroke-width="1"/>
+      <rect x="355" y="265" width="270" height="115" rx="3" fill="#1e3349" stroke="#60a5fa" stroke-width="1"/>
+      <rect x="675" y="265" width="270" height="115" rx="3" fill="#1e3349" stroke="#A78BFA" stroke-width="1"/>
+      <rect x="1000" y="265" width="270" height="115" rx="3" fill="#1e3349" stroke="#EF4444" stroke-width="1"/>
+      <rect x="30" y="400" width="270" height="80" rx="3" fill="#1e3349" stroke="#FFAF18" stroke-width="1"/>
+      <rect x="355" y="400" width="270" height="80" rx="3" fill="#1e3349" stroke="#60a5fa" stroke-width="1"/>
+      <rect x="675" y="400" width="270" height="80" rx="3" fill="#1e3349" stroke="#A78BFA" stroke-width="1"/>
+      <rect x="30" y="527" width="610" height="115" rx="4" fill="#1e3349" stroke="#334155" stroke-width="1"/>
+      <rect x="655" y="527" width="625" height="115" rx="4" fill="#1e3349" stroke="#334155" stroke-width="1"/>
+      <text x="655" y="40" font-family="Inter,sans-serif" font-size="21" font-weight="bold" fill="#f8fafc" text-anchor="middle">engram-go: Document Storage and Chunking Strategy</text>
+      <text x="655" y="63" font-family="Inter,sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">Ingest path (top) | Retrieval path (bottom) | Env overrides: ENGRAM_MAX_DOCUMENT_BYTES, ENGRAM_RAW_DOCUMENT_MAX_BYTES</text>
+      <text x="42" y="105" font-family="Inter,sans-serif" font-size="12" fill="#FFAF18">Document</text>
+      <text x="42" y="121" font-family="Inter,sans-serif" font-size="12" fill="#FFAF18">In</text>
+      <text x="650" y="107" font-family="Inter,sans-serif" font-size="14" font-weight="bold" fill="#f8fafc" text-anchor="middle">Size Classifier</text>
+      <text x="650" y="128" font-family="Inter,sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">classifyDocumentSize() -- ingest_document.go:43</text>
+      <text x="165" y="197" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#FFAF18" text-anchor="middle">Tier-0: Small</text>
+      <text x="165" y="214" font-family="Inter,sans-serif" font-size="12" fill="#f8fafc" text-anchor="middle">size &lt;= 500 KB</text>
+      <text x="165" y="230" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">default 8 MiB threshold</text>
+      <text x="490" y="197" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#60a5fa" text-anchor="middle">Tier-1: Stream Synopsis</text>
+      <text x="490" y="214" font-family="Inter,sans-serif" font-size="12" fill="#f8fafc" text-anchor="middle">500 KB to 8 MB</text>
+      <text x="490" y="230" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">default 8 MiB upper bound</text>
+      <text x="810" y="197" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#A78BFA" text-anchor="middle">Tier-2: Raw Document</text>
+      <text x="810" y="214" font-family="Inter,sans-serif" font-size="12" fill="#f8fafc" text-anchor="middle">8 MB to 50 MB</text>
+      <text x="810" y="230" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">default 50 MiB upper bound</text>
+      <text x="1135" y="197" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#EF4444" text-anchor="middle">Tier-3: Reject</text>
+      <text x="1135" y="214" font-family="Inter,sans-serif" font-size="12" fill="#f8fafc" text-anchor="middle">size &gt; 50 MB</text>
+      <text x="1135" y="230" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">hard limit, no override</text>
+      <text x="165" y="283" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#FFAF18" text-anchor="middle">Storage</text>
+      <text x="165" y="299" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">memories.content = full body</text>
+      <text x="165" y="315" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">documents table: not used</text>
+      <text x="165" y="331" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">chunks: built from full content</text>
+      <text x="165" y="349" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">&lt;8 KB: LazyChunk = 1 chunk</text>
+      <text x="165" y="366" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">execStoreDocument()</text>
+      <text x="490" y="283" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#60a5fa" text-anchor="middle">Storage</text>
+      <text x="490" y="299" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">memories.content = synopsis</text>
+      <text x="490" y="315" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">RawBody = full body (ephemeral)</text>
+      <text x="490" y="331" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">chunks: built from RawBody</text>
+      <text x="490" y="349" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">documents table: not used</text>
+      <text x="490" y="366" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">RawBody json:"-" not persisted</text>
+      <text x="810" y="283" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#A78BFA" text-anchor="middle">Storage</text>
+      <text x="810" y="299" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">memories.content = synopsis</text>
+      <text x="810" y="315" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">documents.body = full body</text>
+      <text x="810" y="331" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">memories.document_id = FK</text>
+      <text x="810" y="349" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">chunks: from synopsis only</text>
+      <text x="810" y="366" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">execStoreDocument()</text>
+      <text x="1135" y="293" font-family="Inter,sans-serif" font-size="16" font-weight="bold" fill="#EF4444" text-anchor="middle">HTTP 413</text>
+      <text x="1135" y="315" font-family="Inter,sans-serif" font-size="13" fill="#f8fafc" text-anchor="middle">Request Rejected</text>
+      <text x="1135" y="336" font-family="Inter,sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">No storage</text>
+      <text x="1135" y="354" font-family="Inter,sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">No chunking</text>
+      <text x="1135" y="370" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">No retrieval path</text>
+      <text x="165" y="417" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#FFAF18" text-anchor="middle">Chunking</text>
+      <text x="165" y="433" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">Source: full content</text>
+      <text x="165" y="449" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">document: semantic, 2000-char</text>
+      <text x="165" y="466" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">focused: 512-tok, 50 overlap</text>
+      <text x="490" y="417" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#60a5fa" text-anchor="middle">Chunking</text>
+      <text x="490" y="433" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">Source: RawBody (full body)</text>
+      <text x="490" y="449" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">document: semantic, 2000-char</text>
+      <text x="490" y="466" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">focused: 512-tok, 50 overlap</text>
+      <text x="810" y="417" font-family="Inter,sans-serif" font-size="11" font-weight="bold" fill="#A78BFA" text-anchor="middle">Chunking</text>
+      <text x="810" y="433" font-family="Inter,sans-serif" font-size="11" fill="#f8fafc" text-anchor="middle">Source: synopsis only</text>
+      <text x="810" y="449" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">document: semantic, 2000-char</text>
+      <text x="810" y="466" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">focused: 512-tok, 50 overlap</text>
+      <text x="655" y="518" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">RETRIEVAL PATH</text>
+      <text x="335" y="547" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#f8fafc" text-anchor="middle">memory_recall</text>
+      <text x="335" y="565" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Vector ANN + Full-Text Search across chunks table</text>
+      <text x="335" y="582" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Best chunk per memory, composite score ranking</text>
+      <text x="335" y="599" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Returns top-N memory summaries + scores</text>
+      <text x="335" y="617" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">All tiers participate via chunks table</text>
+      <text x="335" y="633" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">RecallWithOpts() -- search/engine.go</text>
+      <text x="967" y="547" font-family="Inter,sans-serif" font-size="13" font-weight="bold" fill="#f8fafc" text-anchor="middle">memory_query_document</text>
+      <text x="967" y="565" font-family="Inter,sans-serif" font-size="11" fill="#FFAF18" text-anchor="middle">Tier-0: full content direct</text>
+      <text x="967" y="582" font-family="Inter,sans-serif" font-size="11" fill="#60a5fa" text-anchor="middle">Tier-1: chunks or synopsis text</text>
+      <text x="967" y="599" font-family="Inter,sans-serif" font-size="11" fill="#A78BFA" text-anchor="middle">Tier-2: fetches documents.body from DB</text>
+      <text x="967" y="617" font-family="Inter,sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">All: QueryDocument() -- span extraction + LLM answer</text>
+      <text x="967" y="633" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">query_document.go + claude/document_query.go</text>
+      <text x="655" y="657" font-family="Inter,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Synopsis = buildSynopsis(): first 8 KiB verbatim + h1/h2 heading outline (&lt;=2 KiB) | LazyChunkThreshold = 8 KB | document mode = ChunkDocument | focused mode = ChunkText</text>
+    </svg>
+  </div>
+</section>
+
+<!-- TIERS -->
+<section class="tiers-section">
+  <h2>The Four Tiers</h2>
+  <p class="section-intro">
+    Size drives routing. Every document is classified once on arrival and never reclassified.
+    The classification determines which tables hold the data and what the chunker sees.
+  </p>
+
+  <div class="callout">
+    <strong>Synopsis formula</strong> (Tier-1 and Tier-2): <code>buildSynopsis()</code> in
+    <code>internal/mcp/ingest_document.go:72</code> produces the first <strong>8 KiB</strong> of the
+    document verbatim, then appends a <code>--- Outline ---</code> section containing every
+    Markdown h1/h2 heading found in the full body, capped at <strong>2 KiB</strong>.
+    This is what lands in <code>memories.content</code> for Tier-1 and Tier-2.
+  </div>
+
+  <div class="tier-grid">
+
+    <div class="tier-card t0">
+      <p class="tier-badge">Tier-0</p>
+      <h3>Small</h3>
+      <p class="tier-range">size &lt;= 500 KB</p>
+      <ul>
+        <li><code>memories.content</code> = full body</li>
+        <li><code>documents</code> table not touched</li>
+        <li>Chunks built from full content</li>
+        <li>Below 8 KB: single chunk (<code>LazyChunkThreshold</code>)</li>
+        <li>Existing <code>memory_store_document</code> path; no new code</li>
+      </ul>
+    </div>
+
+    <div class="tier-card t1">
+      <p class="tier-badge">Tier-1</p>
+      <h3>Stream Synopsis</h3>
+      <p class="tier-range">500 KB &ndash; 8 MB (default)</p>
+      <ul>
+        <li><code>memories.content</code> = synopsis (8 KiB + outline)</li>
+        <li><code>RawBody</code> carries full body in-memory only</li>
+        <li>Chunks built from <code>RawBody</code> &mdash; recall stays grounded</li>
+        <li><code>documents</code> table not touched</li>
+        <li><code>RawBody</code> tagged <code>json:"-"</code>; never persisted</li>
+      </ul>
+    </div>
+
+    <div class="tier-card t2">
+      <p class="tier-badge">Tier-2</p>
+      <h3>Raw Document</h3>
+      <p class="tier-range">8 MB &ndash; 50 MB (default)</p>
+      <ul>
+        <li><code>memories.content</code> = synopsis</li>
+        <li><code>documents.body</code> = full body (durable)</li>
+        <li><code>memories.document_id</code> FK set</li>
+        <li>Chunks built from synopsis only</li>
+        <li>Full body fetched on <code>memory_query_document</code></li>
+      </ul>
+    </div>
+
+    <div class="tier-card t3">
+      <p class="tier-badge">Tier-3</p>
+      <h3>Reject</h3>
+      <p class="tier-range">size &gt; 50 MB</p>
+      <ul>
+        <li>HTTP 413 returned immediately</li>
+        <li>No database writes</li>
+        <li>No chunking, no embedding</li>
+        <li>Threshold not configurable</li>
+        <li>Caller must split or summarize before storing</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- RETRIEVAL -->
+<section class="retrieval-section">
+  <p class="section-label">Retrieval</p>
+  <h2>Two Paths Out</h2>
+  <p class="section-intro">
+    Every stored memory participates in both retrieval paths. The paths differ in cost, depth, and what
+    they return.
+  </p>
+
+  <div class="retrieval-cols">
+
+    <div class="retrieval-card">
+      <h3>memory_recall</h3>
+      <p>
+        Semantic search for finding memories. Embeds the query, runs vector ANN against the
+        <code>chunks</code> table via HNSW index, and merges with BM25 full-text scores.
+      </p>
+      <p>
+        Composite score: <code>0.50 x cosine + 0.35 x bm25_norm + 0.15 x recency_decay</code>.
+        Importance multiplier applied on top. Best matching chunk per memory is returned as context.
+      </p>
+      <p>
+        <span class="tier-badge-inline bi-t0">T0</span>
+        <span class="tier-badge-inline bi-t1">T1</span>
+        <span class="tier-badge-inline bi-t2">T2</span>
+        All tiers participate via the chunks table. Tier-2 chunks are from synopsis only,
+        so ranking accuracy is proportional to synopsis quality.
+      </p>
+      <p style="font-size:0.8rem;color:#64748b">RecallWithOpts() &mdash; internal/search/engine.go</p>
+    </div>
+
+    <div class="retrieval-card">
+      <h3>memory_query_document</h3>
+      <p>
+        Deep query against a specific memory's full content. Content source depends on tier:
+      </p>
+      <p>
+        <span class="tier-badge-inline bi-t0">T0</span>
+        Full body from <code>memories.content</code> &mdash; handed directly to
+        <code>QueryDocument()</code>.
+      </p>
+      <p>
+        <span class="tier-badge-inline bi-t1">T1</span>
+        Synopsis from <code>memories.content</code> plus semantic chunk lookup via
+        <code>RecallWithinMemory()</code> for targeted queries.
+      </p>
+      <p>
+        <span class="tier-badge-inline bi-t2">T2</span>
+        Full body fetched from <code>documents</code> table via <code>document_id</code> FK.
+        <code>QueryDocument()</code> applies regex or substring window extraction,
+        enforces a token budget, then calls Claude for span-grounded answer generation.
+      </p>
+      <p style="font-size:0.8rem;color:#64748b">query_document.go + claude/document_query.go</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- DESIGN DECISIONS -->
+<section class="decisions-section">
+  <p class="section-label">Design Decisions</p>
+  <h2>Why It Works This Way</h2>
+  <p class="section-intro">
+    Each decision in the tiered design was made to solve a specific failure mode.
+  </p>
+
+  <div class="decision-list">
+
+    <div class="decision-item">
+      <p class="decision-choice">"Synopsis in memories.content for Tier-1 and Tier-2"</p>
+      <div class="decision-rationale">
+        <strong>Keeps memory_recall fast for all tiers.</strong> The recall path reads
+        <code>memories.content</code> to populate result summaries. If Tier-2 put the raw body there,
+        a single recall call returning 10 results could transfer hundreds of megabytes.
+        The synopsis gives recall enough signal to rank without punishing every search query.
+      </div>
+    </div>
+
+    <div class="decision-item">
+      <p class="decision-choice">"RawBody is ephemeral &mdash; carries the full body for chunking then disappears"</p>
+      <div class="decision-rationale">
+        <strong>Tier-1 avoids a documents table row but still grounds chunks in the full body.</strong>
+        Without <code>RawBody</code>, Tier-1 chunks would be built from the synopsis, making recall
+        no better than Tier-2. <code>RawBody</code> is tagged <code>json:"-"</code> so it cannot
+        accidentally enter any serialization path. It is set by <code>execStoreDocument()</code>,
+        consumed by <code>storeChunksForMemory()</code>, and gone.
+      </div>
+    </div>
+
+    <div class="decision-item">
+      <p class="decision-choice">"documents table for Tier-2, not a blob store or object storage"</p>
+      <div class="decision-rationale">
+        <strong>Transactional integrity without infrastructure complexity.</strong>
+        The FK from <code>memories.document_id</code> to <code>documents.id</code> means
+        document bodies are deleted when memories are deleted, and they are visible within
+        the same PostgreSQL transaction as the memory write. No S3 bucket, no presigned URLs,
+        no orphan cleanup job. At the 50 MB hard limit, PostgreSQL handles this scale comfortably.
+      </div>
+    </div>
+
+    <div class="decision-item">
+      <p class="decision-choice">"Composite score: 0.50 cosine + 0.35 BM25 + 0.15 recency"</p>
+      <div class="decision-rationale">
+        <strong>Semantic search misses exact matches; lexical search misses paraphrase.</strong>
+        The composite score is a weighted fusion of HNSW approximate nearest-neighbor cosine
+        similarity, BM25 full-text rank, and an exponential recency decay
+        (<code>exp(-0.01 * hours_since_access)</code>). The 50/35/15 split was tuned against
+        the engram benchmark suite in <code>docs/benchmarks/2026-04-summarize-llm-comparison.md</code>.
+        The recency weight is intentionally small &mdash; it breaks ties without overriding relevance.
+      </div>
+    </div>
+
+    <div class="decision-item">
+      <p class="decision-choice">"HNSW index via pgvector, not in-process cosine scan"</p>
+      <div class="decision-rationale">
+        <strong>The original design fetched up to 10,000 chunk embeddings into Go for cosine scoring.</strong>
+        At 10k+ memories this becomes a latency and memory bottleneck. The pgvector HNSW index
+        (<code>m=16, ef_construction=64</code>) keeps approximate recall quality above 0.97
+        while reducing the recall path from an O(n) transfer to a top-K index scan.
+        IVFFlat was rejected because it requires periodic reindexing.
+      </div>
+    </div>
+
+    <div class="decision-item">
+      <p class="decision-choice">"charCap is a hard limit on QueryDocument span budget"</p>
+      <div class="decision-rationale">
+        <strong>Issue #195:</strong> the original implementation checked whether adding a span
+        would exceed <code>TokenBudget * 4</code> chars, but if it did, it appended nothing
+        and set <code>Truncated=true</code>. The last span was silently dropped. Fix: truncate
+        the span at a valid UTF-8 rune boundary to use the remaining budget, then set
+        <code>Truncated=true</code>. The span appears in the result; the caller knows it is cut.
+        A second guard was added after the walk-back loop to prevent appending a zero-length span
+        when the boundary lands at position 0.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- SOURCES -->
+<section class="sources-section">
+  <p class="section-label">Sources and References</p>
+  <h2>The Shoulders It Stands On</h2>
+
+  <div class="source-group">
+    <p class="source-group-label">Internal Design Documents</p>
+
+    <div class="source-entry">
+      <div class="source-title">
+        engram-go Phases 3-7 Design Spec
+        <span class="source-author">Approved 2026-04-10. Covers embedding client, search engine, MCP server, background workers, and CLI entry point for the full Go port.</span>
+      </div>
+      <div class="source-ref">docs/superpowers/specs/<br/>2026-04-10-engram-go-phases-3-7-design.md</div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        pgvector ANN Recall + MinHash/LSH Consolidation Design Spec
+        <span class="source-author">Draft 2026-04-10. Details HNSW index migration from BYTEA to vector(768), RecallWithOpts rewrite, and O(n) MinHash candidate generation for Consolidate.</span>
+      </div>
+      <div class="source-ref">docs/superpowers/specs/<br/>2026-04-10-pgvector-ann-minhash-design.md</div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        Tiered Document Ingestion &mdash; Phase A4 Commit
+        <span class="source-author">Peter Simmons, 2026-04-17. Commit cbf5b07. Introduces classifyDocumentSize, buildSynopsis, execStoreDocument, RawBody field, and documents table migration 010.</span>
+        <span class="source-note">Documents the exact tier boundaries and the RawBody ephemeral-field pattern.</span>
+      </div>
+      <div class="source-ref">git show cbf5b07</div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        memory_query_document + QueryDocument Fix &mdash; Commits 23e7d57, 584deae, cafd6a4
+        <span class="source-author">Peter Simmons, 2026-04-17. Phase A5 (memory_query_document + RecallWithinMemory) and issue #195 charCap hard-limit fix including UTF-8 rune-boundary walk-back.</span>
+      </div>
+      <div class="source-ref">git log --oneline</div>
+    </div>
+
+  </div>
+
+  <div class="source-group">
+    <p class="source-group-label">Academic and Technical Foundations</p>
+
+    <div class="source-entry">
+      <div class="source-title">
+        Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs
+        <span class="source-author">Yu. A. Malkov, D. A. Yashunin. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2020.</span>
+        <span class="source-note">Foundation for the HNSW index used in pgvector for approximate vector recall. Establishes the m and ef_construction parameters used in the HNSW index definition.</span>
+      </div>
+      <div class="source-ref"><a href="https://arxiv.org/abs/1603.09320" target="_blank">arxiv:1603.09320</a></div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        Mining of Massive Datasets &mdash; Chapter 3: Finding Similar Items
+        <span class="source-author">Jure Leskovec, Anand Rajaraman, Jeff Ullman. Cambridge University Press. 3rd edition, 2020.</span>
+        <span class="source-note">Canonical reference for MinHash signature computation and LSH banding. Directly informs the NumHashes=128, NumBands=16, RowsPerBand=8 parameters in internal/minhash.</span>
+      </div>
+      <div class="source-ref"><a href="http://www.mmds.org" target="_blank">mmds.org</a></div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        The Probabilistic Relevance Framework: BM25 and Beyond
+        <span class="source-author">Stephen Robertson, Hugo Zaragoza. Foundations and Trends in Information Retrieval, vol. 3, no. 4, 2009.</span>
+        <span class="source-note">Foundation for the BM25 scoring used in the FTS search path. The 0.35 weight in the composite score reflects BM25's strength on exact-term and short-document recall.</span>
+      </div>
+      <div class="source-ref">doi:10.1561/1500000019</div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        pgvector: Open-source vector similarity search for Postgres
+        <span class="source-author">Andrew Kane. 2021&ndash;present. Provides the vector data type, HNSW and IVFFlat indexes, and the &lt;=&gt; cosine distance operator used in VectorSearch().</span>
+      </div>
+      <div class="source-ref"><a href="https://github.com/pgvector/pgvector" target="_blank">github.com/pgvector/pgvector</a></div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        nomic-embed-text
+        <span class="source-author">Nomic AI, 2024. 768-dimensional text embedding model served via Ollama. Default embedding model for engram-go; dimensions drive the vector(768) column type.</span>
+      </div>
+      <div class="source-ref"><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5" target="_blank">huggingface.co</a></div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        Model Context Protocol Specification
+        <span class="source-author">Anthropic, 2024. Defines the SSE transport, tool call/result schema, and resource model that all 17 engram-go MCP tools conform to.</span>
+      </div>
+      <div class="source-ref"><a href="https://spec.modelcontextprotocol.io" target="_blank">spec.modelcontextprotocol.io</a></div>
+    </div>
+
+  </div>
+
+  <div class="source-group">
+    <p class="source-group-label">Prior Art and Inspiration</p>
+
+    <div class="source-entry">
+      <div class="source-title">
+        petersimmons1972/engram &mdash; Python service (predecessor)
+        <span class="source-author">Peter Simmons. The original Python MCP memory server that engram-go replaces. Wire-compatible: same tool names, same SSE transport, same PostgreSQL schema up to migration 009.</span>
+        <span class="source-note">The tiered document ingestion (A4) and memory_query_document (A5) are Go-only extensions with no Python equivalent.</span>
+      </div>
+      <div class="source-ref">github.com/petersimmons1972/engram</div>
+    </div>
+
+    <div class="source-entry">
+      <div class="source-title">
+        mcp-go &mdash; Go SDK for the Model Context Protocol
+        <span class="source-author">mark3labs. v0.45.0. The MCP server library that handles SSE transport, tool registration, and request/response encoding for all 17 tools.</span>
+      </div>
+      <div class="source-ref"><a href="https://github.com/mark3labs/mcp-go" target="_blank">github.com/mark3labs/mcp-go</a></div>
+    </div>
+
+  </div>
+
+  <p style="margin-top:2rem;font-size:0.78rem;color:#475569;font-style:italic;">
+    Note: the original design session for tiered ingestion included additional web references that are
+    no longer accessible (the conversation context was compacted). The academic foundations above
+    represent the complete known bibliography for the techniques implemented.
+  </p>
+
+</section>
+
+<footer class="site-footer">
+  <span>engram-go document storage strategy &bull; generated 2026-04-17</span>
+  <span>internal/mcp/ingest_document.go &bull; internal/search/engine.go &bull; internal/claude/document_query.go</span>
+</footer>
+
+</body>
+</html>
