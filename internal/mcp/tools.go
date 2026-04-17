@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
@@ -899,6 +900,11 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
 	}
 	eventID := getString(args, "event_id", "")
+	if eventID != "" {
+		if _, err := uuid.Parse(eventID); err != nil {
+			return nil, fmt.Errorf("event_id: must be a valid UUID")
+		}
+	}
 	failureClass := getString(args, "failure_class", "")
 	if failureClass != "" {
 		if !types.ValidateFailureClass(failureClass) {

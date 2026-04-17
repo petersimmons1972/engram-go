@@ -1224,6 +1224,9 @@ func (e *SearchEngine) FeedbackWithEventAndClass(ctx context.Context, eventID st
 // filter is an optional prefix/value filter (not applicable for failure_class).
 // limit caps the number of rows returned.
 func (e *SearchEngine) Aggregate(ctx context.Context, by, filter string, limit int) ([]types.AggregateRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
 	switch by {
 	case "tag", "type":
 		return e.backend.AggregateMemories(ctx, e.project, by, filter, limit)
