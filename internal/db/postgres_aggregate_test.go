@@ -145,7 +145,7 @@ func TestAggregateMemories_ByType_SingleTypeOnly(t *testing.T) {
 
 	ctxRow := findRowByLabel(rows, types.MemoryTypeContext)
 	require.NotNil(t, ctxRow, "expected row with label=context")
-	require.GreaterOrEqual(t, ctxRow.Count, 1, "count must be >= 1")
+	require.Equal(t, 3, ctxRow.Count, "all three inserted memories must be counted")
 }
 
 // TestAggregateMemories_EmptyProject calls AggregateMemories on a project

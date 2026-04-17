@@ -902,7 +902,7 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	eventID := getString(args, "event_id", "")
 	if eventID != "" {
 		if _, err := uuid.Parse(eventID); err != nil {
-			return nil, fmt.Errorf("event_id: must be a valid UUID")
+			return nil, fmt.Errorf("event_id: must be a valid UUID, got %q", eventID)
 		}
 	}
 	failureClass := getString(args, "failure_class", "")

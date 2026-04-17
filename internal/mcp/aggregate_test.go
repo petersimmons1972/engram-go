@@ -132,10 +132,10 @@ func TestHandleMemoryAggregate_InvalidBy(t *testing.T) {
 	})
 }
 
-// TestHandleMemoryAggregate_LimitClamping verifies that passing limit=-1 does not
-// produce an error at the MCP handler boundary. The handler silently clamps any
-// limit < 1 to 20 before forwarding to the engine, so the call must succeed and
-// return a valid aggregate response with a "rows" key.
+// TestHandleMemoryAggregate_LimitClamping verifies that passing a representative
+// non-positive limit (limit=-1) does not produce an error at the MCP handler
+// boundary. The handler silently clamps limit < 1 to 20 before forwarding to
+// the engine, so the call must succeed and return a valid aggregate response with a "rows" key.
 func TestHandleMemoryAggregate_LimitClamping(t *testing.T) {
 	ctx := context.Background()
 	// Use the noopBackend-backed pool so this test runs without a real database.
