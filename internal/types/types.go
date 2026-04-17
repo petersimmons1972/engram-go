@@ -101,8 +101,19 @@ func NewMemoryID() string {
 // MCP tool wire format.
 type Memory struct {
 	// ID is a UUID v7 string, time-sortable.
-	ID          string    `json:"id"`
-	Content     string    `json:"content"`
+	ID      string `json:"id"`
+	Content string `json:"content"`
+
+	// RawBody holds the original full content when a Tier-1 synopsis memory is
+	// constructed in-process. It is never serialised (json:"-") because it is
+	// only meaningful during the current Store call: once the memory is written
+	// to the database, Content (the synopsis) is the authoritative field.
+	//
+	// Usage: set this before calling Store() when m.Content holds a synopsis
+	// and you want chunks to be built from the full body. Store() passes
+	// m.RawBody to StoreWithRawBody, eliminating the magic-value "" sentinel.
+	// When RawBody is empty (normal memories), behaviour is unchanged.
+	RawBody string `json:"-"`
 	MemoryType  string    `json:"memory_type"`
 	Project     string    `json:"project"`
 	Tags        []string  `json:"tags"`

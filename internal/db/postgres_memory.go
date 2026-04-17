@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"strings"
@@ -18,8 +20,9 @@ import (
 // Used by both the storage layer and the ingest dedup path to guarantee
 // identical hash values from the same input string.
 func ContentHash(content string) string {
-	h := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("%x", h)
+	h := sha256.New()
+	io.WriteString(h, content) //nolint:errcheck // hash.Hash.Write never returns an error
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (b *PostgresBackend) StoreMemory(ctx context.Context, m *types.Memory) error {

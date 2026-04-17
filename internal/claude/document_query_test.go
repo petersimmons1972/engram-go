@@ -158,6 +158,71 @@ func TestQueryDocument_NoFilter(t *testing.T) {
 	require.Equal(t, 0, res.Spans[0].Offset)
 }
 
+// --- Tests for fixes #184, #186, #188 ---
+
+// Fix #184: FilterRegex longer than 1024 chars must be rejected before compile.
+func TestQueryDocument_RegexTooLong(t *testing.T) {
+	srv := panicOnCallServer(t)
+	defer srv.Close()
+	c, _ := claude.New("test")
+	c.BaseURL = srv.URL
+
+	q := claude.DocumentQuery{
+		Question:    "?",
+		FilterRegex: strings.Repeat("a", 1025), // one byte over the 1024-char limit
+		WindowChars: 40,
+		TokenBudget: 4000,
+	}
+	_, err := claude.QueryDocument(context.Background(), c, "some content", q)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "filter.regex exceeds")
+}
+
+// Fix #186: Truncated must be false when the span that tips the budget is the last one.
+func TestQueryDocument_TruncatedFalseOnLastSpan(t *testing.T) {
+	srv := newStubClaudeServer("ok")
+	defer srv.Close()
+	c, _ := claude.New("test")
+	c.BaseURL = srv.URL
+
+	// Produce exactly two non-overlapping spans each 40 chars wide (WindowChars=40, half=20).
+	// Span 1: HIT at offset 500 → window [480,523) = 43 chars
+	// Span 2: HIT at offset 1003 → window [983,1043) = 40 chars if content is long enough
+	// Use budget=20 → charCap=80. Span1(43) + Span2(40) = 83 > 80, so the last (second)
+	// span tips the cap. With fix, Truncated stays false; without fix it would be true.
+	content := strings.Repeat("x", 500) + "HIT" + strings.Repeat("y", 500) + "HIT" + strings.Repeat("z", 100)
+	// Verify span2 is really the last: the content has exactly two HITs.
+	q := claude.DocumentQuery{
+		Question:    "?",
+		FilterSubs:  []string{"HIT"},
+		WindowChars: 40,
+		TokenBudget: 20, // charCap = 80; span1=43 + span2=40 = 83 > 80, last span tips cap
+	}
+	res, err := claude.QueryDocument(context.Background(), c, content, q)
+	require.NoError(t, err)
+	require.Len(t, res.Spans, 2, "both spans should be included")
+	require.False(t, res.Truncated, "should not be truncated when last span tips the budget")
+}
+
+// Fix #188: Empty content must short-circuit with a canned answer, no LLM call.
+func TestQueryDocument_EmptyContent(t *testing.T) {
+	srv := panicOnCallServer(t)
+	defer srv.Close()
+	c, _ := claude.New("test")
+	c.BaseURL = srv.URL
+
+	q := claude.DocumentQuery{
+		Question:    "anything?",
+		WindowChars: 4000,
+		TokenBudget: 6000,
+	}
+	res, err := claude.QueryDocument(context.Background(), c, "", q)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Empty(t, res.Spans)
+	require.Equal(t, "No content available for this memory.", res.Answer)
+}
+
 func TestQueryDocument_TokenBudget(t *testing.T) {
 	srv := newStubClaudeServer("ok")
 	defer srv.Close()

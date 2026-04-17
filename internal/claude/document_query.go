@@ -68,9 +68,19 @@ func QueryDocument(ctx context.Context, c *Client, content string, q DocumentQue
 	half := q.WindowChars / 2
 	n := len(content)
 
+	// Fix #188: empty content — no LLM call, return canned answer.
+	if len(content) == 0 {
+		return &DocumentQueryResult{Spans: []DocumentSpan{}, Answer: "No content available for this memory."}, nil
+	}
+
 	var raws []rawSpan
 	switch {
 	case q.FilterRegex != "":
+		// Fix #184: reject regex patterns exceeding the length cap (ReDoS mitigation).
+		const maxFilterRegexLen = 1024
+		if len(q.FilterRegex) > maxFilterRegexLen {
+			return nil, fmt.Errorf("filter.regex exceeds %d character limit", maxFilterRegexLen)
+		}
 		re, err := regexp.Compile(q.FilterRegex)
 		if err != nil {
 			return nil, fmt.Errorf("invalid filter.regex: %w", err)
@@ -139,7 +149,7 @@ func QueryDocument(ctx context.Context, c *Client, content string, q DocumentQue
 	spans := make([]DocumentSpan, 0, len(merged))
 	total := 0
 	truncated := false
-	for _, m := range merged {
+	for i, m := range merged {
 		text := content[m.start:m.end]
 		spans = append(spans, DocumentSpan{
 			Offset:  m.start,
@@ -147,7 +157,8 @@ func QueryDocument(ctx context.Context, c *Client, content string, q DocumentQue
 			Matched: m.matched,
 		})
 		total += len(text)
-		if total > charCap {
+		// Fix #186: only mark truncated when more spans remain after this one.
+		if total > charCap && i < len(merged)-1 {
 			truncated = true
 			break
 		}
