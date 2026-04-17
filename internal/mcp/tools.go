@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -1549,24 +1550,28 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 
-	question := getString(args, "question", "")
+	question := strings.TrimSpace(getString(args, "question", ""))
 	if question == "" {
-		return nil, fmt.Errorf("question is required")
+		return mcpgo.NewToolResultError("question: required"), nil
 	}
 	project := getString(args, "project", "")
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
-	}
-	topK := getInt(args, "top_k", 10)
-	if topK < 1 {
-		topK = 1
-	} else if topK > 100 {
-		topK = 100
+		return mcpgo.NewToolResultError("project: required"), nil
 	}
 
+	// Guard before any resource allocation.
 	if cfg.claudeClient == nil {
-		return nil, fmt.Errorf("memory_ask requires Claude (set ENGRAM_CLAUDE_KEY)")
+		return mcpgo.NewToolResultError("memory_ask requires Claude (set ENGRAM_CLAUDE_KEY)"), nil
 	}
+
+	topK := getInt(args, "top_k", 0)
+	if topK < 0 {
+		return mcpgo.NewToolResultError("top_k: must be >= 0"), nil
+	}
+	if topK > 100 {
+		topK = 100
+	}
+	// topK == 0 means "use default" — pass 0 to Asker.TopK so Ask applies defaultTopK=10.
 
 	h, err := pool.Get(ctx, project)
 	if err != nil {

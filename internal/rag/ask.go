@@ -50,10 +50,18 @@ func (a Asker) Ask(ctx context.Context, question string) (*AskResult, error) {
 
 	trimmed := a.Budget.Trim(results)
 
-	// Count context tokens from trimmed chunks.
+	if len(trimmed) == 0 {
+		return &AskResult{Answer: "No relevant memories found.", Citations: []Citation{}}, nil
+	}
+
+	// Count context tokens from trimmed chunks (floor at 1 per chunk, matching ContextBudget).
 	contextTokens := 0
 	for _, chunk := range trimmed {
-		contextTokens += len(chunk.MatchedChunk) / 4
+		cost := len(chunk.MatchedChunk) / 4
+		if cost < 1 {
+			cost = 1
+		}
+		contextTokens += cost
 	}
 
 	prompt := AssemblePrompt(question, trimmed)

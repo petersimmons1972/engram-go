@@ -38,13 +38,16 @@ func (b ContextBudget) Trim(results []types.SearchResult) []types.SearchResult {
 	// Greedily accumulate until budget exhausted.
 	remaining := b.MaxTokens
 	selected := make([]indexed, 0, len(items))
-	for _, item := range items {
-		cost := len(item.result.MatchedChunk) / 4
+	for i := range items {
+		cost := len(items[i].result.MatchedChunk) / 4
+		if cost < 1 {
+			cost = 1
+		}
 		if cost > remaining {
 			continue
 		}
 		remaining -= cost
-		selected = append(selected, item)
+		selected = append(selected, items[i])
 	}
 
 	if len(selected) == 0 {

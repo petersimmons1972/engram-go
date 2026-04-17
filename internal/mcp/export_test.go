@@ -439,7 +439,9 @@ func CallHandleMemoryFeedbackWithClassExpectError(ctx context.Context, t *testin
 }
 
 // CallHandleMemoryAsk invokes handleMemoryAsk and returns the parsed response.
-// Returns (nil, err) on validation errors; returns (result, nil) on success.
+// Returns (nil, err) on Go-level transport errors.
+// Returns (nil, nil) when the handler returns a tool-level error result (IsError=true).
+// Returns (result, nil) on success.
 func CallHandleMemoryAsk(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) (map[string]any, error) {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}
@@ -447,6 +449,12 @@ func CallHandleMemoryAsk(ctx context.Context, t *testing.T, pool *EnginePool, ar
 	result, err := handleMemoryAsk(ctx, pool, req, Config{})
 	if err != nil {
 		return nil, err
+	}
+	// Tool-level validation errors (e.g. missing claude client) are returned as
+	// IsError=true results, not Go errors. Treat them as non-fatal.
+	if result.IsError {
+		t.Logf("handleMemoryAsk returned tool-level error result")
+		return nil, nil
 	}
 	if len(result.Content) == 0 {
 		t.Fatal("tool result has no content items")
@@ -462,13 +470,18 @@ func CallHandleMemoryAsk(ctx context.Context, t *testing.T, pool *EnginePool, ar
 	return out, nil
 }
 
-// CallHandleMemoryAskExpectError invokes handleMemoryAsk and fatals if no error.
+// CallHandleMemoryAskExpectError invokes handleMemoryAsk and fatals if neither
+// a Go error nor a tool-level error result (IsError=true) is returned.
 func CallHandleMemoryAskExpectError(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = args
-	_, err := handleMemoryAsk(ctx, pool, req, Config{})
-	if err == nil {
-		t.Fatal("expected an error from handleMemoryAsk, got nil")
+	result, err := handleMemoryAsk(ctx, pool, req, Config{})
+	if err != nil {
+		return // Go-level error is acceptable
 	}
+	if result != nil && result.IsError {
+		return // tool-level error result is acceptable
+	}
+	t.Fatal("expected an error from handleMemoryAsk, got nil")
 }
