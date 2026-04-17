@@ -29,8 +29,128 @@ type Config struct {
 	// DataDir is the base directory for all file-system operations (export,
 	// import, ingest). Paths provided by callers are validated to stay within
 	// this directory. Must be set; file-operation tools return an error if empty.
-	DataDir      string
-	claudeClient *claude.Client // set via Server.SetClaudeClient
+	DataDir string
+	// RecallDefaultMode controls the default recall response format.
+	// "" or "full" returns complete SearchResults; "handle" returns lightweight
+	// Handle references. Set via ENGRAM_RECALL_DEFAULT_MODE env var.
+	RecallDefaultMode string
+	// FetchMaxBytes caps the content returned by memory_fetch detail=full.
+	// Defaults to 65536 (64 KB). Set via ENGRAM_FETCH_MAX_BYTES env var.
+	FetchMaxBytes int
+	claudeClient  *claude.Client // set via Server.SetClaudeClient
+
+	// ExploreMaxIters caps memory_explore loop iterations (default 5).
+	ExploreMaxIters int
+	// ExploreMaxWorkers bounds FanOutReason concurrency (default 8).
+	ExploreMaxWorkers int
+	// ExploreTokenBudget caps cumulative scoring-call tokens (default 20000).
+	ExploreTokenBudget int
+}
+
+// backendFetcher is the narrow interface required by execFetch.
+// Satisfied by db.Backend; declared separately so tests can inject a stub.
+type backendFetcher interface {
+	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
+}
+
+// execFetch is the testable core of handleMemoryFetch.
+// detail: "summary" | "chunk" | "full"
+// requestedChunkIDs: when non-empty, only those chunk IDs are returned (chunk mode only).
+// maxBytes: byte cap applied to content in full mode; 0 means no cap.
+func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
+	m, err := f.GetMemory(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, fmt.Errorf("memory %q not found", id)
+	}
+
+	switch detail {
+	case "chunk":
+		chunks, err := f.GetChunksForMemory(ctx, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(requestedChunkIDs) > 0 {
+			want := make(map[string]bool, len(requestedChunkIDs))
+			for _, cid := range requestedChunkIDs {
+				want[cid] = true
+			}
+			filtered := chunks[:0]
+			for _, c := range chunks {
+				if want[c.ID] {
+					filtered = append(filtered, c)
+				}
+			}
+			chunks = filtered
+		}
+		return map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"chunks":      chunks,
+			"chunk_count": len(chunks),
+		}, nil
+
+	case "full":
+		content := m.Content
+		truncated := false
+		if maxBytes > 0 && len(content) > maxBytes {
+			content = content[:maxBytes]
+			truncated = true
+		}
+		out := map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"content":     content,
+			"truncated":   truncated,
+		}
+		if m.Summary != nil {
+			out["summary"] = *m.Summary
+		}
+		return out, nil
+
+	default: // "summary" and anything unrecognised
+		sum := ""
+		if m.Summary != nil {
+			sum = *m.Summary
+		}
+		return map[string]any{
+			"id":          m.ID,
+			"memory_type": m.MemoryType,
+			"project":     m.Project,
+			"summary":     sum,
+		}, nil
+	}
+}
+
+// handleMemoryFetch implements the memory_fetch MCP tool.
+func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	id := getString(args, "id", "")
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	detail := getString(args, "detail", "summary")
+	chunkIDs := toStringSlice(args["chunk_ids"])
+	maxBytes := cfg.FetchMaxBytes
+	if maxBytes == 0 {
+		maxBytes = 65536
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	result, err := execFetch(ctx, h.Engine.Backend(), id, detail, maxBytes, chunkIDs)
+	if err != nil {
+		return nil, err
+	}
+	return toolResult(result)
 }
 
 // claudeMergeAdapter adapts *claude.Client to search.MergeReviewer by converting
@@ -348,6 +468,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
+	mode := getString(args, "mode", cfg.RecallDefaultMode)
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames := toStringSlice(args["projects"])
@@ -384,6 +505,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
 		if err != nil {
 			return nil, err
+		}
+		if mode == "handle" {
+			return toolResult(map[string]any{
+				"handles":    search.ToHandles(results),
+				"count":      len(results),
+				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+			})
 		}
 		out := map[string]any{"results": results, "count": len(results)}
 		if includeConflicts && firstHandle != nil {
@@ -452,6 +580,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 	}
 
+	if mode == "handle" {
+		return toolResult(map[string]any{
+			"handles":    search.ToHandles(results),
+			"count":      len(results),
+			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+		})
+	}
 	out := map[string]any{"results": results, "count": len(results)}
 	if eventID != "" {
 		out["event_id"] = eventID
@@ -1167,5 +1302,161 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		"invalidated_sources": ev.InvalidatedSources,
 	}
 	data, _ := json.Marshal(out)
+	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+// exploreScopedRecaller wraps a Recaller and a scope, filtering recalled
+// memories to those matching the scope constraints. Filtering is post-recall
+// since the underlying search engine does not expose scope-aware APIs.
+type exploreScopedRecaller struct {
+	inner claude.Recaller
+	scope claude.ExploreScope
+}
+
+func (s *exploreScopedRecaller) Recall(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, error) {
+	results, err := s.inner.Recall(ctx, query, topK, detail)
+	if err != nil {
+		return nil, err
+	}
+	// If no scope constraints are set, return results as-is.
+	if len(s.scope.Tags) == 0 && s.scope.EpisodeID == "" && s.scope.Since == nil && s.scope.Until == nil {
+		return results, nil
+	}
+	filtered := results[:0]
+	for _, r := range results {
+		if r.Memory == nil {
+			continue
+		}
+		m := r.Memory
+		// Episode filter.
+		if s.scope.EpisodeID != "" && m.EpisodeID != s.scope.EpisodeID {
+			continue
+		}
+		// Time filters.
+		if s.scope.Since != nil && m.CreatedAt.Before(*s.scope.Since) {
+			continue
+		}
+		if s.scope.Until != nil && m.CreatedAt.After(*s.scope.Until) {
+			continue
+		}
+		// Tag filter: memory must contain all requested tags.
+		if len(s.scope.Tags) > 0 {
+			tagSet := make(map[string]bool, len(m.Tags))
+			for _, t := range m.Tags {
+				tagSet[t] = true
+			}
+			match := true
+			for _, want := range s.scope.Tags {
+				if !tagSet[want] {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered, nil
+}
+
+// exploreMemFetcher implements claude.MemoryFetcher using the engine backend.
+type exploreMemFetcher struct {
+	backend backendFetcher
+}
+
+func (f *exploreMemFetcher) FetchMemory(ctx context.Context, _ string, id string) (*types.Memory, error) {
+	return f.backend.GetMemory(ctx, id)
+}
+
+// parseExploreScope extracts the optional scope sub-object from MCP args.
+func parseExploreScope(args map[string]any) claude.ExploreScope {
+	raw, ok := args["scope"]
+	if !ok {
+		return claude.ExploreScope{}
+	}
+	scopeMap, ok := raw.(map[string]any)
+	if !ok {
+		return claude.ExploreScope{}
+	}
+	var scope claude.ExploreScope
+	scope.Tags = toStringSlice(scopeMap["tags"])
+	scope.EpisodeID = getString(scopeMap, "episode_id", "")
+	if since := getString(scopeMap, "since", ""); since != "" {
+		if t, err := time.Parse(time.RFC3339, since); err == nil {
+			scope.Since = &t
+		}
+	}
+	if until := getString(scopeMap, "until", ""); until != "" {
+		if t, err := time.Parse(time.RFC3339, until); err == nil {
+			scope.Until = &t
+		}
+	}
+	return scope
+}
+
+// handleMemoryExplore runs the iterative recall+score+synthesis loop (A3).
+func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project := getString(args, "project", "default")
+	question := getString(args, "question", "")
+	if question == "" {
+		return mcpgo.NewToolResultError("question is required"), nil
+	}
+	if cfg.claudeClient == nil {
+		return mcpgo.NewToolResultError("memory_explore requires ANTHROPIC_API_KEY to be set"), nil
+	}
+
+	maxIter := getInt(args, "max_iterations", cfg.ExploreMaxIters)
+	if maxIter < 1 {
+		maxIter = 1
+	}
+	if maxIter > 10 {
+		maxIter = 10
+	}
+	threshold := getFloat(args, "confidence_threshold", 0.75)
+	if threshold < 0 {
+		threshold = 0
+	}
+	if threshold > 1 {
+		threshold = 1
+	}
+	budget := getInt(args, "token_budget", cfg.ExploreTokenBudget)
+	if budget <= 0 {
+		budget = 20000
+	}
+	includeTrace := getBool(args, "include_trace", false)
+	scope := parseExploreScope(args)
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("get engine for %q: %w", project, err)
+	}
+
+	// Wrap the engine in a scope-filtering recaller.
+	recaller := claude.Recaller(h.Engine)
+	if len(scope.Tags) > 0 || scope.EpisodeID != "" || scope.Since != nil || scope.Until != nil {
+		recaller = &exploreScopedRecaller{inner: h.Engine, scope: scope}
+	}
+
+	// Wrap the backend as a MemoryFetcher for full-detail corpus upgrade.
+	fetcher := &exploreMemFetcher{backend: h.Engine.Backend()}
+
+	result, err := claude.Explore(ctx, cfg.claudeClient, recaller, fetcher, h.Engine.Backend(), claude.ExploreRequest{
+		Project:             project,
+		Question:            question,
+		MaxIterations:       maxIter,
+		ConfidenceThreshold: threshold,
+		TokenBudget:         budget,
+		IncludeTrace:        includeTrace,
+		Scope:               scope,
+		MaxWorkers:          cfg.ExploreMaxWorkers,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("explore: %w", err)
+	}
+
+	data, _ := json.Marshal(result)
 	return mcpgo.NewToolResultText(string(data)), nil
 }

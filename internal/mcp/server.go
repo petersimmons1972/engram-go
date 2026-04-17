@@ -287,6 +287,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryRecall(ctx, pool, req, cfg)
 			}},
+		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryFetch(ctx, pool, req, cfg)
+			}},
 		{"memory_list", "List memories with optional filters",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryList(ctx, pool, req)
@@ -421,6 +425,13 @@ func (s *Server) registerTools() {
 				mcpgo.WithDescription("Recall memories and synthesize a grounded answer using Claude")),
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryReason(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_explore",
+				mcpgo.WithDescription("Iterative recall+score+synthesis loop — returns a single grounded answer (A3)")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryExplore(ctx, pool, req, cfg)
 			},
 		)
 	}

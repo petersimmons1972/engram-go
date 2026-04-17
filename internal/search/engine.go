@@ -48,6 +48,40 @@ type RerankResult struct {
 // RecallOpts controls optional post-processing for Recall.
 type RecallOpts struct {
 	Reranker ResultReranker // nil = skip re-ranking
+	// Mode controls response format. "" or "full" returns complete SearchResults;
+	// "handle" returns lightweight Handle references (content omitted).
+	Mode string
+}
+
+// ToHandles projects a slice of SearchResults into lightweight Handle references.
+// Handles carry only the summary and metadata needed to decide whether to fetch;
+// full content is never loaded. Entries with a nil Memory are skipped.
+func ToHandles(results []types.SearchResult) []types.Handle {
+	if len(results) == 0 {
+		return nil
+	}
+	const fetchHint = "call memory_fetch with this id and detail=summary|chunk|full"
+	out := make([]types.Handle, 0, len(results))
+	for _, r := range results {
+		if r.Memory == nil {
+			continue
+		}
+		sum := ""
+		if r.Memory.Summary != nil {
+			sum = *r.Memory.Summary
+		}
+		out = append(out, types.Handle{
+			ID:          r.Memory.ID,
+			Project:     r.Memory.Project,
+			Summary:     sum,
+			Score:       r.Score,
+			StorageMode: r.Memory.StorageMode,
+			Bytes:       len(r.Memory.Content),
+			IsHandle:    true,
+			FetchHint:   fetchHint,
+		})
+	}
+	return out
 }
 
 // MergeCandidate is a pair of memories with their similarity score.
