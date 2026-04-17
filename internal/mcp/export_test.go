@@ -418,6 +418,8 @@ func CallHandleMemoryFeedbackWithClass(ctx context.Context, t *testing.T, pool *
 	return out
 }
 
+// CallHandleMemoryFeedbackWithClassExpectError invokes handleMemoryFeedback and
+// fatals if no error is returned.
 func CallHandleMemoryFeedbackWithClassExpectError(ctx context.Context, t *testing.T, pool *EnginePool, args map[string]any) {
 	t.Helper()
 	req := mcpgo.CallToolRequest{}
