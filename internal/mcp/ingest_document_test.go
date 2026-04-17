@@ -6,10 +6,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -231,4 +235,235 @@ func TestConfigOrDefaults_RespectsSetValues(t *testing.T) {
 	maxDoc, rawMax := configOrDefaults(Config{MaxDocumentBytes: 1, RawDocumentMaxBytes: 2})
 	require.Equal(t, 1, maxDoc)
 	require.Equal(t, 2, rawMax)
+}
+
+// ── handleMemoryIngestDocumentStream: registry + action dispatch ──────────────
+// These tests exercise start/append validation and the uploadRegistry's TTL,
+// cap, and mutex without needing a live EnginePool. The finish action routes
+// into runStreamIngest which requires a real SearchEngine, covered by the
+// integration tests in e2e.
+
+// resetUploadRegistry wipes the process-global registry between tests.
+func resetUploadRegistry(t *testing.T) {
+	t.Helper()
+	uploadRegistryMu.Lock()
+	defer uploadRegistryMu.Unlock()
+	for k := range uploadRegistry {
+		delete(uploadRegistry, k)
+	}
+}
+
+func streamReq(args map[string]any) mcpgo.CallToolRequest {
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	return req
+}
+
+// resultMap parses the JSON body of a tool result.
+func resultMap(t *testing.T, r *mcpgo.CallToolResult) map[string]any {
+	t.Helper()
+	require.NotNil(t, r)
+	require.NotEmpty(t, r.Content)
+	tc, ok := r.Content[0].(mcpgo.TextContent)
+	require.Truef(t, ok, "expected TextContent, got %T", r.Content[0])
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(tc.Text), &out))
+	return out
+}
+
+// Test A: chunked upload happy path up through append. finish requires a live
+// engine and is covered by e2e tests — this test stops after the second append
+// and verifies the registry state is exactly what finish would consume.
+func TestHandleStream_ChunkedUpload_AppendHappyPath(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	// start
+	out, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "uA", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+	require.Equal(t, "started", resultMap(t, out)["status"])
+
+	// append part 0
+	part0 := base64.StdEncoding.EncodeToString([]byte("hello "))
+	out, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "uA", "part": float64(0), "data": part0}),
+		Config{})
+	require.NoError(t, err)
+	m := resultMap(t, out)
+	require.Equal(t, float64(1), m["parts_received"])
+	require.Equal(t, float64(6), m["bytes_received"])
+
+	// append part 1
+	part1 := base64.StdEncoding.EncodeToString([]byte("world"))
+	out, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "uA", "part": float64(1), "data": part1}),
+		Config{})
+	require.NoError(t, err)
+	m = resultMap(t, out)
+	require.Equal(t, float64(2), m["parts_received"])
+	require.Equal(t, float64(11), m["bytes_received"])
+
+	// Session should hold the combined buffer, ready for finish.
+	sess, err := lookupUploadSession("uA")
+	require.NoError(t, err)
+	require.Equal(t, "hello world", string(sess.buf))
+}
+
+// Test B: out-of-order part is rejected.
+func TestHandleStream_OutOfOrderPart(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "uB", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+
+	data := base64.StdEncoding.EncodeToString([]byte("x"))
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "uB", "part": float64(1), "data": data}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expected 0")
+}
+
+// Test C: size overflow rejects append once accumulated bytes cross rawMax.
+func TestHandleStream_SizeOverflow(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	// Tight cap so the test finishes fast.
+	cfg := Config{MaxDocumentBytes: 1024, RawDocumentMaxBytes: 16}
+
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "uC", "project": "p"}),
+		cfg)
+	require.NoError(t, err)
+
+	big := base64.StdEncoding.EncodeToString(make([]byte, 32)) // 32 bytes > 16 cap
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "uC", "part": float64(0), "data": big}),
+		cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum size")
+}
+
+// Test D: upload_id length validation on start.
+func TestHandleStream_UploadIDValidation(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	// empty
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "", "project": "p"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "upload_id")
+
+	// 129 chars (one over the cap)
+	tooLong := strings.Repeat("a", maxUploadIDLen+1)
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": tooLong, "project": "p"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "upload_id")
+
+	// valid
+	valid := strings.Repeat("a", maxUploadIDLen)
+	_, err = handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": valid, "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+}
+
+// Test E: session cap.
+func TestHandleStream_TooManySessions(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	// Fill the registry directly to avoid making maxUploadSessions handler calls.
+	uploadRegistryMu.Lock()
+	now := time.Now()
+	for i := 0; i < maxUploadSessions; i++ {
+		id := fmt.Sprintf("sess-%d", i)
+		uploadRegistry[id] = &uploadSession{project: "p", createdAt: now}
+	}
+	uploadRegistryMu.Unlock()
+
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "overflow", "project": "p"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "too many in-progress uploads")
+}
+
+// TTL eviction: stale sessions are dropped before the cap check, freeing slots.
+func TestHandleStream_TTLEviction(t *testing.T) {
+	resetUploadRegistry(t)
+	ctx := context.Background()
+
+	uploadRegistryMu.Lock()
+	stale := time.Now().Add(-(uploadSessionTTL + time.Minute))
+	for i := 0; i < maxUploadSessions; i++ {
+		id := fmt.Sprintf("stale-%d", i)
+		uploadRegistry[id] = &uploadSession{project: "p", createdAt: stale}
+	}
+	uploadRegistryMu.Unlock()
+
+	// All stale — a fresh start should succeed because eviction frees the slots.
+	_, err := handleMemoryIngestDocumentStream(ctx, nil,
+		streamReq(map[string]any{"action": "start", "upload_id": "fresh", "project": "p"}),
+		Config{})
+	require.NoError(t, err)
+
+	uploadRegistryMu.Lock()
+	_, ok := uploadRegistry["fresh"]
+	count := len(uploadRegistry)
+	uploadRegistryMu.Unlock()
+	require.True(t, ok, "fresh session should be registered")
+	require.Equal(t, 1, count, "all stale sessions should have been evicted")
+}
+
+// Unknown action is rejected.
+func TestHandleStream_UnknownAction(t *testing.T) {
+	resetUploadRegistry(t)
+	_, err := handleMemoryIngestDocumentStream(context.Background(), nil,
+		streamReq(map[string]any{"action": "upload", "upload_id": "x"}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown action")
+}
+
+// Append against an unknown upload_id (e.g. expired) is rejected.
+func TestHandleStream_AppendUnknownUpload(t *testing.T) {
+	resetUploadRegistry(t)
+	data := base64.StdEncoding.EncodeToString([]byte("x"))
+	_, err := handleMemoryIngestDocumentStream(context.Background(), nil,
+		streamReq(map[string]any{"action": "append", "upload_id": "ghost", "part": float64(0), "data": data}),
+		Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown upload_id")
+}
+
+// Fix 4: Tier-1 response carries "summary" (string) not "summary_bytes" (int).
+func TestExecStoreDocument_Tier1_ReturnsSummaryText(t *testing.T) {
+	const maxDoc = 8 * 1024 * 1024
+	const rawMax = 50 * 1024 * 1024
+
+	eng := &stubEngine{}
+	back := newStubDocBackend()
+	m := &types.Memory{ID: "m-sum", Project: "p", MemoryType: types.MemoryTypeContext}
+	content := "# Top\n" + makeContent(600_000)
+
+	out, err := execStoreDocument(context.Background(), storeDocumentDeps{engine: eng, backend: back}, m, content, maxDoc, rawMax)
+	require.NoError(t, err)
+
+	summary, ok := out["summary"].(string)
+	require.True(t, ok, "Tier-1 response must carry 'summary' as a string, not a byte count")
+	require.NotEmpty(t, summary)
+	require.Less(t, len(summary), len(content))
+	_, hadBytes := out["summary_bytes"]
+	require.False(t, hadBytes, "legacy 'summary_bytes' field should be gone")
 }

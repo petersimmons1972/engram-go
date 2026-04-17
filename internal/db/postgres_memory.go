@@ -56,6 +56,15 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		episodeArg = episodeID
 	}
 
+	// document_id is optional — only set for Tier-2 (raw document) memories.
+	// Pass NULL otherwise so the FK column stays unset.
+	var documentArg any
+	if m.DocumentID == "" {
+		documentArg = nil
+	} else {
+		documentArg = m.DocumentID
+	}
+
 	// Seed dynamic_importance from static importance using Feature 2 formula.
 	if m.DynamicImportance == nil {
 		di := math.Max(0.1, (5.0-float64(m.Importance))/3.0)
@@ -67,12 +76,12 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		  (id, content, memory_type, project, tags,
 		   importance, access_count, last_accessed, created_at, updated_at,
 		   immutable, expires_at, content_hash, storage_mode, episode_id,
-		   dynamic_importance)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		   dynamic_importance, document_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		m.ID, m.Content, m.MemoryType, m.Project, tagsJSON,
 		m.Importance, m.AccessCount, now, now, now,
 		m.Immutable, m.ExpiresAt, hash, m.StorageMode, episodeArg,
-		m.DynamicImportance,
+		m.DynamicImportance, documentArg,
 	)
 	return err
 }

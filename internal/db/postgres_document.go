@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,8 +19,11 @@ func (b *PostgresBackend) StoreDocument(ctx context.Context, project, content st
 		return "", fmt.Errorf("StoreDocument: content is empty")
 	}
 	id := uuid.New().String()
-	sum := sha256.Sum256([]byte(content))
-	hash := hex.EncodeToString(sum[:])
+	// Hash via streaming writer so we don't allocate a second full copy of
+	// content — matters for Tier-2 bodies up to 50 MB.
+	h := sha256.New()
+	_, _ = io.WriteString(h, content)
+	hash := hex.EncodeToString(h.Sum(nil))
 	_, err := b.pool.Exec(ctx, `
 		INSERT INTO documents (id, project, content, sha256, size_bytes)
 		VALUES ($1, $2, $3, $4, $5)`,

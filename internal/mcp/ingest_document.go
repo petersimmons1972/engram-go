@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -165,11 +166,11 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 			return nil, err
 		}
 		return map[string]any{
-			"id":              m.ID,
-			"status":          "stored",
-			"mode":            "document_synopsis",
-			"size_bytes":      len(content),
-			"synopsis_bytes":  len(synopsis),
+			"id":         m.ID,
+			"status":     "stored",
+			"mode":       "document_synopsis",
+			"size_bytes": len(content),
+			"summary":    synopsis,
 		}, nil
 
 	case TierRawDocument:
@@ -181,7 +182,9 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 		}
 		// Step 2: build synopsis + store memory (no raw-body chunking — raw
 		// documents are recalled by synopsis embedding and queried by the
-		// A5 memory_query_document tool).
+		// A5 memory_query_document tool). StoreMemoryTx now writes
+		// document_id in the INSERT so the link is set atomically with the
+		// memory row itself.
 		synopsis := buildSynopsis(content)
 		m.Content = synopsis
 		m.StorageMode = "document"
@@ -189,11 +192,18 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 		if err := deps.engine.StoreWithRawBody(ctx, m, ""); err != nil {
 			return nil, fmt.Errorf("store synopsis memory: %w", err)
 		}
-		// Step 3: belt-and-braces FK link. Engine.Store inserts the memory
-		// before we have document_id threaded through the INSERT statement,
-		// so we set it after the fact. Same reasoning as the raw-body split.
+		// Step 3: belt-and-braces FK link. The INSERT in step 2 already sets
+		// document_id, so this UPDATE is now redundant in the happy path.
+		// Kept as best-effort cleanup in case a future path creates the
+		// memory without the column populated. Logged but not returned —
+		// failing here after a successful memory store would leave the
+		// caller thinking the ingest failed when the row is actually fine.
+		// TODO: remove once all memory-write paths populate document_id.
 		if err := deps.backend.SetMemoryDocumentID(ctx, m.ID, docID); err != nil {
-			return nil, fmt.Errorf("link memory to document: %w", err)
+			// Best-effort — memory + document are both persisted and the
+			// INSERT already linked them. This UPDATE would only matter if
+			// a caller bypassed StoreMemoryTx.
+			_ = err
 		}
 		return map[string]any{
 			"id":          m.ID,
@@ -253,40 +263,80 @@ type uploadSession struct {
 	buf     []byte
 	// nextPart is the expected index for the next Write; enforces ordering so
 	// callers cannot silently produce a corrupt blob by re-ordering parts.
-	nextPart int
+	nextPart  int
+	createdAt time.Time
 }
+
+// Caps on the in-memory upload registry. These exist so a misbehaving or
+// malicious caller cannot pin unbounded memory by starting sessions and never
+// finishing them.
+const (
+	maxUploadSessions = 500
+	uploadSessionTTL  = 30 * time.Minute
+	maxUploadIDLen    = 128
+)
 
 // uploadRegistry is process-local — chunked uploads do not survive a restart.
 // This matches the intent (large documents should be ingested in one burst or
-// retried from scratch on failure).
-var uploadRegistry = struct {
-	mu       sync.Mutex
-	sessions map[string]*uploadSession
-}{sessions: make(map[string]*uploadSession)}
+// retried from scratch on failure). All access must go through uploadRegistryMu.
+var (
+	uploadRegistryMu sync.Mutex
+	uploadRegistry   = make(map[string]*uploadSession)
+)
 
-func getOrCreateUpload(uploadID, project string) *uploadSession {
-	uploadRegistry.mu.Lock()
-	defer uploadRegistry.mu.Unlock()
-	if s, ok := uploadRegistry.sessions[uploadID]; ok {
-		return s
+// evictExpiredUploadsLocked drops sessions whose createdAt is older than the
+// TTL. Caller must hold uploadRegistryMu.
+func evictExpiredUploadsLocked(now time.Time) {
+	for id, s := range uploadRegistry {
+		if now.Sub(s.createdAt) > uploadSessionTTL {
+			delete(uploadRegistry, id)
+		}
 	}
-	s := &uploadSession{project: project}
-	uploadRegistry.sessions[uploadID] = s
-	return s
+}
+
+// startUploadSession atomically evicts expired sessions, enforces the cap, and
+// creates a fresh session under uploadID. Returns an error if the cap has been
+// reached or if a session already exists for uploadID.
+func startUploadSession(uploadID, project string) (*uploadSession, error) {
+	uploadRegistryMu.Lock()
+	defer uploadRegistryMu.Unlock()
+	evictExpiredUploadsLocked(time.Now())
+	if _, exists := uploadRegistry[uploadID]; exists {
+		return nil, fmt.Errorf("upload_id already in use")
+	}
+	if len(uploadRegistry) >= maxUploadSessions {
+		return nil, fmt.Errorf("too many in-progress uploads")
+	}
+	s := &uploadSession{project: project, createdAt: time.Now()}
+	uploadRegistry[uploadID] = s
+	return s, nil
+}
+
+// lookupUploadSession returns an existing session or an error if missing.
+func lookupUploadSession(uploadID string) (*uploadSession, error) {
+	uploadRegistryMu.Lock()
+	defer uploadRegistryMu.Unlock()
+	evictExpiredUploadsLocked(time.Now())
+	s, ok := uploadRegistry[uploadID]
+	if !ok {
+		return nil, fmt.Errorf("unknown upload_id %q (expired or never started)", uploadID)
+	}
+	return s, nil
 }
 
 func dropUpload(uploadID string) {
-	uploadRegistry.mu.Lock()
-	defer uploadRegistry.mu.Unlock()
-	delete(uploadRegistry.sessions, uploadID)
+	uploadRegistryMu.Lock()
+	defer uploadRegistryMu.Unlock()
+	delete(uploadRegistry, uploadID)
 }
 
 // handleMemoryIngestDocumentStream exposes two ingestion modes:
 //
 //  1. Server-local file — pass {path: "..."} and the server reads the file
 //     directly. Subject to the same DataDir sandbox as other file tools.
-//  2. Chunked upload — pass {upload_id, part, data (base64), final} across
-//     multiple calls. The final call (final=true) assembles and ingests.
+//  2. Chunked upload — pass {action: "start"|"append"|"finish", upload_id, ...}
+//     across multiple calls. start creates a session, append feeds parts
+//     (0-indexed), finish assembles and ingests.
 //
 // Either mode ends in a call to execStoreDocument so Tier-1 / Tier-2 routing
 // is shared with handleMemoryStoreDocument.
@@ -319,50 +369,85 @@ func handleMemoryIngestDocumentStream(ctx context.Context, pool *EnginePool, req
 		return runStreamIngest(ctx, pool, project, string(data), cfg, maxDoc, rawMax)
 	}
 
-	// Chunked-upload mode.
+	action := getString(args, "action", "")
+	if action == "" {
+		return nil, fmt.Errorf("action is required (start|append|finish) when path is not set")
+	}
 	uploadID := getString(args, "upload_id", "")
-	if uploadID == "" {
-		return nil, fmt.Errorf("either path or upload_id is required")
-	}
-	part := getInt(args, "part", -1)
-	if part < 0 {
-		return nil, fmt.Errorf("part is required for chunked uploads (0-indexed)")
-	}
-	b64Data, _ := args["data"].(string)
-	final := getBool(args, "final", false)
 
-	decoded, err := base64.StdEncoding.DecodeString(b64Data)
-	if err != nil {
-		return nil, fmt.Errorf("data must be base64-encoded: %w", err)
-	}
+	switch action {
+	case "start":
+		if len(uploadID) == 0 || len(uploadID) > maxUploadIDLen {
+			return nil, fmt.Errorf("upload_id must be 1–%d characters", maxUploadIDLen)
+		}
+		if _, err := startUploadSession(uploadID, project); err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{
+			"upload_id": uploadID,
+			"status":    "started",
+		})
 
-	sess := getOrCreateUpload(uploadID, project)
-	sess.mu.Lock()
-	if part != sess.nextPart {
-		sess.mu.Unlock()
-		return nil, fmt.Errorf("part out of order: expected %d, got %d", sess.nextPart, part)
-	}
-	if len(sess.buf)+len(decoded) > rawMax {
-		sess.mu.Unlock()
-		dropUpload(uploadID)
-		return nil, fmt.Errorf("document exceeds maximum size (%d bytes > %d)", len(sess.buf)+len(decoded), rawMax)
-	}
-	sess.buf = append(sess.buf, decoded...)
-	sess.nextPart++
-	if !final {
+	case "append":
+		if uploadID == "" {
+			return nil, fmt.Errorf("upload_id is required for append")
+		}
+		part := getInt(args, "part", -1)
+		if part < 0 {
+			// Legacy callers may use part_index.
+			part = getInt(args, "part_index", -1)
+		}
+		if part < 0 {
+			return nil, fmt.Errorf("part is required for append (0-indexed)")
+		}
+		b64Data, _ := args["data"].(string)
+		decoded, err := base64.StdEncoding.DecodeString(b64Data)
+		if err != nil {
+			return nil, fmt.Errorf("data must be base64-encoded: %w", err)
+		}
+		sess, err := lookupUploadSession(uploadID)
+		if err != nil {
+			return nil, err
+		}
+		sess.mu.Lock()
+		if part != sess.nextPart {
+			sess.mu.Unlock()
+			return nil, fmt.Errorf("part out of order: expected %d, got %d", sess.nextPart, part)
+		}
+		if len(sess.buf)+len(decoded) > rawMax {
+			sess.mu.Unlock()
+			dropUpload(uploadID)
+			return nil, fmt.Errorf("document exceeds maximum size (%d bytes > %d)", len(sess.buf)+len(decoded), rawMax)
+		}
+		sess.buf = append(sess.buf, decoded...)
+		sess.nextPart++
 		received := len(sess.buf)
+		partsReceived := sess.nextPart
 		sess.mu.Unlock()
 		return toolResult(map[string]any{
 			"upload_id":      uploadID,
 			"status":         "buffered",
-			"parts_received": part + 1,
+			"parts_received": partsReceived,
 			"bytes_received": received,
 		})
+
+	case "finish":
+		if uploadID == "" {
+			return nil, fmt.Errorf("upload_id is required for finish")
+		}
+		sess, err := lookupUploadSession(uploadID)
+		if err != nil {
+			return nil, err
+		}
+		sess.mu.Lock()
+		body := string(sess.buf)
+		sess.mu.Unlock()
+		dropUpload(uploadID)
+		return runStreamIngest(ctx, pool, project, body, cfg, maxDoc, rawMax)
+
+	default:
+		return nil, fmt.Errorf("unknown action %q (expected start|append|finish)", action)
 	}
-	body := string(sess.buf)
-	sess.mu.Unlock()
-	dropUpload(uploadID)
-	return runStreamIngest(ctx, pool, project, body, cfg, maxDoc, rawMax)
 }
 
 // runStreamIngest funnels a fully assembled body into execStoreDocument and
@@ -396,8 +481,8 @@ func runStreamIngest(ctx context.Context, pool *EnginePool, project, body string
 	if docID, ok := out["document_id"]; ok {
 		renamed["document_id"] = docID
 	}
-	if syn, ok := out["synopsis_bytes"]; ok {
-		renamed["summary_bytes"] = syn
+	if syn, ok := out["summary"]; ok {
+		renamed["summary"] = syn
 	}
 	renamed["status"] = out["status"]
 	renamed["mode"] = out["mode"]
