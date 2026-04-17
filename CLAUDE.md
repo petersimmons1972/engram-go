@@ -22,3 +22,20 @@ CI enforces a 60% minimum statement coverage on every PR (`.github/workflows/ci.
 - Write failing tests before implementation (TDD).
 - New MCP tool handlers require at minimum: happy path, zero/empty input, and one boundary condition test.
 - Run `go test ./... -count=1 -race` before any commit to main.
+
+## Retrieval Miss Handling
+
+When `memory_recall` returns nothing useful, use `memory_feedback` with `failure_class` instead of manually calling `memory_store`:
+
+```
+# Record the miss (do not reinforce — no edge boost applied)
+memory_feedback(event_id="<id from recall>", memory_ids=[], failure_class="<class>")
+
+# Triage the distribution of misses
+memory_aggregate(by="failure_class")
+→ [{label: "aggregation_failure", count: N, ...}]
+```
+
+Valid `failure_class` values: `vocabulary_mismatch`, `aggregation_failure`, `stale_ranking`, `missing_content`, `scope_mismatch`.
+
+Use `memory_aggregate(by="failure_class")` periodically to see where recall is failing most. This data feeds retrieval quality benchmarking.
