@@ -58,6 +58,11 @@ type Config struct {
 	// RAGMaxTokens caps the context window assembled for memory_ask prompt
 	// synthesis. Defaults to 4096. Set via ENGRAM_RAG_MAX_TOKENS env var.
 	RAGMaxTokens int
+	// AllowRFC1918SetupToken extends /setup-token access to RFC1918 private
+	// addresses (10.x, 172.16-31.x, 192.168.x) in addition to loopback.
+	// Required for Docker setups where the host appears as a bridge IP.
+	// Set via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
+	AllowRFC1918SetupToken bool
 	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 

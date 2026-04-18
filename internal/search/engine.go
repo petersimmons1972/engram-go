@@ -125,6 +125,7 @@ type SearchEngine struct {
 	embedder   embed.Client
 	project    string
 	ollamaURL  string
+	ctx        context.Context // parent lifecycle context — passed to workers via StartWithContext
 	summarizer *summarize.Worker
 	reembedder *reembed.Worker
 	decayer    *DecayWorker
@@ -153,19 +154,20 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration) *SearchEngine {
 
 	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
-	sum.Start()
+	sum.StartWithContext(ctx)
 
 	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)
-	reb.Start()
+	reb.StartWithContext(ctx)
 
 	dec := NewDecayWorker(backend, project, decayInterval)
-	dec.Start()
+	dec.StartWithContext(ctx)
 
 	return &SearchEngine{
 		backend:    backend,
 		embedder:   embedder,
 		project:    project,
 		ollamaURL:  ollamaURL,
+		ctx:        ctx,
 		summarizer: sum,
 		reembedder: reb,
 		decayer:    dec,
@@ -456,7 +458,10 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	ftsCh := make(chan ftsResult, 1)
 	go func() {
 		res, err := e.backend.FTSSearch(ctx, e.project, query, topK*3, nil, nil)
-		ftsCh <- ftsResult{res, err}
+		select {
+		case ftsCh <- ftsResult{res, err}:
+		case <-ctx.Done():
+		}
 	}()
 
 	// Build per-memory best cosine from vector hits.
@@ -495,7 +500,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 
 	// Merge FTS results.
-	ftsRes := <-ftsCh
+	var ftsRes ftsResult
+	select {
+	case ftsRes = <-ftsCh:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if ftsRes.err != nil {
 		return nil, ftsRes.err
 	}
@@ -991,6 +1001,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	// and never runs because its done channel was already closed at construction.
 	e.reembedder.Stop()
 
+	// ctx is used only for the startup probe; the returned client is context-independent.
 	newEmbedder, err := embed.NewOllamaClient(ctx, e.ollamaURL, newModel)
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
@@ -1000,7 +1011,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	e.embedMu.Unlock()
 
 	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
-	e.reembedder.Start()
+	e.reembedder.StartWithContext(e.ctx)
 
 	return map[string]any{
 		"chunks_nulled": nulled,

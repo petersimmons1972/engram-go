@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -289,6 +290,9 @@ const (
 	maxUploadIDLen    = 128
 )
 
+// uploadIDRE restricts upload_id to safe filesystem-friendly characters.
+var uploadIDRE = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+
 // evictExpiredUploadsLocked drops sessions whose lastActivity (falling back to
 // createdAt) is older than the TTL. Caller must hold s.uploadMu.
 func (s *Server) evictExpiredUploadsLocked(now time.Time) {
@@ -392,6 +396,9 @@ func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *Engi
 	case "start":
 		if len(uploadID) == 0 || len(uploadID) > maxUploadIDLen {
 			return nil, fmt.Errorf("upload_id must be 1–%d characters", maxUploadIDLen)
+		}
+		if !uploadIDRE.MatchString(uploadID) {
+			return nil, fmt.Errorf("upload_id may only contain letters, digits, hyphens, underscores, and dots")
 		}
 		if _, err := s.startUploadSession(uploadID, project); err != nil {
 			return nil, err

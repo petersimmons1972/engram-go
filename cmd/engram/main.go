@@ -162,6 +162,7 @@ func run() error {
 		MaxDocumentBytes:         envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024),
 		RawDocumentMaxBytes:      envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024),
 		RAGMaxTokens:             envInt("ENGRAM_RAG_MAX_TOKENS", 4096),
+		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 	if cc != nil {

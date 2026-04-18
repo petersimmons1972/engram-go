@@ -42,7 +42,13 @@ func NewDecayWorker(backend db.Backend, project string, interval time.Duration) 
 
 // Start launches the background decay goroutine.
 func (w *DecayWorker) Start() {
-	ctx, cancel := context.WithCancel(context.Background())
+	w.StartWithContext(context.Background())
+}
+
+// StartWithContext launches the background decay goroutine using ctx as the
+// parent lifecycle context. The worker stops when ctx is cancelled.
+func (w *DecayWorker) StartWithContext(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 	go w.run(ctx)
 }
@@ -61,11 +67,6 @@ func (w *DecayWorker) Stop() {
 
 func (w *DecayWorker) run(ctx context.Context) {
 	defer close(w.done)
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("decay worker panic", "project", w.project, "panic", r)
-		}
-	}()
 
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
@@ -75,9 +76,21 @@ func (w *DecayWorker) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.runOnce(ctx)
+			w.safeRunOnce(ctx)
 		}
 	}
+}
+
+// safeRunOnce wraps runOnce with per-iteration panic recovery so a single bad
+// row cannot kill the worker goroutine permanently.
+func (w *DecayWorker) safeRunOnce(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("decay worker panic — will retry next tick",
+				"project", w.project, "panic", r)
+		}
+	}()
+	w.runOnce(ctx)
 }
 
 func (w *DecayWorker) runOnce(ctx context.Context) {

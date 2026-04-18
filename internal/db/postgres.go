@@ -103,6 +103,18 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 	}
 	defer conn.Release()
 
+	// Set lock_timeout so a hung migration on another node can't block startup forever.
+	lockTimeoutMs := 30000
+	if deadline, ok := ctx.Deadline(); ok {
+		if rem := int(time.Until(deadline).Milliseconds()); rem < lockTimeoutMs {
+			lockTimeoutMs = rem
+		}
+	}
+	if _, err := conn.Exec(ctx,
+		fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", lockTimeoutMs),
+	); err != nil {
+		return fmt.Errorf("set lock_timeout: %w", err)
+	}
 	if _, err := conn.Exec(ctx,
 		`SELECT pg_advisory_lock($1, hashtext($2::text))`, lockClass, b.project,
 	); err != nil {
@@ -391,7 +403,10 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 	}
 	var tagSlice []string
 	if len(tags) > 0 {
-		_ = json.Unmarshal(tags, &tagSlice)
+		if err := json.Unmarshal(tags, &tagSlice); err != nil {
+			slog.Warn("tags unmarshal failed — empty tags returned", "memory_id", id, "err", err)
+			tagSlice = []string{}
+		}
 	}
 	if tagSlice == nil {
 		tagSlice = []string{}
