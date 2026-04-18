@@ -20,7 +20,9 @@ func newTestBackend(t *testing.T) *PostgresBackend {
 	}
 	ctx := context.Background()
 	b, err := NewPostgresBackend(ctx, "a4-test", dsn)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("cannot connect to PostgreSQL (%v); skipping integration test", err)
+	}
 	t.Cleanup(b.Close)
 	return b
 }
