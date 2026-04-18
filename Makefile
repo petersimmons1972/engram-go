@@ -68,3 +68,8 @@ test:
 ## Run the explore-context soak test (50 synthetic questions, p95 iters ≤4, p95 tokens ≤15K)
 test-explore-soak:
 	go test ./bench/... -v -run TestExploreContext -timeout 60s
+
+.PHONY: eval
+## Run retrieval evaluation harness
+eval:
+	go run ./cmd/eval/main.go $(EVAL_ARGS)

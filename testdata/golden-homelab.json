@@ -1,0 +1,33 @@
+[
+  {
+    "query": "Longhorn storage decommission K8s cluster CPU reduction",
+    "relevant_ids": [
+      "c0608cbf92e7432f8ef86ef84aea1422",
+      "f6e3d80a65d4417ab6642945ba835943"
+    ]
+  },
+  {
+    "query": "Postgres database consolidation single instance ExternalName service",
+    "relevant_ids": [
+      "953c2dc418b546c2b7629034f9cbeef4"
+    ]
+  },
+  {
+    "query": "StatefulSet Deployment CrashLoop archive scale zero",
+    "relevant_ids": [
+      "019d7fe2-058b-70f5-ad20-c4851d6bd406"
+    ]
+  },
+  {
+    "query": "ConfigMap kubectl --from-file subdirectory keys missing mount",
+    "relevant_ids": [
+      "fe7d2d45e807408fbdc124ea938b477e"
+    ]
+  },
+  {
+    "query": "nginx Chainguard security headers server block default.conf",
+    "relevant_ids": [
+      "3654155b8a2d43cca13bac1a98046438"
+    ]
+  }
+]

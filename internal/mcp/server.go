@@ -307,7 +307,32 @@ func (s *Server) registerTools() {
 	}{
 		{"memory_store", "Store a focused memory (<=10k chars)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStore(ctx, pool, req)
+				result, err := handleMemoryStore(ctx, pool, req)
+				if err != nil {
+					return result, err
+				}
+				// Enqueue entity extraction asynchronously. Runs in a detached
+				// goroutine with its own context so it never blocks memory_store.
+				// Non-fatal: if the enqueue fails the store has already succeeded.
+				args := req.GetArguments()
+				project := getString(args, "project", "default")
+				if memID, ok := extractResultID(result); ok {
+					go func() {
+						enqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						h, herr := pool.Get(enqCtx, project)
+						if herr != nil {
+							slog.Warn("memory_store: enqueue pool.Get failed",
+								"id", memID, "project", project, "err", herr)
+							return
+						}
+						if eerr := h.Engine.Backend().EnqueueExtractionJob(enqCtx, memID, project); eerr != nil {
+							slog.Warn("memory_store: enqueue extraction job failed",
+								"id", memID, "project", project, "err", eerr)
+						}
+					}()
+				}
+				return result, nil
 			}},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -426,6 +451,21 @@ func (s *Server) registerTools() {
 		{"memory_adopt", "Create a cross-project reference relationship",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryAdopt(ctx, pool, req)
+			}},
+		// Simplified front-door tools — wrappers over the expert-surface tools
+		// with sensible defaults injected. Designed for LLM orchestrators that
+		// do not need the full parameter surface.
+		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQuickStore(ctx, pool, req)
+			}},
+		{"memory_query", "Search memories with automatic graph expansion. Simplified front door for memory_recall.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQuery(ctx, pool, req, cfg)
+			}},
+		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryExpand(ctx, pool, req)
 			}},
 		// Safety constraint verification tools
 		{"get_constraints", "List constraint and policy memories relevant to an optional query",

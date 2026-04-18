@@ -1,0 +1,37 @@
+[
+  {
+    "query": "embedding provider migration background reembedder",
+    "relevant_ids": [
+      "336895573af84fed8f156d52d6a483a3",
+      "4cefb4eb34a247488e54c7341a49b0e2"
+    ]
+  },
+  {
+    "query": "PostgreSQL SQLite backend architecture decision",
+    "relevant_ids": [
+      "9231705f81f544e18de912ed8c03d3c6",
+      "95a445c59aa5424c87f7ab8d4d66bb91"
+    ]
+  },
+  {
+    "query": "Store Big Retrieve Small chunker semantic document mode",
+    "relevant_ids": [
+      "6998cd95f5b3489f8a23a615ffaa226c",
+      "e7831773dc4e4a099966e3504225403b",
+      "3e4b4cdbd3d24296824ce2e71b6f5211"
+    ]
+  },
+  {
+    "query": "knowledge graph relationships memory optimization session handoff",
+    "relevant_ids": [
+      "3e4b4cdbd3d24296824ce2e71b6f5211"
+    ]
+  },
+  {
+    "query": "compression context window reduce token cost summaries",
+    "relevant_ids": [
+      "ccf39316cab94d5c898238946a660b67",
+      "95a445c59aa5424c87f7ab8d4d66bb91"
+    ]
+  }
+]

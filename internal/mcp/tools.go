@@ -244,6 +244,25 @@ func toolResult(v any) (*mcpgo.CallToolResult, error) {
 	return mcpgo.NewToolResultText(string(b)), nil
 }
 
+// extractResultID pulls the "id" field from a toolResult JSON payload.
+// Returns ("", false) if the result is nil or the id field is absent/non-string.
+func extractResultID(result *mcpgo.CallToolResult) (string, bool) {
+	if result == nil || len(result.Content) == 0 {
+		return "", false
+	}
+	// Content[0] is a TextContent whose Text is the JSON payload.
+	text, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		return "", false
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
+		return "", false
+	}
+	id, ok := m["id"].(string)
+	return id, ok && id != ""
+}
+
 // getString extracts a string arg with a fallback default.
 func getString(args map[string]any, key, def string) string {
 	if v, ok := args[key]; ok {
@@ -1607,4 +1626,116 @@ func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRe
 	}
 	data, _ := json.Marshal(out)
 	return mcpgo.NewToolResultText(string(data)), nil
+}
+
+// ── Simplified front-door tools ───────────────────────────────────────────────
+//
+// These three handlers are genuine wrappers over the expert-surface tools.
+// They exist to reduce the surface area that LLM orchestrators need to know
+// about: sensible defaults are injected so callers only supply the minimum.
+
+// handleMemoryQuickStore is a simplified front door for handleMemoryStore.
+// It injects defaults for memory_type ("context") and importance (2) when
+// those fields are absent from the request, then delegates to handleMemoryStore.
+// The original args map is never mutated — a copy is used for the injection.
+func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+
+	// Build a merged copy so we never mutate the caller's map.
+	merged := make(map[string]any, len(args)+2)
+	for k, v := range args {
+		merged[k] = v
+	}
+	if _, ok := merged["memory_type"]; !ok {
+		merged["memory_type"] = "context"
+	}
+	if _, ok := merged["importance"]; !ok {
+		merged["importance"] = 2
+	}
+
+	req2 := req
+	req2.Params.Arguments = merged
+	return handleMemoryStore(ctx, pool, req2)
+}
+
+// handleMemoryQuery is a simplified front door for handleMemoryRecall.
+// It maps the caller-friendly "limit" parameter to "top_k", defaulting to 5
+// when neither is provided, then delegates to handleMemoryRecall.
+// The original args map is never mutated — a copy is used.
+func handleMemoryQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+
+	// Build a merged copy so we never mutate the caller's map.
+	merged := make(map[string]any, len(args)+1)
+	for k, v := range args {
+		merged[k] = v
+	}
+
+	// Map "limit" → "top_k". If both are supplied, top_k wins.
+	if limit, ok := merged["limit"]; ok {
+		if _, hasTopK := merged["top_k"]; !hasTopK {
+			merged["top_k"] = limit
+		}
+		delete(merged, "limit")
+	} else if _, hasTopK := merged["top_k"]; !hasTopK {
+		merged["top_k"] = 5
+	}
+
+	req2 := req
+	req2.Params.Arguments = merged
+	return handleMemoryRecall(ctx, pool, req2, cfg)
+}
+
+// handleMemoryExpand explores the relationship-graph neighbourhood of a known
+// memory. It calls GetConnected on the engine's backend and returns all
+// reachable nodes within depth hops.
+func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+
+	project := getString(args, "project", "default")
+	memoryID := getString(args, "memory_id", "")
+	if memoryID == "" {
+		return nil, fmt.Errorf("memory_id is required")
+	}
+	depth := getInt(args, "depth", 2)
+	if depth < 1 || depth > 5 {
+		depth = 2
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+
+	connected, err := h.Engine.Backend().GetConnected(ctx, memoryID, depth)
+	if err != nil {
+		return nil, err
+	}
+
+	type connItem struct {
+		ID        string  `json:"id"`
+		Content   string  `json:"content"`
+		RelType   string  `json:"rel_type"`
+		Direction string  `json:"direction"`
+		Strength  float64 `json:"strength"`
+	}
+	items := make([]connItem, 0, len(connected))
+	for _, c := range connected {
+		if c.Memory == nil {
+			continue
+		}
+		items = append(items, connItem{
+			ID:        c.Memory.ID,
+			Content:   c.Memory.Content,
+			RelType:   c.RelType,
+			Direction: c.Direction,
+			Strength:  c.Strength,
+		})
+	}
+
+	return toolResult(map[string]any{
+		"memory_id": memoryID,
+		"depth":     depth,
+		"connected": items,
+	})
 }

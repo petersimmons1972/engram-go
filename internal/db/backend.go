@@ -6,8 +6,16 @@ import (
 	"context"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/types"
 )
+
+// ExtractionJob is a pending entity extraction task.
+type ExtractionJob struct {
+	ID       string
+	MemoryID string
+	Project  string
+}
 
 // Backend is the storage interface for the Engram memory system.
 // All implementations must be safe for concurrent use from multiple goroutines.
@@ -262,6 +270,20 @@ type Backend interface {
 	// SetMemoryDocumentID links a memory to a document by setting
 	// memories.document_id = documentID.
 	SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error
+
+	// ── Entity graph ─────────────────────────────────────────────────────────
+
+	// UpsertEntity inserts or updates a canonical entity. Returns the entity ID.
+	UpsertEntity(ctx context.Context, e *entity.Entity) (id string, err error)
+	// GetEntitiesByProject returns all canonical entities for a project.
+	GetEntitiesByProject(ctx context.Context, project string) ([]entity.Entity, error)
+	// EnqueueExtractionJob enqueues a pending entity extraction task for a memory.
+	EnqueueExtractionJob(ctx context.Context, memoryID, project string) error
+	// ClaimExtractionJobs atomically claims up to limit pending extraction jobs
+	// for a project, marking them as processing.
+	ClaimExtractionJobs(ctx context.Context, project string, limit int) ([]ExtractionJob, error)
+	// CompleteExtractionJob marks an extraction job done (jobErr == nil) or failed.
+	CompleteExtractionJob(ctx context.Context, jobID string, err error) error
 
 	// ── Transactions ────────────────────────────────────────────────────────
 

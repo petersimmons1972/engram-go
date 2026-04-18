@@ -16,6 +16,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
@@ -190,6 +191,18 @@ func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ st
 func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error) { return "", nil }
 func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)      { return "", nil }
 func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error     { return nil }
+
+func (noopBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) {
+	return "", nil
+}
+func (noopBackend) GetEntitiesByProject(_ context.Context, _ string) ([]entity.Entity, error) {
+	return nil, nil
+}
+func (noopBackend) EnqueueExtractionJob(_ context.Context, _, _ string) error { return nil }
+func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db.ExtractionJob, error) {
+	return nil, nil
+}
+func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
 
 var _ db.Backend = noopBackend{}
 
