@@ -1,0 +1,7 @@
+--- Evaluation Summary ---
+Queries:      5
+Avg P@5:      0.24
+Avg MRR:      1.00
+Avg NDCG@5:   0.98
+Provider:     ollama
+Written to:   testdata/baseline-homelab-ollama-768.txt

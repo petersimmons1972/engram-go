@@ -1,0 +1,7 @@
+--- Evaluation Summary ---
+Queries:      5
+Avg P@5:      0.36
+Avg MRR:      1.00
+Avg NDCG@5:   0.93
+Provider:     ollama
+Written to:   testdata/baseline-engram-ollama-768.txt
