@@ -74,8 +74,8 @@ type extractionResponse struct {
 // Extract calls Claude and parses the JSON result into Entity and Relation slices.
 // Content is silently truncated to 4 000 characters before sending.
 func (e *ClaudeExtractor) Extract(ctx context.Context, content string) ([]Entity, []Relation, error) {
-	if len(content) > maxContentChars {
-		content = content[:maxContentChars]
+	if len([]rune(content)) > maxContentChars {
+		content = string([]rune(content)[:maxContentChars])
 	}
 
 	prompt := "Extract entities and relations from the following text:\n\n" + content

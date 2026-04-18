@@ -279,18 +279,26 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return result, err
 				}
-				// Enqueue entity extraction asynchronously. Non-fatal: if the enqueue
-				// fails the store has already succeeded; we log and continue.
+				// Enqueue entity extraction asynchronously. Runs in a detached
+				// goroutine with its own context so it never blocks memory_store.
+				// Non-fatal: if the enqueue fails the store has already succeeded.
 				args := req.GetArguments()
 				project := getString(args, "project", "default")
 				if memID, ok := extractResultID(result); ok {
-					h, herr := pool.Get(ctx, project)
-					if herr == nil {
-						if eerr := h.Engine.Backend().EnqueueExtractionJob(ctx, memID, project); eerr != nil {
+					go func() {
+						enqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						h, herr := pool.Get(enqCtx, project)
+						if herr != nil {
+							slog.Warn("memory_store: enqueue pool.Get failed",
+								"id", memID, "project", project, "err", herr)
+							return
+						}
+						if eerr := h.Engine.Backend().EnqueueExtractionJob(enqCtx, memID, project); eerr != nil {
 							slog.Warn("memory_store: enqueue extraction job failed",
 								"id", memID, "project", project, "err", eerr)
 						}
-					}
+					}()
 				}
 				return result, nil
 			}},
