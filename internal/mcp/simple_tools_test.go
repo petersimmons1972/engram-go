@@ -11,6 +11,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -249,7 +250,7 @@ func TestMemoryExpand_HappyPath(t *testing.T) {
 			{
 				Memory:    &types.Memory{ID: "mem_neighbor", Content: "linked content"},
 				RelType:   "supports",
-				Direction: "outbound",
+				Direction: "outgoing",
 				Strength:  0.85,
 			},
 		},
@@ -279,7 +280,7 @@ func TestMemoryExpand_HappyPath(t *testing.T) {
 	require.Equal(t, "mem_neighbor", item["id"])
 	require.Equal(t, "linked content", item["content"])
 	require.Equal(t, "supports", item["rel_type"])
-	require.Equal(t, "outbound", item["direction"])
+	require.Equal(t, "outgoing", item["direction"])
 	require.InDelta(t, 0.85, item["strength"], 0.001)
 }
 
@@ -300,6 +301,66 @@ func TestMemoryExpand_DepthClamping(t *testing.T) {
 		out := parseSimpleResult(t, res)
 		require.InDelta(t, 2.0, out["depth"], 0.001, "depth=%v must be clamped to 2", badDepth)
 	}
+}
+
+// ── capturing backend (verifies injected defaults) ───────────────────────────
+
+// capturingBackend records memories passed via StoreMemoryTx for assertion.
+type capturingBackend struct {
+	storeCapableBackend
+	mu     sync.Mutex
+	stored []*types.Memory
+}
+
+func (c *capturingBackend) StoreMemoryTx(_ context.Context, _ db.Tx, m *types.Memory) error {
+	c.mu.Lock()
+	c.stored = append(c.stored, m)
+	c.mu.Unlock()
+	return nil
+}
+
+func newCapturingPool(t *testing.T) (*EnginePool, *capturingBackend) {
+	t.Helper()
+	cap := &capturingBackend{}
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, cap, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory), cap
+}
+
+// TestMemoryQuickStore_DefaultMemoryType_Injected verifies the handler actually
+// writes memory_type="context" to the backend (not just that no error occurs).
+func TestMemoryQuickStore_DefaultMemoryType_Injected(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"content": "context-only content",
+		"project": "test",
+	}
+
+	_, err := handleMemoryQuickStore(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.Len(t, cap.stored, 1)
+	require.Equal(t, "context", cap.stored[0].MemoryType)
+}
+
+// TestMemoryQuickStore_DefaultImportance_Injected verifies the handler actually
+// writes importance=2 to the backend when the caller omits the field.
+func TestMemoryQuickStore_DefaultImportance_Injected(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"content": "importance-default test",
+		"project": "test",
+	}
+
+	_, err := handleMemoryQuickStore(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.Len(t, cap.stored, 1)
+	require.Equal(t, 2, cap.stored[0].Importance)
 }
 
 // ── no-op Tx and Store-capable backend ───────────────────────────────────────

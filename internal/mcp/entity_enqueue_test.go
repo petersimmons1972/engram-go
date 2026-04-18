@@ -1,7 +1,6 @@
 package mcp
 
-// Tests for extractResultID and the non-blocking enqueue behaviour wired into
-// the memory_store handler.
+// Tests for extractResultID and enqueueExtractionAsync.
 //
 // extractResultID is unexported so these tests live in package mcp (same
 // package, no _test suffix in the declaration). This follows the convention
@@ -98,7 +97,7 @@ func TestExtractResultID_HappyPath(t *testing.T) {
 	require.Equal(t, want, id)
 }
 
-// ── enqueue wrapper behaviour ─────────────────────────────────────────────────
+// ── enqueueExtractionAsync tests ─────────────────────────────────────────────
 
 // errBackend is a noopBackend override that makes EnqueueExtractionJob return
 // an error, so we can verify the handler proceeds without surfacing it.
@@ -116,58 +115,28 @@ func (errBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, err
 	return "", nil
 }
 
-// TestMemoryStoreHandler_NoEnqueueWhenNoID verifies that the memory_store
-// closure returns (result, nil) when extractResultID returns false — i.e. the
-// handler does not attempt to enqueue and does not return an error.
-func TestMemoryStoreHandler_NoEnqueueWhenNoID(t *testing.T) {
-	// A result with no "id" field — extractResultID will return false.
-	result := textResult(t, map[string]any{"status": "ok"})
-
-	id, ok := extractResultID(result)
-	require.False(t, ok, "pre-condition: result has no id")
-	require.Empty(t, id)
-
-	// If extractResultID returns false the goroutine is never spawned.
-	// Nothing to assert beyond the function returning false — no panic, no enqueue.
-}
-
-// TestMemoryStoreHandler_ReturnsResultEvenOnPoolGetFailure verifies that the
-// memory_store handler's return value is unaffected by pool.Get failures
-// (the goroutine logs and returns silently).
-//
-// We simulate this by building a pool whose factory returns an error and
-// calling the internal logic directly: the goroutine is fire-and-forget so the
-// only contract we can test synchronously is that the goroutine does NOT panic
-// and does NOT modify the return value.
-func TestMemoryStoreHandler_ReturnsResultEvenOnPoolGetFailure(t *testing.T) {
+// TestEnqueueExtractionAsync_PoolGetFailure verifies that a pool.Get error is
+// swallowed: the function logs a warning and returns without panicking.
+func TestEnqueueExtractionAsync_PoolGetFailure(t *testing.T) {
 	failPool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
 		return nil, errors.New("pool: backend unavailable")
 	})
+	// Must not panic; failure is logged and swallowed.
+	enqueueExtractionAsync(failPool, "mem_test99", "test-project")
+}
 
-	const memID = "mem_test99"
-	result := textResult(t, map[string]any{"id": memID})
+// TestEnqueueExtractionAsync_EnqueueJobError verifies that an EnqueueExtractionJob
+// error is also swallowed: the function logs a warning and returns without panicking.
+func TestEnqueueExtractionAsync_EnqueueJobError(t *testing.T) {
+	pool := newPoolWithBackend(t, errBackend{})
+	// Must not panic; EnqueueExtractionJob error is logged and swallowed.
+	enqueueExtractionAsync(pool, "mem_abc", "test-project")
+}
 
-	id, ok := extractResultID(result)
-	require.True(t, ok, "pre-condition: result has a valid id")
-	require.Equal(t, memID, id)
-
-	// Mimic what the closure does — spawn the goroutine.
-	// The goroutine must not panic; it will log a warning and return.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ctx, cancel := context.WithTimeout(context.Background(), 5)
-		defer cancel()
-		h, herr := failPool.Get(ctx, "test-project")
-		if herr != nil {
-			// Expected: pool factory returned an error. Handler logs, returns.
-			return
-		}
-		// Should not reach here in this test.
-		_ = h.Engine.Backend().EnqueueExtractionJob(ctx, memID, "test-project")
-	}()
-	<-done // goroutine finished without panic
-
-	// The original result is untouched.
-	require.NotNil(t, result)
+// TestEnqueueExtractionAsync_HappyPath verifies that the function completes
+// without error when the pool and backend both succeed.
+func TestEnqueueExtractionAsync_HappyPath(t *testing.T) {
+	pool := newTestNoopPool(t)
+	// noopBackend.EnqueueExtractionJob returns nil — must not panic.
+	enqueueExtractionAsync(pool, "mem_happy", "test-project")
 }
