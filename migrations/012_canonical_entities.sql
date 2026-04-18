@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS entity_extraction_jobs (
     status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed')),
     error       TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    processed_at TIMESTAMPTZ
+    processed_at TIMESTAMPTZ,
+    CONSTRAINT uq_entity_jobs_pending UNIQUE (memory_id, project)
 );
 
 CREATE INDEX IF NOT EXISTS idx_entity_jobs_pending ON entity_extraction_jobs(project, created_at) WHERE status = 'pending';

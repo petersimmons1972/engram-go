@@ -12,13 +12,19 @@ func (p *PostgresBackend) UpsertEntity(ctx context.Context, e *entity.Entity) (s
 	if e.ID == "" {
 		e.ID = uuid.New().String()
 	}
-	_, err := p.pool.Exec(ctx, `
+	var id string
+	err := p.pool.QueryRow(ctx, `
 		INSERT INTO canonical_entities (id, name, aliases, project, updated_at)
 		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (id) DO UPDATE
-			SET aliases = $3, updated_at = NOW()`,
-		e.ID, e.Name, e.Aliases, e.Project)
-	return e.ID, err
+		ON CONFLICT (project, lower(name)) DO UPDATE
+			SET aliases = EXCLUDED.aliases, updated_at = NOW()
+		RETURNING id`,
+		e.ID, e.Name, e.Aliases, e.Project).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	e.ID = id
+	return id, nil
 }
 
 func (p *PostgresBackend) GetEntitiesByProject(ctx context.Context, project string) ([]entity.Entity, error) {
@@ -41,9 +47,10 @@ func (p *PostgresBackend) GetEntitiesByProject(ctx context.Context, project stri
 }
 
 func (p *PostgresBackend) EnqueueExtractionJob(ctx context.Context, memoryID, project string) error {
-	_, err := p.pool.Exec(ctx,
-		`INSERT INTO entity_extraction_jobs (id, memory_id, project) VALUES ($1, $2, $3)
-		 ON CONFLICT DO NOTHING`,
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO entity_extraction_jobs (id, memory_id, project)
+		VALUES ($1, $2, $3)
+		ON CONFLICT ON CONSTRAINT uq_entity_jobs_pending DO NOTHING`,
 		uuid.New().String(), memoryID, project)
 	return err
 }
@@ -75,18 +82,23 @@ func (p *PostgresBackend) ClaimExtractionJobs(ctx context.Context, project strin
 	return jobs, rows.Err()
 }
 
+func truncateString(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) > maxRunes {
+		return string(r[:maxRunes])
+	}
+	return s
+}
+
 func (p *PostgresBackend) CompleteExtractionJob(ctx context.Context, jobID string, jobErr error) error {
 	errMsg := ""
 	status := "done"
 	if jobErr != nil {
-		errMsg = jobErr.Error()
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
-		}
+		errMsg = truncateString(strings.TrimSpace(jobErr.Error()), 500)
 		status = "failed"
 	}
 	_, err := p.pool.Exec(ctx,
 		`UPDATE entity_extraction_jobs SET status=$1, error=$2, processed_at=NOW() WHERE id=$3`,
-		status, strings.TrimSpace(errMsg), jobID)
+		status, errMsg, jobID)
 	return err
 }
