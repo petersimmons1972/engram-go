@@ -239,6 +239,25 @@ func toolResult(v any) (*mcpgo.CallToolResult, error) {
 	return mcpgo.NewToolResultText(string(b)), nil
 }
 
+// extractResultID pulls the "id" field from a toolResult JSON payload.
+// Returns ("", false) if the result is nil or the id field is absent/non-string.
+func extractResultID(result *mcpgo.CallToolResult) (string, bool) {
+	if result == nil || len(result.Content) == 0 {
+		return "", false
+	}
+	// Content[0] is a TextContent whose Text is the JSON payload.
+	text, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		return "", false
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
+		return "", false
+	}
+	id, ok := m["id"].(string)
+	return id, ok && id != ""
+}
+
 // getString extracts a string arg with a fallback default.
 func getString(args map[string]any, key, def string) string {
 	if v, ok := args[key]; ok {

@@ -275,7 +275,24 @@ func (s *Server) registerTools() {
 	}{
 		{"memory_store", "Store a focused memory (<=10k chars)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStore(ctx, pool, req)
+				result, err := handleMemoryStore(ctx, pool, req)
+				if err != nil {
+					return result, err
+				}
+				// Enqueue entity extraction asynchronously. Non-fatal: if the enqueue
+				// fails the store has already succeeded; we log and continue.
+				args := req.GetArguments()
+				project := getString(args, "project", "default")
+				if memID, ok := extractResultID(result); ok {
+					h, herr := pool.Get(ctx, project)
+					if herr == nil {
+						if eerr := h.Engine.Backend().EnqueueExtractionJob(ctx, memID, project); eerr != nil {
+							slog.Warn("memory_store: enqueue extraction job failed",
+								"id", memID, "project", project, "err", eerr)
+						}
+					}
+				}
+				return result, nil
 			}},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

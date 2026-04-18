@@ -18,9 +18,11 @@ import (
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/entity"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
+	"github.com/petersimmons1972/engram/internal/types"
 
 	// Register pprof HTTP handlers at /debug/pprof/ (localhost only).
 	_ "net/http/pprof"
@@ -172,6 +174,39 @@ func run() error {
 			"rerank", *claudeRerank)
 	}
 
+	// Start entity extraction worker if Claude is enabled and projects are configured.
+	// The worker polls each project's extraction job queue and runs Claude to identify
+	// named entities and relations, building the GraphRAG entity index.
+	entityProjects := strings.Split(envOr("ENGRAM_ENTITY_PROJECTS", ""), ",")
+	filteredProjects := entityProjects[:0]
+	for _, p := range entityProjects {
+		if p != "" {
+			filteredProjects = append(filteredProjects, p)
+		}
+	}
+	entityProjects = filteredProjects
+
+	if cc != nil && len(entityProjects) > 0 {
+		for _, proj := range entityProjects {
+			proj := proj // capture for goroutine
+			entityBackend, err := db.NewPostgresBackend(ctx, proj, dsn)
+			if err != nil {
+				slog.Warn("entity worker: could not open backend, skipping project",
+					"project", proj, "err", err)
+				continue
+			}
+			adapter := &entityDBAdapter{backend: entityBackend}
+			extractor := entity.NewClaudeExtractor(cc)
+			w := entity.NewWorker(adapter, extractor, entity.WorkerConfig{
+				Projects:     []string{proj},
+				PollInterval: time.Duration(envInt("ENGRAM_ENTITY_POLL_SECONDS", 5)) * time.Second,
+				BatchSize:    envInt("ENGRAM_ENTITY_BATCH_SIZE", 10),
+			})
+			go w.Run(ctx)
+			slog.Info("entity extraction worker started", "project", proj)
+		}
+	}
+
 	// Start pprof profiling server on localhost:6060.
 	// Bound to loopback only — not reachable from outside the host.
 	// Requires no auth because it's loopback-only and the API key protects
@@ -262,4 +297,41 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// entityDBAdapter adapts db.Backend to entity.WorkerBackend.
+// The only mismatch between the two interfaces is ClaimExtractionJobs:
+// db.Backend returns []db.ExtractionJob, while entity.WorkerBackend returns
+// []entity.ExtractionJob. Both types have identical fields (ID, MemoryID,
+// Project). All other methods are signature-compatible.
+type entityDBAdapter struct {
+	backend db.Backend
+}
+
+func (a *entityDBAdapter) ClaimExtractionJobs(ctx context.Context, project string, limit int) ([]entity.ExtractionJob, error) {
+	dbJobs, err := a.backend.ClaimExtractionJobs(ctx, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]entity.ExtractionJob, len(dbJobs))
+	for i, j := range dbJobs {
+		out[i] = entity.ExtractionJob{ID: j.ID, MemoryID: j.MemoryID, Project: j.Project}
+	}
+	return out, nil
+}
+
+func (a *entityDBAdapter) CompleteExtractionJob(ctx context.Context, jobID string, err error) error {
+	return a.backend.CompleteExtractionJob(ctx, jobID, err)
+}
+
+func (a *entityDBAdapter) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
+	return a.backend.GetMemory(ctx, id)
+}
+
+func (a *entityDBAdapter) GetEntitiesByProject(ctx context.Context, project string) ([]entity.Entity, error) {
+	return a.backend.GetEntitiesByProject(ctx, project)
+}
+
+func (a *entityDBAdapter) UpsertEntity(ctx context.Context, e *entity.Entity) (string, error) {
+	return a.backend.UpsertEntity(ctx, e)
 }
