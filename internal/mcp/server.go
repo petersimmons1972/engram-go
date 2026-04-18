@@ -420,6 +420,21 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryAdopt(ctx, pool, req)
 			}},
+		// Simplified front-door tools — wrappers over the expert-surface tools
+		// with sensible defaults injected. Designed for LLM orchestrators that
+		// do not need the full parameter surface.
+		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQuickStore(ctx, pool, req)
+			}},
+		{"memory_query", "Search memories with automatic graph expansion. Simplified front door for memory_recall.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryQuery(ctx, pool, req, cfg)
+			}},
+		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryExpand(ctx, pool, req)
+			}},
 		// Safety constraint verification tools
 		{"get_constraints", "List constraint and policy memories relevant to an optional query",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
