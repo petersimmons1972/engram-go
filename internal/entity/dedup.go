@@ -41,9 +41,8 @@ func Deduplicate(existing []Entity, candidates []Entity) (merged []Entity, fresh
 				updated[idx] = ent
 			}
 			mergedSet[idx] = true
-		} else if fi, seen := freshIndex[key]; seen {
-			// Duplicate new candidate: merge aliases into the existing fresh entry.
-			_ = fi // no alias field on candidate in this design; skip
+		} else if _, seen := freshIndex[key]; seen {
+			// Duplicate new candidate already in fresh — skip.
 		} else {
 			fresh = append(fresh, c)
 			freshIndex[key] = len(fresh) - 1
