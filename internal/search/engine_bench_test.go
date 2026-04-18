@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -376,6 +377,18 @@ func (s *stubBackend) StoreDocument(_ context.Context, _, _ string) (string, err
 }
 func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error) { return "", nil }
 func (s *stubBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error { return nil }
+
+func (s *stubBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) {
+	return "", nil
+}
+func (s *stubBackend) GetEntitiesByProject(_ context.Context, _ string) ([]entity.Entity, error) {
+	return nil, nil
+}
+func (s *stubBackend) EnqueueExtractionJob(_ context.Context, _, _ string) error { return nil }
+func (s *stubBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db.ExtractionJob, error) {
+	return nil, nil
+}
+func (s *stubBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
 
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)
