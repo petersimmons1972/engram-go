@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280" role="img" aria-label="engram-go v3.0 hero banner">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="engram-go v3.0 hero banner">
   <defs>
-    <!-- Accent gradient bar: Go cyan to GitHub green -->
+    <!-- Accent gradient bar: recency blue to cosine green -->
     <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" stop-color="#1f6feb" stop-opacity="1"/>
       <stop offset="100%" stop-color="#3fb950" stop-opacity="1"/>
@@ -27,47 +27,43 @@
   <!-- ============================================================ -->
 
   <!-- Base canvas fill -->
-  <rect x="0" y="0" width="1200" height="280" fill="#0d1117"/>
+  <rect x="0" y="0" width="1200" height="340" fill="#0d1117"/>
 
   <!-- Subtle vignette overlay -->
-  <rect x="0" y="0" width="1200" height="280" fill="url(#bgVignette)"/>
+  <rect x="0" y="0" width="1200" height="340" fill="url(#bgVignette)"/>
 
   <!-- ============================================================ -->
-  <!-- LAYER 2: GEOMETRY — Go accent block, badge rects, divider    -->
+  <!-- LAYER 2: GEOMETRY                                            -->
   <!-- ============================================================ -->
 
-  <!-- Go accent block — rounded rect with Go brand color -->
-  <rect x="52" y="100" width="72" height="48" rx="10" ry="10" fill="url(#goBlockGrad)"/>
+  <!-- Go accent block — left side brand marker -->
+  <rect x="52" y="108" width="72" height="56" rx="10" ry="10" fill="url(#goBlockGrad)"/>
 
-  <!-- Badge 1: ~10 MB container -->
-  <rect x="780" y="168" width="114" height="32" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
+  <!-- Badge 1: ~10 MB container — centered trio -->
+  <rect x="405" y="262" width="120" height="36" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
 
   <!-- Badge 2: ~200ms startup -->
-  <rect x="905" y="168" width="114" height="32" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
+  <rect x="540" y="262" width="120" height="36" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
 
-  <!-- Badge 3: 28 MCP tools -->
-  <rect x="1030" y="168" width="114" height="32" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
+  <!-- Badge 3: 35 MCP tools -->
+  <rect x="675" y="262" width="120" height="36" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
 
-  <!-- Accent gradient rule — thin horizontal line below tagline -->
-  <rect x="80" y="210" width="1040" height="3" rx="1" ry="1" fill="url(#accentGrad)"/>
+  <!-- Accent gradient rule — separates content from footer -->
+  <rect x="80" y="252" width="1040" height="3" rx="1" ry="1" fill="url(#accentGrad)"/>
 
-  <!-- Subtle separator between left accent and center content -->
-  <line x1="148" y1="90" x2="148" y2="210" stroke="#21262d" stroke-width="1"/>
-
-  <!-- ============================================================ -->
-  <!-- LAYER 3: STROKES — none additional needed                    -->
-  <!-- ============================================================ -->
+  <!-- Left accent separator -->
+  <line x1="148" y1="90" x2="148" y2="250" stroke="#21262d" stroke-width="1"/>
 
   <!-- ============================================================ -->
-  <!-- LAYER 4: TEXT — all text drawn last, nothing occludes it     -->
+  <!-- LAYER 4: TEXT — all text drawn last                          -->
   <!-- ============================================================ -->
 
   <!-- Go accent block label -->
   <text
     x="88"
-    y="131"
+    y="139"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="22"
+    font-size="24"
     font-weight="700"
     fill="#0d1117"
     text-anchor="middle"
@@ -77,9 +73,9 @@
   <!-- Main wordmark: "engram" -->
   <text
     x="600"
-    y="108"
+    y="118"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="80"
+    font-size="88"
     font-weight="700"
     fill="#ffffff"
     text-anchor="middle"
@@ -89,9 +85,9 @@
   <!-- Subtitle: project description -->
   <text
     x="600"
-    y="155"
+    y="174"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="22"
+    font-size="28"
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
@@ -101,58 +97,58 @@
   <!-- Tagline: LOCAL-ONLY — the key differentiator -->
   <text
     x="600"
-    y="185"
+    y="218"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="15"
-    font-weight="600"
+    font-size="20"
+    font-weight="700"
     fill="#ff6b6b"
     text-anchor="middle"
     dominant-baseline="auto"
-    letter-spacing="0.5">v3.0  ·  LOCAL-ONLY  ·  No cloud accounts  ·  No API keys  ·  No telemetry</text>
+    letter-spacing="0.8">LOCAL-ONLY  ·  No cloud accounts  ·  No API keys  ·  No telemetry</text>
 
   <!-- Badge 1 label -->
   <text
-    x="837"
-    y="184"
+    x="465"
+    y="280"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="13"
+    font-size="16"
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
-    dominant-baseline="central">~10 MB container</text>
+    dominant-baseline="central">~10 MB</text>
 
   <!-- Badge 2 label -->
   <text
-    x="962"
-    y="184"
+    x="600"
+    y="280"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="13"
+    font-size="16"
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
-    dominant-baseline="central">~200ms startup</text>
+    dominant-baseline="central">~200ms start</text>
 
   <!-- Badge 3 label -->
   <text
-    x="1087"
-    y="184"
+    x="735"
+    y="280"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="13"
+    font-size="16"
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
-    dominant-baseline="central">28 MCP tools</text>
+    dominant-baseline="central">35 MCP tools</text>
 
-  <!-- Small version callout below accent rule -->
+  <!-- Footer: version + repo -->
   <text
     x="600"
-    y="236"
+    y="320"
     font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="12"
+    font-size="14"
     font-weight="400"
     fill="#8b949e"
     text-anchor="middle"
     dominant-baseline="auto"
-    letter-spacing="1.5">ENGRAM-GO  |  github.com/psimmons/engram-go</text>
+    letter-spacing="1.5">v3.0  ·  ENGRAM-GO  ·  github.com/petersimmons1972/engram-go</text>
 
 </svg>
