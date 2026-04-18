@@ -330,6 +330,10 @@ func (s *stubBackend) GetAllMemoryIDs(_ context.Context, _ string) (map[string]s
 	return nil, nil
 }
 
+func (s *stubBackend) GetMemoryTypeMap(_ context.Context, _ string) (map[string]string, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) GetMemoriesPendingSummary(_ context.Context, _ string, _ int) ([]db.IDContent, error) {
 	return nil, nil
 }

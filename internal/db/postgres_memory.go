@@ -585,6 +585,24 @@ func (b *PostgresBackend) GetAllMemoryIDs(ctx context.Context, project string) (
 	return ids, rows.Err()
 }
 
+func (b *PostgresBackend) GetMemoryTypeMap(ctx context.Context, project string) (map[string]string, error) {
+	rows, err := b.pool.Query(ctx,
+		"SELECT id, memory_type FROM memories WHERE project=$1 AND valid_to IS NULL", project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]string)
+	for rows.Next() {
+		var id, memType string
+		if err := rows.Scan(&id, &memType); err != nil {
+			return nil, err
+		}
+		m[id] = memType
+	}
+	return m, rows.Err()
+}
+
 func (b *PostgresBackend) GetMemoriesPendingSummary(ctx context.Context, project string, limit int) ([]IDContent, error) {
 	rows, err := b.pool.Query(ctx,
 		"SELECT id, content FROM memories WHERE project=$1 AND valid_to IS NULL AND (summary IS NULL OR summary = content) LIMIT $2",

@@ -196,6 +196,9 @@ func (noopBackend) ListAllProjects(_ context.Context) ([]string, error)         
 func (noopBackend) GetAllMemoryIDs(_ context.Context, _ string) (map[string]struct{}, error) {
 	return nil, nil
 }
+func (noopBackend) GetMemoryTypeMap(_ context.Context, _ string) (map[string]string, error) {
+	return nil, nil
+}
 func (noopBackend) GetMemoriesPendingSummary(_ context.Context, _ string, _ int) ([]db.IDContent, error) {
 	return nil, nil
 }

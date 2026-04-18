@@ -223,6 +223,8 @@ type Backend interface {
 	ListAllProjects(ctx context.Context) ([]string, error)
 	// GetAllMemoryIDs returns all memory IDs for a project.
 	GetAllMemoryIDs(ctx context.Context, project string) (map[string]struct{}, error)
+	// GetMemoryTypeMap returns a memoryID→memoryType map for all active memories in a project.
+	GetMemoryTypeMap(ctx context.Context, project string) (map[string]string, error)
 	// GetMemoriesPendingSummary returns (id, content) for memories where summary IS NULL.
 	GetMemoriesPendingSummary(ctx context.Context, project string, limit int) ([]IDContent, error)
 	// StoreSummary sets the summary field for a memory.

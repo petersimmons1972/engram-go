@@ -17,6 +17,36 @@ import (
 // versionRe matches version strings like v1.2, v10.3, 2.0, 1.2.3, etc.
 var versionRe = regexp.MustCompile(`v?\d+\.\d+(?:\.\d+)*`)
 
+// domainStopwords are project-specific terms that appear across many memories
+// regardless of subject and must be excluded from shared-word counts to prevent
+// false-positive contradiction matches. These words are too common in this corpus
+// to serve as evidence that two sentences describe the same subject.
+var domainStopwords = map[string]bool{
+	"pattern": true, "patterns": true,
+	"session": true, "sessions": true,
+	"memory": true, "memories": true,
+	"engram": true,
+	"project": true, "projects": true,
+	"system": true, "systems": true,
+	"context": true, "contexts": true,
+	"feedback": true,
+	"completed": true, "complete": true,
+	"clearwatch": true,
+	"using": true, "used": true,
+	"based": true,
+	"current": true, "currently": true,
+	"should": true,
+	"always": true, "never": true,
+	"when": true, "where": true, "that": true, "this": true, "with": true,
+	"from": true, "into": true, "over": true, "have": true, "will": true,
+	"been": true, "they": true, "their": true,
+	"work": true, "works": true, "working": true,
+	"data": true, "result": true, "results": true,
+	"agent": true, "agents": true,
+	"tool": true, "tools": true,
+	"file": true, "files": true,
+}
+
 // negationPhrases are token-level signals that one claim negates another.
 var negationPhrases = []string{
 	"not ", "no ", "never ", "does not", "do not", "is not", "are not",
@@ -48,10 +78,9 @@ func isContradiction(contentA, contentB string) bool {
 	b := strings.ToLower(contentB)
 
 	// Heuristic 1 — negation opposition.
-	// Require both texts to share at least 5 significant words before checking
-	// negation asymmetry. Threshold raised from 3→5 (#156) because "is not" is
-	// a very common phrase; three shared words is insufficient to establish that
-	// two sentences are about the same subject. False negatives are preferred.
+	// Require both texts to share at least 5 significant non-stopword words before
+	// checking negation asymmetry. Domain stopwords reduce effective hit counts,
+	// so the numeric threshold is unchanged from #156 but the population is smaller.
 	if sharedWordCount(a, b) >= 5 {
 		aNeg := containsAny(a, negationPhrases)
 		bNeg := containsAny(b, negationPhrases)
@@ -79,9 +108,11 @@ func isContradiction(contentA, contentB string) bool {
 	if (aPast && bPresent && !bPast) || (bPast && aPresent && !aPast) {
 		// Only flag as contradictory if they also share vocabulary — otherwise any
 		// historical sentence paired with any current sentence would trigger.
-		// Threshold raised from 3→5 (#156): three shared words is not enough to
-		// confirm the sentences describe the same subject. False negatives preferred.
-		if sharedWordCount(a, b) >= 5 {
+		// Threshold lowered from 5→4: domain stopwords strip "session", "currently",
+		// "used", "using", and other corpus-wide terms, so fewer words survive into
+		// the significant set. The effective selectivity is higher than before even
+		// at the lower count.
+		if sharedWordCount(a, b) >= 4 {
 			return true
 		}
 	}
@@ -104,14 +135,14 @@ func sharedWordCount(a, b string) int {
 }
 
 // significantWords returns the set of lower-case words longer than 3 characters
-// in s, split on whitespace and punctuation.
+// in s, excluding domain stopwords, split on whitespace and punctuation.
 func significantWords(s string) map[string]bool {
 	words := strings.FieldsFunc(s, func(r rune) bool {
 		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
 	})
 	m := make(map[string]bool, len(words))
 	for _, w := range words {
-		if len(w) > 3 {
+		if len(w) > 3 && !domainStopwords[w] {
 			m[w] = true
 		}
 	}
@@ -309,14 +340,33 @@ func (r *Runner) DetectContradictions(ctx context.Context, minSimilarity float64
 // that accepts RunOptions so RunAll can pass LLM settings without changing the
 // public API signature.
 func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64, limit int, opts RunOptions) (int, error) {
+	// Fetch memory types once so we can skip context memories below.
+	// Context memories are session handoffs and operational records —
+	// not factual assertions that can contradict each other.
+	memTypes, err := r.backend.GetMemoryTypeMap(ctx, r.project)
+	if err != nil {
+		return 0, fmt.Errorf("consolidate: DetectContradictions: GetMemoryTypeMap: %w", err)
+	}
+
 	chunks, err := r.backend.GetAllChunksWithEmbeddings(ctx, r.project, limit)
 	if err != nil {
 		return 0, fmt.Errorf("consolidate: DetectContradictions: GetAllChunksWithEmbeddings: %w", err)
 	}
 
 	// One chunk per memory — use the first chunk encountered per memory ID.
+	// Skip context-type memories (session handoffs) and large chunks (indexes,
+	// summaries, multi-rule documents). Contradiction detection is only meaningful
+	// for short, focused factual assertions. The 400-char cap excludes multi-paragraph
+	// documents while leaving single-claim memories intact.
+	const maxContradictionChunkLen = 400
 	memChunks := make(map[string]*types.Chunk, len(chunks))
 	for _, c := range chunks {
+		if memTypes[c.MemoryID] == types.MemoryTypeContext {
+			continue
+		}
+		if len(c.ChunkText) > maxContradictionChunkLen {
+			continue
+		}
 		if _, ok := memChunks[c.MemoryID]; !ok {
 			memChunks[c.MemoryID] = c
 		}
@@ -357,6 +407,14 @@ func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64
 
 		for _, hit := range hits {
 			if hit.MemoryID == memID {
+				continue
+			}
+			// Skip context-type targets — same rationale as source filtering above.
+			if memTypes[hit.MemoryID] == types.MemoryTypeContext {
+				continue
+			}
+			// Skip large-chunk targets — multi-paragraph documents, not factual assertions.
+			if len(hit.ChunkText) > maxContradictionChunkLen {
 				continue
 			}
 			key := canonical(memID, hit.MemoryID)
