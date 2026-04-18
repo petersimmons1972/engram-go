@@ -91,7 +91,7 @@ services:
 
   engram-go:
     container_name: engram-go-app
-    image: engram-go:2.3.2
+    image: engram-go:latest
     ports:
       - "0.0.0.0:${ENGRAM_PORT:-8788}:8788"
     env_file:

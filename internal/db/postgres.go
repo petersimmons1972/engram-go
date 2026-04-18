@@ -570,7 +570,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText      string
 		ChunkIndex     int
 		ChunkHash      string
-		Embedding      pgvector.Vector
+		Embedding      *pgvector.Vector
 		SectionHeading *string
 		ChunkType      string
 		LastMatched    *time.Time
@@ -590,6 +590,11 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		chunkType = "sentence_window"
 	}
 
+	var embedding []float32
+	if r.Embedding != nil {
+		embedding = r.Embedding.Slice()
+	}
+
 	return &types.Chunk{
 		ID:             r.ID,
 		MemoryID:       r.MemoryID,
@@ -597,7 +602,7 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkText:      r.ChunkText,
 		ChunkIndex:     r.ChunkIndex,
 		ChunkHash:      r.ChunkHash,
-		Embedding:      r.Embedding.Slice(),
+		Embedding:      embedding,
 		SectionHeading: r.SectionHeading,
 		ChunkType:      chunkType,
 		LastMatched:    r.LastMatched,

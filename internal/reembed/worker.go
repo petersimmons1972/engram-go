@@ -49,7 +49,10 @@ func NewWorkerFromMeta(ctx context.Context, backend db.Backend, embedder embed.C
 			active = true
 		}
 		if !active {
-			if pending, err := backend.GetChunksPendingEmbedding(ctx, project, 1); err == nil && len(pending) > 0 {
+			if pending, err := backend.GetChunksPendingEmbedding(ctx, project, 1); err != nil {
+				slog.Warn("reembed worker: could not query pending embeddings at startup",
+					"project", project, "err", err)
+			} else if len(pending) > 0 {
 				slog.Info("reembed worker: found chunks with NULL embedding at startup, activating",
 					"project", project, "pending_sample", pending[0].ID)
 				active = true
