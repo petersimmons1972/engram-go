@@ -17,7 +17,8 @@ func (p *PostgresBackend) UpsertEntity(ctx context.Context, e *entity.Entity) (s
 		INSERT INTO canonical_entities (id, name, aliases, project, updated_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (project, lower(name)) DO UPDATE
-			SET aliases = EXCLUDED.aliases, updated_at = NOW()
+			SET aliases = ARRAY(SELECT DISTINCT unnest(canonical_entities.aliases || EXCLUDED.aliases)),
+			    updated_at = NOW()
 		RETURNING id`,
 		e.ID, e.Name, e.Aliases, e.Project).Scan(&id)
 	if err != nil {
