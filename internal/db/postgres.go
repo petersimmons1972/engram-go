@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -48,6 +49,16 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	}
 	cfg.MinConns = 2
 	cfg.MaxConns = 10
+	// tsvector (OID 3614) has no binary codec in pgx — register it as text so
+	// SELECT * queries that include search_vector don't fail in binary mode.
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name:  "tsvector",
+			OID:   3614,
+			Codec: pgtype.TextCodec{},
+		})
+		return nil
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
