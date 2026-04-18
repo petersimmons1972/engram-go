@@ -35,12 +35,25 @@ func NewWorker(backend db.Backend, embedder embed.Client, project string, active
 	}
 }
 
+// IsActive reports whether the worker will process chunks when started.
+func (w *Worker) IsActive() bool { return w.active }
+
 // NewWorkerFromMeta creates a Worker and reads the migration flag from project_meta.
+// It also activates if there are chunks with NULL embeddings — this handles Ollama
+// outage recovery, where chunks were stored without embeddings and the migration flag
+// was never set.
 func NewWorkerFromMeta(ctx context.Context, backend db.Backend, embedder embed.Client, project string) *Worker {
 	active := false
 	if backend != nil {
 		if v, ok, _ := backend.GetMeta(ctx, project, "embedding_migration_in_progress"); ok && v == "true" {
 			active = true
+		}
+		if !active {
+			if pending, err := backend.GetChunksPendingEmbedding(ctx, project, 1); err == nil && len(pending) > 0 {
+				slog.Info("reembed worker: found chunks with NULL embedding at startup, activating",
+					"project", project, "pending_sample", pending[0].ID)
+				active = true
+			}
 		}
 	}
 	return NewWorker(backend, embedder, project, active)

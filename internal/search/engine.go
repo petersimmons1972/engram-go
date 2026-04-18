@@ -260,8 +260,9 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		j, p := j, p // capture loop variables
 		eg.Go(func() error {
 			// Embedding is best-effort (#108): if Ollama is unavailable the chunk
-			// is stored with a NULL embedding and the reembed worker will backfill
-			// it later. Memory storage is never blocked by an embedder outage.
+			// is stored with a NULL embedding. The reembed worker detects pending
+			// chunks at next server start (NewWorkerFromMeta) and backfills them.
+			// Memory storage is never blocked by an embedder outage.
 			embedding, err := embedder.Embed(egCtx, p.candidate.Text)
 			if err != nil {
 				slog.Warn("embed chunk failed — storing with NULL embedding for reembed worker",
