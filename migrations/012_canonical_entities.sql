@@ -1,0 +1,27 @@
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS canonical_entities (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name        TEXT NOT NULL,
+    aliases     TEXT[] NOT NULL DEFAULT '{}',
+    project     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_canonical_entities_project ON canonical_entities(project);
+CREATE INDEX IF NOT EXISTS idx_canonical_entities_name ON canonical_entities(project, lower(name));
+
+CREATE TABLE IF NOT EXISTS entity_extraction_jobs (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    project     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed')),
+    error       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_jobs_pending ON entity_extraction_jobs(project, status) WHERE status = 'pending';
+
+COMMIT;
