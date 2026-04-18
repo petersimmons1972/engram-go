@@ -1646,6 +1646,8 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	for k, v := range args {
 		merged[k] = v
 	}
+	// Defaults are pinned here independently of handleMemoryStore's own defaults
+	// so this wrapper's contract stays stable even if upstream defaults drift.
 	if _, ok := merged["memory_type"]; !ok {
 		merged["memory_type"] = "context"
 	}
@@ -1697,7 +1699,8 @@ func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if memoryID == "" {
 		return nil, fmt.Errorf("memory_id is required")
 	}
-	depth := getInt(args, "depth", 2)
+	requestedDepth := getInt(args, "depth", 2)
+	depth := requestedDepth
 	if depth < 1 || depth > 5 {
 		depth = 2
 	}
@@ -1713,29 +1716,45 @@ func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 
 	type connItem struct {
-		ID        string  `json:"id"`
-		Content   string  `json:"content"`
-		RelType   string  `json:"rel_type"`
-		Direction string  `json:"direction"`
-		Strength  float64 `json:"strength"`
+		ID         string   `json:"id"`
+		Content    string   `json:"content"`
+		MemoryType string   `json:"memory_type"`
+		Project    string   `json:"project"`
+		Tags       []string `json:"tags"`
+		CreatedAt  string   `json:"created_at,omitempty"`
+		RelType    string   `json:"rel_type"`
+		Direction  string   `json:"direction"`
+		Strength   float64  `json:"strength"`
 	}
 	items := make([]connItem, 0, len(connected))
 	for _, c := range connected {
 		if c.Memory == nil {
 			continue
 		}
+		createdAt := ""
+		if !c.Memory.CreatedAt.IsZero() {
+			createdAt = c.Memory.CreatedAt.Format(time.RFC3339)
+		}
 		items = append(items, connItem{
-			ID:        c.Memory.ID,
-			Content:   c.Memory.Content,
-			RelType:   c.RelType,
-			Direction: c.Direction,
-			Strength:  c.Strength,
+			ID:         c.Memory.ID,
+			Content:    c.Memory.Content,
+			MemoryType: c.Memory.MemoryType,
+			Project:    c.Memory.Project,
+			Tags:       c.Memory.Tags,
+			CreatedAt:  createdAt,
+			RelType:    c.RelType,
+			Direction:  c.Direction,
+			Strength:   c.Strength,
 		})
 	}
 
-	return toolResult(map[string]any{
+	out := map[string]any{
 		"memory_id": memoryID,
 		"depth":     depth,
 		"connected": items,
-	})
+	}
+	if requestedDepth != depth {
+		out["requested_depth"] = requestedDepth
+	}
+	return toolResult(out)
 }

@@ -317,20 +317,7 @@ func (s *Server) registerTools() {
 				args := req.GetArguments()
 				project := getString(args, "project", "default")
 				if memID, ok := extractResultID(result); ok {
-					go func() {
-						enqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						defer cancel()
-						h, herr := pool.Get(enqCtx, project)
-						if herr != nil {
-							slog.Warn("memory_store: enqueue pool.Get failed",
-								"id", memID, "project", project, "err", herr)
-							return
-						}
-						if eerr := h.Engine.Backend().EnqueueExtractionJob(enqCtx, memID, project); eerr != nil {
-							slog.Warn("memory_store: enqueue extraction job failed",
-								"id", memID, "project", project, "err", eerr)
-						}
-					}()
+					go enqueueExtractionAsync(pool, memID, project)
 				}
 				return result, nil
 			}},
@@ -459,7 +446,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryQuickStore(ctx, pool, req)
 			}},
-		{"memory_query", "Search memories with automatic graph expansion. Simplified front door for memory_recall.",
+		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryQuery(ctx, pool, req, cfg)
 			}},
@@ -535,5 +522,22 @@ func (s *Server) registerTools() {
 				return handleMemoryAsk(ctx, pool, req, cfg)
 			},
 		)
+	}
+}
+
+// enqueueExtractionAsync submits memID to the entity extraction queue via pool.
+// Intended to run in a detached goroutine; all failures are logged, never surfaced.
+func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h, herr := pool.Get(ctx, project)
+	if herr != nil {
+		slog.Warn("memory_store: enqueue pool.Get failed",
+			"id", memID, "project", project, "err", herr)
+		return
+	}
+	if eerr := h.Engine.Backend().EnqueueExtractionJob(ctx, memID, project); eerr != nil {
+		slog.Warn("memory_store: enqueue extraction job failed",
+			"id", memID, "project", project, "err", eerr)
 	}
 }

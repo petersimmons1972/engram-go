@@ -187,6 +187,12 @@ func run() error {
 	}
 	entityProjects = filteredProjects
 
+	var entityBackends []db.Backend
+	defer func() {
+		for _, b := range entityBackends {
+			b.Close()
+		}
+	}()
 	if cc != nil && len(entityProjects) > 0 {
 		for _, proj := range entityProjects {
 			proj := proj // capture for goroutine
@@ -196,6 +202,7 @@ func run() error {
 					"project", proj, "err", err)
 				continue
 			}
+			entityBackends = append(entityBackends, entityBackend)
 			adapter := &entityDBAdapter{backend: entityBackend}
 			extractor := entity.NewClaudeExtractor(cc)
 			w := entity.NewWorker(adapter, extractor, entity.WorkerConfig{
