@@ -114,7 +114,7 @@ func handleCheckConstraints(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	project := getString(args, "project", "default")
 	proposedAction := getString(args, "proposed_action", "")
 	if proposedAction == "" {
-		return nil, fmt.Errorf("proposed_action is required")
+		return mcpgo.NewToolResultError("proposed_action is required"), nil
 	}
 	limit := getInt(args, "limit", defaultConstraintLimit)
 	if limit < 1 || limit > 50 {
@@ -148,7 +148,7 @@ func handleVerifyBeforeActing(ctx context.Context, pool *EnginePool, req mcpgo.C
 	project := getString(args, "project", "default")
 	proposedAction := getString(args, "proposed_action", "")
 	if proposedAction == "" {
-		return nil, fmt.Errorf("proposed_action is required")
+		return mcpgo.NewToolResultError("proposed_action is required"), nil
 	}
 	limit := getInt(args, "limit", defaultConstraintLimit)
 	if limit < 1 || limit > 50 {
@@ -726,17 +726,19 @@ func actionTagMatchesProfile(tag string, profile actionProfile, actionLower stri
 
 // ── Decision ratchet ──────────────────────────────────────────────────────────
 
-// elevateDecision returns the higher-severity of current and next.
+// decisionRank maps decision strings to severity ordinals for elevateDecision.
 // Order: proceed(0) < warn(1) < require_approval(2) < block(3).
+var decisionRank = map[string]int{
+	"proceed":          0,
+	"warn":             1,
+	"require_approval": 2,
+	"block":            3,
+}
+
+// elevateDecision returns the higher-severity of current and next.
 // The decision never decreases — this is the one-directional ratchet.
 func elevateDecision(current, next string) string {
-	rank := map[string]int{
-		"proceed":          0,
-		"warn":             1,
-		"require_approval": 2,
-		"block":            3,
-	}
-	if rank[next] > rank[current] {
+	if decisionRank[next] > decisionRank[current] {
 		return next
 	}
 	return current

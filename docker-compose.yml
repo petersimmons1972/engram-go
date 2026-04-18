@@ -113,6 +113,9 @@ services:
       - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}
       - ENGRAM_CLAUDE_CONSOLIDATE=${ENGRAM_CLAUDE_CONSOLIDATE:-false}
       - ENGRAM_CLAUDE_RERANK=${ENGRAM_CLAUDE_RERANK:-false}
+      # Allow /setup-token from Docker bridge IPs (RFC1918). Required because the
+      # host appears as a gateway IP (172.x, 10.x) rather than 127.0.0.1 via NAT.
+      - ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1
     depends_on:
       postgres:
         condition: service_healthy

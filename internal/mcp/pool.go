@@ -16,7 +16,7 @@ import (
 
 // maxPoolSize is the maximum number of project engines kept in memory at once.
 // When exceeded, the least-recently-used engine is evicted and its connection
-// pool released. 50 projects × ~10 PG connections each = 500 max connections,
+// pool released. 50 projects × 2–10 PG connections each = 100–500 connections,
 // well within typical PostgreSQL limits.
 const maxPoolSize = 50
 
@@ -111,7 +111,7 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 			e.lastAccess.Store(time.Now().UnixNano())
 			return e.handle, nil
 		}
-		if len(p.engines) >= maxPoolSize {
+		for len(p.engines) >= maxPoolSize {
 			p.evictLRULocked()
 		}
 		entry := &engineEntry{handle: h}
@@ -132,7 +132,7 @@ func (p *EnginePool) evictLRULocked() {
 	lruNano := int64(math.MaxInt64) // #131: init to max so any real value wins
 	for k, e := range p.engines {
 		nano := e.lastAccess.Load()
-		if nano < lruNano {
+		if nano < lruNano || (nano == lruNano && k < lruKey) {
 			lruKey = k
 			lruNano = nano
 		}

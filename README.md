@@ -61,6 +61,8 @@ make setup    # writes bearer token to ~/.claude/mcp_servers.json
 
 The server starts on port 8788. Cold start: under 200ms. Memory at idle: 18 MB.
 
+> **Docker users:** `docker-compose.yml` now sets `ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1` automatically. If you run engram outside Docker and need `/setup-token` accessible from RFC1918 addresses (e.g. a LAN host), add this variable to your environment. Without it, `/setup-token` only accepts loopback (127.0.0.1 / ::1).
+
 Run `/mcp` in Claude Code after setup to connect. All 30 core tools are available immediately. Five optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) activate when `ANTHROPIC_API_KEY` is set.
 
 ---

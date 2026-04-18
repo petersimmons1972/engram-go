@@ -193,11 +193,17 @@ func NewWorkerWithClaude(backend db.Backend, project, ollamaURL, model string, e
 
 // Start launches the background goroutine. Safe to call if disabled.
 func (w *Worker) Start() {
+	w.StartWithContext(context.Background())
+}
+
+// StartWithContext launches the background goroutine using ctx as the parent
+// lifecycle context. The worker stops when ctx is cancelled.
+func (w *Worker) StartWithContext(ctx context.Context) {
 	if !w.enabled {
 		close(w.done)
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 	go w.run(ctx)
 }

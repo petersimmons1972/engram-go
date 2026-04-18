@@ -33,9 +33,10 @@ type rateLimiterEntry struct {
 }
 
 // newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
-func newRateLimiter() *rateLimiter {
+// The eviction goroutine stops when ctx is cancelled.
+func newRateLimiter(ctx context.Context) *rateLimiter {
 	rl := &rateLimiter{clients: make(map[string]*rateLimiterEntry)}
-	go rl.evict()
+	go rl.evictLoop(ctx)
 	return rl
 }
 
@@ -56,18 +57,28 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return ok
 }
 
-// evict removes entries not seen in the last 5 minutes.
-func (rl *rateLimiter) evict() {
+// evictLoop removes idle IP entries every 5 minutes until ctx is cancelled.
+func (rl *rateLimiter) evictLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, e := range rl.clients {
-			if time.Since(e.lastSeen) > 5*time.Minute {
-				delete(rl.clients, ip)
-			}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.evict()
 		}
-		rl.mu.Unlock()
+	}
+}
+
+// evict removes entries not seen in the last 5 minutes.
+func (rl *rateLimiter) evict() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	for ip, e := range rl.clients {
+		if time.Since(e.lastSeen) > 5*time.Minute {
+			delete(rl.clients, ip)
+		}
 	}
 }
 
@@ -153,7 +164,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// The token is equivalent in sensitivity to ~/.claude.json which is already on disk.
 	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
 		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !isLocalAddress(remoteHost) {
+		if !isLocalAddress(remoteHost, s.cfg.AllowRFC1918SetupToken) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -176,8 +187,24 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	mux.HandleFunc("/.well-known/oauth-protected-resource", notFound)
 
 	// All other routes require Bearer authentication and per-IP rate limiting (#140).
-	rl := newRateLimiter()
+	rl := newRateLimiter(ctx)
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
+
+	// Background sweeper clears stale upload sessions on a 5-minute interval.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				s.uploadMu.Lock()
+				s.evictExpiredUploadsLocked(now)
+				s.uploadMu.Unlock()
+			}
+		}
+	}()
 
 	const maxRequestBodyBytes = 2 * 1024 * 1024 // 2 MiB (#6)
 	httpServer := &http.Server{
@@ -237,10 +264,11 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 	})
 }
 
-// isLocalAddress reports whether the IP string is a loopback or RFC1918 private address.
-// Used by /setup-token to accept requests arriving via Docker's NAT gateway (which presents
-// as a Docker bridge IP, not 127.0.0.1, even when the port is host-loopback-bound).
-func isLocalAddress(ipStr string) bool {
+// isLocalAddress reports whether ipStr is a loopback address.
+// When allowRFC1918 is true, private RFC1918 ranges are also accepted — required
+// for Docker setups where the host appears as a bridge IP (172.x, 10.x, 192.168.x)
+// rather than 127.0.0.1 due to NAT. Enable via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
+func isLocalAddress(ipStr string, allowRFC1918 bool) bool {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return false
@@ -249,11 +277,15 @@ func isLocalAddress(ipStr string) bool {
 		ip = ip4
 	}
 	local := []string{
-		"127.0.0.0/8",    // loopback
-		"::1/128",        // IPv6 loopback
-		"10.0.0.0/8",     // RFC1918 — Docker bridge networks (10.x.x.x)
-		"172.16.0.0/12",  // RFC1918 — Docker default bridge (172.17-31.x.x)
-		"192.168.0.0/16", // RFC1918 — Docker custom networks
+		"127.0.0.0/8", // loopback
+		"::1/128",     // IPv6 loopback
+	}
+	if allowRFC1918 {
+		local = append(local,
+			"10.0.0.0/8",     // RFC1918 — Docker bridge networks
+			"172.16.0.0/12",  // RFC1918 — Docker default bridge
+			"192.168.0.0/16", // RFC1918 — Docker custom networks
+		)
 	}
 	for _, cidr := range local {
 		_, n, _ := net.ParseCIDR(cidr)

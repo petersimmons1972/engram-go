@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -130,7 +131,10 @@ ORDER BY bfs.neighbor_id, bfs.hop ASC`,
 			return nil, err
 		}
 		if tagsJSON != nil {
-			_ = json.Unmarshal(tagsJSON, &m.Tags)
+			if err := json.Unmarshal(tagsJSON, &m.Tags); err != nil {
+				slog.Warn("tags unmarshal failed — empty tags returned", "memory_id", m.ID, "err", err)
+				m.Tags = []string{}
+			}
 		}
 		m.ExpiresAt = expiresAt
 		m.ValidTo = validTo

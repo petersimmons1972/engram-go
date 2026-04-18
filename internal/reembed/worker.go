@@ -48,11 +48,17 @@ func NewWorkerFromMeta(ctx context.Context, backend db.Backend, embedder embed.C
 
 // Start launches the background goroutine if active.
 func (w *Worker) Start() {
+	w.StartWithContext(context.Background())
+}
+
+// StartWithContext launches the background goroutine using ctx as the parent
+// lifecycle context. The worker stops when ctx is cancelled.
+func (w *Worker) StartWithContext(ctx context.Context) {
 	if !w.active {
 		close(w.done)
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 	go w.run(ctx)
 }
@@ -82,7 +88,12 @@ func (w *Worker) run(ctx context.Context) {
 			return
 		}
 		if done {
-			_ = w.backend.SetMeta(ctx, w.project, "embedding_migration_in_progress", "false")
+			// ctx is already cancelled here; use a fresh context for the flag write.
+			flagCtx, flagCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer flagCancel()
+			if err := w.backend.SetMeta(flagCtx, w.project, "embedding_migration_in_progress", "false"); err != nil {
+				slog.Warn("reembed: failed to clear migration flag", "project", w.project, "err", err)
+			}
 			slog.Info("reembed complete", "project", w.project)
 			return
 		}
