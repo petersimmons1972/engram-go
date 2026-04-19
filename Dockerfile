@@ -15,5 +15,6 @@ FROM cgr.dev/chainguard/static:latest
 COPY --from=build /engram /engram
 COPY --from=build /starter /starter
 COPY --from=build /engram-setup /engram-setup
+USER nonroot
 ENTRYPOINT ["/starter"]
 CMD ["server"]
