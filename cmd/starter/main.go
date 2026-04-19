@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -96,6 +97,12 @@ func main() {
 	// them to any process that can read /proc (#138, #139).
 	cleanEnv := filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD")
 
+	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
+	for _, arg := range os.Args[1:] {
+		if !strings.HasPrefix(arg, "-") && !allowed[arg] {
+			fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
+		}
+	}
 	argv := append([]string{"/engram"}, os.Args[1:]...)
 	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil {
 		fatalf("exec /engram: %v", err)
