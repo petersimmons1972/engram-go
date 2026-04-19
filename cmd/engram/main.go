@@ -215,16 +215,17 @@ func run() error {
 		}
 	}
 
-	// Start pprof profiling server on localhost:6060.
+	// Start pprof profiling server on localhost:6060 when ENGRAM_PPROF=1.
 	// Bound to loopback only — not reachable from outside the host.
-	// Requires no auth because it's loopback-only and the API key protects
-	// the MCP port; operators can SSH-forward if they need remote access.
-	go func() {
-		slog.Info("pprof listening", "addr", "localhost:6060")
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			slog.Warn("pprof server stopped", "err", err)
-		}
-	}()
+	// Operators can SSH-forward if they need remote access.
+	if os.Getenv("ENGRAM_PPROF") != "" {
+		go func() {
+			slog.Info("pprof listening", "addr", "localhost:6060")
+			if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+				slog.Warn("pprof server stopped", "err", err)
+			}
+		}()
+	}
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
