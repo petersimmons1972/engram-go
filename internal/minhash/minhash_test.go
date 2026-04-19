@@ -7,8 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustNewHasher(t *testing.T) *minhash.Hasher {
+	t.Helper()
+	h, err := minhash.NewHasher()
+	require.NoError(t, err)
+	return h
+}
+
 func TestSignature_IdenticalStrings(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	sig1 := h.Signature("the quick brown fox jumps over the lazy dog")
 	sig2 := h.Signature("the quick brown fox jumps over the lazy dog")
 	require.Equal(t, sig1, sig2)
@@ -16,7 +23,7 @@ func TestSignature_IdenticalStrings(t *testing.T) {
 }
 
 func TestSignature_CompletelyDifferent(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	sig1 := h.Signature("aaaaaaaaaa bbbbbbbbbb cccccccccc")
 	sig2 := h.Signature("xxxxxxxxxx yyyyyyyyyy zzzzzzzzzz")
 	est := minhash.EstimatedJaccard(sig1, sig2)
@@ -24,23 +31,16 @@ func TestSignature_CompletelyDifferent(t *testing.T) {
 }
 
 func TestSignature_Deterministic(t *testing.T) {
-	h1 := minhash.NewHasher(42)
-	h2 := minhash.NewHasher(42)
-	sig1 := h1.Signature("test content here")
-	sig2 := h2.Signature("test content here")
-	require.Equal(t, sig1, sig2, "same seed + same input must produce same signature")
-}
-
-func TestSignature_DifferentSeeds(t *testing.T) {
-	h1 := minhash.NewHasher(42)
-	h2 := minhash.NewHasher(99)
-	sig1 := h1.Signature("test content here")
-	sig2 := h2.Signature("test content here")
-	require.NotEqual(t, sig1, sig2, "different seeds should produce different signatures")
+	// A single Hasher instance must return the same signature for the same input
+	// on repeated calls — coefficients are fixed at construction time.
+	h := mustNewHasher(t)
+	sig1 := h.Signature("test content here")
+	sig2 := h.Signature("test content here")
+	require.Equal(t, sig1, sig2, "same hasher + same input must produce same signature")
 }
 
 func TestSignature_NearDuplicate(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	base := "kubernetes deployment patterns for production workloads with high availability"
 	sig1 := h.Signature(base)
 	sig2 := h.Signature(base + " and disaster recovery")
@@ -49,7 +49,7 @@ func TestSignature_NearDuplicate(t *testing.T) {
 }
 
 func TestSignature_EmptyString(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	sig := h.Signature("")
 	// Empty string has no bigrams; all signature slots stay at max.
 	est := minhash.EstimatedJaccard(sig, sig)
@@ -57,14 +57,14 @@ func TestSignature_EmptyString(t *testing.T) {
 }
 
 func TestSignature_UTF8(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	sig1 := h.Signature("日本語テスト")
 	sig2 := h.Signature("日本語テスト")
 	require.Equal(t, sig1, sig2, "UTF-8 strings must produce identical signatures")
 }
 
 func TestLSH_IdenticalStrings_AreCandidates(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	idx, err := minhash.NewIndex(16, 8)
 	require.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestLSH_IdenticalStrings_AreCandidates(t *testing.T) {
 }
 
 func TestLSH_DifferentStrings_NotCandidates(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	idx, err := minhash.NewIndex(16, 8)
 	require.NoError(t, err)
 
@@ -95,7 +95,7 @@ func TestLSH_DifferentStrings_NotCandidates(t *testing.T) {
 }
 
 func TestLSH_ThreeMemories_OnlyNearPairMatches(t *testing.T) {
-	h := minhash.NewHasher(42)
+	h := mustNewHasher(t)
 	idx, err := minhash.NewIndex(16, 8)
 	require.NoError(t, err)
 

@@ -3,9 +3,10 @@
 package minhash
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"hash/fnv"
 	"math"
-	"math/rand"
 )
 
 // NumHashes is the number of hash functions in a MinHash signature.
@@ -23,15 +24,21 @@ type Hasher struct {
 	b [NumHashes]uint64
 }
 
-// NewHasher creates a Hasher with deterministic coefficients from seed.
-func NewHasher(seed int64) *Hasher {
-	rng := rand.New(rand.NewSource(seed))
+// NewHasher creates a Hasher with cryptographically random coefficients.
+func NewHasher() (*Hasher, error) {
 	var h Hasher
+	var buf [8]byte
 	for i := range NumHashes {
-		h.a[i] = rng.Uint64()%prime + 1 // a must be non-zero
-		h.b[i] = rng.Uint64() % prime
+		if _, err := rand.Read(buf[:]); err != nil {
+			return nil, err
+		}
+		h.a[i] = binary.LittleEndian.Uint64(buf[:])%prime + 1 // a must be non-zero
+		if _, err := rand.Read(buf[:]); err != nil {
+			return nil, err
+		}
+		h.b[i] = binary.LittleEndian.Uint64(buf[:]) % prime
 	}
-	return &h
+	return &h, nil
 }
 
 // Signature computes the MinHash signature for content using rune-based

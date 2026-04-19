@@ -1054,7 +1054,10 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 	}
 
 	// 4. Compute MinHash signatures — O(n).
-	hasher := minhash.NewHasher(42)
+	hasher, err := minhash.NewHasher()
+	if err != nil {
+		return result, fmt.Errorf("consolidate: %w", err)
+	}
 	idx, err := minhash.NewIndex(16, 8)
 	if err != nil {
 		return result, fmt.Errorf("consolidate: %w", err)
