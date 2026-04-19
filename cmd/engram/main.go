@@ -221,7 +221,7 @@ func run() error {
 	if os.Getenv("ENGRAM_PPROF") != "" {
 		go func() {
 			slog.Info("pprof listening", "addr", "localhost:6060")
-			if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			if err := http.ListenAndServe("localhost:6060", nil); err != nil { //nolint // nosemgrep: go.lang.security.audit.net.use-tls.use-tls -- loopback-only, gated by ENGRAM_PPROF env var
 				slog.Warn("pprof server stopped", "err", err)
 			}
 		}()

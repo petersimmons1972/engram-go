@@ -104,7 +104,7 @@ func main() {
 		}
 	}
 	argv := append([]string{"/engram"}, os.Args[1:]...)
-	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil {
+	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)
 	}
 }
