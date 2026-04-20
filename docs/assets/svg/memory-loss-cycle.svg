@@ -22,17 +22,22 @@
   <ellipse cx="450" cy="210" rx="280" ry="155" fill="#161b22" fill-opacity="0.10"/>
   <ellipse cx="450" cy="210" rx="200" ry="110" fill="#21262d" fill-opacity="0.08"/>
 
-  <!-- Circular flow arrows between nodes -->
-  <!-- Top arc: Session -> Work -->
-  <path d="M 310,90 Q 390,50 470,90" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
-  <!-- Right arc: Work -> Close -->
-  <path d="M 590,155 Q 640,210 590,265" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
-  <!-- Bottom-right arc: Close -> Forget -->
-  <path d="M 540,330 Q 450,370 370,330" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
-  <!-- Bottom-left arc: Forget -> Explain Again -->
-  <path d="M 260,300 Q 210,250 245,195" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
-  <!-- Left arc: Explain Again -> Session -->
-  <path d="M 280,155 Q 265,110 290,95" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+  <!-- Circular flow arrows between nodes (explicit polygon arrowheads — GitHub strips <marker>) -->
+  <!-- Arc 1: Session right-edge → Work left-edge, curves over top -->
+  <path d="M 360,82 Q 420,48 480,82" stroke="#00ADD8" stroke-width="2" fill="none"/>
+  <polygon points="480.0,82.0 469.7,81.9 474.6,73.2" fill="#00ADD8"/>
+  <!-- Arc 2: Work right-edge → Close top, curves right then down -->
+  <path d="M 600,90 Q 658,132 632,173" stroke="#00ADD8" stroke-width="2" fill="none"/>
+  <polygon points="632.0,173.0 632.6,162.7 641.0,168.1" fill="#00ADD8"/>
+  <!-- Arc 3: Close bottom → Forget top, curves down-left -->
+  <path d="M 612,225 Q 568,268 512,295" stroke="#00ADD8" stroke-width="2" fill="none"/>
+  <polygon points="512.0,295.0 517.9,286.6 522.3,295.6" fill="#00ADD8"/>
+  <!-- Arc 4: Forget left-edge → Explain Again right-edge, curves down -->
+  <path d="M 450,318 Q 398,358 345,302" stroke="#00ADD8" stroke-width="2" fill="none"/>
+  <polygon points="345.0,302.0 354.8,305.1 347.6,312.0" fill="#00ADD8"/>
+  <!-- Arc 5: Explain Again top → Session bottom, curves up-left -->
+  <path d="M 272,277 Q 232,190 252,110" stroke="#00ADD8" stroke-width="2" fill="none"/>
+  <polygon points="252.0,110.0 254.7,119.9 245.0,117.5" fill="#00ADD8"/>
 
   <!-- Node: Session (top-left) -->
   <rect x="240" y="60" width="120" height="50" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="1.5"/>
