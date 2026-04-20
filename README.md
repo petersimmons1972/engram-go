@@ -169,4 +169,4 @@ v1 was Python. v2 rewrote in Go. v3.0 adds required authentication, auto-episode
 
 ---
 
-MIT — see [LICENSE](LICENSE)
+GPL v3 — see [LICENSE](LICENSE)
