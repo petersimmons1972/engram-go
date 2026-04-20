@@ -36,8 +36,6 @@
   <!-- LAYER 2: GEOMETRY                                            -->
   <!-- ============================================================ -->
 
-  <!-- Go accent block — left side brand marker -->
-  <rect x="52" y="108" width="72" height="56" rx="10" ry="10" fill="url(#goBlockGrad)"/>
 
   <!-- Badge 1: ~10 MB container — centered trio -->
   <rect x="405" y="262" width="120" height="36" rx="6" ry="6" fill="url(#badgeGrad)" stroke="#30363d" stroke-width="1"/>
@@ -51,26 +49,12 @@
   <!-- Accent gradient rule — separates content from footer -->
   <rect x="80" y="252" width="1040" height="3" rx="1" ry="1" fill="url(#accentGrad)"/>
 
-  <!-- Left accent separator -->
-  <line x1="148" y1="90" x2="148" y2="250" stroke="#21262d" stroke-width="1"/>
 
   <!-- ============================================================ -->
   <!-- LAYER 4: TEXT — all text drawn last                          -->
   <!-- ============================================================ -->
 
-  <!-- Go accent block label -->
-  <text
-    x="88"
-    y="139"
-    font-family="Inter, 'Source Sans 3', 'Segoe UI', sans-serif"
-    font-size="24"
-    font-weight="700"
-    fill="#0d1117"
-    text-anchor="middle"
-    dominant-baseline="central"
-    letter-spacing="1">Go</text>
-
-  <!-- Main wordmark: "engram" -->
+  <!-- Main wordmark: "engram-go" -->
   <text
     x="600"
     y="118"
@@ -80,7 +64,7 @@
     fill="#ffffff"
     text-anchor="middle"
     dominant-baseline="auto"
-    letter-spacing="-2">engram</text>
+    letter-spacing="-2">engram<tspan fill="#00ADD8">-go</tspan></text>
 
   <!-- Subtitle: project description -->
   <text
