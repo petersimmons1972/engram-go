@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="tr-panel-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid lines -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="300" y1="0" x2="300" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="600" y1="0" x2="600" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="28" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="700" fill="#f0f6fc" text-anchor="middle">35 MCP Tools</text>
+  <text x="450" y="44" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1.5">SIX FUNCTIONAL GROUPS</text>
+
+  <!-- Group 1: Store (Go cyan) -->
+  <rect x="15" y="55" width="270" height="155" rx="8" fill="url(#tr-panel-grad)" stroke="#00ADD8" stroke-width="1.5"/>
+  <rect x="15" y="55" width="270" height="6" rx="4" fill="#00ADD8"/>
+  <text x="150" y="79" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#00ADD8" text-anchor="middle" letter-spacing="1">STORE</text>
+  <text x="30" y="98" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_store</text>
+  <text x="30" y="114" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_quick_store</text>
+  <text x="30" y="130" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_store_batch</text>
+  <text x="30" y="146" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_store_document</text>
+  <text x="30" y="162" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_ingest</text>
+  <text x="30" y="178" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_correct</text>
+  <text x="30" y="194" font-family="'Courier New',monospace" font-size="11" fill="#8b949e">memory_import_claudemd</text>
+
+  <!-- Group 2: Find (cosine green) -->
+  <rect x="315" y="55" width="270" height="155" rx="8" fill="url(#tr-panel-grad)" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="315" y="55" width="270" height="6" rx="4" fill="#3fb950"/>
+  <text x="450" y="79" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#3fb950" text-anchor="middle" letter-spacing="1">FIND</text>
+  <text x="330" y="98" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_recall</text>
+  <text x="330" y="114" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_fetch</text>
+  <text x="330" y="130" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_list</text>
+  <text x="330" y="146" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_expand</text>
+  <text x="330" y="162" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_query</text>
+  <text x="330" y="178" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_timeline</text>
+  <text x="330" y="194" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_history</text>
+
+  <!-- Group 3: Maintain (amber) -->
+  <rect x="615" y="55" width="270" height="155" rx="8" fill="url(#tr-panel-grad)" stroke="#e3b341" stroke-width="1.5"/>
+  <rect x="615" y="55" width="270" height="6" rx="4" fill="#e3b341"/>
+  <text x="750" y="79" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#e3b341" text-anchor="middle" letter-spacing="1">MAINTAIN</text>
+  <text x="630" y="98" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_connect</text>
+  <text x="630" y="114" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_feedback</text>
+  <text x="630" y="130" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_forget</text>
+  <text x="630" y="146" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_consolidate</text>
+  <text x="630" y="162" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_summarize</text>
+  <text x="630" y="178" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_resummarize</text>
+  <text x="630" y="194" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_sleep</text>
+
+  <!-- Group 4: Export/Import (recency blue) -->
+  <rect x="15" y="228" width="270" height="130" rx="8" fill="url(#tr-panel-grad)" stroke="#1f6feb" stroke-width="1.5"/>
+  <rect x="15" y="228" width="270" height="6" rx="4" fill="#1f6feb"/>
+  <text x="150" y="252" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#1f6feb" text-anchor="middle" letter-spacing="1">EXPORT / IMPORT</text>
+  <text x="30" y="271" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_export_all</text>
+  <text x="30" y="287" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_adopt</text>
+  <text x="30" y="303" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_migrate_embedder</text>
+  <text x="30" y="319" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_projects</text>
+  <text x="30" y="335" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_aggregate</text>
+
+  <!-- Group 5: Episodes (graph violet) -->
+  <rect x="315" y="228" width="270" height="130" rx="8" fill="url(#tr-panel-grad)" stroke="#bc8cff" stroke-width="1.5"/>
+  <rect x="315" y="228" width="270" height="6" rx="4" fill="#bc8cff"/>
+  <text x="450" y="252" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#bc8cff" text-anchor="middle" letter-spacing="1">EPISODES</text>
+  <text x="330" y="271" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_episode_start</text>
+  <text x="330" y="287" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_episode_end</text>
+  <text x="330" y="303" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_episode_list</text>
+  <text x="330" y="319" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_episode_recall</text>
+
+  <!-- Group 6: Diagnostics (muted) -->
+  <rect x="615" y="228" width="270" height="130" rx="8" fill="url(#tr-panel-grad)" stroke="#8b949e" stroke-width="1.5"/>
+  <rect x="615" y="228" width="270" height="6" rx="4" fill="#8b949e"/>
+  <text x="750" y="252" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#8b949e" text-anchor="middle" letter-spacing="1">DIAGNOSTICS + AI</text>
+  <text x="630" y="271" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_status</text>
+  <text x="630" y="287" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_verify</text>
+  <text x="630" y="303" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_diagnose *</text>
+  <text x="630" y="319" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_reason *</text>
+  <text x="630" y="335" font-family="'Courier New',monospace" font-size="11" fill="#f0f6fc">memory_explore *</text>
+
+  <!-- Footer -->
+  <text x="450" y="383" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">* requires ANTHROPIC_API_KEY  ·  30 base tools + 5 AI-enhanced tools = 35 total</text>
+  <text x="450" y="400" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">also: memory_query_document · ingest_document_stream · check_constraints · get_constraints · verify_before_acting</text>
+</svg>

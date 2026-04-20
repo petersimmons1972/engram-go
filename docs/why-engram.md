@@ -1,6 +1,6 @@
 # Why Engram?
 
-<p align="center"><img src="memory-loss-cycle.svg" alt="The agent memory loss cycle" width="900"></p>
+<p align="center"><img src="assets/svg/memory-loss-cycle.svg" alt="The agent memory loss cycle" width="900"></p>
 
 ---
 
@@ -68,7 +68,7 @@ composite = (vector × 0.50) + (bm25 × 0.35) + (recency × 0.15) × importance_
 
 Importance multipliers run from 2.0x (Critical) to 0.6x (Trivial). A decision marked Critical — core system architecture, hard constraints — stays visible across long time spans. A note marked Trivial steps aside quickly and is pruned after 30 days without access.
 
-<p align="center"><img src="architecture.svg" alt="Engram Architecture" width="900"></p>
+<p align="center"><img src="assets/svg/architecture.svg" alt="Engram Architecture" width="900"></p>
 
 ---
 

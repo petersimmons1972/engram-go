@@ -1,16 +1,16 @@
 # Getting Started
 
-Five minutes and three commands. Here is the fastest path from zero to working.
+When you finish this page, you will have a running memory server, a working IDE connection, and 30 tools available to every AI assistant you use. Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while a 270 MB model downloads.
 
 ---
 
-<p align="center"><img src="quick-start-flow.svg" alt="Quick start: three steps" width="900"></p>
+<p align="center"><img src="assets/svg/quick-start-flow.svg" alt="Quick start: three steps" width="900"></p>
 
 ---
 
 ## Prerequisites
 
-Before you start, confirm you have:
+Engram runs as three Docker containers. Before you start, confirm you have what those containers need:
 
 - **Docker Engine 20.10 or newer** — check with `docker --version`
 - **Docker Compose 2.0 or newer** — check with `docker compose version` (note: the subcommand, not `docker-compose`)
@@ -35,6 +35,8 @@ make init
 - `ENGRAM_API_KEY` — bearer token that every MCP client must present
 
 Both are required. The server refuses to start if either is missing. `make init` is idempotent — re-running it skips values that are already set.
+
+Generating credentials first rather than shipping defaults means your memory store is protected from the first second it runs. Shared default passwords have ended careers. Yours will not.
 
 ---
 
@@ -78,6 +80,8 @@ For Cursor, VS Code, Windsurf, or Claude Desktop, see [Connecting Your IDE](conn
 
 ## Verify It Is Working
 
+This is the moment it clicks. Run these checks and watch the pieces confirm each other.
+
 Check that all three containers are running and healthy:
 
 ```bash
@@ -103,11 +107,13 @@ In Claude Code, confirm the tools loaded:
 
 You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
 
+When you see 30 tools, you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
+
 ---
 
 ## Configuration Reference
 
-All configuration lives in `.env`. Here is the full set of variables.
+Most people never touch these. `make init` handles the two required values, and the defaults for everything else are sensible. But here is the full picture for when you need it:
 
 ```bash
 # ============================================================
@@ -169,6 +175,8 @@ ENGRAM_CLAUDE_RERANK=false                # Use Claude to rerank results (slower
 
 ## GPU Acceleration
 
+If you store a lot of memories, this matters. Every `memory_store` call runs an embedding pass through Ollama. On CPU, that is fast enough for normal use. Under heavy ingest — bulk imports, frequent stores across many projects — GPU acceleration makes the difference between a snappy tool and one that makes you wait.
+
 ### NVIDIA
 
 Edit `docker-compose.yml` and uncomment the `deploy` block under the `ollama` service. It looks like this:
@@ -217,10 +225,10 @@ And comment out the `ollama` service in `docker-compose.yml` so Docker does not 
 ## Common Problems
 
 **Port 8788 is already in use.**
-Set `ENGRAM_PORT=8789` (or any free port) in `.env`, restart with `docker compose up -d`, and update the port in your IDE config.
+Something else claimed that port before Engram did. Set `ENGRAM_PORT=8789` (or any free port) in `.env`, restart with `docker compose up -d`, and update the port in your IDE config.
 
 **Embedding model not found / connection errors on first start.**
-Ollama is still downloading the model. Watch it finish:
+Ollama is still downloading the model — it can look like a crash when it is really just slow. Watch it finish:
 
 ```bash
 docker compose logs ollama -f
@@ -229,13 +237,13 @@ docker compose logs ollama -f
 Wait for a line like `llm server listening`. Then the `engram-go-app` container will become healthy.
 
 **IDE says connection refused.**
-Confirm all three containers are up and healthy:
+Either a container is not up yet, or `engram-go-app` is waiting on its dependencies. Confirm the state:
 
 ```bash
 docker compose ps
 ```
 
-If `engram-go-app` shows `Up (health: starting)`, it is waiting for Postgres or Ollama. Give it 30 seconds. If it shows `Exit`, check the logs:
+If `engram-go-app` shows `Up (health: starting)`, it is waiting for Postgres or Ollama. Give it 30 seconds. If it shows `Exit`, the process crashed — check the logs to see why:
 
 ```bash
 docker compose logs engram-go-app
@@ -244,7 +252,7 @@ docker compose logs engram-go-app
 The most common causes are a missing `POSTGRES_PASSWORD` or `ENGRAM_API_KEY`. Run `make init` to generate both.
 
 **`POSTGRES_PASSWORD must be set` error before containers start.**
-Docker Compose now requires `POSTGRES_PASSWORD` — there is no default. Run `make init` to generate it, or set it manually in `.env`. The error appears before any container starts, not in the logs.
+Docker Compose requires `POSTGRES_PASSWORD` — there is no default, and this error fires before any container starts (not inside the logs). Run `make init` to generate it, or set it manually in `.env`.
 
 **Ollama SSRF protection rejects your `OLLAMA_URL`.**
 If you see `ollama URL resolved to private IP` in the logs, your `OLLAMA_URL` hostname is resolving to a private address that does not match the configured host. The configured host is always allowed. This error means the hostname in `OLLAMA_URL` resolves differently at dial time than expected — check for DNS misconfiguration or a mismatched `OLLAMA_URL` value.

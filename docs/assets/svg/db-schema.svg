@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="db-table-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <marker id="db-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#21262d"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="28" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">DATABASE SCHEMA — 5 TABLES</text>
+
+  <!-- FK lines (draw before tables so tables sit on top) -->
+  <!-- memories -> retrieval_events -->
+  <line x1="590" y1="200" x2="680" y2="200" stroke="#21262d" stroke-width="1.5" marker-end="url(#db-arrow)"/>
+  <rect x="600" y="185" width="70" height="14" rx="3" fill="#0d1117"/>
+  <text x="635" y="196" font-family="'Courier New',monospace" font-size="9" fill="#8b949e" text-anchor="middle">memory_id FK</text>
+
+  <!-- memories -> episodes (up) -->
+  <line x1="450" y1="135" x2="680" y2="80" stroke="#21262d" stroke-width="1.5" marker-end="url(#db-arrow)"/>
+  <rect x="520" y="90" width="75" height="14" rx="3" fill="#0d1117"/>
+  <text x="557" y="101" font-family="'Courier New',monospace" font-size="9" fill="#8b949e" text-anchor="middle">episode_id FK</text>
+
+  <!-- memories -> documents (top-left) -->
+  <line x1="362" y1="135" x2="220" y2="80" stroke="#21262d" stroke-width="1.5" marker-end="url(#db-arrow)"/>
+  <rect x="258" y="88" width="80" height="14" rx="3" fill="#0d1117"/>
+  <text x="297" y="99" font-family="'Courier New',monospace" font-size="9" fill="#8b949e" text-anchor="middle">document_id FK</text>
+
+  <!-- memories -> consolidation_runs (bottom) -->
+  <line x1="450" y1="265" x2="450" y2="335" stroke="#21262d" stroke-width="1.5" marker-end="url(#db-arrow)"/>
+  <rect x="395" y="292" width="108" height="14" rx="3" fill="#0d1117"/>
+  <text x="449" y="303" font-family="'Courier New',monospace" font-size="9" fill="#8b949e" text-anchor="middle">consolidation_id FK</text>
+
+  <!-- Central table: memories (largest) -->
+  <rect x="312" y="135" width="276" height="130" rx="8" fill="url(#db-table-grad)" stroke="#00ADD8" stroke-width="2"/>
+  <rect x="312" y="135" width="276" height="26" rx="8" fill="#00ADD8" fill-opacity="0.15"/>
+  <text x="450" y="152" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="12" font-weight="700" fill="#00ADD8" text-anchor="middle" letter-spacing="1">memories</text>
+  <line x1="312" y1="162" x2="588" y2="162" stroke="#21262d" stroke-width="1"/>
+  <text x="328" y="178" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">id · project · content</text>
+  <text x="328" y="194" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">memory_type · importance</text>
+  <text x="328" y="210" font-family="'Courier New',monospace" font-size="10" fill="#e3b341">content_hash</text>
+  <text x="328" y="226" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">embedding · tsvector</text>
+  <text x="328" y="242" font-family="'Courier New',monospace" font-size="10" fill="#1f6feb">valid_to · created_at</text>
+  <text x="328" y="258" font-family="'Courier New',monospace" font-size="10" fill="#8b949e">episode_id · document_id</text>
+
+  <!-- retrieval_events table (right) -->
+  <rect x="680" y="155" width="200" height="110" rx="8" fill="url(#db-table-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="680" y="155" width="200" height="26" rx="8" fill="#21262d"/>
+  <text x="780" y="172" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">retrieval_events</text>
+  <line x1="680" y1="182" x2="880" y2="182" stroke="#21262d" stroke-width="1"/>
+  <text x="696" y="198" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">id · memory_id</text>
+  <text x="696" y="214" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">query · was_useful</text>
+  <text x="696" y="230" font-family="'Courier New',monospace" font-size="10" fill="#8b949e">retrieved_at</text>
+  <text x="696" y="246" font-family="'Courier New',monospace" font-size="10" fill="#8b949e">pruned after 90 days</text>
+
+  <!-- episodes table (top-right) -->
+  <rect x="668" y="40" width="208" height="95" rx="8" fill="url(#db-table-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="668" y="40" width="208" height="26" rx="8" fill="#21262d"/>
+  <text x="772" y="57" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">episodes</text>
+  <line x1="668" y1="67" x2="876" y2="67" stroke="#21262d" stroke-width="1"/>
+  <text x="684" y="83" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">id · project</text>
+  <text x="684" y="99" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">description · summary</text>
+  <text x="684" y="115" font-family="'Courier New',monospace" font-size="10" fill="#8b949e">started_at · ended_at</text>
+
+  <!-- documents table (top-left) -->
+  <rect x="24" y="40" width="200" height="95" rx="8" fill="url(#db-table-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="24" y="40" width="200" height="26" rx="8" fill="#21262d"/>
+  <text x="124" y="57" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">documents</text>
+  <line x1="24" y1="67" x2="224" y2="67" stroke="#21262d" stroke-width="1"/>
+  <text x="40" y="83" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">id · memory_id</text>
+  <text x="40" y="99" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">raw_body · mime_type</text>
+  <text x="40" y="115" font-family="'Courier New',monospace" font-size="10" fill="#8b949e">size_bytes · tier</text>
+
+  <!-- consolidation_runs table (bottom) -->
+  <rect x="312" y="335" width="276" height="68" rx="8" fill="url(#db-table-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="312" y="335" width="276" height="26" rx="8" fill="#21262d"/>
+  <text x="450" y="352" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">consolidation_runs</text>
+  <line x1="312" y1="362" x2="588" y2="362" stroke="#21262d" stroke-width="1"/>
+  <text x="328" y="378" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">id · project · ran_at · memories_pruned</text>
+
+  <!-- Legend -->
+  <rect x="24" y="155" width="270" height="110" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="159" y="176" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1">KEY COLUMNS</text>
+  <text x="40" y="196" font-family="'Courier New',monospace" font-size="10" fill="#e3b341">content_hash</text>
+  <text x="165" y="196" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e">dedup fingerprint</text>
+  <text x="40" y="212" font-family="'Courier New',monospace" font-size="10" fill="#1f6feb">valid_to</text>
+  <text x="165" y="212" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e">soft-delete / supersedes</text>
+  <text x="40" y="228" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">embedding</text>
+  <text x="165" y="228" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e">768-dim pgvector</text>
+  <text x="40" y="244" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">tsvector</text>
+  <text x="165" y="244" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e">BM25 index</text>
+  <text x="40" y="260" font-family="'Courier New',monospace" font-size="10" fill="#f0f6fc">importance</text>
+  <text x="165" y="260" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e">1=critical .. 5=trivial</text>
+</svg>

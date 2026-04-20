@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <radialGradient id="mlc-bg-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#161b22" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0d1117" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="mlc-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+  <rect x="0" y="0" width="900" height="420" fill="url(#mlc-bg-glow)"/>
+
+  <!-- Grid lines -->
+  <line x1="0" y1="105" x2="900" y2="105" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="210" x2="900" y2="210" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="315" x2="900" y2="315" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Depth layer -->
+  <ellipse cx="450" cy="210" rx="280" ry="155" fill="#161b22" fill-opacity="0.10"/>
+  <ellipse cx="450" cy="210" rx="200" ry="110" fill="#21262d" fill-opacity="0.08"/>
+
+  <!-- Circular flow arrows between nodes -->
+  <!-- Top arc: Session -> Work -->
+  <path d="M 310,90 Q 390,50 470,90" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+  <!-- Right arc: Work -> Close -->
+  <path d="M 590,155 Q 640,210 590,265" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+  <!-- Bottom-right arc: Close -> Forget -->
+  <path d="M 540,330 Q 450,370 370,330" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+  <!-- Bottom-left arc: Forget -> Explain Again -->
+  <path d="M 260,300 Q 210,250 245,195" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+  <!-- Left arc: Explain Again -> Session -->
+  <path d="M 280,155 Q 265,110 290,95" stroke="#00ADD8" stroke-width="2" fill="none" marker-end="url(#mlc-arrow)"/>
+
+  <!-- Node: Session (top-left) -->
+  <rect x="240" y="60" width="120" height="50" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="1.5"/>
+  <text x="300" y="89" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="middle">Session</text>
+
+  <!-- Node: Work (top-right) -->
+  <rect x="480" y="60" width="120" height="50" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="1.5"/>
+  <text x="540" y="89" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="middle">Work</text>
+
+  <!-- Node: Close (right) -->
+  <rect x="570" y="175" width="120" height="50" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="1.5"/>
+  <text x="630" y="204" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="middle">Close</text>
+
+  <!-- Node: Forget (bottom-right) -->
+  <rect x="450" y="295" width="120" height="50" rx="8" fill="#161b22" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="510" y="324" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="15" font-weight="600" fill="#e3b341" text-anchor="middle">Forget</text>
+
+  <!-- Node: Explain Again (bottom-left) -->
+  <rect x="200" y="275" width="145" height="50" rx="8" fill="#161b22" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="272" y="298" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="600" fill="#e3b341" text-anchor="middle">Explain Again</text>
+  <text x="272" y="315" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">(next session)</text>
+
+  <!-- Center label -->
+  <rect x="330" y="175" width="180" height="56" rx="8" fill="#0d1117" fill-opacity="0.85" stroke="#21262d" stroke-width="1"/>
+  <text x="420" y="199" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#8b949e" text-anchor="middle">The loop that</text>
+  <text x="420" y="218" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#00ADD8" font-weight="600" text-anchor="middle">Engram breaks.</text>
+
+  <!-- Title -->
+  <text x="450" y="390" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="12" fill="#8b949e" text-anchor="middle" letter-spacing="2">AGENT MEMORY LOSS CYCLE</text>
+</svg>

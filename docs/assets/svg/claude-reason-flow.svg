@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="crf-panel-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <marker id="crf-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="28" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">memory_reason — SEQUENTIAL FLOW</text>
+
+  <!-- Step numbers on top -->
+  <text x="122" y="50" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 1</text>
+  <text x="332" y="50" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 2</text>
+  <text x="570" y="50" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 3</text>
+  <text x="780" y="50" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 4</text>
+
+  <!-- Step 1: User query -> memory_reason -->
+  <rect x="30" y="60" width="185" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="122" y="86" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">User Query</text>
+  <rect x="50" y="100" width="145" height="60" rx="6" fill="#21262d"/>
+  <text x="122" y="122" font-family="'Courier New',monospace" font-size="11" fill="#00ADD8" text-anchor="middle">memory_reason</text>
+  <text x="122" y="140" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">"Why did we switch</text>
+  <text x="122" y="155" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">from Redis?"</text>
+  <text x="122" y="200" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">question + project</text>
+  <text x="122" y="218" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">→ MCP call</text>
+  <text x="122" y="245" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">requires API key</text>
+
+  <!-- Arrow 1->2 -->
+  <line x1="215" y1="165" x2="245" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+
+  <!-- Step 2: memory_recall fires internally -->
+  <rect x="248" y="60" width="235" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="365" y="86" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">Internal Recall</text>
+  <rect x="265" y="100" width="200" height="34" rx="6" fill="#21262d"/>
+  <text x="365" y="121" font-family="'Courier New',monospace" font-size="11" fill="#00ADD8" text-anchor="middle">memory_recall (internal)</text>
+
+  <!-- Four signal dots -->
+  <text x="268" y="155" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">signals:</text>
+  <circle cx="335" cy="151" r="7" fill="#e3b341"/>
+  <text x="350" y="155" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#e3b341">BM25</text>
+  <circle cx="400" cy="151" r="7" fill="#3fb950"/>
+  <text x="415" y="155" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#3fb950">vec</text>
+  <circle cx="335" cy="175" r="7" fill="#1f6feb"/>
+  <text x="350" y="179" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#1f6feb">recency</text>
+  <circle cx="420" cy="175" r="7" fill="#bc8cff"/>
+  <text x="435" y="179" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#bc8cff">graph</text>
+
+  <text x="365" y="210" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">top 3–8 memories</text>
+  <text x="365" y="228" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">ranked + scored</text>
+  <text x="365" y="248" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">~200ms</text>
+
+  <!-- Arrow 2->3 -->
+  <line x1="483" y1="165" x2="513" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+
+  <!-- Step 3: Top memories -> Claude API -->
+  <rect x="516" y="60" width="215" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#5865F2" stroke-width="2"/>
+  <rect x="516" y="60" width="215" height="26" rx="8" fill="#5865F2" fill-opacity="0.2"/>
+  <text x="623" y="79" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#5865F2" text-anchor="middle" letter-spacing="1">CLAUDE API</text>
+  <text x="623" y="105" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">memories passed as</text>
+  <text x="623" y="121" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">context + question</text>
+  <rect x="535" y="135" width="178" height="32" rx="6" fill="#21262d"/>
+  <text x="623" y="147" font-family="'Courier New',monospace" font-size="10" fill="#5865F2" text-anchor="middle">advisor_20260301</text>
+  <text x="623" y="163" font-family="'Courier New',monospace" font-size="10" fill="#8b949e" text-anchor="middle">Sonnet → Opus if complex</text>
+  <text x="623" y="200" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">synthesizes answer</text>
+  <text x="623" y="218" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">with citations</text>
+  <text x="623" y="248" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">~$0.002–0.01</text>
+
+  <!-- Arrow 3->4 -->
+  <line x1="731" y1="165" x2="761" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+
+  <!-- Step 4: Synthesized answer with citations -->
+  <rect x="764" y="60" width="116" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="822" y="86" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">Answer</text>
+  <rect x="775" y="98" width="94" height="50" rx="6" fill="#21262d"/>
+  <text x="822" y="116" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#f0f6fc" text-anchor="middle">prose answer</text>
+  <text x="822" y="132" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">+ reasoning</text>
+
+  <rect x="775" y="158" width="94" height="40" rx="6" fill="#21262d"/>
+  <text x="822" y="172" font-family="'Courier New',monospace" font-size="9" fill="#e3b341" text-anchor="middle">sources:</text>
+  <text x="822" y="187" font-family="'Courier New',monospace" font-size="9" fill="#f0f6fc" text-anchor="middle">mem-abc123</text>
+
+  <text x="822" y="218" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">verifiable</text>
+  <text x="822" y="234" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">citations</text>
+  <text x="822" y="252" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">not hallucinated</text>
+
+  <!-- Total time bar -->
+  <rect x="30" y="290" width="850" height="40" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="450" y="313" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">End-to-end: recall ~200ms + synthesis ~1–3s  ·  use memory_recall when you know what you need  ·  use memory_reason when you need synthesis</text>
+
+  <!-- Footer note -->
+  <text x="450" y="370" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">memory_reason = memory_recall (four signals) + Claude synthesis + citation tracking</text>
+</svg>

@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="sc-bg-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <marker id="sc-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+    </marker>
+    <marker id="sc-arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid -->
+  <line x1="0" y1="105" x2="900" y2="105" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="210" x2="900" y2="210" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="315" x2="900" y2="315" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="32" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">FOUR-SIGNAL SCORING</text>
+
+  <!-- Lane 1: BM25 -->
+  <rect x="30" y="50" width="260" height="56" rx="8" fill="#161b22" stroke="#e3b341" stroke-width="1.5"/>
+  <rect x="30" y="50" width="8" height="56" rx="4" fill="#e3b341"/>
+  <text x="54" y="72" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#e3b341" letter-spacing="1">BM25</text>
+  <text x="54" y="90" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc">BM25 Keyword</text>
+
+  <!-- Lane 2: Cosine -->
+  <rect x="30" y="118" width="260" height="56" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="30" y="118" width="8" height="56" rx="4" fill="#3fb950"/>
+  <text x="54" y="140" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#3fb950" letter-spacing="1">COSINE</text>
+  <text x="54" y="158" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc">Vector Semantic</text>
+
+  <!-- Lane 3: Recency -->
+  <rect x="30" y="186" width="260" height="56" rx="8" fill="#161b22" stroke="#1f6feb" stroke-width="1.5"/>
+  <rect x="30" y="186" width="8" height="56" rx="4" fill="#1f6feb"/>
+  <text x="54" y="208" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#1f6feb" letter-spacing="1">RECENCY</text>
+  <text x="54" y="226" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc">Recency Decay</text>
+
+  <!-- Lane 4: Graph -->
+  <rect x="30" y="254" width="260" height="56" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+  <rect x="30" y="254" width="8" height="56" rx="4" fill="#bc8cff"/>
+  <text x="54" y="276" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#bc8cff" letter-spacing="1">GRAPH</text>
+  <text x="54" y="294" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc">Graph Enrichment</text>
+
+  <!-- Converging lines to merge point -->
+  <line x1="290" y1="78" x2="480" y2="195" stroke="#e3b341" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
+  <line x1="290" y1="146" x2="480" y2="200" stroke="#3fb950" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
+  <line x1="290" y1="214" x2="480" y2="210" stroke="#1f6feb" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
+  <line x1="290" y1="282" x2="480" y2="220" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
+
+  <!-- Merge point -->
+  <rect x="480" y="168" width="160" height="64" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="2"/>
+  <text x="560" y="193" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">MERGE POINT</text>
+  <text x="560" y="215" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="700" fill="#00ADD8" text-anchor="middle">Σ weighted score</text>
+
+  <!-- Arrow to results -->
+  <line x1="640" y1="200" x2="700" y2="200" stroke="#00ADD8" stroke-width="2" marker-end="url(#sc-arrow-cyan)"/>
+
+  <!-- Results panel -->
+  <rect x="700" y="100" width="170" height="200" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="785" y="125" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">RANKED RESULTS</text>
+
+  <rect x="715" y="138" width="140" height="30" rx="4" fill="#21262d"/>
+  <text x="730" y="153" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#f0f6fc">#1</text>
+  <rect x="742" y="144" width="90" height="6" rx="3" fill="#00ADD8"/>
+
+  <rect x="715" y="178" width="140" height="30" rx="4" fill="#21262d"/>
+  <text x="730" y="193" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#f0f6fc">#2</text>
+  <rect x="742" y="184" width="75" height="6" rx="3" fill="#3fb950"/>
+
+  <rect x="715" y="218" width="140" height="30" rx="4" fill="#21262d"/>
+  <text x="730" y="233" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#f0f6fc">#3</text>
+  <rect x="742" y="224" width="60" height="6" rx="3" fill="#e3b341"/>
+
+  <rect x="715" y="258" width="140" height="30" rx="4" fill="#21262d"/>
+  <text x="730" y="273" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#f0f6fc">#4</text>
+  <rect x="742" y="264" width="40" height="6" rx="3" fill="#8b949e"/>
+
+  <!-- Formula at bottom -->
+  <rect x="30" y="335" width="840" height="52" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="450" y="357" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">SCORING FORMULA</text>
+  <text x="450" y="377" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc" text-anchor="middle">score = α·bm25 + β·cosine + γ·recency + δ·graph</text>
+</svg>

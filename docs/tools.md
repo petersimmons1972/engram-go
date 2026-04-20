@@ -1,10 +1,12 @@
-# All 28 Tools
+# All 35 Tools
 
 You open a session. The codebase is the same as yesterday but you have no memory of it. Before writing a line, you need to know: what decisions did we make about auth? Are there any known bugs in this module? What was the next thing we planned to do?
 
 Three calls answer that — one to recall recent context, one targeted at the work area, one to check if there is a handoff note from the last session. Everything else in this reference is about what you do with what you find.
 
-<p align="center"><img src="session-workflow.svg" alt="Agent session workflow" width="1000"></p>
+<p align="center"><img src="assets/svg/session-workflow.svg" alt="Agent session workflow" width="900"></p>
+
+<p align="center"><img src="assets/svg/tools-reference.svg" alt="35 MCP Tools reference" width="900"></p>
 
 ---
 
@@ -30,6 +32,8 @@ Store it as `memory_type="context"`, `importance=1`, `tags="handoff,session"`. T
 ---
 
 ## Storing Memories
+
+You need to put something in before you can get it back. These tools handle the write side — from a single observation to an entire documentation tree. The right tool depends on how much you are storing and whether you need it searchable at the paragraph level or whole-document level.
 
 ### memory_store
 
@@ -90,9 +94,13 @@ memory_store_batch(
 )
 ```
 
+Reach for this at session start when bootstrapping a project — loading ten context memories in one call is meaningfully faster than ten sequential stores.
+
 ---
 
 ## Finding What You Need
+
+Storing is cheap. The value is in retrieval. These tools cover the range from precise targeted lookup to open-ended synthesis. Know which mode you are in before you call one — the right tool returns the right shape of answer.
 
 ### memory_recall
 
@@ -126,7 +134,7 @@ memory_recall("database", project="my-app", memory_types=["error"])
 # Returns only error-type memories. Good before a debugging session.
 ```
 
-<p align="center"><img src="scoring.svg" alt="How memories are scored and ranked" width="900"></p>
+<p align="center"><img src="assets/svg/scoring.svg" alt="How memories are scored and ranked" width="900"></p>
 
 ---
 
@@ -145,6 +153,8 @@ memory_list(project="my-app", tags="security", limit=10)
 memory_list(project="my-app", min_importance=0, max_importance=1)
 ```
 
+Reach for this when you want to audit a category — "what decisions have we recorded so far?" — rather than retrieve something specific.
+
 ---
 
 ### memory_feedback
@@ -160,6 +170,8 @@ This is the only mechanism for the knowledge graph to learn from usage rather th
 ---
 
 ## Maintaining Your Memory Store
+
+Memory stores accumulate noise. Decisions get revised. Bugs get fixed and the old note stays around. These tools keep the store accurate and the graph healthy. Run them periodically rather than reactively — a well-maintained store retrieves cleanly; a neglected one surfaces stale results.
 
 ### memory_correct
 
@@ -239,6 +251,8 @@ memory_status(project="my-app")
 # Returns: memory count, chunk count, summarization progress, embedding migration status
 ```
 
+Reach for this when something feels off about retrieval quality — it will tell you whether the embedder has fallen behind or whether summaries are missing.
+
 ---
 
 ### memory_verify
@@ -276,6 +290,8 @@ After the first memory is stored, a project is locked to its embedding model. Th
 
 ## Data In and Out
 
+Sometimes you need to move memories in bulk — bootstrapping a project from existing documentation, exporting for backup, or migrating from a structured CLAUDE.md. These tools handle the mass import and export cases that single-store calls cannot.
+
 ### memory_export_all
 
 Export all memories for a project as markdown files with YAML frontmatter. The output is greppable, committable, and readable without any tools installed.
@@ -294,6 +310,8 @@ Import a CLAUDE.md file as structured memories. Each section becomes a memory wi
 memory_import_claudemd(content=claude_md_text, project="my-app")
 ```
 
+Reach for this when you have a mature CLAUDE.md and want its rules surfaced through recall rather than re-read every session from a static file.
+
 ---
 
 ### memory_ingest
@@ -307,6 +325,8 @@ memory_ingest(path="/path/to/docs/", project="my-app")
 ---
 
 ## History and Time Travel
+
+Every `memory_correct` call creates a version record. These tools make that history queryable — useful for auditing decisions, understanding what changed, and reconstructing what the system knew at a specific point in time.
 
 ### memory_history
 
@@ -332,7 +352,7 @@ Useful for reconstructing what the system "knew" before a decision was made, or 
 
 ## Episodic Memory
 
-Episodes group memories from a session. Every SSE connection auto-starts a `global` episode — you rarely need to call these manually, but they give you finer-grained control.
+Episodes group memories from a session. Every SSE connection auto-starts a `global` episode — you rarely need to call these manually, but they give you finer-grained control when you want to mark the boundaries of a focused piece of work and replay it later.
 
 ### memory_episode_start
 
@@ -381,6 +401,8 @@ The complete context of a session in one call. Useful at the start of a follow-u
 
 ## Cross-Project Federation
 
+Projects are siloed by default — a `memory_recall` in `frontend` does not search `backend`. Federation tools break down that boundary when you need to: discovering what projects exist, linking a memory in one project to a memory in another, or querying across the whole memory store.
+
 ### memory_projects
 
 List all projects with memory counts. Use this to discover what projects exist before recalling across them.
@@ -411,6 +433,8 @@ Use `memory_projects` first to discover project names and memory counts.
 
 ## Diagnostics
 
+When recall feels wrong — results that should be there are missing, or conflicts surface in retrieved memories — these tools give you evidence rather than guesses.
+
 ### memory_diagnose
 
 Return an evidence map for a set of recalled memories — conflicts between them, confidence level, and invalidated sources. Unlike `memory_reason`, this tool does no synthesis and requires no Claude API key. It returns raw evidence about the memories you pass in, not a generated answer.
@@ -437,6 +461,8 @@ Run this periodically on active projects — monthly or after a major work sessi
 
 ## Memory Types Reference
 
+Engram uses memory types to let you filter recalls by category and to weight retrieval behavior. The type you assign at store time is the primary axis for narrowing results — `memory_types=["error"]` returns only errors, regardless of how closely other types match. Choosing the right type is not metadata housekeeping; it determines whether you can cheaply reconstruct "all the bugs we have seen" before a debugging session.
+
 | Type | Use it for | Example |
 | ---- | ---------- | ------- |
 | `decision` | Choices made and their reasoning | "Chose PostgreSQL — needed JSONB and array columns" |
@@ -454,4 +480,4 @@ Filtering by type is a hard filter — `memory_types=["error"]` returns only err
 
 ---
 
-*28 tools total: 27 registered unconditionally + `memory_reason` when `ANTHROPIC_API_KEY` is set.*
+*35 tools total: 30 registered unconditionally + 5 AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) when `ANTHROPIC_API_KEY` is set.*

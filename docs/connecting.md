@@ -1,18 +1,18 @@
 # Connecting Your IDE
 
-Engram speaks MCP over Server-Sent Events. Any MCP-compatible client that supports SSE transport works.
+Engram communicates with your IDE over Server-Sent Events — a persistent HTTP connection where the server pushes data to the client. When you point your IDE at Engram's SSE endpoint, the server sends your IDE the full list of available tools, then keeps the connection alive to carry requests and responses. From your IDE's perspective, 30 new tools just appeared. From Engram's perspective, it now has a client. The connection is live for as long as both sides are running, and your IDE does not need to poll or reconnect to get fresh results.
 
-The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 30 tools, and they appear in your model context.
+The SSE endpoint is `http://localhost:8788/sse`. Everything below is how you tell each IDE to find it.
 
 ---
 
-<p align="center"><img src="ide-ecosystem.svg" alt="IDE compatibility" width="900"></p>
+<p align="center"><img src="assets/svg/ide-ecosystem.svg" alt="IDE compatibility" width="900"></p>
 
 ---
 
 ## Claude Code
 
-The easiest way to configure Claude Code is `make setup`, which calls the `/setup-token` endpoint, fetches the current bearer token, and writes it to `~/.claude/mcp_servers.json` automatically:
+Claude Code is the easiest client to configure because Engram ships an automation for it. One command fetches your bearer token and writes it directly to the right config file — no manual copy-paste, no hunting for the right JSON path.
 
 ```bash
 make setup
@@ -41,6 +41,8 @@ You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set �
 
 ## Cursor
 
+Cursor reads MCP configuration from a JSON file in your home directory. If the file does not exist yet, create it — Cursor will pick it up on next restart.
+
 Add to `~/.cursor/mcp.json`. Create the file if it does not exist. Bearer authentication is required — the server rejects connections without it.
 
 ```json
@@ -61,6 +63,8 @@ Copy your `ENGRAM_API_KEY` from `.env` for the header value. Restart Cursor afte
 ---
 
 ## VS Code (GitHub Copilot)
+
+VS Code gives you a choice: per-workspace config (committed alongside your code) or global config (applies everywhere). The global path is useful if you want Engram available in every project without adding an extra file to each repository.
 
 VS Code reads MCP configuration from `.vscode/mcp.json` inside your workspace, or from `~/.vscode/mcp.json` for a global config that applies across all workspaces. Bearer authentication is required.
 
@@ -83,6 +87,8 @@ The global config is useful if you want Engram available in every project withou
 
 ## Windsurf
 
+Windsurf uses a slightly different field name than the rest — `serverUrl` instead of `url`. Everything else follows the same pattern. If you configure Windsurf after setting up Cursor or VS Code, this is the one detail to watch.
+
 Add to `~/.codeium/windsurf/mcp_config.json`. Bearer authentication is required.
 
 ```json
@@ -103,6 +109,8 @@ Note the key is `serverUrl`, not `url` — Windsurf uses a slightly different fi
 ---
 
 ## Opencode
+
+Opencode is strict about one thing: the URL you configure must match exactly what Engram advertises in its SSE stream. That means `127.0.0.1`, not `localhost` — they resolve to the same place, but Opencode validates the string, not the address. This is the one gotcha in an otherwise straightforward setup.
 
 Add to `~/.config/opencode/opencode.json`. Create the file if it does not exist. Bearer authentication is required.
 
@@ -127,7 +135,7 @@ Copy your `ENGRAM_API_KEY` from `.env` for the header value. **Use `127.0.0.1`, 
 
 ## Claude Desktop
 
-Claude Desktop uses stdio transport, not SSE. It does not connect to a running server over a network port — it spawns a process and communicates over stdin/stdout. To bridge this, you tell Claude Desktop to `docker exec` into the running `engram-go-app` container and run the binary in stdio mode.
+Claude Desktop works differently from every other client here. It does not speak SSE — it uses stdio transport, communicating with MCP servers over stdin/stdout by spawning a subprocess. To use Engram with Claude Desktop, you bridge the gap by telling it to `docker exec` into the running container and invoke the binary directly.
 
 This means the Docker container must already be running when Claude Desktop starts. Run `docker compose up -d` before launching Claude Desktop.
 
@@ -175,6 +183,8 @@ docker compose up -d
 
 ## Authentication
 
+Bearer auth is not bureaucracy — it is the thing standing between your memory store and anything else running on your machine. Engram can read and write everything you have stored: decisions, patterns, credentials metadata, architectural context accumulated over months of work. A server that accepted connections from any local process without a token would be one misconfigured tool call away from exfiltrating all of it.
+
 Bearer token authentication is required. The server refuses to start without `ENGRAM_API_KEY` set. Every SSE connection must present `Authorization: Bearer <token>` — connections without it are rejected with `401 Unauthorized`.
 
 **For Claude Code:** `make setup` handles the token automatically.
@@ -190,13 +200,13 @@ There is no per-tool or per-project access control. Authentication is all-or-not
 ## Troubleshooting
 
 **Tools do not appear after adding the MCP server.**
-Most IDE MCP clients read configuration at startup. Restart the IDE after editing the config file.
+You edited the config, but your IDE is still running with the old one. Most IDE MCP clients read configuration at startup. Restart the IDE after editing the config file.
 
 **SSE connection drops repeatedly.**
-The SSE transport is a long-lived HTTP connection. Some reverse proxies and firewalls close idle connections after 60–90 seconds. If Engram is behind a proxy, configure the proxy to allow long-lived connections (or disable the idle timeout on that path).
+The SSE transport holds an HTTP connection open indefinitely, and some reverse proxies and firewalls close connections they consider idle after 60–90 seconds. If Engram is behind a proxy, configure the proxy to allow long-lived connections (or disable the idle timeout on that path). The problem is not Engram — it is something between your IDE and the server closing the connection early.
 
 **"Authorization required" error.**
-You have `ENGRAM_API_KEY` set but the IDE is not sending the header. Check the IDE config and confirm the header key is `Authorization` and the value starts with `Bearer `.
+You have `ENGRAM_API_KEY` set in `.env`, but the IDE is not sending it in the header. Check the IDE config and confirm the header key is exactly `Authorization` and the value starts with `Bearer ` (with a space).
 
 **Wrong number of tools (expect 30 or 35).**
 Five AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 30 tools. With it, you see 35. Set the key and restart `engram-go`:
@@ -206,7 +216,7 @@ docker compose restart engram-go
 ```
 
 **403 "session bearer mismatch" after rotating `ENGRAM_API_KEY`.**
-SSE sessions are bound to the bearer token presented at connection time. After a key rotation, existing sessions are invalidated. Reconnect your IDE: restart Claude Code, or reload the MCP connection in Cursor/VS Code. The 403 is expected — it means the session was opened with the old key and a new key is now in use.
+SSE sessions are bound to the bearer token presented at connection time. After a key rotation, existing sessions are invalidated — the 403 is intentional and expected. Reconnect your IDE: restart Claude Code, or reload the MCP connection in Cursor/VS Code. The old session is gone; the new one will use the new key.
 
 **Rate limit from `/setup-token` (`make setup` returns 429).**
 `/setup-token` is rate-limited to 3 requests per 5 minutes per IP. If `make setup` returns a 429, wait 5 minutes and try again. This limit protects against token enumeration — it is not meant to interfere with normal setup.

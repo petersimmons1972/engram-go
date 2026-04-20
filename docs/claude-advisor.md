@@ -2,7 +2,7 @@
 
 The four Claude features are all off by default. Here is how to think about which to turn on — and which to leave alone.
 
-<p align="center"><img src="claude-advisor.svg" alt="Claude Advisor Strategy" width="900"></p>
+<p align="center"><img src="assets/svg/claude-advisor.svg" alt="Claude Advisor Strategy" width="900"></p>
 
 ---
 
@@ -29,7 +29,7 @@ memory_reason(
 )
 ```
 
-<p align="center"><img src="claude-reason-flow.svg" alt="memory_reason flow" width="900"></p>
+<p align="center"><img src="assets/svg/claude-reason-flow.svg" alt="memory_reason flow" width="900"></p>
 
 **Where it earns its keep:**
 

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="qs-panel-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="qs-cyan-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00ADD8" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#00ADD8" stop-opacity="0.06"/>
+    </linearGradient>
+    <marker id="qs-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="38" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">QUICK START — 4 STEPS</text>
+
+  <!-- Step 1 -->
+  <rect x="35" y="75" width="175" height="140" rx="8" fill="url(#qs-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="122" y="100" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 1</text>
+  <text x="122" y="127" font-family="'Courier New',monospace" font-size="16" font-weight="700" fill="#f0f6fc" text-anchor="middle">git clone</text>
+  <line x1="55" y1="142" x2="195" y2="142" stroke="#21262d" stroke-width="1"/>
+  <text x="122" y="162" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">clone repo</text>
+  <text x="122" y="178" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">cd engram-go</text>
+
+  <!-- Arrow 1->2 -->
+  <line x1="210" y1="145" x2="240" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+
+  <!-- Step 2 -->
+  <rect x="245" y="75" width="175" height="140" rx="8" fill="url(#qs-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="332" y="100" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 2</text>
+  <text x="332" y="127" font-family="'Courier New',monospace" font-size="16" font-weight="700" fill="#f0f6fc" text-anchor="middle">make init</text>
+  <line x1="265" y1="142" x2="405" y2="142" stroke="#21262d" stroke-width="1"/>
+  <text x="332" y="162" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">generates</text>
+  <text x="332" y="178" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">credentials</text>
+
+  <!-- Arrow 2->3 -->
+  <line x1="420" y1="145" x2="450" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+
+  <!-- Step 3 -->
+  <rect x="455" y="75" width="175" height="140" rx="8" fill="url(#qs-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="542" y="100" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">STEP 3</text>
+  <text x="542" y="127" font-family="'Courier New',monospace" font-size="16" font-weight="700" fill="#f0f6fc" text-anchor="middle">make up</text>
+  <line x1="475" y1="142" x2="615" y2="142" stroke="#21262d" stroke-width="1"/>
+  <text x="542" y="162" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">starts 3 containers</text>
+  <text x="542" y="178" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">postgres · ollama · app</text>
+
+  <!-- Arrow 3->4 -->
+  <line x1="630" y1="145" x2="660" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+
+  <!-- Step 4 (highlighted) -->
+  <rect x="665" y="68" width="198" height="154" rx="8" fill="url(#qs-cyan-grad)" stroke="#00ADD8" stroke-width="2"/>
+  <text x="764" y="94" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#00ADD8" text-anchor="middle" letter-spacing="1">STEP 4</text>
+  <text x="764" y="121" font-family="'Courier New',monospace" font-size="16" font-weight="700" fill="#00ADD8" text-anchor="middle">make setup</text>
+  <line x1="685" y1="136" x2="845" y2="136" stroke="#00ADD8" stroke-opacity="0.3" stroke-width="1"/>
+  <text x="764" y="156" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">connects</text>
+  <text x="764" y="172" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#f0f6fc" text-anchor="middle">Claude Code</text>
+  <text x="764" y="190" font-family="'Courier New',monospace" font-size="10" fill="#8b949e" text-anchor="middle">writes mcp_servers.json</text>
+  <text x="764" y="206" font-family="'Courier New',monospace" font-size="10" fill="#8b949e" text-anchor="middle">then run /mcp</text>
+
+  <!-- Container detail panels below -->
+  <rect x="35" y="255" width="820" height="80" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="450" y="278" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">CONTAINERS STARTED BY make up</text>
+  <rect x="55" y="288" width="230" height="30" rx="4" fill="#21262d"/>
+  <text x="170" y="307" font-family="'Courier New',monospace" font-size="12" fill="#3fb950" text-anchor="middle">engram-postgres</text>
+  <rect x="305" y="288" width="230" height="30" rx="4" fill="#21262d"/>
+  <text x="420" y="307" font-family="'Courier New',monospace" font-size="12" fill="#e3b341" text-anchor="middle">engram-ollama</text>
+  <rect x="555" y="288" width="280" height="30" rx="4" fill="#21262d"/>
+  <text x="695" y="307" font-family="'Courier New',monospace" font-size="12" fill="#00ADD8" text-anchor="middle">engram-go-app :8788</text>
+
+  <!-- Time label -->
+  <text x="450" y="370" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#8b949e" text-anchor="middle">~5 minutes total  ·  ~3 minutes Ollama model download  ·  subsequent starts are fast</text>
+
+  <!-- Step number badges -->
+  <circle cx="122" cy="65" r="12" fill="#21262d"/>
+  <text x="122" y="69" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">1</text>
+  <circle cx="332" cy="65" r="12" fill="#21262d"/>
+  <text x="332" y="69" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">2</text>
+  <circle cx="542" cy="65" r="12" fill="#21262d"/>
+  <text x="542" y="69" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#f0f6fc" text-anchor="middle">3</text>
+  <circle cx="764" cy="57" r="12" fill="#00ADD8"/>
+  <text x="764" y="61" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" font-weight="700" fill="#0d1117" text-anchor="middle">4</text>
+</svg>

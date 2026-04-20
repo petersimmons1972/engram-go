@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="arch-panel-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0d1117" stop-opacity="1"/>
+    </linearGradient>
+    <marker id="arch-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid lines -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="180" y1="0" x2="180" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="360" y1="0" x2="360" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="540" y1="0" x2="540" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="720" y1="0" x2="720" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Depth layer panels -->
+  <rect x="20" y="20" width="900" height="380" rx="8" fill="#161b22" fill-opacity="0.08"/>
+
+  <!-- Left column: Clients -->
+  <rect x="40" y="80" width="180" height="260" rx="8" fill="url(#arch-panel-grad)" stroke="#21262d" stroke-width="1"/>
+  <text x="130" y="105" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1.5">MCP CLIENTS</text>
+
+  <!-- Client boxes -->
+  <rect x="60" y="120" width="140" height="32" rx="8" fill="#21262d"/>
+  <text x="130" y="140" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#f0f6fc" text-anchor="middle">Claude Code</text>
+
+  <rect x="60" y="162" width="140" height="32" rx="8" fill="#21262d"/>
+  <text x="130" y="182" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#f0f6fc" text-anchor="middle">Cursor</text>
+
+  <rect x="60" y="204" width="140" height="32" rx="8" fill="#21262d"/>
+  <text x="130" y="224" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#f0f6fc" text-anchor="middle">VS Code</text>
+
+  <rect x="60" y="246" width="140" height="32" rx="8" fill="#21262d"/>
+  <text x="130" y="266" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#f0f6fc" text-anchor="middle">Windsurf</text>
+
+  <rect x="60" y="288" width="140" height="32" rx="8" fill="#21262d"/>
+  <text x="130" y="308" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#f0f6fc" text-anchor="middle">Opencode</text>
+
+  <!-- SSE Connection arrow -->
+  <line x1="220" y1="210" x2="330" y2="210" stroke="#00ADD8" stroke-width="2" marker-end="url(#arch-arrow)"/>
+  <rect x="230" y="190" width="90" height="18" rx="4" fill="#0d1117"/>
+  <text x="275" y="202" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#00ADD8" text-anchor="middle">Bearer Auth</text>
+  <text x="275" y="216" font-family="'Courier New',monospace" font-size="10" fill="#8b949e" text-anchor="middle">SSE / :8788</text>
+
+  <!-- Center: engram-go server -->
+  <rect x="335" y="140" width="230" height="140" rx="8" fill="url(#arch-panel-grad)" stroke="#00ADD8" stroke-width="2"/>
+  <text x="450" y="168" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1.5">MCP SERVER</text>
+  <text x="450" y="192" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="18" font-weight="700" fill="#00ADD8" text-anchor="middle">engram-go</text>
+  <text x="450" y="212" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">35 MCP tools</text>
+  <text x="450" y="232" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">Go 1.22 · ~18 MB idle</text>
+  <text x="450" y="252" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">port :8788</text>
+
+  <!-- Arrow to PostgreSQL (down-left) -->
+  <line x1="420" y1="280" x2="310" y2="340" stroke="#00ADD8" stroke-width="2" marker-end="url(#arch-arrow)"/>
+
+  <!-- Arrow to Ollama (down-right) -->
+  <line x1="480" y1="280" x2="600" y2="340" stroke="#00ADD8" stroke-width="2" marker-end="url(#arch-arrow)"/>
+
+  <!-- PostgreSQL box -->
+  <rect x="180" y="345" width="220" height="55" rx="8" fill="url(#arch-panel-grad)" stroke="#21262d" stroke-width="1"/>
+  <text x="290" y="367" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">STORAGE</text>
+  <text x="290" y="385" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc" text-anchor="middle">PostgreSQL + pgvector</text>
+
+  <!-- Ollama box -->
+  <rect x="510" y="345" width="220" height="55" rx="8" fill="url(#arch-panel-grad)" stroke="#21262d" stroke-width="1"/>
+  <text x="620" y="367" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">EMBEDDINGS</text>
+  <text x="620" y="385" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc" text-anchor="middle">Ollama nomic-embed</text>
+
+  <!-- SSRF guard label -->
+  <text x="620" y="405" font-family="'Courier New',monospace" font-size="10" fill="#e3b341" text-anchor="middle">SSRF guard</text>
+
+  <!-- Title -->
+  <text x="450" y="38" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">SYSTEM ARCHITECTURE</text>
+
+  <!-- Right side: optional Claude API -->
+  <rect x="740" y="165" width="130" height="50" rx="8" fill="url(#arch-panel-grad)" stroke="#21262d" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="805" y="185" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">optional</text>
+  <text x="805" y="201" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="600" fill="#5865F2" text-anchor="middle">Claude API</text>
+  <line x1="565" y1="195" x2="740" y2="195" stroke="#21262d" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="652" y="190" font-family="'Courier New',monospace" font-size="10" fill="#8b949e" text-anchor="middle">AI advisor</text>
+</svg>

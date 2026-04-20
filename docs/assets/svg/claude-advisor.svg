@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <linearGradient id="ca-panel-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b22"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <marker id="ca-arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
+    </marker>
+    <marker id="ca-arrow-muted" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="420" fill="#0d1117"/>
+
+  <!-- Grid -->
+  <line x1="0" y1="140" x2="900" y2="140" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="0" y1="280" x2="900" y2="280" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="225" y1="0" x2="225" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+  <line x1="675" y1="0" x2="675" y2="420" stroke="#f0f6fc" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="28" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="2">CLAUDE ADVISOR — FEATURE ACTIVATION MAP</text>
+
+  <!-- Left column header: ENV VARS -->
+  <text x="195" y="52" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">ENVIRONMENT VARIABLE</text>
+
+  <!-- Right column header: CAPABILITIES -->
+  <text x="700" y="52" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle" letter-spacing="1">CAPABILITY UNLOCKED</text>
+
+  <!-- Row 1: ANTHROPIC_API_KEY -> memory_reason + 4 AI tools (always-on with key, cyan) -->
+  <rect x="30" y="68" width="330" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#00ADD8" stroke-width="1.5"/>
+  <text x="55" y="90" font-family="'Courier New',monospace" font-size="13" fill="#00ADD8">ANTHROPIC_API_KEY</text>
+  <text x="55" y="108" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">required for all Claude features</text>
+
+  <line x1="360" y1="94" x2="510" y2="94" stroke="#00ADD8" stroke-width="2" marker-end="url(#ca-arrow-cyan)"/>
+  <rect x="373" y="80" width="130" height="14" rx="3" fill="#0d1117"/>
+  <text x="437" y="91" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#00ADD8" text-anchor="middle">always-on with key</text>
+
+  <rect x="510" y="68" width="360" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#00ADD8" stroke-width="1.5"/>
+  <text x="530" y="90" font-family="'Courier New',monospace" font-size="13" fill="#00ADD8">memory_reason</text>
+  <text x="530" y="108" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">+ memory_explore · diagnose · query_doc · ask</text>
+
+  <!-- Row 2: ENGRAM_CLAUDE_SUMMARIZE -> Claude summaries (muted, opt-in) -->
+  <rect x="30" y="148" width="330" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="55" y="170" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">ENGRAM_CLAUDE_SUMMARIZE</text>
+  <text x="55" y="188" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">default: false</text>
+
+  <line x1="360" y1="174" x2="510" y2="174" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ca-arrow-muted)"/>
+  <rect x="375" y="160" width="124" height="14" rx="3" fill="#0d1117"/>
+  <text x="437" y="171" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">opt-in</text>
+
+  <rect x="510" y="148" width="360" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="530" y="170" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">Claude summaries</text>
+  <text x="530" y="188" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">replaces Ollama llama3.2 for background summarization</text>
+
+  <!-- Row 3: ENGRAM_CLAUDE_CONSOLIDATE -> Smart dedup -->
+  <rect x="30" y="228" width="330" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="55" y="250" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">ENGRAM_CLAUDE_CONSOLIDATE</text>
+  <text x="55" y="268" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">default: false</text>
+
+  <line x1="360" y1="254" x2="510" y2="254" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ca-arrow-muted)"/>
+  <rect x="375" y="240" width="124" height="14" rx="3" fill="#0d1117"/>
+  <text x="437" y="251" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">opt-in</text>
+
+  <rect x="510" y="228" width="360" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="530" y="250" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">Smart dedup</text>
+  <text x="530" y="268" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">semantic near-duplicate detection in consolidation</text>
+
+  <!-- Row 4: ENGRAM_CLAUDE_RERANK -> Better ranking -->
+  <rect x="30" y="308" width="330" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="55" y="330" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">ENGRAM_CLAUDE_RERANK</text>
+  <text x="55" y="348" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">default: false · slower</text>
+
+  <line x1="360" y1="334" x2="510" y2="334" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ca-arrow-muted)"/>
+  <rect x="375" y="320" width="124" height="14" rx="3" fill="#0d1117"/>
+  <text x="437" y="331" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" fill="#8b949e" text-anchor="middle">opt-in</text>
+
+  <rect x="510" y="308" width="360" height="52" rx="8" fill="url(#ca-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
+  <text x="530" y="330" font-family="'Courier New',monospace" font-size="13" fill="#f0f6fc">Better ranking</text>
+  <text x="530" y="348" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e">Claude re-ranks recall results for relevance quality</text>
+
+  <!-- Footer -->
+  <text x="450" y="390" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">advisor_20260301 strategy: Sonnet for routine ops · escalates to Opus for complex synthesis</text>
+</svg>

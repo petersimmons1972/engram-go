@@ -8,11 +8,13 @@ That is the whole system. The rest of this page explains each step in enough dep
 
 ---
 
-<p align="center"><img src="scoring.svg" alt="Four-signal search scoring" width="900"></p>
+<p align="center"><img src="assets/svg/scoring.svg" alt="Four-signal search scoring" width="900"></p>
 
 ---
 
 ## The Four Search Signals
+
+No single search strategy handles every case well. Keyword search fails when you remember the concept but not the exact term. Semantic search fails when you need precision — function names, error codes. Recency fails when the most relevant memory is six months old. That is why Engram runs four signals simultaneously and combines them, rather than picking one and hoping it fits.
 
 ### BM25 Keyword Search
 
@@ -44,6 +46,8 @@ After the three signals produce a scored list, the top results act as seeds for 
 
 Store a bug report. Store the architectural pattern that caused it. Connect them with a `causes` edge. Now a query about the pattern automatically surfaces the bug, because the traversal follows the edge from pattern to bug. You do not need to remember to ask about both.
 
+With that understanding of the four signals, you can read the scoring formula not as an opaque equation but as a record of how those trade-offs were balanced.
+
 ---
 
 ## The Scoring Formula
@@ -59,6 +63,8 @@ Without embeddings available:
 composite = (bm25 × 0.85) + (recency × 0.15)
 ```
 
+The weights encode a specific view of what matters most. Vector search (0.45) leads because meaning-matching — finding the right concept across different vocabulary — is the hardest problem to solve by hand. When BM25 is doing most of the work, you feel it as precision: the function name you typed came back exactly. When cosine similarity is doing the work, you feel it as discovery: you found the memory you needed even though you did not remember how you described it. Recency (0.10) is intentionally light — it is a tiebreaker, not a filter. A three-month-old architectural decision should still surface when it is the only thing that explains why the code is the way it is.
+
 The importance multiplier is set at store time and applied at recall time. It is a flat scaling factor — a `critical` memory with a mediocre composite score still beats a `trivial` memory with a strong one.
 
 Two additional signals feed into the composite:
@@ -73,6 +79,8 @@ Both signals appear in the `score_breakdown` map returned with each result, so y
 
 ## Context-Efficient Recall
 
+Context windows are not unlimited. An agent that pulls back ten full memories per session — each five thousand characters — burns forty percent of its available context on recall before writing a line of code. That is the problem the `detail` parameter solves.
+
 The `detail` parameter controls how much text comes back per memory.
 
 | `detail=`         | What you get                          | Typical size     | When to use                            |
@@ -85,9 +93,11 @@ Summaries are generated asynchronously by a background goroutine. When you store
 
 At scale, summary mode reduces context consumption by roughly 13× compared to full mode. For an agent that recalls 10 memories per session, that is the difference between using 5% of a context window and using 65%.
 
-<p align="center"><img src="context-reduction.svg" alt="Context reduction: summary vs full" width="900"></p>
+<p align="center"><img src="assets/svg/context-reduction.svg" alt="Context reduction: summary vs full" width="900"></p>
 
 ### Handle Mode
+
+Summary mode reduces the size of each result. Handle mode goes further — it does not return content at all. It returns lightweight references instead, leaving the agent in charge of which memories actually deserve context space.
 
 When an agent calls `memory_recall`, the default response contains full memory objects (content, scores, metadata). For high-volume sessions, this inflates context. Handle mode returns lightweight references instead:
 
@@ -115,6 +125,8 @@ To expand a specific handle into full content, call `memory_fetch` with the ID a
 Handle mode trades recall immediacy for context efficiency: an agent can scan 20 handles for ~1 KB, then fetch only the 2–3 memories it actually needs.
 
 ### Memory Explore: Iterative Synthesis
+
+Sometimes you do not know what you are looking for. You have a question — "why does the connection pool timeout under load?" — and you need the system to go find the answer rather than hand you a list of candidates to reason over yourself. That is what `memory_explore` is for.
 
 `memory_explore` answers open-ended questions by running multiple rounds of recall, scoring confidence after each round, and stopping when it has enough signal to synthesize an answer — or after a configured maximum number of iterations.
 
@@ -161,6 +173,8 @@ Set `critical` sparingly. If everything is critical, nothing is.
 
 ## Knowledge Graph
 
+The scoring formula gets you the right memories. The knowledge graph gets you the memories adjacent to the right memories — the ones you did not know to ask for.
+
 Engram tracks six relationship types between memories:
 
 | Relationship    | Meaning                                        | Example                                         |
@@ -178,7 +192,7 @@ Two-hop traversal means: a query returns a memory, that memory's neighbors are a
 
 The graph does not require manual maintenance to stay useful. It self-optimizes toward what your queries actually find relevant, over time.
 
-<p align="center"><img src="knowledge-graph.svg" alt="Knowledge graph: memory relationships" width="900"></p>
+<p align="center"><img src="assets/svg/knowledge-graph.svg" alt="Knowledge graph: memory relationships" width="900"></p>
 
 ---
 
@@ -202,13 +216,11 @@ Manual episode management is still available. `memory_episode_start` creates an 
 
 ## Background Workers
 
-Two goroutines start with the server and run on a fixed tick.
+Two goroutines start with the server and run on a fixed tick. You never configure them — they are always running.
 
-**Summarizer (60-second tick):** Finds memories with no generated summary, calls the configured model (Ollama `llama3.2` by default, or Claude if `ENGRAM_CLAUDE_SUMMARIZE=true`), stores the result back. The goroutine logs failures but does not crash — a memory without a summary is not a broken memory.
+**Summarizer (60-second tick):** Finds memories with no generated summary, calls the configured model (Ollama `llama3.2` by default, or Claude if `ENGRAM_CLAUDE_SUMMARIZE=true`), stores the result back. Without the summarizer, `detail="summary"` would always fall back to the matched chunk — a reasonable approximation, but not a compressed representation of the full memory. The goroutine logs failures but does not crash — a memory without a summary is not a broken memory.
 
-**Re-embedder (30-second tick):** Finds chunks with NULL embedding vectors — new memories not yet embedded, or chunks from a pre-embedding migration. Calls Ollama's embedding endpoint and fills them in. Vector search is accurate only for chunks with embeddings, so this goroutine keeps the index current. On first start it may take a few minutes to process a large existing store.
-
-Neither goroutine needs configuration. They are always running.
+**Re-embedder (30-second tick):** Finds chunks with NULL embedding vectors — new memories not yet embedded, or chunks from a pre-embedding migration. Calls Ollama's embedding endpoint and fills them in. Without the re-embedder, every new memory would be invisible to vector search until the server restarted. On first start it may take a few minutes to process a large existing store.
 
 ---
 
