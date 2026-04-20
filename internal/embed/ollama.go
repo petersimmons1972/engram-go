@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -58,6 +59,14 @@ func newOllamaClient(ctx context.Context, baseURL, model string, customTransport
 		// Re-resolves the hostname on every dial and rejects private IPs,
 		// preventing an attacker from using a short-TTL DNS record to bypass
 		// the startup IP check by switching the resolution to an internal address.
+		//
+		// The configured baseURL host is allow-listed: the operator explicitly
+		// chose it (e.g. Docker service name "ollama"), so its private-IP resolution
+		// is intentional and must not be blocked.
+		var configuredHost string
+		if u, err := url.Parse(baseURL); err == nil {
+			configuredHost = u.Hostname()
+		}
 		baseDialer := &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -73,9 +82,12 @@ func newOllamaClient(ctx context.Context, baseURL, model string, customTransport
 				if err != nil {
 					return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
 				}
-				for _, resolved := range addrs {
-					if netutil.IsPrivateIP(resolved) {
-						return nil, fmt.Errorf("ollama URL resolved to private IP %q (SSRF protection, closes #242)", resolved)
+				// Skip private-IP check for the operator-configured host.
+				if host != configuredHost {
+					for _, resolved := range addrs {
+						if netutil.IsPrivateIP(resolved) {
+							return nil, fmt.Errorf("ollama URL resolved to private IP %q (SSRF protection, closes #242)", resolved)
+						}
 					}
 				}
 				return baseDialer.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
