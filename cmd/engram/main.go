@@ -70,12 +70,11 @@ func run() error {
 		return fmt.Errorf("ENGRAM_API_KEY or --api-key is required; refusing to start without authentication")
 	}
 
-	// Unset secrets from the process environment after reading (#139, #141).
-	// This limits exposure via /proc/self/environ to the startup window only.
-	// Note: this reduces but does not eliminate the window — the kernel may cache
-	// the original environ in /proc until the process exits.
+	// Unset secrets from the process environment after reading (#139, #141, #250).
+	// Reduces the exposure window for credentials in /proc/self/environ.
 	_ = os.Unsetenv("ENGRAM_API_KEY")
 	_ = os.Unsetenv("ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("DATABASE_URL")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

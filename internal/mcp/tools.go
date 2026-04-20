@@ -8,12 +8,15 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"golang.org/x/text/unicode/norm"
 	"github.com/petersimmons1972/engram/internal/claude"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/markdown"
 	"github.com/petersimmons1972/engram/internal/rag"
 	"github.com/petersimmons1972/engram/internal/search"
@@ -149,13 +152,19 @@ func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxByte
 // handleMemoryFetch implements the memory_fetch MCP tool.
 func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	id := getString(args, "id", "")
 	if id == "" {
 		return nil, fmt.Errorf("id is required")
 	}
 	detail := getString(args, "detail", "summary")
-	chunkIDs := toStringSlice(args["chunk_ids"])
+	chunkIDs, err := toStringSlice(args["chunk_ids"])
+	if err != nil {
+		return nil, fmt.Errorf("chunk_ids: %w", err)
+	}
 	maxBytes := cfg.FetchMaxBytes
 	if maxBytes == 0 {
 		maxBytes = 65536
@@ -273,6 +282,79 @@ func getString(args map[string]any, key, def string) string {
 	return def
 }
 
+// bidiAndZeroWidthRanges lists Unicode codepoints that can create trust confusion
+// via bidirectional control characters or zero-width joiners/separators (#249).
+// Ranges are [lo, hi] inclusive.
+var bidiAndZeroWidthRanges = [][2]rune{
+	{0x200B, 0x200F}, // zero-width space, ZWNJ, ZWJ, LRM, RLM
+	{0x202A, 0x202E}, // LRE, RLE, PDF, LRO, RLO
+	{0x2060, 0x2069}, // WJ, invisible operators, FSI/LRI/RLI/PDI
+	{0xFEFF, 0xFEFF}, // BOM / zero-width no-break space
+	{0x061C, 0x061C}, // Arabic letter mark
+}
+
+// validateProjectName applies NFC normalization and rejects bidi/zero-width
+// codepoints and names that are empty or exceed maxProjectNameLen (#249).
+const maxProjectNameLen = 128
+
+func validateProjectName(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("project name must not be empty")
+	}
+	s = norm.NFC.String(s)
+	if len(s) > maxProjectNameLen {
+		return fmt.Errorf("project name exceeds max length %d", maxProjectNameLen)
+	}
+	for i, r := range s {
+		for _, rng := range bidiAndZeroWidthRanges {
+			if r >= rng[0] && r <= rng[1] {
+				return fmt.Errorf("project name contains disallowed codepoint U+%04X at byte %d", r, i)
+			}
+		}
+	}
+	return nil
+}
+
+// getProject extracts and validates the "project" argument, applying NFC
+// normalization and rejecting bidi/zero-width characters (#249).
+// def is the fallback when the argument is absent or empty.
+func getProject(args map[string]any, def string) (string, error) {
+	raw := getString(args, "project", def)
+	// Apply NFC before returning so the caller always gets a normalized name.
+	normalized := norm.NFC.String(strings.TrimSpace(raw))
+	if err := validateProjectName(normalized); err != nil {
+		return "", fmt.Errorf("project: %w", err)
+	}
+	return normalized, nil
+}
+
+// validateContent rejects content strings that contain C0 control characters
+// (except HT/LF/CR), DEL, and C1 control characters (U+0080–U+009F) (#253).
+func validateContent(s string) error {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return fmt.Errorf("content contains invalid UTF-8 at byte %d", i)
+		}
+		switch {
+		case r == 0x09 || r == 0x0A || r == 0x0D:
+			// HT, LF, CR — allowed
+		case r <= 0x08, r == 0x0B, r == 0x0C, r >= 0x0E && r <= 0x1F:
+			// C0 control chars except HT/LF/CR
+			return fmt.Errorf("content contains disallowed control character U+%04X at byte %d", r, i)
+		case r == 0x7F:
+			// DEL
+			return fmt.Errorf("content contains disallowed control character U+007F (DEL) at byte %d", i)
+		case r >= 0x80 && r <= 0x9F:
+			// C1 control characters
+			return fmt.Errorf("content contains disallowed C1 control character U+%04X at byte %d", r, i)
+		}
+		i += size
+	}
+	return nil
+}
+
 // getInt extracts an int arg (JSON numbers arrive as float64) with a fallback.
 func getInt(args map[string]any, key string, def int) int {
 	if v, ok := args[key]; ok {
@@ -306,17 +388,19 @@ func getBool(args map[string]any, key string, def bool) bool {
 	return def
 }
 
-// toStringSlice converts []any to []string, skipping non-string entries.
-// Applies per-tag and count limits to prevent tag injection attacks (#149).
+// Per-tag and count limits to prevent tag injection attacks (#149).
 const (
 	maxTagCount  = 50
 	maxTagLength = 256
 )
 
-func toStringSlice(v any) []string {
+// toStringSlice converts []any to []string, applying per-tag/count limits (#149).
+// Returns an error if any tag contains NUL or C0 control characters
+// (except tab/newline/carriage-return) or DEL (#252).
+func toStringSlice(v any) ([]string, error) {
 	arr, ok := v.([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	result := make([]string, 0, len(arr))
 	for _, item := range arr {
@@ -330,15 +414,28 @@ func toStringSlice(v any) []string {
 		if len(s) > maxTagLength {
 			s = s[:maxTagLength] // truncate oversized tag
 		}
+		// Reject NUL, C0 controls (except HT/LF/CR), and DEL (#252).
+		for i := 0; i < len(s); i++ {
+			b := s[i]
+			switch {
+			case b == 0x09 || b == 0x0A || b == 0x0D:
+				// allowed
+			case b <= 0x08, b == 0x0B, b == 0x0C, b >= 0x0E && b <= 0x1F, b == 0x7F:
+				return nil, fmt.Errorf("tag %q contains disallowed control character 0x%02X at byte %d", s, b, i)
+			}
+		}
 		result = append(result, s)
 	}
-	return result
+	return result, nil
 }
 
 // handleMemoryStore stores a single focused memory.
 func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -350,6 +447,9 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if len(content) > types.MaxContentLength {
 		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
 	}
+	if err := validateContent(content); err != nil {
+		return nil, fmt.Errorf("content: %w", err)
+	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
 		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
@@ -358,13 +458,17 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if importance < 0 || importance > 4 {
 		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
 	}
+	tags, err := toStringSlice(args["tags"])
+	if err != nil {
+		return nil, fmt.Errorf("tags: %w", err)
+	}
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     content,
 		MemoryType:  memType,
 		Project:     project,
 		Importance:  importance,
-		Tags:        toStringSlice(args["tags"]),
+		Tags:        tags,
 		Immutable:   getBool(args, "immutable", false),
 		StorageMode: "focused",
 	}
@@ -386,7 +490,10 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 //   - > RawDocumentMaxBytes: refused.
 func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -394,6 +501,9 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	content, _ := args["content"].(string)
 	if content == "" {
 		return nil, fmt.Errorf("content is required")
+	}
+	if err := validateContent(content); err != nil {
+		return nil, fmt.Errorf("content: %w", err)
 	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
@@ -404,12 +514,16 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
 	}
 	maxDoc, rawMax := configOrDefaults(cfg)
+	docTags, err := toStringSlice(args["tags"])
+	if err != nil {
+		return nil, fmt.Errorf("tags: %w", err)
+	}
 	m := &types.Memory{
 		ID:         types.NewMemoryID(),
 		MemoryType: memType,
 		Project:    project,
 		Importance: importance,
-		Tags:       toStringSlice(args["tags"]),
+		Tags:       docTags,
 		Immutable:  getBool(args, "immutable", false),
 	}
 	engine := h.Engine
@@ -429,7 +543,10 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 // are committed in one transaction — either all succeed or none do.
 func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -461,6 +578,10 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			validErrs = append(validErrs, fmt.Sprintf("item %d: content exceeds max length %d bytes", idx, types.MaxContentLength))
 			continue
 		}
+		if contentErr := validateContent(content); contentErr != nil {
+			validErrs = append(validErrs, fmt.Sprintf("item %d: content: %v", idx, contentErr))
+			continue
+		}
 		memType := getString(mmap, "memory_type", types.MemoryTypeContext)
 		if !types.ValidateMemoryType(memType) {
 			validErrs = append(validErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
@@ -471,13 +592,18 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			validErrs = append(validErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
 			continue
 		}
+		itemTags, tagErr := toStringSlice(mmap["tags"])
+		if tagErr != nil {
+			validErrs = append(validErrs, fmt.Sprintf("item %d: tags: %v", idx, tagErr))
+			continue
+		}
 		memories = append(memories, &types.Memory{
 			ID:          types.NewMemoryID(),
 			Content:     content,
 			MemoryType:  memType,
 			Project:     project,
 			Importance:  importance,
-			Tags:        toStringSlice(mmap["tags"]),
+			Tags:        itemTags,
 			StorageMode: "focused",
 		})
 	}
@@ -507,7 +633,10 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 // Pass cfg to enable optional Claude re-ranking (single-project only).
 func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	query := getString(args, "query", "")
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
@@ -521,7 +650,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	mode := getString(args, "mode", cfg.RecallDefaultMode)
 
 	// Federated path: "projects" overrides the single-project recall.
-	projectNames := toStringSlice(args["projects"])
+	projectNames, err := toStringSlice(args["projects"])
+	if err != nil {
+		return nil, fmt.Errorf("projects: %w", err)
+	}
 	if len(projectNames) > 0 {
 		// Expand wildcard "*" to all known projects.
 		if len(projectNames) == 1 && projectNames[0] == "*" {
@@ -654,7 +786,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 func handleMemoryProjects(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	// Use any project to get a backend connection for the cross-project query.
-	anchorProject := getString(args, "project", "default")
+	anchorProject, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, anchorProject)
 	if err != nil {
 		return nil, err
@@ -690,7 +825,10 @@ func handleMemoryProjects(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // the calling project's edge table.
 func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -721,7 +859,10 @@ func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 // handleMemoryList lists memories with optional type and tag filters.
 func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -735,7 +876,11 @@ func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolR
 	if s := getString(args, "memory_type", ""); s != "" {
 		memType = &s
 	}
-	memories, err := h.Engine.List(ctx, memType, toStringSlice(args["tags"]), nil, limit, offset)
+	listTags, err := toStringSlice(args["tags"])
+	if err != nil {
+		return nil, fmt.Errorf("tags: %w", err)
+	}
+	memories, err := h.Engine.List(ctx, memType, listTags, nil, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -745,7 +890,10 @@ func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolR
 // handleMemoryConnect creates a directional relationship between two memories.
 func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -775,7 +923,10 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 // handleMemoryCorrect updates the content, tags, or importance of an existing memory.
 func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -793,7 +944,11 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		n := types.ValidateImportance(int(v))
 		importance = &n
 	}
-	updated, err := h.Engine.Correct(ctx, id, content, toStringSlice(args["tags"]), importance)
+	correctTags, err := toStringSlice(args["tags"])
+	if err != nil {
+		return nil, fmt.Errorf("tags: %w", err)
+	}
+	updated, err := h.Engine.Correct(ctx, id, content, correctTags, importance)
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +961,10 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 // handleMemoryForget soft-deletes a memory by ID (sets valid_to=NOW(), preserves history).
 func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -826,7 +984,10 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 // handleMemoryHistory returns the version chain for a memory.
 func handleMemoryHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -845,7 +1006,10 @@ func handleMemoryHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 // handleMemoryTimeline recalls memories that were active at a given point in time.
 func handleMemoryTimeline(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -869,7 +1033,10 @@ func handleMemoryTimeline(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // handleMemorySummarize requests Ollama to summarize a memory's content.
 func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -888,7 +1055,10 @@ func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.Call
 // worker regenerates them with the current model on its next tick (within 60s).
 func handleMemoryResummarize(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -906,7 +1076,10 @@ func handleMemoryResummarize(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 // handleMemoryStatus returns aggregate statistics for a project's memory store.
 func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -923,8 +1096,14 @@ func handleMemoryStatus(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 // tracking is updated in addition to the standard edge boost.
 func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
-	ids := toStringSlice(args["memory_ids"])
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
+	ids, err := toStringSlice(args["memory_ids"])
+	if err != nil {
+		return nil, fmt.Errorf("memory_ids: %w", err)
+	}
 	if len(ids) > 100 {
 		return nil, fmt.Errorf("memory_ids: too many IDs (%d), max 100", len(ids))
 	}
@@ -969,7 +1148,10 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // failure_class) and returns counts with oldest/newest timestamps per label.
 func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	by := getString(args, "by", "")
 	if by == "" {
 		return nil, fmt.Errorf("by: required (tag, type, or failure_class)")
@@ -1008,7 +1190,10 @@ func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.Call
 // it uses bigramJaccard similarity + Claude review for near-duplicate merging.
 func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1029,7 +1214,10 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 // cfg is passed so the handler can read OllamaURL for the LLM second pass.
 func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	minSim := getFloat(args, "min_similarity", 0.7)
 	limit := getInt(args, "limit", 500)
 	if limit < 1 || limit > 5000 {
@@ -1068,7 +1256,10 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 // handleMemoryVerify checks integrity of the memory store.
 func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1081,9 +1272,15 @@ func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 }
 
 // handleMemoryMigrateEmbedder re-embeds all chunks using a new Ollama model.
-func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// Performs a dimension pre-flight before nulling existing embeddings: if the
+// new model outputs a different vector width than the current stored dimension,
+// migration is refused to prevent silent pgvector corruption (#251).
+func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1092,6 +1289,25 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	if newModel == "" {
 		return nil, fmt.Errorf("new_model is required")
 	}
+
+	// Dimension pre-flight (#251): compare stored dims against the new model's output.
+	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
+	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
+		probeClient, probeErr := embed.NewOllamaClient(ctx, cfg.OllamaURL, newModel)
+		if probeErr == nil {
+			newDims := probeClient.Dimensions()
+			var storedDims int
+			if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
+				if newDims != storedDims {
+					return nil, fmt.Errorf(
+						"dimension mismatch: current model stores %d-dim vectors, new model %q produces %d-dim vectors — pgvector column must be rebuilt first",
+						storedDims, newModel, newDims,
+					)
+				}
+			}
+		}
+	}
+
 	result, err := h.Engine.MigrateEmbedder(ctx, newModel)
 	if err != nil {
 		return nil, err
@@ -1105,7 +1321,10 @@ func handleMemoryExportAll(ctx context.Context, pool *EnginePool, req mcpgo.Call
 		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
 	}
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1131,7 +1350,10 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
 	}
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1170,7 +1392,10 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, fmt.Errorf("file operations require --data-dir / ENGRAM_DATA_DIR to be set")
 	}
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
@@ -1217,7 +1442,10 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 // handleMemoryEpisodeStart creates a new episode for a project.
 func handleMemoryEpisodeStart(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	description := getString(args, "description", "")
 	h, err := pool.Get(ctx, project)
 	if err != nil {
@@ -1233,7 +1461,10 @@ func handleMemoryEpisodeStart(ctx context.Context, pool *EnginePool, req mcpgo.C
 // handleMemoryEpisodeEnd marks an episode as ended with an optional summary.
 func handleMemoryEpisodeEnd(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	id := getString(args, "episode_id", "")
 	summary := getString(args, "summary", "")
 	if id == "" {
@@ -1252,7 +1483,10 @@ func handleMemoryEpisodeEnd(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 // handleMemoryEpisodeList returns recent episodes for a project.
 func handleMemoryEpisodeList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	limit := getInt(args, "limit", 20)
 	h, err := pool.Get(ctx, project)
 	if err != nil {
@@ -1272,7 +1506,10 @@ func handleMemoryEpisodeList(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 // chronological order.
 func handleMemoryEpisodeRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	episodeID := getString(args, "episode_id", "")
 	if episodeID == "" {
 		return mcpgo.NewToolResultError("episode_id is required"), nil
@@ -1321,7 +1558,10 @@ func buildEvidenceMap(ctx context.Context, backend interface {
 // synthesizing an answer — useful for inspecting conflicts before reasoning.
 func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	question := getString(args, "question", "")
 	topK := getInt(args, "top_k", 10)
 	detail := getString(args, "detail", "full")
@@ -1355,7 +1595,10 @@ func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // synthesize a grounded, conflict-aware answer.
 func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	question := getString(args, "question", "")
 	topK := getInt(args, "top_k", 10)
 	if topK < 1 {
@@ -1489,7 +1732,7 @@ func parseExploreScope(args map[string]any) claude.ExploreScope {
 		return claude.ExploreScope{}
 	}
 	var scope claude.ExploreScope
-	scope.Tags = toStringSlice(scopeMap["tags"])
+	scope.Tags, _ = toStringSlice(scopeMap["tags"]) // ignore control-char error in optional scope
 	scope.EpisodeID = getString(scopeMap, "episode_id", "")
 	if since := getString(scopeMap, "since", ""); since != "" {
 		if t, err := time.Parse(time.RFC3339, since); err == nil {
@@ -1507,7 +1750,10 @@ func parseExploreScope(args map[string]any) claude.ExploreScope {
 // handleMemoryExplore runs the iterative recall+score+synthesis loop (A3).
 func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	question := getString(args, "question", "")
 	if question == "" {
 		return mcpgo.NewToolResultError("question is required"), nil
@@ -1578,7 +1824,10 @@ func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRe
 	if question == "" {
 		return mcpgo.NewToolResultError("question: required"), nil
 	}
-	project := getString(args, "project", "")
+	project, err := getProject(args, "")
+	if err != nil {
+		return mcpgo.NewToolResultError("project: " + err.Error()), nil
+	}
 	if project == "" {
 		return mcpgo.NewToolResultError("project: required"), nil
 	}
@@ -1694,7 +1943,10 @@ func handleMemoryQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	memoryID := getString(args, "memory_id", "")
 	if memoryID == "" {
 		return nil, fmt.Errorf("memory_id is required")

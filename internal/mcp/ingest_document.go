@@ -359,7 +359,10 @@ func (s *Server) dropUpload(uploadID string) {
 // must supply a non-nil *Server for those code paths.
 func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	maxDoc, rawMax := configOrDefaults(cfg)
 
 	path := getString(args, "path", "")

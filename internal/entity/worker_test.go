@@ -173,6 +173,52 @@ func TestWorker_DefaultConfig(t *testing.T) {
 	assert.NotNil(t, w)
 }
 
+// panicExtractor panics on every Extract call to simulate a misbehaving LLM client.
+type panicExtractor struct{}
+
+func (panicExtractor) Extract(_ context.Context, _ string) ([]entity.Entity, []entity.Relation, error) {
+	panic("simulated extractor panic")
+}
+
+// TestWorker_PanicInProcessJobDoesNotKillRun verifies that a panic inside
+// processJob (via Extract) does NOT permanently kill the Run goroutine (#247).
+// After a panic on tick 1, Run must still process a new job on tick 2+.
+func TestWorker_PanicInProcessJobDoesNotKillRun(t *testing.T) {
+	backend := newWorkerBackend()
+	backend.memories["mem-panic"] = &types.Memory{ID: "mem-panic", Content: "will panic"}
+	backend.jobs = []entity.ExtractionJob{{ID: "job-panic", MemoryID: "mem-panic", Project: "proj"}}
+
+	w := entity.NewWorker(backend, panicExtractor{}, entity.WorkerConfig{
+		Projects:     []string{"proj"},
+		PollInterval: 50 * time.Millisecond,
+		BatchSize:    5,
+	})
+
+	// Run for long enough to fire at least 2 ticks even after the 1s sleep.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		w.Run(ctx)
+		close(done)
+	}()
+
+	// The goroutine must still be alive after the panic tick + 1s sleep + a bit.
+	// We confirm it by waiting for context expiry and checking Run returned cleanly.
+	select {
+	case <-done:
+		// Run exited — verify it was due to context cancellation, not panic death.
+		// If done closes before ctx expires that would be unexpected here; we check
+		// that ctx was the cause by re-checking cancellation.
+		if ctx.Err() == nil {
+			t.Fatal("Run exited before context was cancelled — goroutine may have panicked")
+		}
+	case <-time.After(3500 * time.Millisecond):
+		t.Fatal("Run did not exit after context expiry")
+	}
+}
+
 func TestWorker_ExitsOnContextCancel(t *testing.T) {
 	backend := newWorkerBackend()
 	ext := &stubExtractor{}

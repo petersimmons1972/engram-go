@@ -315,7 +315,10 @@ func (s *Server) registerTools() {
 				// goroutine with its own context so it never blocks memory_store.
 				// Non-fatal: if the enqueue fails the store has already succeeded.
 				args := req.GetArguments()
-				project := getString(args, "project", "default")
+				project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 				if memID, ok := extractResultID(result); ok {
 					go enqueueExtractionAsync(pool, memID, project)
 				}
@@ -416,7 +419,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryMigrateEmbedder(ctx, pool, req)
+				return handleMemoryMigrateEmbedder(ctx, pool, req, cfg)
 			}},
 		{"memory_export_all", "Export all memories to markdown files",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
