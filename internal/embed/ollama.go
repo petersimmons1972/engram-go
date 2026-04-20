@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/petersimmons1972/engram/internal/netutil"
 )
 
 // Client is the embedding provider interface.
@@ -39,20 +41,52 @@ type OllamaClient struct {
 // NewOllamaClient constructs an OllamaClient and validates connectivity.
 // If the model is absent from Ollama, it triggers a pull and waits (max 5 min).
 func NewOllamaClient(ctx context.Context, baseURL, model string) (*OllamaClient, error) {
+	return newOllamaClient(ctx, baseURL, model, nil)
+}
+
+// newOllamaClient is the internal constructor. When customTransport is non-nil
+// it is used as-is (test seam only — bypasses SSRF guard). When nil, the
+// production DNS-rebinding-safe transport is constructed.
+func newOllamaClient(ctx context.Context, baseURL, model string, customTransport http.RoundTripper) (*OllamaClient, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// DNS-safe transport with explicit timeouts (#125).
-	// TLSHandshake/ResponseHeader caps apply even when the context has no deadline.
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
+	var transport http.RoundTripper
+	if customTransport != nil {
+		transport = customTransport
+	} else {
+		// DNS-rebinding-safe transport (#242).
+		// Re-resolves the hostname on every dial and rejects private IPs,
+		// preventing an attacker from using a short-TTL DNS record to bypass
+		// the startup IP check by switching the resolution to an internal address.
+		baseDialer := &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-		IdleConnTimeout:       30 * time.Second,
-		MaxIdleConnsPerHost:   2,
+		}
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				// Re-resolve on every dial — prevents DNS rebinding SSRF.
+				addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+				}
+				for _, resolved := range addrs {
+					if netutil.IsPrivateIP(resolved) {
+						return nil, fmt.Errorf("ollama URL resolved to private IP %q (SSRF protection, closes #242)", resolved)
+					}
+				}
+				return baseDialer.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
+			},
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+			IdleConnTimeout:       30 * time.Second,
+			MaxIdleConnsPerHost:   2,
+		}
 	}
+
 	// Client-level Timeout provides an outer bound for non-pull requests.
 	// Embed calls include text up to a few KB; 60s is generous.
 	hc := &http.Client{Transport: transport, Timeout: 60 * time.Second}

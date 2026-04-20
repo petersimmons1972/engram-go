@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/petersimmons1972/engram/internal/netutil"
 )
 
 func TestRecallDefaultModeDefault(t *testing.T) {
@@ -27,30 +29,34 @@ func TestRecallDefaultModeDefault(t *testing.T) {
 	}
 }
 
-func TestIsPrivateIP(t *testing.T) {
+// TestIsPrivateIP_ViaNetutil verifies that the startup SSRF guard in main.go
+// delegates correctly to netutil.IsPrivateIP. The comprehensive range coverage
+// is in internal/netutil/private_ip_test.go; this test covers the cases that
+// were exercised by the old inline isPrivateIP function (#55, #68, #242).
+func TestIsPrivateIP_ViaNetutil(t *testing.T) {
 	cases := []struct {
 		ip      string
 		private bool
 	}{
 		// Private / reserved ranges that must be blocked
-		{"169.254.169.254", true},  // AWS metadata
-		{"10.0.0.1", true},         // RFC-1918
-		{"10.255.255.255", true},   // RFC-1918
-		{"172.16.0.1", true},       // RFC-1918
-		{"172.31.255.255", true},   // RFC-1918
-		{"192.168.1.1", true},      // RFC-1918
-		{"127.0.0.1", true},        // loopback
-		{"127.255.0.1", true},      // loopback range
-		{"::1", true},              // IPv6 loopback
-		{"fc00::1", true},          // IPv6 ULA
-		{"fe80::1", true},          // IPv6 link-local
+		{"169.254.169.254", true},    // AWS metadata
+		{"10.0.0.1", true},           // RFC-1918
+		{"10.255.255.255", true},     // RFC-1918
+		{"172.16.0.1", true},         // RFC-1918
+		{"172.31.255.255", true},     // RFC-1918
+		{"192.168.1.1", true},        // RFC-1918
+		{"127.0.0.1", true},          // loopback
+		{"127.255.0.1", true},        // loopback range
+		{"::1", true},                // IPv6 loopback
+		{"fc00::1", true},            // IPv6 ULA
+		{"fe80::1", true},            // IPv6 link-local
 		// Previously missing ranges (fixes #68)
-		{"0.0.0.1", true},          // this-network (RFC 1122)
-		{"100.64.0.1", true},       // CGNAT (RFC 6598)
-		{"100.127.255.255", true},  // CGNAT top
-		{"198.18.0.1", true},       // benchmark (RFC 2544)
-		{"198.19.255.255", true},   // benchmark top
-		{"240.0.0.1", true},        // reserved (RFC 1112)
+		{"0.0.0.1", true},            // this-network (RFC 1122)
+		{"100.64.0.1", true},         // CGNAT (RFC 6598)
+		{"100.127.255.255", true},    // CGNAT top
+		{"198.18.0.1", true},         // benchmark (RFC 2544)
+		{"198.19.255.255", true},     // benchmark top
+		{"240.0.0.1", true},          // reserved (RFC 1112)
 		{"::ffff:192.168.1.1", true}, // IPv4-mapped IPv6
 
 		// Public addresses that must pass
@@ -65,9 +71,9 @@ func TestIsPrivateIP(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := isPrivateIP(tc.ip)
+		got := netutil.IsPrivateIP(tc.ip)
 		if got != tc.private {
-			t.Errorf("isPrivateIP(%q) = %v, want %v", tc.ip, got, tc.private)
+			t.Errorf("netutil.IsPrivateIP(%q) = %v, want %v", tc.ip, got, tc.private)
 		}
 	}
 }
