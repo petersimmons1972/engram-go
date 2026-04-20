@@ -101,7 +101,7 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
+You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
 
 ---
 
@@ -138,6 +138,7 @@ ENGRAM_SUMMARIZE_MODEL=llama3.2           # Ollama model for async summary gener
 # Server
 # ============================================================
 ENGRAM_PORT=8788                           # Change if 8788 conflicts with something else
+ENGRAM_TRUST_PROXY_HEADERS=false           # Set to 1 when behind a trusted reverse proxy
 
 # ============================================================
 # Claude Advisor (all off by default — requires Anthropic API key)
@@ -162,6 +163,7 @@ ENGRAM_CLAUDE_RERANK=false                # Use Claude to rerank results (slower
 | `ENGRAM_CLAUDE_RERANK`     | `false`              | No       | Use Claude to rerank search results                   |
 | `POSTGRES_DB`              | `engram`             | No       | Database name (rarely needs changing)                 |
 | `POSTGRES_USER`            | `engram`             | No       | Database user (rarely needs changing)                 |
+| `ENGRAM_TRUST_PROXY_HEADERS` | `false`              | No       | Trust `X-Forwarded-For` / `X-Real-IP` for rate limiting. Set to `1` only when a trusted reverse proxy is in front. |
 
 ---
 
@@ -240,6 +242,12 @@ docker compose logs engram-go-app
 ```
 
 The most common causes are a missing `POSTGRES_PASSWORD` or `ENGRAM_API_KEY`. Run `make init` to generate both.
+
+**`POSTGRES_PASSWORD must be set` error before containers start.**
+Docker Compose now requires `POSTGRES_PASSWORD` — there is no default. Run `make init` to generate it, or set it manually in `.env`. The error appears before any container starts, not in the logs.
+
+**Ollama SSRF protection rejects your `OLLAMA_URL`.**
+If you see `ollama URL resolved to private IP` in the logs, your `OLLAMA_URL` hostname is resolving to a private address that does not match the configured host. The configured host is always allowed. This error means the hostname in `OLLAMA_URL` resolves differently at dial time than expected — check for DNS misconfiguration or a mismatched `OLLAMA_URL` value.
 
 ---
 

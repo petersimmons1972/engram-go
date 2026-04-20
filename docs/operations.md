@@ -51,7 +51,7 @@ In addition to the MCP SSE endpoint at `/sse`, the server exposes two utility en
 curl http://localhost:8788/health
 ```
 
-**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Localhost-only (accepts loopback and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste:
+**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Localhost-only (accepts loopback and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste. Rate-limited to 3 requests per 5 minutes per IP — do not poll it in a loop:
 
 ```bash
 curl http://localhost:8788/setup-token
@@ -78,6 +78,12 @@ For Claude Code, `make setup` configures the token automatically. For other clie
 **Claude API key:** Never logged. Never stored in the database. Used only in memory within the running process, passed directly to the Anthropic SDK.
 
 **Data at rest:** PostgreSQL data lives in a Docker named volume, not encrypted by default. If you need encryption at rest, mount the volume on an encrypted filesystem at the host level. There is no in-application encryption option.
+
+**Secrets cleared from environment:** `ENGRAM_API_KEY`, `ANTHROPIC_API_KEY`, and `DATABASE_URL` are unset from the process environment immediately after being read at startup. Go subprocesses spawned by the server will not inherit these values.
+
+**Container hardening defaults:** The `docker-compose.yml` applies the following to the `engram-go-app` service: `mem_limit: 512m` (OOM-kill rather than unbounded growth), `pids_limit: 512` (fork bomb mitigation), `security_opt: no-new-privileges:true`. Both `engram-go` and `ollama` ports are bound to `127.0.0.1` only — not reachable from outside the machine without explicit proxy configuration. If you hit OOM kills under heavy ingest load, raise `mem_limit` in `docker-compose.yml`.
+
+**`ENGRAM_TRUST_PROXY_HEADERS`:** When Engram is behind a reverse proxy (nginx, Traefik, Caddy), set `ENGRAM_TRUST_PROXY_HEADERS=1` in `.env`. This enables the server to read the real client IP from `X-Forwarded-For` / `X-Real-IP` headers for rate limiting and `/setup-token` locality checks. Default is `false` — leave it off unless you have a trusted proxy in front.
 
 ---
 
@@ -116,6 +122,7 @@ Five tables:
 | `chunks` | Content chunks with vector embeddings (768-dim float32 array) |
 | `relationships` | Knowledge graph edges: source, target, type, weight, created_at |
 | `project_meta` | Per-project metadata: embedder lock, migration state |
+| `retrieval_events` | Per-recall event log for retrieval quality metrics. Rows older than 90 days are purged automatically by the retention worker. |
 
 The `pgvector` extension provides the `<=>` cosine distance operator for vector similarity search. Chunks are split at sentence boundaries to preserve semantic coherence — splitting at word limits would destroy the meaning of both halves of a sentence.
 
@@ -181,6 +188,8 @@ Two goroutines start with the server and run continuously.
 **Summarizer (60-second tick):** Finds memories without generated summaries and calls the configured model — Ollama by default, Claude Haiku if `ENGRAM_CLAUDE_SUMMARIZE=true`. Failures are logged but do not crash the worker. A memory without a summary is not broken; it falls back to the matched chunk when `detail="summary"` is requested.
 
 **Re-embedder (30-second tick):** Finds chunks with null embedding vectors and fills them in. This goroutine handles both new memories waiting for their first embedding and chunks from an in-progress model migration. It runs until there is nothing left to embed, then idles.
+
+**Retention worker (24-hour tick):** Deletes `retrieval_events` rows older than 90 days. Runs once immediately at startup (catch-up pass) and then every 24 hours. Logs `rows_deleted` at INFO. The `retrieval_events` table records every recall query; the 90-day window keeps the table bounded without manual maintenance. Note: `memory_aggregate(by="failure_class")` and retrieval quality metrics do not see events older than 90 days.
 
 Both workers are always on. Neither requires configuration.
 

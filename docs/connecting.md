@@ -2,7 +2,7 @@
 
 Engram speaks MCP over Server-Sent Events. Any MCP-compatible client that supports SSE transport works.
 
-The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 28 tools, and they appear in your model context.
+The SSE endpoint is `http://localhost:8788/sse`. When Engram is running, that endpoint holds a persistent connection open and sends tool definitions and responses over it. You point your IDE at the URL, it discovers the 30 tools, and they appear in your model context.
 
 ---
 
@@ -35,7 +35,7 @@ Verify the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 27 tools (28 if `ANTHROPIC_API_KEY` is set). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
+You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
 
 ---
 
@@ -198,14 +198,20 @@ The SSE transport is a long-lived HTTP connection. Some reverse proxies and fire
 **"Authorization required" error.**
 You have `ENGRAM_API_KEY` set but the IDE is not sending the header. Check the IDE config and confirm the header key is `Authorization` and the value starts with `Bearer `.
 
-**Wrong number of tools (expect 27 or 28).**
-`memory_reason` is only registered when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 27 tools. With it, you see 28. Set the key and restart `engram-go`:
+**Wrong number of tools (expect 30 or 35).**
+Five AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 30 tools. With it, you see 35. Set the key and restart `engram-go`:
 
 ```bash
 docker compose restart engram-go
 ```
 
+**403 "session bearer mismatch" after rotating `ENGRAM_API_KEY`.**
+SSE sessions are bound to the bearer token presented at connection time. After a key rotation, existing sessions are invalidated. Reconnect your IDE: restart Claude Code, or reload the MCP connection in Cursor/VS Code. The 403 is expected — it means the session was opened with the old key and a new key is now in use.
+
+**Rate limit from `/setup-token` (`make setup` returns 429).**
+`/setup-token` is rate-limited to 3 requests per 5 minutes per IP. If `make setup` returns a 429, wait 5 minutes and try again. This limit protects against token enumeration — it is not meant to interfere with normal setup.
+
 ---
 
 **Previous:** [Getting Started](getting-started.md) — prerequisites, startup, and configuration reference.  
-**Next:** [Tools Reference](tools.md) — all 28 tools with parameters and examples.
+**Next:** [Tools Reference](tools.md) — all 35 tools with parameters and examples.

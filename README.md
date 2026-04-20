@@ -59,7 +59,7 @@ make up       # starts postgres, ollama, and engram-go
 make setup    # writes bearer token to ~/.claude/mcp_servers.json
 ```
 
-The server starts on port 8788. Cold start: under 200ms. Memory at idle: 18 MB.
+The server starts on port 8788. If you prefer to author `.env` by hand rather than using `make init`, `.env.example` at the repo root documents every available variable with its default and purpose. Cold start: under 200ms. Memory at idle: 18 MB.
 
 > **Docker users:** `docker-compose.yml` now sets `ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1` automatically. If you run engram outside Docker and need `/setup-token` accessible from RFC1918 addresses (e.g. a LAN host), add this variable to your environment. Without it, `/setup-token` only accepts loopback (127.0.0.1 / ::1).
 
