@@ -144,6 +144,7 @@ memory_feedback(
 | [All 35 Tools](docs/tools.md) | MCP tool reference with usage examples |
 | [Claude Advisor](docs/claude-advisor.md) | AI-powered summarization, consolidation, re-ranking |
 | [Operations](docs/operations.md) | Backup, security, data portability |
+| [Document Storage Strategy](https://www.petersimmons.com/engram/document-storage-strategy/) | Four-tier ingest architecture, chunking, retrieval paths |
 
 ---
 

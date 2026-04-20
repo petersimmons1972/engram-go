@@ -8,9 +8,6 @@
       <stop offset="0%" stop-color="#00ADD8" stop-opacity="0.18"/>
       <stop offset="100%" stop-color="#00ADD8" stop-opacity="0.06"/>
     </linearGradient>
-    <marker id="qs-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
-    </marker>
   </defs>
 
   <!-- Background -->
@@ -35,7 +32,8 @@
   <text x="122" y="178" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">cd engram-go</text>
 
   <!-- Arrow 1->2 -->
-  <line x1="210" y1="145" x2="240" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+  <line x1="210" y1="145" x2="231.0" y2="145.0" stroke="#8b949e" stroke-width="1.5"/>
+  <polygon points="240.0,145.0 231.0,150.0 231.0,140.0" fill="#8b949e"/>
 
   <!-- Step 2 -->
   <rect x="245" y="75" width="175" height="140" rx="8" fill="url(#qs-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
@@ -46,7 +44,8 @@
   <text x="332" y="178" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#8b949e" text-anchor="middle">credentials</text>
 
   <!-- Arrow 2->3 -->
-  <line x1="420" y1="145" x2="450" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+  <line x1="420" y1="145" x2="441.0" y2="145.0" stroke="#8b949e" stroke-width="1.5"/>
+  <polygon points="450.0,145.0 441.0,150.0 441.0,140.0" fill="#8b949e"/>
 
   <!-- Step 3 -->
   <rect x="455" y="75" width="175" height="140" rx="8" fill="url(#qs-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
@@ -57,7 +56,8 @@
   <text x="542" y="178" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">postgres · ollama · app</text>
 
   <!-- Arrow 3->4 -->
-  <line x1="630" y1="145" x2="660" y2="145" stroke="#8b949e" stroke-width="1.5" marker-end="url(#qs-arrow)"/>
+  <line x1="630" y1="145" x2="651.0" y2="145.0" stroke="#8b949e" stroke-width="1.5"/>
+  <polygon points="660.0,145.0 651.0,150.0 651.0,140.0" fill="#8b949e"/>
 
   <!-- Step 4 (highlighted) -->
   <rect x="665" y="68" width="198" height="154" rx="8" fill="url(#qs-cyan-grad)" stroke="#00ADD8" stroke-width="2"/>

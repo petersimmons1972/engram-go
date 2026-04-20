@@ -4,12 +4,6 @@
       <stop offset="0%" stop-color="#00ADD8" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="#00ADD8" stop-opacity="0"/>
     </radialGradient>
-    <marker id="kg-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L7,3 z" fill="#bc8cff"/>
-    </marker>
-    <marker id="kg-arrow-cyan" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L7,3 z" fill="#00ADD8"/>
-    </marker>
   </defs>
 
   <!-- Background -->
@@ -29,33 +23,39 @@
   <circle cx="450" cy="210" r="70" fill="url(#kg-query-glow)"/>
 
   <!-- Edge: query -> auth-decision -->
-  <line x1="390" y1="175" x2="260" y2="130" stroke="#00ADD8" stroke-width="2" marker-end="url(#kg-arrow-cyan)"/>
+  <line x1="390" y1="175" x2="268.5" y2="132.9" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="260.0,130.0 270.1,128.2 266.9,137.7" fill="#00ADD8"/>
   <!-- Edge label -->
   <rect x="275" y="138" width="105" height="18" rx="3" fill="#0d1117"/>
   <text x="327" y="150" font-family="'Courier New',monospace" font-size="10" fill="#00ADD8" text-anchor="middle">same_project</text>
 
   <!-- Edge: query -> expiry-bug -->
-  <line x1="400" y1="245" x2="270" y2="300" stroke="#00ADD8" stroke-width="2" marker-end="url(#kg-arrow-cyan)"/>
+  <line x1="400" y1="245" x2="278.3" y2="296.5" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="270.0,300.0 276.3,291.9 280.2,301.1" fill="#00ADD8"/>
   <rect x="270" y="260" width="110" height="18" rx="3" fill="#0d1117"/>
   <text x="325" y="272" font-family="'Courier New',monospace" font-size="10" fill="#00ADD8" text-anchor="middle">causes</text>
 
   <!-- Edge: query -> test-pattern -->
-  <line x1="510" y1="180" x2="630" y2="130" stroke="#00ADD8" stroke-width="2" marker-end="url(#kg-arrow-cyan)"/>
+  <line x1="510" y1="180" x2="621.7" y2="133.5" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="630.0,130.0 623.6,138.1 619.8,128.8" fill="#00ADD8"/>
   <rect x="535" y="138" width="95" height="18" rx="3" fill="#0d1117"/>
   <text x="582" y="150" font-family="'Courier New',monospace" font-size="10" fill="#00ADD8" text-anchor="middle">supports</text>
 
   <!-- Edge: query -> library-choice -->
-  <line x1="505" y1="245" x2="635" y2="295" stroke="#00ADD8" stroke-width="2" marker-end="url(#kg-arrow-cyan)"/>
+  <line x1="505" y1="245" x2="626.6" y2="291.8" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="635.0,295.0 624.8,296.4 628.4,287.1" fill="#00ADD8"/>
   <rect x="540" y="258" width="100" height="18" rx="3" fill="#0d1117"/>
   <text x="590" y="270" font-family="'Courier New',monospace" font-size="10" fill="#00ADD8" text-anchor="middle">depends_on</text>
 
   <!-- Edge: auth-decision -> old-decision (contradicts) -->
-  <line x1="185" y1="115" x2="130" y2="270" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#kg-arrow)"/>
+  <line x1="185" y1="115" x2="133.0" y2="261.5" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <polygon points="130.0,270.0 128.3,259.8 137.7,263.2" fill="#bc8cff"/>
   <rect x="90" y="175" width="95" height="18" rx="3" fill="#0d1117"/>
   <text x="137" y="187" font-family="'Courier New',monospace" font-size="10" fill="#bc8cff" text-anchor="middle">contradicts</text>
 
   <!-- Edge: test-pattern -> expiry-bug -->
-  <line x1="660" y1="155" x2="310" y2="295" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#kg-arrow)"/>
+  <line x1="660" y1="155" x2="318.4" y2="291.7" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <polygon points="310.0,295.0 316.5,287.0 320.2,296.3" fill="#bc8cff"/>
   <rect x="450" y="210" width="90" height="16" rx="3" fill="#0d1117"/>
   <text x="495" y="222" font-family="'Courier New',monospace" font-size="10" fill="#bc8cff" text-anchor="middle">followed_by</text>
 

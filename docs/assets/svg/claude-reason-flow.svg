@@ -4,9 +4,6 @@
       <stop offset="0%" stop-color="#161b22"/>
       <stop offset="100%" stop-color="#0d1117"/>
     </linearGradient>
-    <marker id="crf-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
-    </marker>
   </defs>
 
   <!-- Background -->
@@ -40,7 +37,8 @@
   <text x="122" y="245" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">requires API key</text>
 
   <!-- Arrow 1->2 -->
-  <line x1="215" y1="165" x2="245" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+  <line x1="215" y1="165" x2="236.0" y2="165.0" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="245.0,165.0 236.0,170.0 236.0,160.0" fill="#00ADD8"/>
 
   <!-- Step 2: memory_recall fires internally -->
   <rect x="248" y="60" width="235" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#21262d" stroke-width="1.5"/>
@@ -64,7 +62,8 @@
   <text x="365" y="248" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">~200ms</text>
 
   <!-- Arrow 2->3 -->
-  <line x1="483" y1="165" x2="513" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+  <line x1="483" y1="165" x2="504.0" y2="165.0" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="513.0,165.0 504.0,170.0 504.0,160.0" fill="#00ADD8"/>
 
   <!-- Step 3: Top memories -> Claude API -->
   <rect x="516" y="60" width="215" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#5865F2" stroke-width="2"/>
@@ -80,7 +79,8 @@
   <text x="623" y="248" font-family="'Courier New',monospace" font-size="11" fill="#8b949e" text-anchor="middle">~$0.002–0.01</text>
 
   <!-- Arrow 3->4 -->
-  <line x1="731" y1="165" x2="761" y2="165" stroke="#00ADD8" stroke-width="2" marker-end="url(#crf-arrow)"/>
+  <line x1="731" y1="165" x2="752.0" y2="165.0" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="761.0,165.0 752.0,170.0 752.0,160.0" fill="#00ADD8"/>
 
   <!-- Step 4: Synthesized answer with citations -->
   <rect x="764" y="60" width="116" height="200" rx="8" fill="url(#crf-panel-grad)" stroke="#21262d" stroke-width="1.5"/>

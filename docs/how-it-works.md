@@ -268,6 +268,8 @@ memory_query_document(
 
 Tier boundaries are configurable via `ENGRAM_MAX_DOCUMENT_BYTES` (Tier-1/Tier-2 boundary, default 8 MB) and `ENGRAM_RAW_DOCUMENT_MAX_BYTES` (Tier-2 cap, default 50 MB).
 
+**Full architecture reference:** [Document Storage Strategy](https://www.petersimmons.com/engram/document-storage-strategy/) — ingest path, retrieval paths, design decisions, and bibliography in a single illustrated page.
+
 ---
 
 ## Configuration Reference

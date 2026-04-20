@@ -4,12 +4,6 @@
       <stop offset="0%" stop-color="#0d1117"/>
       <stop offset="100%" stop-color="#0d1117"/>
     </linearGradient>
-    <marker id="sc-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
-    </marker>
-    <marker id="sc-arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L8,3 z" fill="#00ADD8"/>
-    </marker>
   </defs>
 
   <!-- Background -->
@@ -51,10 +45,14 @@
   <text x="54" y="294" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="600" fill="#f0f6fc">Graph Enrichment</text>
 
   <!-- Converging lines to merge point -->
-  <line x1="290" y1="78" x2="480" y2="195" stroke="#e3b341" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
-  <line x1="290" y1="146" x2="480" y2="200" stroke="#3fb950" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
-  <line x1="290" y1="214" x2="480" y2="210" stroke="#1f6feb" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
-  <line x1="290" y1="282" x2="480" y2="220" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#sc-arrow)"/>
+  <line x1="290" y1="78" x2="472.3" y2="190.3" stroke="#e3b341" stroke-width="1.5"/>
+  <polygon points="480.0,195.0 469.7,194.5 475.0,186.0" fill="#8b949e"/>
+  <line x1="290" y1="146" x2="471.3" y2="197.5" stroke="#3fb950" stroke-width="1.5"/>
+  <polygon points="480.0,200.0 470.0,202.3 472.7,192.7" fill="#8b949e"/>
+  <line x1="290" y1="214" x2="471.0" y2="210.2" stroke="#1f6feb" stroke-width="1.5"/>
+  <polygon points="480.0,210.0 471.1,215.2 470.9,205.2" fill="#8b949e"/>
+  <line x1="290" y1="282" x2="471.4" y2="222.8" stroke="#bc8cff" stroke-width="1.5"/>
+  <polygon points="480.0,220.0 473.0,227.5 469.9,218.0" fill="#8b949e"/>
 
   <!-- Merge point -->
   <rect x="480" y="168" width="160" height="64" rx="8" fill="#161b22" stroke="#00ADD8" stroke-width="2"/>
@@ -62,7 +60,8 @@
   <text x="560" y="215" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="14" font-weight="700" fill="#00ADD8" text-anchor="middle">Σ weighted score</text>
 
   <!-- Arrow to results -->
-  <line x1="640" y1="200" x2="700" y2="200" stroke="#00ADD8" stroke-width="2" marker-end="url(#sc-arrow-cyan)"/>
+  <line x1="640" y1="200" x2="691.0" y2="200.0" stroke="#00ADD8" stroke-width="2"/>
+  <polygon points="700.0,200.0 691.0,205.0 691.0,195.0" fill="#00ADD8"/>
 
   <!-- Results panel -->
   <rect x="700" y="100" width="170" height="200" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
