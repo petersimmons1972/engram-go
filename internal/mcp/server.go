@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,18 +84,41 @@ func (rl *rateLimiter) evict() {
 	}
 }
 
+// allowSetupToken is like allow but uses a tighter budget for the /setup-token
+// endpoint: 3 requests per 5-minute window (burst 3, one token every ~100s) (#243).
+func (rl *rateLimiter) allowSetupToken(ip string) bool {
+	rl.mu.Lock()
+	e, ok := rl.clients[ip]
+	if !ok {
+		e = &rateLimiterEntry{
+			limiter: rate.NewLimiter(rate.Every(setupTokenWindow), 3),
+		}
+		rl.clients[ip] = e
+	}
+	e.lastSeen = time.Now()
+	ok = e.limiter.Allow()
+	rl.mu.Unlock()
+	return ok
+}
+
 // Server wraps the MCP SSE server and owns the EnginePool.
 type Server struct {
-	pool     *EnginePool
-	cfg      Config
-	mcp      *server.MCPServer
-	uploadMu sync.Mutex
-	uploads  map[string]*uploadSession
+	pool                *EnginePool
+	cfg                 Config
+	mcp                 *server.MCPServer
+	uploadMu            sync.Mutex
+	uploads             map[string]*uploadSession
+	sessionFingerprints sync.Map // sessionID -> []byte HMAC fingerprint (#245)
+	trustProxy          bool     // honour X-Forwarded-For / X-Real-IP (#255)
 }
 
 // NewServer constructs a Server with all MCP tools registered.
 func NewServer(pool *EnginePool, cfg Config) *Server {
-	s := &Server{pool: pool, cfg: cfg, uploads: make(map[string]*uploadSession)}
+	trustProxy := false
+	if v := os.Getenv("ENGRAM_TRUST_PROXY_HEADERS"); v == "1" || strings.EqualFold(v, "true") {
+		trustProxy = true
+	}
+	s := &Server{pool: pool, cfg: cfg, uploads: make(map[string]*uploadSession), trustProxy: trustProxy}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithHooks(&server.Hooks{}),
@@ -109,6 +134,9 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 	s.cfg.claudeClient = client
 	s.cfg.ClaudeEnabled = (client != nil)
 }
+
+// setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
+const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
 // baseURL overrides the URL advertised in SSE endpoint events; when empty,
@@ -129,7 +157,17 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// Auto-start a "global" episode on every new SSE client connection (#91).
 	// SSE sessions carry no project context, so episodes land in "global" where
 	// they can be queried via memory_episode_list/memory_episode_recall.
-	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, _ server.ClientSession) {
+	//
+	// Also store a session→bearer HMAC fingerprint so POST /message can verify
+	// the session was established by the same bearer that is now posting (#245).
+	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, sess server.ClientSession) {
+		sessionID := sess.SessionID()
+
+		// Compute HMAC(apiKey, sessionID) and store for later verification.
+		mac := hmac.New(sha256.New, []byte(apiKey))
+		mac.Write([]byte(sessionID))
+		s.sessionFingerprints.Store(sessionID, mac.Sum(nil))
+
 		desc := "Claude Code session " + time.Now().UTC().Format(time.RFC3339)
 		h, err := s.pool.Get(ctx, "global")
 		if err != nil {
@@ -143,6 +181,14 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		}
 		slog.Info("auto-episode started", "id", ep.ID, "project", "global", "desc", desc)
 	})
+
+	// Remove the fingerprint when a session disconnects (#245).
+	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
+		s.sessionFingerprints.Delete(sess.SessionID())
+	})
+
+	// setupTokenLimiter enforces 3 calls per 5-minute window per IP (#243).
+	setupLimiter := newRateLimiter(ctx) // eviction goroutine shares ctx lifetime
 
 	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
 	mux := http.NewServeMux()
@@ -162,12 +208,21 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// than 127.0.0.1 due to NAT. We accept RFC1918 addresses because they can only reach
 	// this port via the loopback-bound Docker port mapping — not from the network.
 	// The token is equivalent in sensitivity to ~/.claude.json which is already on disk.
+	//
+	// Rate limit: 3 calls per 5-minute window per IP (#243).
 	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
-		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !isLocalAddress(remoteHost, s.cfg.AllowRFC1918SetupToken) {
+		ip := s.clientIP(r)
+		if !isLocalAddress(ip, s.cfg.AllowRFC1918SetupToken) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if !setupLimiter.allowSetupToken(ip) {
+			slog.Warn("setup-token rate limited", "remote_ip", ip)
+			w.Header().Set("Retry-After", "100")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		slog.Warn("setup-token accessed", "remote_ip", ip)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
 			"token":    apiKey,
@@ -187,7 +242,15 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	mux.HandleFunc("/.well-known/oauth-protected-resource", notFound)
 
 	// All other routes require Bearer authentication and per-IP rate limiting (#140).
+	// The SSE and message endpoints are mounted separately so that the /message
+	// handler can be wrapped with session-fingerprint verification (#245).
 	rl := newRateLimiter(ctx)
+
+	// /message — wrap with session-fingerprint check before the auth middleware.
+	msgHandler := s.withSessionFingerprint(sse.MessageHandler(), apiKey)
+	mux.Handle("/message", s.applyMiddleware(msgHandler, apiKey, rl))
+
+	// All other authenticated routes (including /sse) go through the standard middleware.
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
 	// Background sweeper clears stale upload sessions on a 5-minute interval.
@@ -239,7 +302,7 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Rate limit before auth check to prevent timing-based enumeration.
-		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		remoteHost := s.clientIP(r)
 		if !rl.allow(remoteHost) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
@@ -258,6 +321,41 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withSessionFingerprint wraps next with a check that the sessionId query
+// parameter was established by the same bearer token that is presenting the
+// request (#245). The fingerprint is HMAC(apiKey, sessionID) stored at SSE
+// connection time. Any mismatch returns 403.
+func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.URL.Query().Get("sessionId")
+		if sessionID == "" {
+			// Let the underlying handler produce the canonical error.
+			next.ServeHTTP(w, r)
+			return
+		}
+		stored, ok := s.sessionFingerprints.Load(sessionID)
+		if !ok {
+			// Session not found — let the underlying handler produce the error.
+			next.ServeHTTP(w, r)
+			return
+		}
+		storedFP, _ := stored.([]byte)
+
+		// Compute the expected fingerprint for the current bearer.
+		mac := hmac.New(sha256.New, []byte(apiKey))
+		mac.Write([]byte(sessionID))
+		expected := mac.Sum(nil)
+
+		if subtle.ConstantTimeCompare(storedFP, expected) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error":"forbidden","hint":"session bearer mismatch"}`)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -296,6 +394,28 @@ func isLocalAddress(ipStr string, allowRFC1918 bool) bool {
 	return false
 }
 
+// clientIP extracts the real client IP from the request.
+// When s.trustProxy is true, it checks X-Real-IP and the first entry in
+// X-Forwarded-For before falling back to RemoteAddr. This handles the case
+// where engram runs behind a reverse proxy (#255).
+// ENGRAM_TRUST_PROXY_HEADERS=1 (or =true) enables proxy header trust.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.trustProxy {
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			// X-Forwarded-For may be a comma-separated list; leftmost is the client.
+			parts := strings.SplitN(forwarded, ",", 2)
+			if ip := strings.TrimSpace(parts[0]); ip != "" {
+				return ip
+			}
+		}
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return host
+}
+
 func (s *Server) registerTools() {
 	pool := s.pool
 	cfg := s.cfg
@@ -315,7 +435,10 @@ func (s *Server) registerTools() {
 				// goroutine with its own context so it never blocks memory_store.
 				// Non-fatal: if the enqueue fails the store has already succeeded.
 				args := req.GetArguments()
-				project := getString(args, "project", "default")
+				project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 				if memID, ok := extractResultID(result); ok {
 					go enqueueExtractionAsync(pool, memID, project)
 				}
@@ -416,7 +539,7 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryMigrateEmbedder(ctx, pool, req)
+				return handleMemoryMigrateEmbedder(ctx, pool, req, cfg)
 			}},
 		{"memory_export_all", "Export all memories to markdown files",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

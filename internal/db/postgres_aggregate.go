@@ -3,10 +3,21 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
+
+// escapeLike escapes the three PostgreSQL LIKE metacharacters so that a filter
+// value is treated as a literal substring rather than a pattern.
+// Order matters: escape the escape character first, then % and _.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
 // AggregateMemories dispatches to the appropriate aggregate helper based on
 // the by parameter. Supported values are "tag" and "type".
@@ -41,11 +52,11 @@ FROM (
     WHERE project = $1 AND valid_to IS NULL
     GROUP BY label
 ) sub
-WHERE ($2 = '' OR label ILIKE '%' || $2 || '%')
+WHERE ($2 = '' OR label ILIKE '%' || $2 || '%' ESCAPE '\')
 ORDER BY count DESC
 LIMIT $3`
 
-	rows, err := b.pool.Query(ctx, q, project, filter, limit)
+	rows, err := b.pool.Query(ctx, q, project, escapeLike(filter), limit)
 	if err != nil {
 		return nil, fmt.Errorf("aggregateByTag query: %w", err)
 	}

@@ -113,7 +113,10 @@ func recallChunks(ctx context.Context, deps queryDocumentDeps, q claude.Document
 // answer grounded in those spans.
 func handleMemoryQueryDocument(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "")
+	project, err := getProject(args, "")
+	if err != nil {
+		return nil, fmt.Errorf("project: %w", err)
+	}
 	memoryID := getString(args, "memory_id", "")
 	question := getString(args, "question", "")
 
@@ -127,7 +130,7 @@ func handleMemoryQueryDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if rawFilter, ok := args["filter"]; ok {
 		if fmap, ok := rawFilter.(map[string]any); ok {
 			filterRegex = getString(fmap, "regex", "")
-			filterSubs = toStringSlice(fmap["substrings"])
+			filterSubs, _ = toStringSlice(fmap["substrings"]) // ignore control-char error in optional filter
 		}
 	}
 

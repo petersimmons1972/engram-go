@@ -72,9 +72,26 @@ func (w *Worker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.processBatch(ctx)
+			w.safeProcessBatch(ctx)
 		}
 	}
+}
+
+// safeProcessBatch wraps processBatch with per-iteration panic recovery (#247).
+// A panic logs an error and sleeps 1s so the loop can continue rather than
+// killing the worker goroutine permanently.
+func (w *Worker) safeProcessBatch(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("entity worker panic — will retry next tick",
+				"panic", r)
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+	w.processBatch(ctx)
 }
 
 // processBatch claims and processes a batch of jobs for every configured project.

@@ -48,11 +48,19 @@ func fakeOllama(t *testing.T, tagsModels []string, embedDims int) *httptest.Serv
 	return httptest.NewServer(mux)
 }
 
+// newTestClient wires NewOllamaClientWithTransport to a local httptest.Server,
+// bypassing the production SSRF guard (which correctly blocks 127.0.0.1).
+// Use only in tests.
+func newTestClient(t *testing.T, srv *httptest.Server, model string) (*embed.OllamaClient, error) {
+	t.Helper()
+	return embed.NewOllamaClientWithTransport(context.Background(), srv.URL, model, srv.Client().Transport)
+}
+
 func TestNewOllamaClient_ModelPresent(t *testing.T) {
 	srv := fakeOllama(t, []string{"nomic-embed-text:latest"}, 768)
 	defer srv.Close()
 
-	c, err := embed.NewOllamaClient(context.Background(), srv.URL, "nomic-embed-text")
+	c, err := newTestClient(t, srv, "nomic-embed-text")
 	require.NoError(t, err)
 	require.Equal(t, "nomic-embed-text", c.Name())
 }
@@ -61,7 +69,7 @@ func TestNewOllamaClient_ModelAbsent_TriggersPull(t *testing.T) {
 	srv := fakeOllama(t, []string{}, 768) // no models — pull will be triggered
 	defer srv.Close()
 
-	_, err := embed.NewOllamaClient(context.Background(), srv.URL, "nomic-embed-text")
+	_, err := newTestClient(t, srv, "nomic-embed-text")
 	require.NoError(t, err)
 }
 
@@ -69,7 +77,7 @@ func TestOllamaClient_Embed(t *testing.T) {
 	srv := fakeOllama(t, []string{"nomic-embed-text:latest"}, 768)
 	defer srv.Close()
 
-	c, err := embed.NewOllamaClient(context.Background(), srv.URL, "nomic-embed-text")
+	c, err := newTestClient(t, srv, "nomic-embed-text")
 	require.NoError(t, err)
 
 	vec, err := c.Embed(context.Background(), "hello world")

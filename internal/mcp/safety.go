@@ -78,7 +78,10 @@ type verificationResult struct {
 // handleGetConstraints lists constraint memories matching an optional query.
 func handleGetConstraints(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	query := getString(args, "query", "")
 	limit := getInt(args, "limit", defaultConstraintLimit)
 	if limit < 1 || limit > 50 {
@@ -111,7 +114,10 @@ func handleGetConstraints(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // with a preliminary verification decision.
 func handleCheckConstraints(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	proposedAction := getString(args, "proposed_action", "")
 	if proposedAction == "" {
 		return mcpgo.NewToolResultError("proposed_action is required"), nil
@@ -145,7 +151,10 @@ func handleCheckConstraints(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 // and risk-baseline checks, returning a decision with suggested safe actions.
 func handleVerifyBeforeActing(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	project := getString(args, "project", "default")
+	project, err := getProject(args, "default")
+	if err != nil {
+		return nil, err
+	}
 	proposedAction := getString(args, "proposed_action", "")
 	if proposedAction == "" {
 		return mcpgo.NewToolResultError("proposed_action is required"), nil

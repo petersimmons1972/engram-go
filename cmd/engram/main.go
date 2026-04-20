@@ -20,6 +20,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/entity"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
+	"github.com/petersimmons1972/engram/internal/netutil"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -69,12 +70,11 @@ func run() error {
 		return fmt.Errorf("ENGRAM_API_KEY or --api-key is required; refusing to start without authentication")
 	}
 
-	// Unset secrets from the process environment after reading (#139, #141).
-	// This limits exposure via /proc/self/environ to the startup window only.
-	// Note: this reduces but does not eliminate the window — the kernel may cache
-	// the original environ in /proc until the process exits.
+	// Unset secrets from the process environment after reading (#139, #141, #250).
+	// Reduces the exposure window for credentials in /proc/self/environ.
 	_ = os.Unsetenv("ENGRAM_API_KEY")
 	_ = os.Unsetenv("ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("DATABASE_URL")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -87,7 +87,7 @@ func run() error {
 	// Block literal private-IP Ollama URLs to prevent SSRF (#55).
 	// Hostnames (e.g. "ollama" in Docker Compose) are intentionally excluded:
 	// they resolve to private container IPs by design and are not attacker-controlled.
-	if ollamaHost := parsedOllamaURL.Hostname(); net.ParseIP(ollamaHost) != nil && isPrivateIP(ollamaHost) {
+	if ollamaHost := parsedOllamaURL.Hostname(); net.ParseIP(ollamaHost) != nil && netutil.IsPrivateIP(ollamaHost) {
 		return fmt.Errorf("invalid --ollama-url: IP %q is in a private/reserved range (SSRF protection)", ollamaHost)
 	}
 
@@ -135,6 +135,17 @@ func run() error {
 			claudeCompleter = cc
 		}
 	}
+
+	// Start the retrieval_events retention worker on a shared backend.
+	// A dedicated backend is used so the worker lifecycle is independent of
+	// per-project factory calls. Project "default" is used for the connection;
+	// the DELETE query itself targets all projects via no project filter.
+	retentionBackend, err := db.NewPostgresBackend(ctx, "default", dsn)
+	if err != nil {
+		return fmt.Errorf("retention worker backend: %w", err)
+	}
+	defer retentionBackend.Close()
+	go retentionBackend.StartRetentionWorker(ctx)
 
 	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(ctx, project, dsn)
@@ -230,44 +241,6 @@ func run() error {
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 	return srv.Start(ctx, *host, *port, apiKey, *baseURL)
-}
-
-// isPrivateIP reports whether ipStr is an IP address that falls within a
-// private, loopback, or link-local range. Only literal IP addresses are
-// checked; hostnames must be resolved before calling this function.
-// Used to block SSRF via the Ollama URL flag (#55).
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	// Normalize IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) to their IPv4 form
-	// so they are checked against the same IPv4 private ranges. This prevents
-	// bypassing the check via notation like "::ffff:127.0.0.1".
-	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
-	}
-	privateRanges := []string{
-		"0.0.0.0/8",      // this-network (RFC 1122)
-		"10.0.0.0/8",
-		"100.64.0.0/10",  // CGNAT (RFC 6598)
-		"127.0.0.0/8",    // loopback
-		"169.254.0.0/16", // link-local / AWS metadata endpoint
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"198.18.0.0/15",  // benchmark testing (RFC 2544)
-		"240.0.0.0/4",    // reserved (RFC 1112)
-		"::1/128",        // IPv6 loopback
-		"fc00::/7",       // IPv6 ULA
-		"fe80::/10",      // IPv6 link-local
-	}
-	for _, cidr := range privateRanges {
-		_, n, _ := net.ParseCIDR(cidr)
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 func envOr(key, def string) string {

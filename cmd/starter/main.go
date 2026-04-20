@@ -30,10 +30,27 @@ func patchDatabaseURLPassword(dsn, password string) string {
 	return u.String()
 }
 
-// infisicalDomainRE accepts only https:// URLs with a safe hostname.
-// This prevents INFISICAL_DOMAIN from being set to an attacker-controlled host
-// that would redirect machine-identity authentication (#135).
-var infisicalDomainRE = regexp.MustCompile(`^https://[a-zA-Z0-9][a-zA-Z0-9\-\.]+$`)
+// infisicalDomainRE accepts only https:// URLs with a proper FQDN hostname
+// (at least two dot-separated labels, e.g. infisical.example.com).
+// The FQDN requirement blocks localhost and single-label hostnames.
+// Each label: starts with alphanumeric, may contain hyphens.
+// Raw IP addresses (which also satisfy the dot rule) are blocked by
+// isValidInfisicalDomain using net.ParseIP.
+var infisicalDomainRE = regexp.MustCompile(`^https://[a-zA-Z0-9][a-zA-Z0-9\-]*(\.[a-zA-Z0-9][a-zA-Z0-9\-]*)+$`)
+
+// isValidInfisicalDomain returns true iff domain is a safe Infisical base URL.
+// It combines the FQDN regex with an IP-address rejection to prevent SSRF (#135).
+func isValidInfisicalDomain(domain string) bool {
+	if !infisicalDomainRE.MatchString(domain) {
+		return false
+	}
+	// Strip the scheme to get the raw host, then reject raw IP literals.
+	host := domain[len("https://"):]
+	if net.ParseIP(host) != nil {
+		return false
+	}
+	return true
+}
 
 // infisicalHTTPClient has explicit timeouts so an unreachable Infisical
 // host does not hang the container startup indefinitely (#137).
@@ -59,8 +76,8 @@ func main() {
 	secretPath := envOr("INFISICAL_SECRET_PATH", "/engram")
 
 	// Validate Infisical domain to prevent supply-chain redirect attacks (#135).
-	if !infisicalDomainRE.MatchString(domain) {
-		fatalf("INFISICAL_DOMAIN %q is invalid — must be https://<hostname> with no path or credentials", domain)
+	if !isValidInfisicalDomain(domain) {
+		fatalf("INFISICAL_DOMAIN %q is invalid — must be https://<fqdn> with no path, credentials, or raw IP", domain)
 	}
 
 	ctx := context.Background()
