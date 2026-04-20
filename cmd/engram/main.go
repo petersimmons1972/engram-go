@@ -136,6 +136,17 @@ func run() error {
 		}
 	}
 
+	// Start the retrieval_events retention worker on a shared backend.
+	// A dedicated backend is used so the worker lifecycle is independent of
+	// per-project factory calls. Project "default" is used for the connection;
+	// the DELETE query itself targets all projects via no project filter.
+	retentionBackend, err := db.NewPostgresBackend(ctx, "default", dsn)
+	if err != nil {
+		return fmt.Errorf("retention worker backend: %w", err)
+	}
+	defer retentionBackend.Close()
+	go retentionBackend.StartRetentionWorker(ctx)
+
 	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(ctx, project, dsn)
 		if err != nil {
