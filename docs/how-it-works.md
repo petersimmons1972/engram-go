@@ -53,7 +53,7 @@ With that understanding of the four signals, you can read the scoring formula no
 ## The Scoring Formula
 
 ```
-composite = (vector × 0.45) + (bm25 × 0.30) + (recency × 0.10) + (precision × 0.15)
+composite = (vector × W_v) + (bm25 × W_b) + (recency × W_r) + (precision × W_p)
 final     = composite × importance_multiplier
 ```
 
@@ -63,7 +63,9 @@ Without embeddings available:
 composite = (bm25 × 0.85) + (recency × 0.15)
 ```
 
-The weights encode a specific view of what matters most. Vector search (0.45) leads because meaning-matching — finding the right concept across different vocabulary — is the hardest problem to solve by hand. When BM25 is doing most of the work, you feel it as precision: the function name you typed came back exactly. When cosine similarity is doing the work, you feel it as discovery: you found the memory you needed even though you did not remember how you described it. Recency (0.10) is intentionally light — it is a tiebreaker, not a filter. A three-month-old architectural decision should still surface when it is the only thing that explains why the code is the way it is.
+Starting with v3.1, weights are stored per-project in the `weight_config` database table and loaded at server start (refreshed every 15 minutes). The compiled-in defaults — `W_v=0.45`, `W_b=0.30`, `W_r=0.10`, `W_p=0.15` — are used until a project's first row is written to `weight_config`. The adaptive weight tuner (see Background Workers) updates these values automatically based on accumulated failure-class events.
+
+The defaults encode a specific view of what matters most. Vector search (0.45) leads because meaning-matching — finding the right concept across different vocabulary — is the hardest problem to solve by hand. When BM25 is doing most of the work, you feel it as precision: the function name you typed came back exactly. When cosine similarity is doing the work, you feel it as discovery: you found the memory you needed even though you did not remember how you described it. Recency (0.10) is intentionally light — it is a tiebreaker, not a filter. A three-month-old architectural decision should still surface when it is the only thing that explains why the code is the way it is.
 
 The importance multiplier is set at store time and applied at recall time. It is a flat scaling factor — a `critical` memory with a mediocre composite score still beats a `trivial` memory with a strong one.
 
@@ -175,16 +177,21 @@ Set `critical` sparingly. If everything is critical, nothing is.
 
 The scoring formula gets you the right memories. The knowledge graph gets you the memories adjacent to the right memories — the ones you did not know to ask for.
 
-Engram tracks six relationship types between memories:
+Engram tracks eleven relationship types between memories:
 
 | Relationship    | Meaning                                        | Example                                         |
 | --------------- | ---------------------------------------------- | ----------------------------------------------- |
-| `causes`        | This memory led to or produces that one        | Architecture decision → downstream bug          |
 | `caused_by`     | This memory exists because of that one         | Bug → the pattern that introduced it            |
 | `relates_to`    | Adjacent context, no causal direction          | Two components that interact                    |
+| `depends_on`    | This memory requires that one to be valid      | Feature decision → infrastructure prerequisite |
 | `supersedes`    | This memory replaces that one                  | Corrected decision → original (now stale) one   |
-| `supports`      | Evidence or reinforcement                      | Test pattern → the principle it validates       |
+| `used_in`       | This memory is applied in that context         | Pattern → the modules that apply it             |
+| `resolved_by`   | Problem resolved by the referenced memory      | Bug → the fix that closed it                    |
 | `contradicts`   | Conflict or tension                            | New finding → prior assumption                  |
+| `supports`      | Evidence or reinforcement                      | Test pattern → the principle it validates       |
+| `derived_from`  | Citation chain — memory derived from another   | Summary → the source document                   |
+| `part_of`       | Hierarchical containment                       | Sub-decision → the larger architectural choice  |
+| `follows`       | Temporal or sequential ordering                | Step 2 → Step 1 in a migration runbook          |
 
 Edges have weights between 0.0 and 1.0, starting at 1.0 and decaying over time with `memory_consolidate`. When `memory_feedback` marks a recalled memory as useful, the edges that surfaced it are strengthened. Edges that fall below 0.1 are pruned.
 
@@ -216,11 +223,15 @@ Manual episode management is still available. `memory_episode_start` creates an 
 
 ## Background Workers
 
-Two goroutines start with the server and run on a fixed tick. You never configure them — they are always running.
+Four goroutines start with the server and run on a fixed tick. You never configure them — they are always running.
 
 **Summarizer (60-second tick):** Finds memories with no generated summary, calls the configured model (Ollama `llama3.2` by default, or Claude if `ENGRAM_CLAUDE_SUMMARIZE=true`), stores the result back. Without the summarizer, `detail="summary"` would always fall back to the matched chunk — a reasonable approximation, but not a compressed representation of the full memory. The goroutine logs failures but does not crash — a memory without a summary is not a broken memory.
 
 **Re-embedder (30-second tick):** Finds chunks with NULL embedding vectors — new memories not yet embedded, or chunks from a pre-embedding migration. Calls Ollama's embedding endpoint and fills them in. Without the re-embedder, every new memory would be invisible to vector search until the server restarted. On first start it may take a few minutes to process a large existing store.
+
+**Audit worker (`ENGRAM_AUDIT_INTERVAL`, default `168h`):** Runs all active canonical queries for each project, snapshots the ordered result IDs into `audit_snapshots`, and computes RBO and Jaccard similarity versus the prior snapshot. Fires an alert flag on results with RBO below 0.7. The first snapshot for a query establishes the baseline — no comparison is possible until the second run. Use `memory_audit_run` to trigger an immediate pass outside the tick.
+
+**Weight tuner (`ENGRAM_WEIGHT_INTERVAL`, default `168h`):** Reads `retrieval_events` failure-class aggregates for the last 30 days. If ≥ 50 events exist and the dominant failure class maps to a weight adjustment, it updates `weight_config` for the project, stores a record in `weight_history`, and waits at least 7 days before the next adjustment. Guardrails prevent any single weight from leaving its bounded range. Use `memory_weight_history` to inspect current weights and the full adjustment log.
 
 ---
 
@@ -298,6 +309,8 @@ All Engram configuration is via environment variables (not CLI flags — secrets
 | `ENGRAM_CLAUDE_CONSOLIDATE` | `false` | Use Claude for near-duplicate detection in consolidation |
 | `ENGRAM_CLAUDE_RERANK` | `false` | Enable Claude re-ranking of recall results |
 | `ENGRAM_DECAY_INTERVAL` | `8h` | How often the importance decay worker runs |
+| `ENGRAM_AUDIT_INTERVAL` | `168h` | How often the decay audit worker snapshots canonical queries |
+| `ENGRAM_WEIGHT_INTERVAL` | `168h` | How often the adaptive weight tuner checks failure-class aggregates |
 
 ---
 
