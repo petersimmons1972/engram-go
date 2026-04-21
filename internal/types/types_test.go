@@ -24,7 +24,7 @@ func TestValidateMemoryType(t *testing.T) {
 }
 
 func TestValidateRelationType(t *testing.T) {
-	valid := []string{"caused_by", "relates_to", "depends_on", "supersedes", "used_in", "resolved_by", "supports", "derived_from", "part_of", "follows"}
+	valid := []string{"caused_by", "relates_to", "depends_on", "supersedes", "used_in", "resolved_by", "contradicts", "supports", "derived_from", "part_of", "follows"}
 	for _, v := range valid {
 		if !types.ValidateRelationType(v) {
 			t.Errorf("expected %q to be valid relation type", v)
