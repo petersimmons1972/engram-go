@@ -2124,7 +2124,11 @@ var evalProbeSentences = []string{
 func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 
-	modelA := getString(args, "model_a", "nomic-embed-text")
+	defaultModelA := cfg.EmbedModel
+	if defaultModelA == "" {
+		defaultModelA = "nomic-embed-text"
+	}
+	modelA := getString(args, "model_a", defaultModelA)
 	modelB := getString(args, "model_b", "")
 	if modelB == "" {
 		if rec := embed.DefaultRecommendedModel(); rec != nil {
