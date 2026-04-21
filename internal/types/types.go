@@ -43,6 +43,7 @@ const (
 	FailureClassStaleRanking       = "stale_ranking"
 	FailureClassMissingContent     = "missing_content"
 	FailureClassScopeMismatch      = "scope_mismatch"
+	FailureClassOther              = "other"
 )
 
 var validFailureClasses = map[string]bool{
@@ -51,6 +52,7 @@ var validFailureClasses = map[string]bool{
 	FailureClassStaleRanking:       true,
 	FailureClassMissingContent:     true,
 	FailureClassScopeMismatch:      true,
+	FailureClassOther:              true,
 }
 
 func ValidateFailureClass(s string) bool {

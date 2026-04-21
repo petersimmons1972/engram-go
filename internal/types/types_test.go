@@ -206,6 +206,7 @@ func TestFailureClassConstants(t *testing.T) {
 		{types.FailureClassStaleRanking, "stale_ranking"},
 		{types.FailureClassMissingContent, "missing_content"},
 		{types.FailureClassScopeMismatch, "scope_mismatch"},
+		{types.FailureClassOther, "other"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -244,6 +245,7 @@ func TestValidateFailureClass(t *testing.T) {
 		types.FailureClassStaleRanking,
 		types.FailureClassMissingContent,
 		types.FailureClassScopeMismatch,
+		types.FailureClassOther,
 	}
 	for _, v := range valid {
 		if !types.ValidateFailureClass(v) {
