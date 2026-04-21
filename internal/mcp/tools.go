@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"golang.org/x/text/unicode/norm"
 	"github.com/petersimmons1972/engram/internal/claude"
@@ -69,6 +70,9 @@ type Config struct {
 	// Required for Docker setups where the host appears as a bridge IP.
 	// Set via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
 	AllowRFC1918SetupToken bool
+	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
+	// When nil, audit/weight tools return an error.
+	PgPool               *pgxpool.Pool
 	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
@@ -1315,6 +1319,18 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	if err != nil {
 		return nil, err
 	}
+
+	// Reset weight_config to defaults for this project: learned weights are
+	// no longer valid after the embedding model changes (#Phase4).
+	// Best-effort — a failure here does not roll back the migration.
+	if cfg.PgPool != nil {
+		if _, delErr := cfg.PgPool.Exec(ctx,
+			`DELETE FROM weight_config WHERE project = $1`, project); delErr != nil {
+			slog.Warn("memory_migrate_embedder: weight_config reset failed",
+				"project", project, "err", delErr)
+		}
+	}
+
 	return toolResult(result)
 }
 

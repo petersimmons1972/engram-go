@@ -605,6 +605,54 @@ func (s *Server) registerTools() {
 		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), t.handler)
 	}
 
+	// Audit and weight tools are always available when PgPool is configured.
+	{
+		pool := s.pool
+		cfg := s.cfg
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_add_query",
+				mcpgo.WithDescription("Register a canonical query for retrieval drift monitoring")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditAddQuery(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_list_queries",
+				mcpgo.WithDescription("List canonical queries registered for drift monitoring in a project")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditListQueries(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_deactivate_query",
+				mcpgo.WithDescription("Deactivate a canonical query (stops future drift snapshots)")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditDeactivateQuery(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_run",
+				mcpgo.WithDescription("Run a decay audit pass for a project immediately and return snapshot summaries")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditRun(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_compare",
+				mcpgo.WithDescription("Compare retrieval snapshots for a canonical query to detect ranking drift")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditCompare(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_weight_history",
+				mcpgo.WithDescription("Return current retrieval weights and tuning history for a project")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryWeightHistory(ctx, pool, req, cfg)
+			},
+		)
+	}
+
 	// memory_diagnose is always available — no Claude required.
 	{
 		pool := s.pool
