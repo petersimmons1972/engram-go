@@ -243,7 +243,7 @@ func (w *TunerWorker) GetHistory(ctx context.Context, project string, limit int)
 // ResetToDefaults resets weight_config to defaults for a project.
 // Used during embedder migration to clear learned weights.
 func (w *TunerWorker) ResetToDefaults(ctx context.Context, project string) error {
-	_, err := w.pool.Exec(ctx, `DELETE FROM weight_config WHERE project = $1`, project)
+	_, err := w.db.Exec(ctx, `DELETE FROM weight_config WHERE project = $1`, project)
 	return err
 }
 

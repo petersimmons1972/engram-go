@@ -18,6 +18,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/weight"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -77,6 +78,9 @@ type Config struct {
 	// testAuditDB is injected in tests to avoid needing a real pgxpool.
 	// When non-nil, audit handlers use this querier instead of PgPool.
 	testAuditDB audit.AuditQuerier
+	// testWeightTuner is injected in tests. When non-nil, handleMemoryWeightHistory
+	// uses it instead of creating a real TunerWorker from PgPool.
+	testWeightTuner *weight.TunerWorker
 	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
@@ -1305,16 +1309,17 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
 	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
 		probeClient, probeErr := embed.NewOllamaClient(ctx, cfg.OllamaURL, newModel)
-		if probeErr == nil {
-			newDims := probeClient.Dimensions()
-			var storedDims int
-			if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
-				if newDims != storedDims {
-					return nil, fmt.Errorf(
-						"dimension mismatch: current model stores %d-dim vectors, new model %q produces %d-dim vectors — pgvector column must be rebuilt first",
-						storedDims, newModel, newDims,
-					)
-				}
+		if probeErr != nil {
+			return nil, fmt.Errorf("cannot verify new embedder model dimensions: %w", probeErr)
+		}
+		newDims := probeClient.Dimensions()
+		var storedDims int
+		if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
+			if newDims != storedDims {
+				return nil, fmt.Errorf(
+					"dimension mismatch: current model stores %d-dim vectors, new model %q produces %d-dim vectors — pgvector column must be rebuilt first",
+					storedDims, newModel, newDims,
+				)
 			}
 		}
 	}

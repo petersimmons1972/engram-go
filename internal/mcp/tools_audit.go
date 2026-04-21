@@ -243,9 +243,6 @@ func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.C
 //
 // Required args: project
 func handleMemoryWeightHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
-		return nil, fmt.Errorf("weight tools require a database connection (PgPool not configured)")
-	}
 	args, _ := req.Params.Arguments.(map[string]any)
 	project, err := getProject(args, "")
 	if err != nil {
@@ -255,7 +252,15 @@ func handleMemoryWeightHistory(ctx context.Context, pool *EnginePool, req mcpgo.
 		return nil, fmt.Errorf("project is required")
 	}
 
-	tuner := weight.NewTunerWorker(cfg.PgPool, 24*time.Hour)
+	var tuner *weight.TunerWorker
+	switch {
+	case cfg.testWeightTuner != nil:
+		tuner = cfg.testWeightTuner
+	case cfg.PgPool != nil:
+		tuner = weight.NewTunerWorker(cfg.PgPool, 24*time.Hour)
+	default:
+		return nil, fmt.Errorf("weight tools require a database connection (PgPool not configured)")
+	}
 	current, err := tuner.LoadWeights(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("load weights: %w", err)

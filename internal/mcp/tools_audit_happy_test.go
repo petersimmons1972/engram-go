@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/petersimmons1972/engram/internal/audit"
+	"github.com/petersimmons1972/engram/internal/weight"
 )
 
 // --- stubs implementing audit.AuditQuerier ---
@@ -423,5 +424,126 @@ func TestHandleAuditCompare_UnknownQueryID(t *testing.T) {
 	count, _ := m["count"].(float64)
 	if int(count) != 0 {
 		t.Errorf("expected count=0 for unknown query, got %v", m["count"])
+	}
+}
+
+// --- weightStubDB: satisfies weight.tunerQuerier structurally ---
+
+type weightStubDB struct {
+	queryRowFn func(sql string, args ...any) pgx.Row
+	queryFn    func(sql string, args ...any) (pgx.Rows, error)
+	execFn     func(sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func (s *weightStubDB) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if s.execFn != nil {
+		return s.execFn(sql, args...)
+	}
+	return pgconn.NewCommandTag("DELETE 0"), nil
+}
+
+func (s *weightStubDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if s.queryFn != nil {
+		return s.queryFn(sql, args...)
+	}
+	return newHappyRows(nil), nil
+}
+
+func (s *weightStubDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	if s.queryRowFn != nil {
+		return s.queryRowFn(sql, args...)
+	}
+	return &happyTestRow{err: pgx.ErrNoRows}
+}
+
+// makeTestConfigWithWeightTuner builds a Config with an injected weight.TunerWorker
+// backed by the supplied stub DB. PgPool stays nil so no real DB is needed.
+func makeTestConfigWithWeightTuner(db *weightStubDB) Config {
+	tuner := weight.NewTunerWorkerWithDB(nil, db, time.Hour)
+	return Config{
+		testWeightTuner: tuner,
+		PgPool:          nil,
+		EmbedModel:      "test-model",
+	}
+}
+
+// --- handleMemoryWeightHistory tests ---
+
+func TestHandleMemoryWeightHistory_HappyPath(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	noteStr := "auto-tuned: stale_ranking dominant"
+	queryCallCount := 0
+	db := &weightStubDB{
+		// LoadWeights: return custom weights
+		queryRowFn: func(_ string, _ ...any) pgx.Row {
+			return &happyTestRow{vals: []any{0.40, 0.35, 0.15, 0.10}}
+		},
+		// GetHistory: return one entry
+		queryFn: func(_ string, _ ...any) (pgx.Rows, error) {
+			queryCallCount++
+			return newHappyRows([][]any{
+				{"hist-1", "proj1", now, 0.40, 0.35, 0.15, 0.10, []byte(`{"class":"stale_ranking"}`), noteStr},
+			}), nil
+		},
+	}
+	cfg := makeTestConfigWithWeightTuner(db)
+	pool := makeNilEnginePool()
+
+	result, err := handleMemoryWeightHistory(context.Background(), pool,
+		auditHandlerRequest(map[string]any{"project": "proj1"}), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m := extractAuditResult(t, result)
+	if m["project"] != "proj1" {
+		t.Errorf("project = %v, want proj1", m["project"])
+	}
+	if _, ok := m["current_weights"]; !ok {
+		t.Error("expected current_weights in result")
+	}
+	history, _ := m["history"].([]any)
+	if len(history) != 1 {
+		t.Errorf("history len = %d, want 1", len(history))
+	}
+	if m["status"] != "active" {
+		t.Errorf("status = %v, want active", m["status"])
+	}
+}
+
+func TestHandleMemoryWeightHistory_EmptyHistory(t *testing.T) {
+	db := &weightStubDB{
+		queryRowFn: func(_ string, _ ...any) pgx.Row {
+			return &happyTestRow{err: pgx.ErrNoRows} // defaults
+		},
+		queryFn: func(_ string, _ ...any) (pgx.Rows, error) {
+			return newHappyRows(nil), nil // no history rows
+		},
+	}
+	cfg := makeTestConfigWithWeightTuner(db)
+	pool := makeNilEnginePool()
+
+	result, err := handleMemoryWeightHistory(context.Background(), pool,
+		auditHandlerRequest(map[string]any{"project": "proj1"}), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m := extractAuditResult(t, result)
+	history, _ := m["history"].([]any)
+	if len(history) != 0 {
+		t.Errorf("expected empty history, got %d items", len(history))
+	}
+	if status, _ := m["status"].(string); status == "" || status == "active" {
+		t.Errorf("expected non-active status for empty history, got %q", status)
+	}
+}
+
+func TestHandleMemoryWeightHistory_MissingProject(t *testing.T) {
+	cfg := makeTestConfigWithWeightTuner(&weightStubDB{})
+	pool := makeNilEnginePool()
+
+	_, err := handleMemoryWeightHistory(context.Background(), pool,
+		auditHandlerRequest(map[string]any{}), cfg)
+	if err == nil {
+		t.Error("expected error for missing project")
 	}
 }

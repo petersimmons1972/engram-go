@@ -614,6 +614,35 @@ func TestGetHistory_DefaultLimit(t *testing.T) {
 	}
 }
 
+func TestResetToDefaults_Success(t *testing.T) {
+	execCalled := false
+	db := &tunerStubDB{
+		execFn: func(sql string, args ...any) (pgconn.CommandTag, error) {
+			execCalled = true
+			return pgconn.NewCommandTag("DELETE 1"), nil
+		},
+	}
+	w := makeTunerWorker(db)
+	if err := w.ResetToDefaults(context.Background(), "proj1"); err != nil {
+		t.Fatalf("ResetToDefaults: unexpected error: %v", err)
+	}
+	if !execCalled {
+		t.Error("ResetToDefaults: expected exec to be called")
+	}
+}
+
+func TestResetToDefaults_Error(t *testing.T) {
+	db := &tunerStubDB{
+		execFn: func(_ string, _ ...any) (pgconn.CommandTag, error) {
+			return pgconn.CommandTag{}, fmt.Errorf("db unavailable")
+		},
+	}
+	w := makeTunerWorker(db)
+	if err := w.ResetToDefaults(context.Background(), "proj1"); err == nil {
+		t.Error("ResetToDefaults: expected error, got nil")
+	}
+}
+
 func TestAdjustWeightsForProject_DelegatesTo_MaybeAdjust(t *testing.T) {
 	// Verify the public entry-point calls through to maybeAdjust without error.
 	db := &tunerStubDB{
