@@ -590,6 +590,15 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleVerifyBeforeActing(ctx, pool, req)
 			}},
+		// Phase 5: Pluggable Embedder — model registry and eval
+		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryModels(ctx, pool, req, cfg)
+			}},
+		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEmbeddingEval(ctx, pool, req, cfg)
+			}},
 	}
 
 	for _, t := range tools {

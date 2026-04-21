@@ -162,6 +162,7 @@ func run() error {
 
 	cfg := internalmcp.Config{
 		OllamaURL:                *ollamaURL,
+		EmbedModel:               *embedModel,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
 		ClaudeEnabled:            cc != nil,
