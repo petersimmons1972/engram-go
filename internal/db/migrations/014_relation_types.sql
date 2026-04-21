@@ -1,0 +1,15 @@
+-- Migration 014: Expand relation type vocabulary (additive merge, v3.x)
+--
+-- New valid values for relationships.rel_type:
+--   supports     – one memory strengthens another's evidence
+--   derived_from – citation chain; memory derived from source
+--   part_of      – hierarchical containment
+--   follows      – temporal or sequential ordering
+--
+-- New valid value for retrieval_events.failure_class:
+--   other – catch-all for unclassified retrieval failures
+--
+-- Existing edges and events are unaffected.
+-- No constraint on rel_type or failure_class columns (both free-text).
+-- See /internal/types/types.go for the full closed constant sets.
+SELECT 1; -- no-op; migration runner requires at least one statement
