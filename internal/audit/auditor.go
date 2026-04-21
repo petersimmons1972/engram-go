@@ -5,11 +5,14 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,18 +72,40 @@ type SnapshotSummary struct {
 	IsBaseline bool     `json:"is_baseline"`
 }
 
+// AuditQuerier is the narrow DB interface used for audit data operations.
+// Both *pgxpool.Pool and *pgxpool.Conn satisfy this interface.
+type AuditQuerier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // AuditWorker runs canonical queries on a schedule and stores snapshots.
 type AuditWorker struct {
-	pool       *pgxpool.Pool
+	pool       *pgxpool.Pool // used only for advisory lock Acquire
+	db         AuditQuerier  // used for all data queries
 	recaller   Recaller
 	embedModel string
 	interval   time.Duration
 }
 
-// NewAuditWorker creates an AuditWorker.
+// NewAuditWorker creates an AuditWorker. The pool is used for advisory lock
+// acquisition; all data queries go through pool (which satisfies AuditQuerier).
 func NewAuditWorker(pool *pgxpool.Pool, recaller Recaller, embedModel string, interval time.Duration) *AuditWorker {
 	return &AuditWorker{
 		pool:       pool,
+		db:         pool,
+		recaller:   recaller,
+		embedModel: embedModel,
+		interval:   interval,
+	}
+}
+
+// NewAuditWorkerWithDB creates an AuditWorker with a separate db querier, for testing.
+func NewAuditWorkerWithDB(pool *pgxpool.Pool, db AuditQuerier, recaller Recaller, embedModel string, interval time.Duration) *AuditWorker {
+	return &AuditWorker{
+		pool:       pool,
+		db:         db,
 		recaller:   recaller,
 		embedModel: embedModel,
 		interval:   interval,
@@ -101,6 +126,7 @@ func (w *AuditWorker) Run(ctx context.Context) {
 		}
 	}
 
+	run() // baseline pass at startup
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
@@ -115,19 +141,25 @@ func (w *AuditWorker) Run(ctx context.Context) {
 
 // RunPass executes one full audit pass — all active queries for all projects.
 // Uses an advisory lock so concurrent invocations skip rather than double-run.
+// The lock is acquired on a pinned connection to ensure lock and unlock happen
+// on the same PostgreSQL session (advisory locks are session-scoped).
 func (w *AuditWorker) RunPass(ctx context.Context) ([]SnapshotSummary, error) {
+	conn, err := w.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire conn for advisory lock: %w", err)
+	}
+	defer conn.Release()
+
 	var locked bool
-	if err := w.pool.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&locked); err != nil {
-		return nil, fmt.Errorf("advisory lock: %w", err)
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&locked); err != nil {
+		return nil, fmt.Errorf("advisory lock acquire: %w", err)
 	}
 	if !locked {
 		slog.Info("audit worker: another pass is running, skipping")
 		return nil, nil
 	}
 	defer func() {
-		if err := w.pool.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool)); err != nil {
-			slog.Warn("audit worker: advisory unlock failed", "err", err)
-		}
+		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool))
 	}()
 
 	queries, err := w.loadActiveQueries(ctx, "")
@@ -150,7 +182,7 @@ func (w *AuditWorker) RunPass(ctx context.Context) ([]SnapshotSummary, error) {
 // RegisterQuery creates a new canonical query and returns its ID.
 func (w *AuditWorker) RegisterQuery(ctx context.Context, project, query, description string) (string, error) {
 	id := uuid.New().String()
-	_, err := w.pool.Exec(ctx,
+	_, err := w.db.Exec(ctx,
 		`INSERT INTO audit_canonical_queries (id, project, query, description)
 		 VALUES ($1, $2, $3, $4)`,
 		id, project, query, description,
@@ -163,7 +195,7 @@ func (w *AuditWorker) RegisterQuery(ctx context.Context, project, query, descrip
 
 // DeactivateQuery marks the given query as inactive.
 func (w *AuditWorker) DeactivateQuery(ctx context.Context, queryID string) error {
-	tag, err := w.pool.Exec(ctx,
+	tag, err := w.db.Exec(ctx,
 		`UPDATE audit_canonical_queries SET active = FALSE WHERE id = $1`, queryID)
 	if err != nil {
 		return fmt.Errorf("deactivate query: %w", err)
@@ -175,8 +207,12 @@ func (w *AuditWorker) DeactivateQuery(ctx context.Context, queryID string) error
 }
 
 // ListQueries returns all canonical queries for a project (both active and inactive).
+// When project is empty, returns all queries across all projects regardless of active status.
 func (w *AuditWorker) ListQueries(ctx context.Context, project string) ([]CanonicalQuery, error) {
-	return w.loadActiveQueries(ctx, project)
+	if project == "" {
+		return w.loadAllQueries(ctx)
+	}
+	return w.loadQueriesByProject(ctx, project)
 }
 
 // RunProjectAudit executes an audit pass for one project only.
@@ -202,7 +238,7 @@ func (w *AuditWorker) GetSnapshots(ctx context.Context, queryID string, limit in
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := w.pool.Query(ctx,
+	rows, err := w.db.Query(ctx,
 		`SELECT id, query_id, project, memory_ids, scores, embedding_model,
 		        embedding_model_version, run_at, rbo_vs_prev,
 		        jaccard_at_5, jaccard_at_10, jaccard_full, additions, removals
@@ -237,12 +273,12 @@ func (w *AuditWorker) GetSnapshots(ctx context.Context, queryID string, limit in
 	return snaps, rows.Err()
 }
 
-// loadActiveQueries loads all active canonical queries. If project is empty,
-// queries from all projects are returned.
+// loadActiveQueries loads all active canonical queries for all projects.
+// Used internally by RunPass (the scheduler always processes all active queries).
 func (w *AuditWorker) loadActiveQueries(ctx context.Context, project string) ([]CanonicalQuery, error) {
 	if project == "" {
 		// All active queries regardless of project.
-		rows, err := w.pool.Query(ctx,
+		rows, err := w.db.Query(ctx,
 			`SELECT id, project, query, description, active, alert_threshold, created_at
 			 FROM audit_canonical_queries
 			 WHERE active = TRUE
@@ -257,10 +293,25 @@ func (w *AuditWorker) loadActiveQueries(ctx context.Context, project string) ([]
 	return w.loadQueriesByProject(ctx, project)
 }
 
+// loadAllQueries loads all canonical queries across all projects regardless of
+// active status. Used by ListQueries when no project filter is given.
+func (w *AuditWorker) loadAllQueries(ctx context.Context) ([]CanonicalQuery, error) {
+	rows, err := w.db.Query(ctx,
+		`SELECT id, project, query, description, active, alert_threshold, created_at
+		 FROM audit_canonical_queries
+		 ORDER BY project, created_at`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanQueries(rows)
+}
+
 // loadQueriesByProject loads all canonical queries for a specific project
 // (active and inactive alike — used for listing).
 func (w *AuditWorker) loadQueriesByProject(ctx context.Context, project string) ([]CanonicalQuery, error) {
-	rows, err := w.pool.Query(ctx,
+	rows, err := w.db.Query(ctx,
 		`SELECT id, project, query, description, active, alert_threshold, created_at
 		 FROM audit_canonical_queries
 		 WHERE project = $1
@@ -315,7 +366,7 @@ func (w *AuditWorker) runQuerySnapshot(ctx context.Context, q CanonicalQuery) (*
 		QueryID:        q.ID,
 		Project:        q.Project,
 		MemoryIDs:      ids,
-		Scores:         make([]float64, len(ids)), // scores not available via Recaller interface
+		Scores:         nil, // NULL: scores unavailable via Recaller interface; reserved for future use
 		EmbeddingModel: w.embedModel,
 		RunAt:          time.Now().UTC(),
 	}
@@ -348,7 +399,7 @@ func (w *AuditWorker) runQuerySnapshot(ctx context.Context, q CanonicalQuery) (*
 func (w *AuditWorker) latestSnapshot(ctx context.Context, queryID string) (*Snapshot, error) {
 	var s Snapshot
 	var embModelVersion *string
-	err := w.pool.QueryRow(ctx,
+	err := w.db.QueryRow(ctx,
 		`SELECT id, query_id, project, memory_ids, scores, embedding_model,
 		        embedding_model_version, run_at
 		 FROM audit_snapshots
@@ -362,7 +413,7 @@ func (w *AuditWorker) latestSnapshot(ctx context.Context, queryID string) (*Snap
 	)
 	if err != nil {
 		// pgx returns pgx.ErrNoRows when empty — treat as no previous snapshot.
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -379,7 +430,7 @@ func (w *AuditWorker) insertSnapshot(ctx context.Context, s *Snapshot) error {
 	if s.EmbeddingModelVersion != "" {
 		embModelVersion = &s.EmbeddingModelVersion
 	}
-	_, err := w.pool.Exec(ctx,
+	_, err := w.db.Exec(ctx,
 		`INSERT INTO audit_snapshots
 		 (id, query_id, project, memory_ids, scores, embedding_model, embedding_model_version,
 		  run_at, rbo_vs_prev, jaccard_at_5, jaccard_at_10, jaccard_full, additions, removals)

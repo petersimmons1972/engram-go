@@ -537,7 +537,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryVerify(ctx, pool, req)
 			}},
-		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding",
+		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding. Also resets any learned adaptive weights for the project to compile-time defaults.",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryMigrateEmbedder(ctx, pool, req, cfg)
 			}},

@@ -6,12 +6,15 @@ package weight
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -72,20 +75,57 @@ type WeightHistory struct {
 	Notes       string          `json:"notes,omitempty"`
 }
 
+// tunerQuerier is the narrow DB interface used by TunerWorker for data queries.
+// Both *pgxpool.Pool and test stubs satisfy this interface.
+type tunerQuerier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// tunerTxBeginner can begin a transaction — satisfied by *pgxpool.Pool.
+type tunerTxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // TunerWorker periodically checks failure event distributions and applies
 // weight adjustments when a dominant failure class is detected.
 type TunerWorker struct {
-	pool     *pgxpool.Pool
+	pool     *pgxpool.Pool // used for advisory lock (Acquire) and transactions (Begin)
+	db       tunerQuerier  // used for data queries; defaults to pool
 	interval time.Duration
+	// applyFn is called to persist weights; if nil, applyWeights is used.
+	// Set in tests to capture or simulate weight writes without a real DB.
+	applyFn func(ctx context.Context, project string, wt Weights, triggerData []byte, notes string) error
 }
 
 // NewTunerWorker creates a TunerWorker.
 func NewTunerWorker(pool *pgxpool.Pool, interval time.Duration) *TunerWorker {
-	return &TunerWorker{pool: pool, interval: interval}
+	return &TunerWorker{pool: pool, db: pool, interval: interval}
+}
+
+// NewTunerWorkerWithDB creates a TunerWorker with an injected querier, for testing.
+// pool must be non-nil only for RunPass (advisory lock); pass nil if only testing
+// maybeAdjust-level logic via AdjustWeightsForProject.
+func NewTunerWorkerWithDB(pool *pgxpool.Pool, db tunerQuerier, interval time.Duration) *TunerWorker {
+	return &TunerWorker{pool: pool, db: db, interval: interval}
 }
 
 // Run starts the background tuning loop. Call as a goroutine.
+// Fires once immediately then on each ticker tick.
 func (w *TunerWorker) Run(ctx context.Context) {
+	run := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("weight tuner: panic", "err", r)
+			}
+		}()
+		if err := w.RunPass(ctx); err != nil {
+			slog.Error("weight tuner: pass failed", "err", err)
+		}
+	}
+
+	run() // baseline pass at startup
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
@@ -93,35 +133,32 @@ func (w *TunerWorker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("weight tuner: panic", "err", r)
-					}
-				}()
-				if err := w.RunPass(ctx); err != nil {
-					slog.Error("weight tuner: pass failed", "err", err)
-				}
-			}()
+			run()
 		}
 	}
 }
 
 // RunPass examines all projects with recent failure events and applies
 // weight adjustments where warranted.
+// The advisory lock is acquired on a pinned connection to ensure lock and unlock
+// happen on the same PostgreSQL session (advisory locks are session-scoped).
 func (w *TunerWorker) RunPass(ctx context.Context) error {
+	conn, err := w.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn for advisory lock: %w", err)
+	}
+	defer conn.Release()
+
 	var locked bool
-	if err := w.pool.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&locked); err != nil {
-		return fmt.Errorf("advisory lock: %w", err)
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&locked); err != nil {
+		return fmt.Errorf("advisory lock acquire: %w", err)
 	}
 	if !locked {
 		slog.Info("weight tuner: another pass is running, skipping")
 		return nil
 	}
 	defer func() {
-		if err := w.pool.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool)); err != nil {
-			slog.Warn("weight tuner: advisory unlock failed", "err", err)
-		}
+		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool))
 	}()
 
 	projects, err := w.projectsWithRecentEvents(ctx)
@@ -147,13 +184,13 @@ func (w *TunerWorker) AdjustWeightsForProject(ctx context.Context, project strin
 // Returns defaults if no entry exists.
 func (w *TunerWorker) LoadWeights(ctx context.Context, project string) (Weights, error) {
 	var wt Weights
-	err := w.pool.QueryRow(ctx,
+	err := w.db.QueryRow(ctx,
 		`SELECT weight_vector, weight_bm25, weight_recency, weight_precision
 		 FROM weight_config WHERE project = $1`,
 		project,
 	).Scan(&wt.Vector, &wt.BM25, &wt.Recency, &wt.Precision)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return DefaultWeights(), nil
 		}
 		return Weights{}, fmt.Errorf("load weights: %w", err)
@@ -166,7 +203,7 @@ func (w *TunerWorker) GetHistory(ctx context.Context, project string, limit int)
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := w.pool.Query(ctx,
+	rows, err := w.db.Query(ctx,
 		`SELECT id, project, applied_at, weight_vector, weight_bm25, weight_recency, weight_precision,
 		        trigger_data, notes
 		 FROM weight_history
@@ -205,8 +242,8 @@ func (w *TunerWorker) GetHistory(ctx context.Context, project string, limit int)
 
 // ResetToDefaults resets weight_config to defaults for a project.
 // Used during embedder migration to clear learned weights.
-func (w *TunerWorker) ResetToDefaults(ctx context.Context, pool *pgxpool.Pool, project string) error {
-	_, err := pool.Exec(ctx, `DELETE FROM weight_config WHERE project = $1`, project)
+func (w *TunerWorker) ResetToDefaults(ctx context.Context, project string) error {
+	_, err := w.pool.Exec(ctx, `DELETE FROM weight_config WHERE project = $1`, project)
 	return err
 }
 
@@ -216,11 +253,11 @@ func (w *TunerWorker) ResetToDefaults(ctx context.Context, pool *pgxpool.Pool, p
 func (w *TunerWorker) maybeAdjust(ctx context.Context, project string) error {
 	// Check cooldown: skip if a tuning was applied in the last 7 days.
 	var lastApplied *time.Time
-	err := w.pool.QueryRow(ctx,
+	err := w.db.QueryRow(ctx,
 		`SELECT applied_at FROM weight_history WHERE project = $1 ORDER BY applied_at DESC LIMIT 1`,
 		project,
 	).Scan(&lastApplied)
-	if err != nil && err.Error() != "no rows in result set" {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("check cooldown: %w", err)
 	}
 	if lastApplied != nil && time.Since(*lastApplied) < tuningCooldownDays*24*time.Hour {
@@ -234,7 +271,7 @@ func (w *TunerWorker) maybeAdjust(ctx context.Context, project string) error {
 		class string
 		count int
 	}
-	rows, err := w.pool.Query(ctx,
+	rows, err := w.db.Query(ctx,
 		`SELECT failure_class, COUNT(*) AS cnt
 		 FROM retrieval_events
 		 WHERE project = $1
@@ -318,7 +355,11 @@ func (w *TunerWorker) maybeAdjust(ctx context.Context, project string) error {
 	notes := fmt.Sprintf("auto-tuned: %s dominant at %.0f%% of %d events",
 		dominant.class, domFrac*100, total)
 
-	if err := w.applyWeights(ctx, project, proposed, triggerJSON, notes); err != nil {
+	apply := w.applyWeights
+	if w.applyFn != nil {
+		apply = w.applyFn
+	}
+	if err := apply(ctx, project, proposed, triggerJSON, notes); err != nil {
 		return fmt.Errorf("apply weights: %w", err)
 	}
 	slog.Info("weight tuner: weights adjusted",
@@ -357,49 +398,74 @@ func applyDelta(current, delta Weights) Weights {
 	}
 }
 
-// normalizeWeights clamps each weight within its guardrail bounds and
-// normalizes so the sum equals 1.0. Returns (weights, ok). ok=false if
-// the guardrail constraints make it impossible for the weights to sum to 1.0.
+// wBounds holds the guardrail bounds for a single weight.
+type wBounds struct{ min, max float64 }
+
+// wBoundsTable defines bounds for [vector, bm25, recency, precision].
+var wBoundsTable = [4]wBounds{
+	{minVector, maxVector},       // vector
+	{minBM25, maxBM25},           // bm25
+	{minRecency, maxRecency},     // recency
+	{minPrecision, maxPrecision}, // precision
+}
+
+// normalizeWeights clamps each weight within its guardrail bounds then
+// distributes any residual proportionally to available slack so the sum
+// equals exactly 1.0. Returns (weights, ok). ok=false if the guardrail
+// constraints make it impossible for the weights to sum to 1.0.
 func normalizeWeights(w Weights) (Weights, bool) {
-	w.Vector = math.Max(minVector, math.Min(maxVector, w.Vector))
-	w.BM25 = math.Max(minBM25, math.Min(maxBM25, w.BM25))
-	w.Recency = math.Max(minRecency, math.Min(maxRecency, w.Recency))
-	w.Precision = math.Max(minPrecision, math.Min(maxPrecision, w.Precision))
+	vals := [4]float64{w.Vector, w.BM25, w.Recency, w.Precision}
 
-	// Check feasibility: min sum and max sum within bounds.
-	minSum := minVector + minBM25 + minRecency + minPrecision // 0.55
-	maxSum := maxVector + maxBM25 + maxRecency + maxPrecision // 1.55
-	if minSum > 1.0 || maxSum < 1.0 {
+	// Step 1: clamp each weight to its bounds.
+	for i := range vals {
+		if vals[i] < wBoundsTable[i].min {
+			vals[i] = wBoundsTable[i].min
+		}
+		if vals[i] > wBoundsTable[i].max {
+			vals[i] = wBoundsTable[i].max
+		}
+	}
+
+	sum := vals[0] + vals[1] + vals[2] + vals[3]
+	residual := 1.0 - sum
+	if math.Abs(residual) < 1e-9 {
+		return Weights{vals[0], vals[1], vals[2], vals[3]}, true
+	}
+
+	// Step 2: distribute residual proportionally to available slack.
+	var slacks [4]float64
+	var totalSlack float64
+	for i := range vals {
+		if residual > 0 {
+			slacks[i] = wBoundsTable[i].max - vals[i]
+		} else {
+			slacks[i] = vals[i] - wBoundsTable[i].min
+		}
+		if slacks[i] < 0 {
+			slacks[i] = 0
+		}
+		totalSlack += slacks[i]
+	}
+	if totalSlack < 1e-9 {
+		return Weights{}, false // infeasible: no slack to absorb residual
+	}
+	for i := range vals {
+		vals[i] += residual * slacks[i] / totalSlack
+		// re-clamp for float precision
+		if vals[i] < wBoundsTable[i].min {
+			vals[i] = wBoundsTable[i].min
+		}
+		if vals[i] > wBoundsTable[i].max {
+			vals[i] = wBoundsTable[i].max
+		}
+	}
+
+	// Final verification.
+	finalSum := vals[0] + vals[1] + vals[2] + vals[3]
+	if math.Abs(finalSum-1.0) > 1e-9 {
 		return Weights{}, false
 	}
-
-	sum := w.Vector + w.BM25 + w.Recency + w.Precision
-	if math.Abs(sum-1.0) < 1e-9 {
-		return w, true
-	}
-	if sum == 0 {
-		return Weights{}, false
-	}
-
-	// Scale proportionally.
-	factor := 1.0 / sum
-	w.Vector *= factor
-	w.BM25 *= factor
-	w.Recency *= factor
-	w.Precision *= factor
-
-	// After scaling, re-clamp to ensure we didn't violate bounds.
-	w.Vector = math.Max(minVector, math.Min(maxVector, w.Vector))
-	w.BM25 = math.Max(minBM25, math.Min(maxBM25, w.BM25))
-	w.Recency = math.Max(minRecency, math.Min(maxRecency, w.Recency))
-	w.Precision = math.Max(minPrecision, math.Min(maxPrecision, w.Precision))
-
-	// Final sum check — if still out of tolerance, abort.
-	finalSum := w.Vector + w.BM25 + w.Recency + w.Precision
-	if math.Abs(finalSum-1.0) > 0.01 {
-		return Weights{}, false
-	}
-	return w, true
+	return Weights{vals[0], vals[1], vals[2], vals[3]}, true
 }
 
 // applyWeights persists new weights to weight_config and records the history entry.
@@ -437,7 +503,7 @@ func (w *TunerWorker) applyWeights(ctx context.Context, project string, wt Weigh
 // projectsWithRecentEvents returns distinct project names with failure events
 // in the last 30 days.
 func (w *TunerWorker) projectsWithRecentEvents(ctx context.Context) ([]string, error) {
-	rows, err := w.pool.Query(ctx,
+	rows, err := w.db.Query(ctx,
 		`SELECT DISTINCT project FROM retrieval_events
 		 WHERE failure_class IS NOT NULL
 		   AND created_at >= NOW() - INTERVAL '30 days'`,

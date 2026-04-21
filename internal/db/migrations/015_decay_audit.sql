@@ -18,7 +18,7 @@ CREATE TABLE audit_snapshots (
     query_id         TEXT NOT NULL REFERENCES audit_canonical_queries(id),
     project          TEXT NOT NULL,
     memory_ids       TEXT[] NOT NULL,           -- ordered list of returned memory IDs
-    scores           DOUBLE PRECISION[] NOT NULL, -- parallel scores list
+    scores           DOUBLE PRECISION[],           -- NULL when scores are unavailable (Recaller does not expose per-result scores); reserved for future use
     embedding_model  TEXT NOT NULL,             -- e.g. 'nomic-embed-text'
     embedding_model_version TEXT,               -- optional model tag/digest
     run_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),

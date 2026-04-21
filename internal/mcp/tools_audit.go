@@ -36,12 +36,22 @@ func (a *engineRecallerAdapter) Recall(ctx context.Context, project, query strin
 	return ids, nil
 }
 
+// newAuditWorker creates an AuditWorker using cfg, injecting a test DB querier when
+// cfg.testAuditDB is set (avoids needing a real pgxpool.Pool in tests).
+func newAuditWorker(pool *EnginePool, cfg Config) *audit.AuditWorker {
+	recaller := &engineRecallerAdapter{pool: pool}
+	if cfg.testAuditDB != nil {
+		return audit.NewAuditWorkerWithDB(cfg.PgPool, cfg.testAuditDB, recaller, cfg.EmbedModel, 24*time.Hour)
+	}
+	return audit.NewAuditWorker(cfg.PgPool, recaller, cfg.EmbedModel, 24*time.Hour)
+}
+
 // handleMemoryAuditAddQuery registers a new canonical query for drift monitoring.
 //
 // Required args: project, query
 // Optional args: description
 func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
+	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -58,7 +68,7 @@ func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.
 	}
 	description := getString(args, "description", "")
 
-	worker := audit.NewAuditWorker(cfg.PgPool, &engineRecallerAdapter{pool: pool}, cfg.EmbedModel, 24*time.Hour)
+	worker := newAuditWorker(pool, cfg)
 	id, err := worker.RegisterQuery(ctx, project, query, description)
 	if err != nil {
 		return nil, fmt.Errorf("register canonical query: %w", err)
@@ -74,9 +84,9 @@ func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.
 
 // handleMemoryAuditListQueries lists all canonical queries for a project.
 //
-// Required args: project
+// Required args: project (empty returns all queries across all projects)
 func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
+	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -88,7 +98,7 @@ func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcp
 		return nil, fmt.Errorf("project is required")
 	}
 
-	worker := audit.NewAuditWorker(cfg.PgPool, &engineRecallerAdapter{pool: pool}, cfg.EmbedModel, 24*time.Hour)
+	worker := newAuditWorker(pool, cfg)
 	queries, err := worker.ListQueries(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("list canonical queries: %w", err)
@@ -116,7 +126,7 @@ func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcp
 //
 // Required args: query_id
 func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
+	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -125,7 +135,7 @@ func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req
 		return nil, fmt.Errorf("query_id is required")
 	}
 
-	worker := audit.NewAuditWorker(cfg.PgPool, &engineRecallerAdapter{pool: pool}, cfg.EmbedModel, 24*time.Hour)
+	worker := newAuditWorker(pool, cfg)
 	if err := worker.DeactivateQuery(ctx, queryID); err != nil {
 		return nil, fmt.Errorf("deactivate query: %w", err)
 	}
@@ -139,7 +149,7 @@ func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req
 //
 // Required args: project
 func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
+	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -151,7 +161,7 @@ func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, fmt.Errorf("project is required")
 	}
 
-	worker := audit.NewAuditWorker(cfg.PgPool, &engineRecallerAdapter{pool: pool}, cfg.EmbedModel, 24*time.Hour)
+	worker := newAuditWorker(pool, cfg)
 	summaries, err := worker.RunProjectAudit(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("run audit: %w", err)
@@ -172,7 +182,7 @@ func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // Required args: query_id
 // Optional args: limit (default 10)
 func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil {
+	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -187,7 +197,7 @@ func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.C
 		}
 	}
 
-	worker := audit.NewAuditWorker(cfg.PgPool, &engineRecallerAdapter{pool: pool}, cfg.EmbedModel, 24*time.Hour)
+	worker := newAuditWorker(pool, cfg)
 	snaps, err := worker.GetSnapshots(ctx, queryID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get snapshots: %w", err)

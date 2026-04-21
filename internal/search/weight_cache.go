@@ -2,10 +2,12 @@ package search
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -14,6 +16,12 @@ import (
 // without importing the db package's concrete type.
 type pgPooler interface {
 	PgxPool() *pgxpool.Pool
+}
+
+// weightQuerier is the narrow DB interface required by WeightCache.
+// Satisfied by *pgxpool.Pool.
+type weightQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 const weightCacheTTL = 15 * time.Minute
@@ -30,14 +38,22 @@ type weightCacheEntry struct {
 type WeightCache struct {
 	mu      sync.Mutex
 	entries map[string]weightCacheEntry
-	pool    *pgxpool.Pool
+	db      weightQuerier
 }
 
 // NewWeightCache creates a WeightCache backed by pool.
 func NewWeightCache(pool *pgxpool.Pool) *WeightCache {
 	return &WeightCache{
 		entries: make(map[string]weightCacheEntry),
-		pool:    pool,
+		db:      pool,
+	}
+}
+
+// newWeightCacheWithQuerier creates a WeightCache with an injected querier, for testing.
+func newWeightCacheWithQuerier(q weightQuerier) *WeightCache {
+	return &WeightCache{
+		entries: make(map[string]weightCacheEntry),
+		db:      q,
 	}
 }
 
@@ -71,14 +87,14 @@ func (c *WeightCache) Invalidate(project string) {
 // if no row exists or the query fails.
 func (c *WeightCache) loadFromDB(ctx context.Context, project string) Weights {
 	var w Weights
-	err := c.pool.QueryRow(ctx,
+	err := c.db.QueryRow(ctx,
 		`SELECT weight_vector, weight_bm25, weight_recency, weight_precision
 		 FROM weight_config WHERE project = $1`,
 		project,
 	).Scan(&w.Vector, &w.BM25, &w.Recency, &w.Precision)
 	if err != nil {
 		// No row or query error — fall back to compile-time defaults.
-		if err.Error() != "no rows in result set" {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("weight_cache: DB load failed, using defaults",
 				"project", project, "err", err)
 		}

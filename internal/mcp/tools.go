@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"golang.org/x/text/unicode/norm"
+	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -72,7 +73,10 @@ type Config struct {
 	AllowRFC1918SetupToken bool
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
-	PgPool               *pgxpool.Pool
+	PgPool *pgxpool.Pool
+	// testAuditDB is injected in tests to avoid needing a real pgxpool.
+	// When non-nil, audit handlers use this querier instead of PgPool.
+	testAuditDB audit.AuditQuerier
 	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
@@ -1323,11 +1327,23 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// Reset weight_config to defaults for this project: learned weights are
 	// no longer valid after the embedding model changes (#Phase4).
 	// Best-effort — a failure here does not roll back the migration.
+	// A history row is inserted before deletion so the reset is auditable.
 	if cfg.PgPool != nil {
+		histID := uuid.New().String()
+		if _, histErr := cfg.PgPool.Exec(ctx,
+			`INSERT INTO weight_history (id, project, applied_at, weight_vector, weight_bm25, weight_recency, weight_precision, notes, trigger_data)
+			 VALUES ($1, $2, NOW(), 0.45, 0.30, 0.10, 0.15, 'reset on embedder migration', '{"reason":"embedder_migration"}'::jsonb)`,
+			histID, project,
+		); histErr != nil {
+			slog.Warn("memory_migrate_embedder: weight_history insert failed",
+				"project", project, "err", histErr)
+		}
 		if _, delErr := cfg.PgPool.Exec(ctx,
 			`DELETE FROM weight_config WHERE project = $1`, project); delErr != nil {
 			slog.Warn("memory_migrate_embedder: weight_config reset failed",
 				"project", project, "err", delErr)
+		} else {
+			slog.Info("weight_config reset after embedder migration", "project", project)
 		}
 	}
 
