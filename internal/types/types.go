@@ -28,6 +28,12 @@ const (
 	RelTypeUsedIn      = "used_in"
 	RelTypeResolvedBy  = "resolved_by"
 	RelTypeContradicts = "contradicts" // set by sleep consolidation daemon
+
+	// Semantic types from open-brain vocabulary (additive merge, v3.x)
+	RelTypeSupports    = "supports"      // one memory strengthens another's evidence
+	RelTypeDerivedFrom = "derived_from"  // citation chain — memory derived from source
+	RelTypePartOf      = "part_of"       // hierarchical containment
+	RelTypeFollows     = "follows"       // temporal or sequential ordering
 )
 
 // MemoryVersionChangeType constants for memory_versions.change_type.
@@ -85,6 +91,10 @@ var validRelationTypes = map[string]bool{
 	RelTypeUsedIn:      true,
 	RelTypeResolvedBy:  true,
 	RelTypeContradicts: true,
+	RelTypeSupports:    true,
+	RelTypeDerivedFrom: true,
+	RelTypePartOf:      true,
+	RelTypeFollows:     true,
 }
 
 // ValidateMemoryType reports whether s is a valid memory type constant.
