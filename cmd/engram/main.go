@@ -100,17 +100,18 @@ func run() error {
 		return fmt.Errorf("ollama: %w", err)
 	}
 
-	// Dimensional guard: verify embedding model produces the expected vector dimension.
-	// The pgvector column is vector(768). A mismatch causes silent corruption.
-	const expectedDims = 768
+	// Dimensional guard: verify the embedding model returns a non-empty vector.
+	// Schema compatibility (pgvector column width) is enforced at insert time —
+	// a dimension mismatch produces a clear error on the first Store call.
 	testVec, err := embedder.Embed(ctx, "dimensional guard test")
 	if err != nil {
 		return fmt.Errorf("dimensional guard: embed test failed: %w", err)
 	}
-	if len(testVec) != expectedDims {
-		return fmt.Errorf("dimensional guard: embedding model produces %d dimensions, but pgvector column is vector(%d) — use a %d-dimension model or run a schema migration", len(testVec), expectedDims, expectedDims)
+	actualDims := len(testVec)
+	if actualDims == 0 {
+		return fmt.Errorf("dimensional guard: embedding model returned empty vector")
 	}
-	slog.Info("dimensional guard passed", "dims", expectedDims)
+	slog.Info("dimensional guard passed", "dims", actualDims)
 
 	dsn := *databaseURL
 	ollamaURLVal := *ollamaURL
