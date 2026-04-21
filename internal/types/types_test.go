@@ -24,7 +24,7 @@ func TestValidateMemoryType(t *testing.T) {
 }
 
 func TestValidateRelationType(t *testing.T) {
-	valid := []string{"caused_by", "relates_to", "depends_on", "supersedes", "used_in", "resolved_by"}
+	valid := []string{"caused_by", "relates_to", "depends_on", "supersedes", "used_in", "resolved_by", "contradicts", "supports", "derived_from", "part_of", "follows"}
 	for _, v := range valid {
 		if !types.ValidateRelationType(v) {
 			t.Errorf("expected %q to be valid relation type", v)
@@ -182,12 +182,16 @@ func TestMemoryTypeConstants(t *testing.T) {
 
 func TestRelationTypeConstants(t *testing.T) {
 	expected := map[string]string{
-		"caused_by":   types.RelTypeCausedBy,
-		"relates_to":  types.RelTypeRelatesTo,
-		"depends_on":  types.RelTypeDependsOn,
-		"supersedes":  types.RelTypeSupersedes,
-		"used_in":     types.RelTypeUsedIn,
-		"resolved_by": types.RelTypeResolvedBy,
+		"caused_by":    types.RelTypeCausedBy,
+		"relates_to":   types.RelTypeRelatesTo,
+		"depends_on":   types.RelTypeDependsOn,
+		"supersedes":   types.RelTypeSupersedes,
+		"used_in":      types.RelTypeUsedIn,
+		"resolved_by":  types.RelTypeResolvedBy,
+		"supports":     types.RelTypeSupports,
+		"derived_from": types.RelTypeDerivedFrom,
+		"part_of":      types.RelTypePartOf,
+		"follows":      types.RelTypeFollows,
 	}
 	for want, got := range expected {
 		if want != got {
@@ -206,6 +210,7 @@ func TestFailureClassConstants(t *testing.T) {
 		{types.FailureClassStaleRanking, "stale_ranking"},
 		{types.FailureClassMissingContent, "missing_content"},
 		{types.FailureClassScopeMismatch, "scope_mismatch"},
+		{types.FailureClassOther, "other"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -244,6 +249,7 @@ func TestValidateFailureClass(t *testing.T) {
 		types.FailureClassStaleRanking,
 		types.FailureClassMissingContent,
 		types.FailureClassScopeMismatch,
+		types.FailureClassOther,
 	}
 	for _, v := range valid {
 		if !types.ValidateFailureClass(v) {

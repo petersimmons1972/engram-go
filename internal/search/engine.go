@@ -120,15 +120,16 @@ type bestHit struct {
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend    db.Backend
-	embedMu    sync.RWMutex // protects embedder; use getEmbedder() for all reads
-	embedder   embed.Client
-	project    string
-	ollamaURL  string
-	ctx        context.Context // parent lifecycle context — passed to workers via StartWithContext
-	summarizer *summarize.Worker
-	reembedder *reembed.Worker
-	decayer    *DecayWorker
+	backend      db.Backend
+	embedMu      sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedder     embed.Client
+	project      string
+	ollamaURL    string
+	ctx          context.Context // parent lifecycle context — passed to workers via StartWithContext
+	summarizer   *summarize.Worker
+	reembedder   *reembed.Worker
+	decayer      *DecayWorker
+	weightCache  *WeightCache // nil when no pgxpool available (pre-migration or test)
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -162,15 +163,23 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	dec := NewDecayWorker(backend, project, decayInterval)
 	dec.StartWithContext(ctx)
 
+	// Build a weight cache if the backend exposes a pgxpool.
+	// PostgresBackend implements pgPooler; test stubs do not.
+	var wc *WeightCache
+	if pgb, ok := backend.(pgPooler); ok {
+		wc = NewWeightCache(pgb.PgxPool())
+	}
+
 	return &SearchEngine{
-		backend:    backend,
-		embedder:   embedder,
-		project:    project,
-		ollamaURL:  ollamaURL,
-		ctx:        ctx,
-		summarizer: sum,
-		reembedder: reb,
-		decayer:    dec,
+		backend:     backend,
+		embedder:    embedder,
+		project:     project,
+		ollamaURL:   ollamaURL,
+		ctx:         ctx,
+		summarizer:  sum,
+		reembedder:  reb,
+		decayer:     dec,
+		weightCache: wc,
 	}
 }
 
@@ -536,7 +545,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			DynamicImportance:  m.DynamicImportance,
 			RetrievalPrecision: m.RetrievalPrecision,
 		}
-		score := CompositeScore(input)
+		var score float64
+		if e.weightCache != nil {
+			score = CompositeScoreWithWeights(input, e.weightCache.Get(ctx, e.project))
+		} else {
+			score = CompositeScore(input)
+		}
 
 		result := types.SearchResult{
 			Memory:     m,

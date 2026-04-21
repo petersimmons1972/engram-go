@@ -1,4 +1,4 @@
-# All 35 Tools
+# All 43 Tools
 
 You open a session. The codebase is the same as yesterday but you have no memory of it. Before writing a line, you need to know: what decisions did we make about auth? Are there any known bugs in this module? What was the next thing we planned to do?
 
@@ -6,7 +6,7 @@ Three calls answer that — one to recall recent context, one targeted at the wo
 
 <p align="center"><img src="assets/svg/session-workflow.svg" alt="Agent session workflow" width="900"></p>
 
-<p align="center"><img src="assets/svg/tools-reference.svg" alt="35 MCP Tools reference" width="900"></p>
+<p align="center"><img src="assets/svg/tools-reference.svg" alt="43 MCP Tools reference" width="900"></p>
 
 ---
 
@@ -217,12 +217,17 @@ memory_connect(
 
 | Type | Meaning |
 | ---- | ------- |
-| `causes` | This memory led to or produces that one |
 | `caused_by` | This memory exists because of that one |
 | `relates_to` | Adjacent context, no causal direction |
+| `depends_on` | This memory requires that one to be valid |
 | `supersedes` | This memory replaces that one |
-| `supports` | Evidence or reinforcement |
+| `used_in` | This memory is applied in that context |
+| `resolved_by` | Problem resolved by the referenced memory |
 | `contradicts` | Conflict or tension |
+| `supports` | Evidence or reinforcement |
+| `derived_from` | Citation chain — memory derived from another |
+| `part_of` | Hierarchical containment |
+| `follows` | Temporal or sequential ordering |
 
 Weights range from 0.0 to 1.0. Edges start at 1.0 and decay over time. `memory_consolidate` prunes edges below 0.1. `memory_feedback` strengthens edges when the connections they represent prove useful.
 
@@ -476,8 +481,135 @@ Filtering by type is a hard filter — `memory_types=["error"]` returns only err
 
 ---
 
+---
+
+## Decay Audit
+
+Canonical query snapshots let you measure whether your retrieval results drift over time. Register a reference query once; the audit worker runs it on a schedule and compares the ordered result list to the prior snapshot using RBO (rank-biased overlap) and Jaccard similarity.
+
+### memory_audit_add_query
+
+Register a query as a permanent reference point for drift monitoring.
+
+```python
+memory_audit_add_query(
+    project="myapp",
+    query="deployment procedures",
+    description="CI/CD runbook recall"
+)
+# Returns: {id, project, query, description, status: "registered"}
+```
+
+---
+
+### memory_audit_list_queries
+
+List all registered canonical queries for a project.
+
+```python
+memory_audit_list_queries(project="myapp")
+# Returns: {project, queries: [{id, query, description, active, created_at}], count}
+```
+
+---
+
+### memory_audit_deactivate_query
+
+Stop a canonical query from being included in future audit runs. Does not delete the query or its historical snapshots.
+
+```python
+memory_audit_deactivate_query(query_id="cq-abc123")
+# Returns: {query_id, status: "deactivated"}
+```
+
+---
+
+### memory_audit_run
+
+Execute a full audit pass for a project immediately, outside the scheduled tick. Runs all active canonical queries, stores snapshots, and returns per-query drift metrics.
+
+```python
+memory_audit_run(project="myapp")
+# Returns: {project, snapshots: [{query_id, rbo_vs_prev, jaccard_at_5, additions, removals, alert}], count}
+```
+
+`alert: true` when RBO drops below 0.7. The first run for each query establishes the baseline — no comparison score until the second run.
+
+---
+
+### memory_audit_compare
+
+Return the snapshot history for a canonical query, enabling point-in-time comparison of retrieval ranking.
+
+```python
+memory_audit_compare(query_id="cq-abc123", limit=10)
+# Returns: {query_id, snapshots: [{run_at, memory_count, rbo_vs_prev, jaccard_at_5, additions, removals}], count}
+```
+
+---
+
+## Adaptive Weights
+
+### memory_weight_history
+
+Return the current scoring weights for a project and the full history of tuner adjustments that produced them.
+
+```python
+memory_weight_history(project="myapp")
+# Returns:
+# {
+#   project: "myapp",
+#   current_weights: {vector: 0.45, bm25: 0.30, recency: 0.10, precision: 0.15},
+#   history: [{applied_at, weights, trigger_data, notes}],
+#   status: "active" | "no adjustments recorded — tuner fires after 50+ failure events"
+# }
+```
+
+Weights are adjusted automatically by the background tuner based on failure-class event aggregates. Use this tool to audit what changed and why. To reset to compiled defaults, call `memory_weight_history` to confirm the project name, then contact your administrator — reset requires direct database access.
+
+---
+
+## Embedding Evaluation
+
+### memory_models
+
+List available and suggested Ollama embedding models. Shows which models are installed locally and flags the recommended upgrade candidate.
+
+```python
+memory_models()
+# Returns:
+# {
+#   current: "nomic-embed-text",
+#   installed: ["nomic-embed-text:latest"],
+#   suggested: [
+#     {name: "mxbai-embed-large", dimensions: 1024, size_mb: 669, recommended: true, installed: false},
+#     {name: "bge-m3", dimensions: 1024, size_mb: 1200, recommended: false, installed: false}
+#   ]
+# }
+```
+
+---
+
+### memory_embedding_eval
+
+Compare two Ollama embedding models against your actual stored memories. Pulls canonical audit queries (or recent ones if none registered), runs both models, and returns a side-by-side comparison. Auto-pulls any model not yet present in Ollama.
+
+```python
+memory_embedding_eval(
+    project="myapp",
+    model_a="nomic-embed-text",
+    model_b="mxbai-embed-large",  # optional — defaults to first recommended model
+    query_count=20
+)
+# Returns: {model_a_stats, model_b_stats, overlap_scores, recommendation}
+```
+
+This tool is read-only — it does not migrate any data. Review the output, then use `memory_migrate_embedder` if the results justify switching models.
+
+---
+
 **Previous:** [Connecting Your IDE](connecting.md) | **Next:** [Claude Advisor](claude-advisor.md)
 
 ---
 
-*35 tools total: 30 registered unconditionally + 5 AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) when `ANTHROPIC_API_KEY` is set.*
+*43 tools total: 38 registered unconditionally + 5 AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) when `ANTHROPIC_API_KEY` is set.*

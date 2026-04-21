@@ -102,6 +102,12 @@ func (b *PostgresBackend) Pool() *pgxpool.Pool {
 	return b.pool
 }
 
+// PgxPool satisfies search.pgPooler — exposes the underlying pool so the
+// search engine's weight cache can load per-project weights from weight_config.
+func (b *PostgresBackend) PgxPool() *pgxpool.Pool {
+	return b.pool
+}
+
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 	// Serialize concurrent project initialization with a per-project advisory lock (#105).
 	// Two backends for the same project initializing simultaneously would both pass the

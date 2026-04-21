@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -24,6 +25,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/weight"
 
 	// Register pprof HTTP handlers at /debug/pprof/ (localhost only).
 	_ "net/http/pprof"
@@ -58,6 +60,8 @@ func run() error {
 	apiKey := envOr("ENGRAM_API_KEY", "")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
 	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = default 8h)")
+	auditInterval := fs.Duration("audit-interval", envDuration("ENGRAM_AUDIT_INTERVAL", 6*time.Hour), "How often the decay audit worker runs (default 6h)")
+	weightInterval := fs.Duration("weight-interval", envDuration("ENGRAM_WEIGHT_INTERVAL", 24*time.Hour), "How often the weight tuner worker runs (default 24h)")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -100,17 +104,18 @@ func run() error {
 		return fmt.Errorf("ollama: %w", err)
 	}
 
-	// Dimensional guard: verify embedding model produces the expected vector dimension.
-	// The pgvector column is vector(768). A mismatch causes silent corruption.
-	const expectedDims = 768
+	// Dimensional guard: verify the embedding model returns a non-empty vector.
+	// Schema compatibility (pgvector column width) is enforced at insert time —
+	// a dimension mismatch produces a clear error on the first Store call.
 	testVec, err := embedder.Embed(ctx, "dimensional guard test")
 	if err != nil {
 		return fmt.Errorf("dimensional guard: embed test failed: %w", err)
 	}
-	if len(testVec) != expectedDims {
-		return fmt.Errorf("dimensional guard: embedding model produces %d dimensions, but pgvector column is vector(%d) — use a %d-dimension model or run a schema migration", len(testVec), expectedDims, expectedDims)
+	actualDims := len(testVec)
+	if actualDims == 0 {
+		return fmt.Errorf("dimensional guard: embedding model returned empty vector")
 	}
-	slog.Info("dimensional guard passed", "dims", expectedDims)
+	slog.Info("dimensional guard passed", "dims", actualDims)
 
 	dsn := *databaseURL
 	ollamaURLVal := *ollamaURL
@@ -147,6 +152,10 @@ func run() error {
 	defer retentionBackend.Close()
 	go retentionBackend.StartRetentionWorker(ctx)
 
+	// Audit and weight tuner workers use the shared retention backend pool.
+	// A recaller adapter is wired after the pool is constructed below.
+	sharedPool := retentionBackend.Pool()
+
 	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(ctx, project, dsn)
 		if err != nil {
@@ -161,6 +170,7 @@ func run() error {
 
 	cfg := internalmcp.Config{
 		OllamaURL:                *ollamaURL,
+		EmbedModel:               *embedModel,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
 		ClaudeEnabled:            cc != nil,
@@ -176,8 +186,20 @@ func run() error {
 		RawDocumentMaxBytes:      envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024),
 		RAGMaxTokens:             envInt("ENGRAM_RAG_MAX_TOKENS", 4096),
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
+		PgPool:                   sharedPool,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
+
+	// Start audit worker — monitors ranking drift by re-running canonical queries.
+	auditRecaller := &auditRecallerAdapter{pool: pool}
+	auditWorker := audit.NewAuditWorker(sharedPool, auditRecaller, *embedModel, *auditInterval)
+	go auditWorker.Run(ctx)
+	slog.Info("audit worker started", "interval", auditInterval.String())
+
+	// Start weight tuner worker — adjusts per-project weights on dominant failure classes.
+	tunerWorker := weight.NewTunerWorker(sharedPool, *weightInterval)
+	go tunerWorker.Run(ctx)
+	slog.Info("weight tuner started", "interval", weightInterval.String())
 	if cc != nil {
 		srv.SetClaudeClient(cc)
 		slog.Info("claude advisor enabled",
@@ -316,4 +338,28 @@ func (a *entityDBAdapter) GetEntitiesByProject(ctx context.Context, project stri
 
 func (a *entityDBAdapter) UpsertEntity(ctx context.Context, e *entity.Entity) (string, error) {
 	return a.backend.UpsertEntity(ctx, e)
+}
+
+// auditRecallerAdapter adapts the engine pool to the audit.Recaller interface.
+type auditRecallerAdapter struct {
+	pool *internalmcp.EnginePool
+}
+
+func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
+	h, err := a.pool.Get(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("audit recaller: get engine for project %q: %w", project, err)
+	}
+	if h == nil || h.Engine == nil {
+		return nil, fmt.Errorf("audit recaller: no engine for project %q", project)
+	}
+	results, err := h.Engine.Recall(ctx, query, topK, "id_only")
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(results))
+	for i, r := range results {
+		ids[i] = r.Memory.ID
+	}
+	return ids, nil
 }

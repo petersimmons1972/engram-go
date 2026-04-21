@@ -468,7 +468,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryList(ctx, pool, req)
 			}},
-		{"memory_connect", "Create a directed relationship between two memories",
+		{"memory_connect", "Create a directed relationship between two memories. relation_type values: caused_by, relates_to, depends_on, supersedes, used_in, resolved_by, contradicts, supports, derived_from, part_of, follows",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryConnect(ctx, pool, req)
 			}},
@@ -500,7 +500,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryStatus(ctx, pool, req)
 			}},
-		{"memory_feedback", "Record positive access signal for memories",
+		{"memory_feedback", "Record retrieval feedback. failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryFeedback(ctx, pool, req)
 			}},
@@ -537,7 +537,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryVerify(ctx, pool, req)
 			}},
-		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding",
+		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding. Also resets any learned adaptive weights for the project to compile-time defaults.",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryMigrateEmbedder(ctx, pool, req, cfg)
 			}},
@@ -590,10 +590,67 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleVerifyBeforeActing(ctx, pool, req)
 			}},
+		// Phase 5: Pluggable Embedder — model registry and eval
+		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryModels(ctx, pool, req, cfg)
+			}},
+		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryEmbeddingEval(ctx, pool, req, cfg)
+			}},
 	}
 
 	for _, t := range tools {
 		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), t.handler)
+	}
+
+	// Audit and weight tools are always available when PgPool is configured.
+	{
+		pool := s.pool
+		cfg := s.cfg
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_add_query",
+				mcpgo.WithDescription("Register a canonical query for retrieval drift monitoring")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditAddQuery(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_list_queries",
+				mcpgo.WithDescription("List canonical queries registered for drift monitoring in a project")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditListQueries(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_deactivate_query",
+				mcpgo.WithDescription("Deactivate a canonical query (stops future drift snapshots)")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditDeactivateQuery(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_run",
+				mcpgo.WithDescription("Run a decay audit pass for a project immediately and return snapshot summaries")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditRun(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_audit_compare",
+				mcpgo.WithDescription("Compare retrieval snapshots for a canonical query to detect ranking drift")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryAuditCompare(ctx, pool, req, cfg)
+			},
+		)
+		s.mcp.AddTool(
+			mcpgo.NewTool("memory_weight_history",
+				mcpgo.WithDescription("Return current retrieval weights and tuning history for a project")),
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryWeightHistory(ctx, pool, req, cfg)
+			},
+		)
 	}
 
 	// memory_diagnose is always available — no Claude required.
