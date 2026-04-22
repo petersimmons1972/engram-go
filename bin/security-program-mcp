@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# MCP server launcher for Claude Code
+export PATH="$HOME/.pyenv/shims:/home/linuxbrew/.linuxbrew/bin:$PATH"
+cd /home/psimmons/projects/security-program
+exec uv run security-program
