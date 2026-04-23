@@ -182,6 +182,8 @@ func (s *stubBackend) DeleteMemoryAtomic(_ context.Context, _, _ string, _ bool)
 	return false, nil
 }
 
+func (s *stubBackend) DeleteProject(_ context.Context, _ string) (int64, error) { return 0, nil }
+
 func (s *stubBackend) MergeMemoriesAtomic(_ context.Context, _, _, _, _ string) error { return nil }
 
 func (s *stubBackend) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error) {

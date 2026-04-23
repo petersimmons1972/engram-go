@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -624,4 +625,18 @@ func rowToChunk(row pgx.CollectableRow) (*types.Chunk, error) {
 		ChunkType:      chunkType,
 		LastMatched:    r.LastMatched,
 	}, nil
+}
+
+// isUndefinedTable returns true when err is a PostgreSQL "undefined_table"
+// error (SQLSTATE 42P01). Used by DeleteProject to gracefully skip optional
+// tables that may not be present in all schema versions.
+func isUndefinedTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if ok := errors.As(err, &pgErr); ok {
+		return pgErr.Code == "42P01"
+	}
+	return false
 }

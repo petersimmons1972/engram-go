@@ -650,3 +650,70 @@ func (b *PostgresBackend) ClearSummaries(ctx context.Context, project string) (i
 	}
 	return int(result.RowsAffected()), nil
 }
+
+// DeleteProject hard-deletes all memories and associated data for a project
+// in a single transaction. Returns the number of memories deleted.
+// Used by the eval harness to clean up per-question isolation projects.
+func (b *PostgresBackend) DeleteProject(ctx context.Context, project string) (int64, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Delete per-memory dependent rows first (FK constraints on memories.id).
+	memoryDeps := []string{
+		"DELETE FROM chunks WHERE memory_id IN (SELECT id FROM memories WHERE project=$1)",
+		"DELETE FROM relationships WHERE source_id IN (SELECT id FROM memories WHERE project=$1) OR target_id IN (SELECT id FROM memories WHERE project=$1)",
+		"DELETE FROM memory_versions WHERE project=$1",
+	}
+	for _, q := range memoryDeps {
+		if _, err := tx.Exec(ctx, q, project); err != nil {
+			return 0, fmt.Errorf("DeleteProject dep cleanup: %w", err)
+		}
+	}
+
+	// Count and delete the memories themselves.
+	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE project=$1", project)
+	if err != nil {
+		return 0, fmt.Errorf("DeleteProject memories: %w", err)
+	}
+	deleted := tag.RowsAffected()
+
+	// Delete project-scoped rows from remaining tables.
+	// Tables that may or may not exist in all deployments use IF EXISTS guards
+	// via DO $$ blocks to avoid errors on older schemas.
+	projectScoped := []string{
+		"DELETE FROM project_meta WHERE project=$1",
+		"DELETE FROM weight_config WHERE project=$1",
+		"DELETE FROM weight_history WHERE project=$1",
+		"DELETE FROM retrieval_events WHERE project=$1",
+		"DELETE FROM audit_canonical_queries WHERE project=$1",
+		"DELETE FROM audit_snapshots WHERE project=$1",
+		"DELETE FROM episodes WHERE project=$1",
+	}
+	for _, q := range projectScoped {
+		if _, err := tx.Exec(ctx, q, project); err != nil {
+			return 0, fmt.Errorf("DeleteProject project cleanup: %w", err)
+		}
+	}
+
+	// Optional tables (present only when entity-extraction migration has run).
+	optionalScoped := []string{
+		"DELETE FROM canonical_entities WHERE project=$1",
+		"DELETE FROM entity_extraction_jobs WHERE project=$1",
+	}
+	for _, q := range optionalScoped {
+		if _, err := tx.Exec(ctx, q, project); err != nil {
+			// Ignore "relation does not exist" — table simply not migrated yet.
+			if !isUndefinedTable(err) {
+				return 0, fmt.Errorf("DeleteProject optional cleanup: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}

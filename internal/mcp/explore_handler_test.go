@@ -47,6 +47,7 @@ func (noopBackend) DeleteMemory(_ context.Context, _ string) (bool, error)      
 func (noopBackend) DeleteMemoryAtomic(_ context.Context, _, _ string, _ bool) (bool, error) {
 	return false, nil
 }
+func (noopBackend) DeleteProject(_ context.Context, _ string) (int64, error) { return 0, nil }
 func (noopBackend) MergeMemoriesAtomic(_ context.Context, _, _, _, _ string) error { return nil }
 func (noopBackend) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error) {
 	return nil, nil
