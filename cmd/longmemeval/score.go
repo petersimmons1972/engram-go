@@ -35,6 +35,10 @@ func runScore(cfg *Config) {
 	if err != nil {
 		log.Fatalf("read run checkpoint: %v", err)
 	}
+	runMap := make(map[string]longmemeval.RunEntry, len(runEntries))
+	for _, r := range runEntries {
+		runMap[r.QuestionID] = r
+	}
 
 	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-score.jsonl")
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
@@ -51,6 +55,7 @@ func runScore(cfg *Config) {
 		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
+	// Buffer sized to full input so pre-load before workers start cannot block.
 	work := make(chan longmemeval.RunEntry, len(runEntries))
 	for _, e := range runEntries {
 		if e.Status == "done" && !skip[e.QuestionID] {
@@ -76,7 +81,7 @@ func runScore(cfg *Config) {
 	if err != nil {
 		log.Fatalf("read final scores: %v", err)
 	}
-	writeOutputs(cfg, itemMap, ingestMap, allScores)
+	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
 	log.Printf("score: complete")
 }
 
@@ -111,8 +116,6 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 			QuestionID:   item.QuestionID,
 			QuestionType: item.QuestionType,
 			Hypothesis:   run.Hypothesis,
-			ScoreLabel:   result.Label,
-			Explanation:  result.Explanation,
 			Status:       "error",
 			Error:        err.Error(),
 		}
@@ -127,9 +130,9 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 	}
 }
 
-func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, scores []longmemeval.ScoreEntry) {
+func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
 	writeHypotheses(cfg, scores)
-	writeRetrievalLog(cfg, itemMap, ingestMap, scores)
+	writeRetrievalLog(cfg, itemMap, ingestMap, runMap, scores)
 	writeScoreReport(cfg, scores)
 }
 
@@ -142,19 +145,15 @@ func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, s := range scores {
-		_ = enc.Encode(longmemeval.HypothesisLine{QuestionID: s.QuestionID, Hypothesis: s.Hypothesis})
+		if err := enc.Encode(longmemeval.HypothesisLine{QuestionID: s.QuestionID, Hypothesis: s.Hypothesis}); err != nil {
+			log.Printf("WARN writeHypotheses encode [%s]: %v", s.QuestionID, err)
+			break
+		}
 	}
 	log.Printf("wrote %s", filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
 }
 
-func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, scores []longmemeval.ScoreEntry) {
-	// Build a run-entry map from the run checkpoint for retrieved IDs.
-	runEntries, _ := longmemeval.ReadAllRun(filepath.Join(cfg.OutDir, "checkpoint-run.jsonl"))
-	runMap := make(map[string]longmemeval.RunEntry, len(runEntries))
-	for _, r := range runEntries {
-		runMap[r.QuestionID] = r
-	}
-
+func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
 	f, err := os.Create(filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 	if err != nil {
 		log.Printf("WARN write retrieval_log.jsonl: %v", err)
@@ -169,7 +168,7 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 			continue
 		}
 		// Skip abstention questions per LongMemEval convention.
-		if strings.Contains(s.QuestionID, "_abs") {
+		if strings.HasSuffix(s.QuestionID, "_abs") {
 			continue
 		}
 		ingest, ok := ingestMap[s.QuestionID]
@@ -186,7 +185,10 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 		var entry longmemeval.RetrievalLogEntry
 		entry.QuestionID = s.QuestionID
 		entry.RetrievalResults.Metrics.Session = metrics
-		_ = enc.Encode(entry)
+		if err := enc.Encode(entry); err != nil {
+			log.Printf("WARN writeRetrievalLog encode [%s]: %v", entry.QuestionID, err)
+			break
+		}
 	}
 	log.Printf("wrote %s", filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 }

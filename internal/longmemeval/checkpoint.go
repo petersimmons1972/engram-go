@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 )
 
@@ -12,6 +13,7 @@ import (
 func WriteCheckpoint[T any](path string, ch <-chan T) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
+		log.Printf("WARN WriteCheckpoint: open %s: %v — all entries will be lost", path, err)
 		for range ch {
 		}
 		return
