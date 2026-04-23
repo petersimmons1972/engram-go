@@ -73,7 +73,7 @@ func main() {
 	domain := envOr("INFISICAL_DOMAIN", "https://infisical.petersimmons.com")
 	projectID := envOr("INFISICAL_PROJECT_ID", "f49c5b01-4bd1-4883-afbd-51c1fef53a2f")
 	env := envOr("INFISICAL_ENV", "prod")
-	secretPath := envOr("INFISICAL_SECRET_PATH", "/engram")
+	secretPath := envOr("INFISICAL_SECRET_PATH", "/apps/engram")
 
 	// Validate Infisical domain to prevent supply-chain redirect attacks (#135).
 	if !isValidInfisicalDomain(domain) {
