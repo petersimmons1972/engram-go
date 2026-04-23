@@ -480,6 +480,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryForget(ctx, pool, req)
 			}},
+		{"memory_delete_project", "Hard-delete ALL memories and associated data for a project. Irreversible. Intended for eval-harness cleanup.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryDeleteProject(ctx, pool, req)
+			}},
 		{"memory_history", "Return the full version chain for a memory",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryHistory(ctx, pool, req)

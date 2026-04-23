@@ -1007,6 +1007,30 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	return toolResult(map[string]any{"deleted": deleted, "memory_id": id})
 }
 
+// handleMemoryDeleteProject hard-deletes all memories and associated data for
+// a project. Intended for eval-harness cleanup; not reversible.
+func handleMemoryDeleteProject(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	// Check for the project key before calling getProject, which rejects empty
+	// strings as a validation error rather than a caller error.
+	if raw := getString(args, "project", ""); strings.TrimSpace(raw) == "" {
+		return mcpgo.NewToolResultError("project is required"), nil
+	}
+	project, err := getProject(args, "")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	deleted, err := h.Engine.Backend().DeleteProject(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("delete project %q: %w", project, err)
+	}
+	return toolResult(map[string]any{"project": project, "deleted": deleted})
+}
+
 // handleMemoryHistory returns the version chain for a memory.
 func handleMemoryHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
