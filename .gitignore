@@ -8,3 +8,4 @@ infisical/infisical-bin
 /engram-*
 cover.out
 .claude/
+testdata/longmemeval/*.json
