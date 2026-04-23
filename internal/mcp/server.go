@@ -43,13 +43,14 @@ func newRateLimiter(ctx context.Context) *rateLimiter {
 }
 
 // allow returns true if the request from ip should be allowed.
-// Limit: 60 requests/minute with a burst of 20.
+// Limit: 50 req/s sustained, burst 200. Generous for local/LAN use; the server
+// only binds to 127.0.0.1 by default so external abuse is not a concern.
 func (rl *rateLimiter) allow(ip string) bool {
 	rl.mu.Lock()
 	e, ok := rl.clients[ip]
 	if !ok {
 		e = &rateLimiterEntry{
-			limiter: rate.NewLimiter(rate.Every(time.Second), 20), // 1 req/s sustained, burst 20
+			limiter: rate.NewLimiter(50, 200), // 50 req/s sustained, burst 200
 		}
 		rl.clients[ip] = e
 	}
