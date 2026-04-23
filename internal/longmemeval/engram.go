@@ -106,6 +106,76 @@ func (c *Client) store(ctx context.Context, project, content string, tags []stri
 	return resp.ID, nil
 }
 
+// BatchItem is one entry for StoreBatch.
+type BatchItem struct {
+	Content string
+	Tags    []string
+}
+
+// StoreBatch stores up to 100 sessions in a single MCP call and returns their IDs
+// in the same order as items. Uses memory_store_batch to reduce HTTP round-trips.
+func (c *Client) StoreBatch(ctx context.Context, project string, items []BatchItem) ([]string, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.retries; attempt++ {
+		ids, err := c.storeBatch(ctx, project, items)
+		if err == nil {
+			return ids, nil
+		}
+		lastErr = err
+		if attempt < c.retries {
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (c *Client) storeBatch(ctx context.Context, project string, items []BatchItem) ([]string, error) {
+	memories := make([]any, len(items))
+	for i, item := range items {
+		memories[i] = map[string]any{
+			"content": item.Content,
+			"tags":    item.Tags,
+		}
+	}
+	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "memory_store_batch",
+			Arguments: map[string]any{
+				"project":  project,
+				"memories": memories,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.IsError {
+		return nil, toolErrorMsg(result, "memory_store_batch")
+	}
+	if len(result.Content) == 0 {
+		return nil, fmt.Errorf("memory_store_batch returned no content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		return nil, fmt.Errorf("unexpected content type from memory_store_batch: %T", result.Content[0])
+	}
+	var resp struct {
+		IDs   []string `json:"ids"`
+		Count int      `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		return nil, fmt.Errorf("parse store_batch response: %w", err)
+	}
+	if len(resp.IDs) != len(items) {
+		return nil, fmt.Errorf("memory_store_batch returned %d ids for %d items", len(resp.IDs), len(items))
+	}
+	return resp.IDs, nil
+}
+
 // Recall calls memory_recall and returns ranked memory IDs.
 // The server returns {"results":[{"memory":{"id":"..."},"score":...},...]}
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {

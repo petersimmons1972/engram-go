@@ -73,6 +73,8 @@ func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmeme
 	}
 }
 
+const ingestBatchSize = 100
+
 func ingestOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, item longmemeval.Item) (entry longmemeval.IngestEntry) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -85,8 +87,13 @@ func ingestOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, 
 	}()
 
 	project := projectName(cfg.RunID, item.QuestionID)
-	memoryMap := make(map[string]string, len(item.HaystackSessions))
 
+	// Collect non-empty sessions with their IDs.
+	type sessionEntry struct {
+		sessionID string
+		item      longmemeval.BatchItem
+	}
+	var sessions []sessionEntry
 	for i, session := range item.HaystackSessions {
 		if i >= len(item.HaystackSessionIDs) {
 			break
@@ -96,17 +103,35 @@ func ingestOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, 
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
-		tags := []string{"lme", "sid:" + sessionID}
-		memID, err := mcpClient.Store(ctx, project, content, tags)
+		sessions = append(sessions, sessionEntry{
+			sessionID: sessionID,
+			item:      longmemeval.BatchItem{Content: content, Tags: []string{"lme", "sid:" + sessionID}},
+		})
+	}
+
+	memoryMap := make(map[string]string, len(sessions))
+	for start := 0; start < len(sessions); start += ingestBatchSize {
+		end := start + ingestBatchSize
+		if end > len(sessions) {
+			end = len(sessions)
+		}
+		batch := sessions[start:end]
+		batchItems := make([]longmemeval.BatchItem, len(batch))
+		for i, s := range batch {
+			batchItems[i] = s.item
+		}
+		ids, err := mcpClient.StoreBatch(ctx, project, batchItems)
 		if err != nil {
 			return longmemeval.IngestEntry{
 				QuestionID: item.QuestionID,
 				Project:    project,
 				Status:     "error",
-				Error:      fmt.Sprintf("store session %s: %v", sessionID, err),
+				Error:      fmt.Sprintf("store_batch offset %d: %v", start, err),
 			}
 		}
-		memoryMap[memID] = sessionID
+		for i, id := range ids {
+			memoryMap[id] = batch[i].sessionID
+		}
 	}
 
 	return longmemeval.IngestEntry{
