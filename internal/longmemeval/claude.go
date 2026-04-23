@@ -14,14 +14,26 @@ const generateTimeout = 90 * time.Second
 
 // Generate calls `claude --print prompt` and returns trimmed stdout.
 // retries is the number of additional attempts on failure (0 = try once).
+// On failure a backoff sleep (30s, 60s, 120s) is inserted between attempts
+// so transient API rate limits have a chance to clear before retrying.
 func Generate(ctx context.Context, prompt string, retries int) (string, error) {
 	var lastErr error
+	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
 		out, err := runClaude(ctx, prompt)
 		if err == nil {
 			return out, nil
 		}
 		lastErr = err
+		if attempt >= retries {
+			break
+		}
+		wait := backoffs[attempt%len(backoffs)]
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(wait):
+		}
 	}
 	return "", lastErr
 }
@@ -34,14 +46,31 @@ func runClaude(ctx context.Context, prompt string) (string, error) {
 	// retrieved contexts (~10 sessions × ~7 KB = ~70 KB prompts).
 	cmd := exec.CommandContext(tctx, "claude", "--print")
 	cmd.Stdin = strings.NewReader(prompt)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	raw, err := cmd.Output()
 	if err != nil {
 		if tctx.Err() != nil {
 			return "", fmt.Errorf("claude --print timed out after %s", generateTimeout)
 		}
+		stderrSnippet := strings.TrimSpace(stderr.String())
+		if len(stderrSnippet) > 200 {
+			stderrSnippet = stderrSnippet[:200] + "…"
+		}
+		if stderrSnippet != "" {
+			return "", fmt.Errorf("claude --print: %w: %s", err, stderrSnippet)
+		}
 		return "", fmt.Errorf("claude --print: %w", err)
 	}
-	return strings.TrimSpace(string(raw)), nil
+	// Sometimes claude prints usage/rate-limit messages to stdout instead of
+	// stderr and still exits 0. Treat those as failures so the retry loop
+	// kicks in instead of returning a useless "API Error" string as the
+	// hypothesis.
+	out := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(out, "API Error") {
+		return "", fmt.Errorf("claude --print: %s", out)
+	}
+	return out, nil
 }
 
 // GenerationPrompt builds the prompt for answer generation.
