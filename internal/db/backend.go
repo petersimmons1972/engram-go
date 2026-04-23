@@ -55,6 +55,10 @@ type Backend interface {
 	// force=true bypasses the immutability check (rollback path only).
 	// Prefer SoftDeleteMemory for all caller-initiated deletes.
 	DeleteMemoryAtomic(ctx context.Context, project, id string, force bool) (bool, error)
+	// DeleteProject hard-deletes all memories and associated data for a project
+	// in a single transaction. Returns the number of memories deleted.
+	// Used by the eval harness to clean up per-question isolation projects.
+	DeleteProject(ctx context.Context, project string) (int64, error)
 	// MergeMemoriesAtomic updates winnerID content (if newContent non-empty) and
 	// deletes loserID in a single transaction. Prevents partial-merge state on crash.
 	MergeMemoriesAtomic(ctx context.Context, project, winnerID, loserID, newContent string) error
