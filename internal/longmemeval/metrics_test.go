@@ -57,3 +57,44 @@ func TestSessionIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionContentIncludesAllRoles(t *testing.T) {
+	turns := []longmemeval.Turn{
+		{Role: "user", Content: "What's the best ramen place?"},
+		{Role: "assistant", Content: "Ippudo in the East Village is excellent."},
+		{Role: "user", Content: "Thanks!"},
+	}
+	got := longmemeval.SessionContent(turns)
+
+	// Must include the assistant turn — single-session-assistant questions
+	// have their gold answers in assistant replies.
+	if !contains(got, "Ippudo") {
+		t.Errorf("SessionContent dropped assistant turn; got %q", got)
+	}
+	if !contains(got, "ramen") {
+		t.Errorf("SessionContent dropped user turn; got %q", got)
+	}
+	if !contains(got, "assistant:") || !contains(got, "user:") {
+		t.Errorf("SessionContent missing role labels; got %q", got)
+	}
+}
+
+func TestSessionContentEmptyTurnsSkipped(t *testing.T) {
+	turns := []longmemeval.Turn{
+		{Role: "user", Content: ""},
+		{Role: "assistant", Content: "hello"},
+	}
+	got := longmemeval.SessionContent(turns)
+	if !contains(got, "hello") {
+		t.Errorf("expected assistant content, got %q", got)
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

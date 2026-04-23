@@ -298,16 +298,27 @@ func (c *Client) Close() error {
 	return c.mcp.Close()
 }
 
-// SessionContent concatenates the user-role turns of a session into a single string.
+// SessionContent concatenates all turns of a session into a single string,
+// preserving role labels so the retriever and generator can distinguish
+// user questions from assistant responses. Dropping assistant turns would
+// make single-session-assistant questions unanswerable (the gold content
+// lives in the assistant's reply).
 func SessionContent(turns []Turn) string {
 	var sb strings.Builder
 	for _, t := range turns {
-		if t.Role == "user" {
-			if sb.Len() > 0 {
-				sb.WriteByte(' ')
-			}
-			sb.WriteString(t.Content)
+		if t.Content == "" {
+			continue
 		}
+		if sb.Len() > 0 {
+			sb.WriteByte('\n')
+		}
+		role := t.Role
+		if role == "" {
+			role = "user"
+		}
+		sb.WriteString(role)
+		sb.WriteString(": ")
+		sb.WriteString(t.Content)
 	}
 	return sb.String()
 }
