@@ -110,7 +110,7 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 		}
 	}()
 
-	result, err := longmemeval.Score(ctx, item.Question, item.Answer, run.Hypothesis, cfg.Retries)
+	result, err := longmemeval.Score(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.Retries)
 	if err != nil {
 		return longmemeval.ScoreEntry{
 			QuestionID:   item.QuestionID,

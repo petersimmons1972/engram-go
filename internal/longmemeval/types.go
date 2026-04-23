@@ -1,12 +1,35 @@
 // Package longmemeval implements the LongMemEval benchmark harness for engram-go.
 package longmemeval
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// flexString unmarshals JSON strings or numbers as a Go string.
+// LongMemEval has 32/500 questions with numeric answers (e.g. 120).
+type flexString string
+
+func (f *flexString) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = flexString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexString(n.String())
+		return nil
+	}
+	return fmt.Errorf("flexString: cannot unmarshal %s", b)
+}
+
 // Item is one entry from the LongMemEval dataset JSON file.
 type Item struct {
-	QuestionID         string   `json:"question_id"`
-	QuestionType       string   `json:"question_type"`
-	Question           string   `json:"question"`
-	Answer             string   `json:"answer"`
+	QuestionID         string     `json:"question_id"`
+	QuestionType       string     `json:"question_type"`
+	Question           string     `json:"question"`
+	Answer             flexString `json:"answer"`
 	QuestionDate       string   `json:"question_date"`
 	HaystackSessionIDs []string `json:"haystack_session_ids"`
 	HaystackDates      []string `json:"haystack_dates"`
