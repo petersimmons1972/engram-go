@@ -1,14 +1,78 @@
 package search
 
-import "math"
+import (
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"sync"
+)
 
 const (
-	weightVector    = 0.45  // was 0.50; reduced to make room for precision signal
-	weightBM25      = 0.30  // was 0.35
-	weightRecency   = 0.10  // was 0.15
-	weightPrecision = 0.15  // new: retrieval outcome precision
-	decayRate       = 0.01  // per hour
+	weightVector    = 0.45 // was 0.50; reduced to make room for precision signal
+	weightBM25      = 0.30 // was 0.35
+	weightRecency   = 0.10 // was 0.15
+	weightPrecision = 0.15 // new: retrieval outcome precision
+	decayRate       = 0.01 // per hour — canonical default, used when env var is absent or invalid
 )
+
+// decayConfig holds the resolved env-var knobs for recency decay.
+// It is populated exactly once via decayConfigOnce.
+type decayConfig struct {
+	rate  float64 // ENGRAM_DECAY_RATE_PER_HOUR; default decayRate
+	floor float64 // ENGRAM_DECAY_FLOOR; default 0.0 (no floor)
+}
+
+var (
+	decayConfigOnce sync.Once
+	resolvedDecay   decayConfig
+)
+
+// loadDecayConfig reads ENGRAM_DECAY_RATE_PER_HOUR and ENGRAM_DECAY_FLOOR,
+// applies sanity bounds, and populates resolvedDecay. Called exactly once.
+func loadDecayConfig() {
+	cfg := decayConfig{
+		rate:  decayRate,
+		floor: 0.0,
+	}
+
+	if raw := os.Getenv("ENGRAM_DECAY_RATE_PER_HOUR"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: invalid float, using default",
+				"value", raw, "default", decayRate)
+		} else if v <= 0 {
+			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: must be positive, using default",
+				"value", v, "default", decayRate)
+		} else if v > 10 {
+			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: value >10 is unusable, using default",
+				"value", v, "default", decayRate)
+		} else {
+			cfg.rate = v
+		}
+	}
+
+	if raw := os.Getenv("ENGRAM_DECAY_FLOOR"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			slog.Warn("ENGRAM_DECAY_FLOOR: invalid float, using default 0.0",
+				"value", raw)
+		} else if v < 0 || v > 1 {
+			slog.Warn("ENGRAM_DECAY_FLOOR: must be in [0,1], using default 0.0",
+				"value", v)
+		} else {
+			cfg.floor = v
+		}
+	}
+
+	resolvedDecay = cfg
+}
+
+// decayCfg returns the resolved decay configuration, loading it on first call.
+func decayCfg() decayConfig {
+	decayConfigOnce.Do(loadDecayConfig)
+	return resolvedDecay
+}
 
 // Weights holds one complete set of composite scoring weights.
 // The compile-time constants above are the canonical defaults.
@@ -40,9 +104,17 @@ type ScoreInput struct {
 	RetrievalPrecision *float64 // times_useful/times_retrieved; nil during cold start (<5 retrievals) → treated as 0.5
 }
 
-// RecencyDecay returns exp(-decayRate * hours). Result is in (0,1].
+// RecencyDecay returns exp(-rate * hours), optionally clamped by a floor.
+// The rate defaults to 0.01/hr; override via ENGRAM_DECAY_RATE_PER_HOUR.
+// The floor defaults to 0 (no floor); override via ENGRAM_DECAY_FLOOR.
+// When neither env var is set the result is exactly math.Exp(-0.01 * hours).
 func RecencyDecay(hoursSince float64) float64 {
-	return math.Exp(-decayRate * hoursSince)
+	cfg := decayCfg()
+	v := math.Exp(-cfg.rate * hoursSince)
+	if cfg.floor > 0 {
+		v = math.Max(cfg.floor, v)
+	}
+	return v
 }
 
 // ImportanceBoost returns a multiplier reflecting memory importance.
