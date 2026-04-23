@@ -11,24 +11,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-// oneConvJSON builds a minimal single-conversation JSON array wrapping the
-// provided mapping block and current_node value.
-func oneConvJSON(title string, createTime, updateTime float64, mapping, currentNode string) string {
-	return `[{"title":` + `"` + title + `"` +
-		`,"create_time":` + formatFloat(createTime) +
-		`,"update_time":` + formatFloat(updateTime) +
-		`,"mapping":` + mapping +
-		`,"current_node":"` + currentNode + `"` +
-		`}]`
-}
-
-func formatFloat(f float64) string {
-	// Use strconv in a helper — but we can just embed the literals in test bodies.
-	// This is only used in the helper above where callers pass string-representable values.
-	_ = f
-	return "0" // placeholder; actual tests embed JSON directly.
-}
-
 // ---------------------------------------------------------------------------
 // TestParse_HappyPath: 1 conversation, 2-message linear path → 1 memory.
 // ---------------------------------------------------------------------------
