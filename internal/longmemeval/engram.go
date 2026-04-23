@@ -18,6 +18,15 @@ type Client struct {
 	retries int
 }
 
+func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
+	if len(result.Content) > 0 {
+		if tc, ok := result.Content[0].(mcp.TextContent); ok {
+			return fmt.Errorf("%s tool error: %s", toolName, tc.Text)
+		}
+	}
+	return fmt.Errorf("%s tool error", toolName)
+}
+
 // Connect creates an authenticated MCP SSE client connected to serverURL.
 func Connect(ctx context.Context, serverURL, apiKey string) (*Client, error) {
 	sseURL := strings.TrimRight(serverURL, "/") + "/sse"
@@ -54,7 +63,11 @@ func (c *Client) Store(ctx context.Context, project, content string, tags []stri
 		}
 		lastErr = err
 		if attempt < c.retries {
-			time.Sleep(5 * time.Second)
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 		}
 	}
 	return "", lastErr
@@ -75,7 +88,10 @@ func (c *Client) store(ctx context.Context, project, content string, tags []stri
 		return "", err
 	}
 	if result.IsError {
-		return "", fmt.Errorf("memory_store tool error")
+		return "", toolErrorMsg(result, "memory_store")
+	}
+	if len(result.Content) == 0 {
+		return "", fmt.Errorf("memory_store returned no content")
 	}
 	tc, ok := result.Content[0].(mcp.TextContent)
 	if !ok {
@@ -101,7 +117,11 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 		}
 		lastErr = err
 		if attempt < c.retries {
-			time.Sleep(5 * time.Second)
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 	}
 	return nil, lastErr
@@ -123,12 +143,7 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 		return nil, err
 	}
 	if result.IsError {
-		if len(result.Content) > 0 {
-			if tc, ok := result.Content[0].(mcp.TextContent); ok {
-				return nil, fmt.Errorf("memory_recall tool error: %s", tc.Text)
-			}
-		}
-		return nil, fmt.Errorf("memory_recall tool error")
+		return nil, toolErrorMsg(result, "memory_recall")
 	}
 	if len(result.Content) == 0 {
 		return nil, fmt.Errorf("memory_recall returned no content")
@@ -171,7 +186,7 @@ func (c *Client) FetchContent(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	if result.IsError {
-		return "", fmt.Errorf("memory_fetch tool error")
+		return "", toolErrorMsg(result, "memory_fetch")
 	}
 	if len(result.Content) == 0 {
 		return "", fmt.Errorf("memory_fetch returned no content")
@@ -203,9 +218,14 @@ func (c *Client) DeleteProject(ctx context.Context, project string) error {
 		return err
 	}
 	if result.IsError {
-		return fmt.Errorf("memory_delete_project tool error for %q", project)
+		return toolErrorMsg(result, "memory_delete_project")
 	}
 	return nil
+}
+
+// Close shuts down the underlying MCP SSE connection.
+func (c *Client) Close() error {
+	return c.mcp.Close()
 }
 
 // SessionContent concatenates the user-role turns of a session into a single string.
