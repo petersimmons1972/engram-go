@@ -98,3 +98,20 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestSessionContentStripsControlChars(t *testing.T) {
+	turns := []longmemeval.Turn{
+		{Role: "user", Content: "hello\x0Bworld"},              // VT
+		{Role: "assistant", Content: "answer\x00with\x7Fchar"}, // NUL, DEL
+		{Role: "user", Content: "tab\there\nnew"},              // tab/newline preserved
+	}
+	got := longmemeval.SessionContent(turns)
+	for _, bad := range []string{"\x00", "\x0B", "\x7F"} {
+		if contains(got, bad) {
+			t.Errorf("SessionContent leaked control char %q: %q", bad, got)
+		}
+	}
+	if !contains(got, "\t") || !contains(got, "\n") {
+		t.Errorf("SessionContent stripped tab/newline: %q", got)
+	}
+}

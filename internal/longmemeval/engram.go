@@ -164,11 +164,20 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 		return nil, fmt.Errorf("unexpected content type from memory_store_batch: %T", result.Content[0])
 	}
 	var resp struct {
-		IDs   []string `json:"ids"`
-		Count int      `json:"count"`
+		IDs    []string `json:"ids"`
+		Count  int      `json:"count"`
+		Errors []string `json:"errors"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return nil, fmt.Errorf("parse store_batch response: %w", err)
+	}
+	if len(resp.Errors) > 0 {
+		// Server validated items and rejected them; surface up to 3 messages.
+		sample := resp.Errors
+		if len(sample) > 3 {
+			sample = sample[:3]
+		}
+		return nil, fmt.Errorf("memory_store_batch rejected %d items: %s", len(resp.Errors), strings.Join(sample, "; "))
 	}
 	if len(resp.IDs) != len(items) {
 		return nil, fmt.Errorf("memory_store_batch returned %d ids for %d items", len(resp.IDs), len(items))
@@ -303,6 +312,11 @@ func (c *Client) Close() error {
 // user questions from assistant responses. Dropping assistant turns would
 // make single-session-assistant questions unanswerable (the gold content
 // lives in the assistant's reply).
+//
+// C0/C1 control characters (except \t, \n, \r) are stripped — the server's
+// validateContent rejects them and, because memory_store_batch is all-or-
+// nothing, one offender tanks an entire 100-item batch. See LongMemEval
+// session 158 of question 7e00a6cb for a real-world offender (\x0B).
 func SessionContent(turns []Turn) string {
 	var sb strings.Builder
 	for _, t := range turns {
@@ -318,7 +332,25 @@ func SessionContent(turns []Turn) string {
 		}
 		sb.WriteString(role)
 		sb.WriteString(": ")
-		sb.WriteString(t.Content)
+		sb.WriteString(sanitizeControlChars(t.Content))
+	}
+	return sb.String()
+}
+
+// sanitizeControlChars removes C0 (0x00-0x1F except \t \n \r) and C1 (0x7F-0x9F)
+// control characters from s.
+func sanitizeControlChars(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || r == '\n' || r == '\r' {
+			sb.WriteRune(r)
+			continue
+		}
+		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
+			continue
+		}
+		sb.WriteRune(r)
 	}
 	return sb.String()
 }
