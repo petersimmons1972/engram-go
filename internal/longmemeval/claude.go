@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// claudePrintTimeout is the hard cap for one claude --print call.
+
 const generateTimeout = 90 * time.Second
 
 // Generate calls `claude --print prompt` and returns trimmed stdout.
@@ -27,7 +29,11 @@ func Generate(ctx context.Context, prompt string, retries int) (string, error) {
 func runClaude(ctx context.Context, prompt string) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(tctx, "claude", "--print", prompt)
+	// Pass the prompt via stdin rather than argv so we don't blow past
+	// the OS argv limit (E2BIG / "argument list too long") on large
+	// retrieved contexts (~10 sessions × ~7 KB = ~70 KB prompts).
+	cmd := exec.CommandContext(tctx, "claude", "--print")
+	cmd.Stdin = strings.NewReader(prompt)
 	raw, err := cmd.Output()
 	if err != nil {
 		if tctx.Err() != nil {
