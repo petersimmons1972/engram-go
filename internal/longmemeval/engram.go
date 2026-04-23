@@ -250,14 +250,18 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 	return ids, nil
 }
 
-// FetchContent fetches the full content of a memory by ID.
-func (c *Client) FetchContent(ctx context.Context, id string) (string, error) {
+// FetchContent fetches the full content of a memory by ID within a project.
+// The project argument is required: the server-side memory_fetch handler
+// scopes by project (default "default") and will return "not found" if the
+// memory lives in a different project than the one the call targets.
+func (c *Client) FetchContent(ctx context.Context, project, id string) (string, error) {
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name: "memory_fetch",
 			Arguments: map[string]any{
-				"id":     id,
-				"detail": "full",
+				"project": project,
+				"id":      id,
+				"detail":  "full",
 			},
 		},
 	})

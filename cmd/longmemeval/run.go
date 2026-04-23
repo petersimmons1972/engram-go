@@ -125,7 +125,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 	contextBlocks := make([]string, 0, contextLimit)
 	for _, id := range retrievedIDs[:contextLimit] {
-		content, err := mcpClient.FetchContent(ctx, id)
+		content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
 		if err != nil {
 			log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
 			continue
