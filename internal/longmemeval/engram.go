@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -231,7 +232,18 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 	if !ok {
 		return nil, fmt.Errorf("unexpected content type from memory_recall: %T", result.Content[0])
 	}
-	// Server returns {"results":[{"memory":{"id":"..."},"score":...},...]}
+	if os.Getenv("LME_DEBUG_RECALL") != "" {
+		preview := tc.Text
+		if len(preview) > 800 {
+			preview = preview[:800] + "…"
+		}
+		fmt.Fprintf(os.Stderr, "DEBUG recall raw: %s\n", preview)
+	}
+	// Server may respond in either of two shapes depending on configured default
+	// mode (ENGRAM_RECALL_DEFAULT_MODE):
+	//   full:   {"results":[{"memory":{"id":"..."},"score":...}, ...]}
+	//   handle: {"handles":[{"id":"...","score":...}, ...]}
+	// Parse both and prefer whichever is populated.
 	var resp struct {
 		Results []struct {
 			Memory struct {
@@ -239,13 +251,24 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 			} `json:"memory"`
 			Score float64 `json:"score"`
 		} `json:"results"`
+		Handles []struct {
+			ID    string  `json:"id"`
+			Score float64 `json:"score"`
+		} `json:"handles"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return nil, fmt.Errorf("parse recall response: %w", err)
 	}
-	ids := make([]string, 0, len(resp.Results))
+	ids := make([]string, 0, len(resp.Results)+len(resp.Handles))
 	for _, r := range resp.Results {
-		ids = append(ids, r.Memory.ID)
+		if r.Memory.ID != "" {
+			ids = append(ids, r.Memory.ID)
+		}
+	}
+	for _, h := range resp.Handles {
+		if h.ID != "" {
+			ids = append(ids, h.ID)
+		}
 	}
 	return ids, nil
 }
@@ -278,15 +301,26 @@ func (c *Client) FetchContent(ctx context.Context, project, id string) (string, 
 	if !ok {
 		return "", fmt.Errorf("unexpected content type from memory_fetch: %T", result.Content[0])
 	}
+	if os.Getenv("LME_DEBUG_FETCH") != "" {
+		preview := tc.Text
+		if len(preview) > 600 {
+			preview = preview[:600] + "…"
+		}
+		fmt.Fprintf(os.Stderr, "DEBUG fetch raw: %s\n", preview)
+	}
 	var resp struct {
 		Memory struct {
 			Content string `json:"content"`
 		} `json:"memory"`
+		Content string `json:"content"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return "", fmt.Errorf("parse fetch response: %w", err)
 	}
-	return resp.Memory.Content, nil
+	if resp.Memory.Content != "" {
+		return resp.Memory.Content, nil
+	}
+	return resp.Content, nil
 }
 
 // DeleteProject calls memory_delete_project to clean up an isolation project.
