@@ -1,23 +1,25 @@
 # Learning Index
 
-**Last Updated**: 2026-04-17T16:49:41Z
-**Session**: 20260417-124941
+**Last Updated**: 2026-04-24T01:24:34Z
+**Session**: 20260423-212434
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-04-23: fix: prune stale bench profiles from ~/.claude/agents/ on sync
+- 2026-04-23: feat: add PreCompact hook to store session snapshot to engram before compaction
+- 2026-04-23: docs: telemetry sink design spec + Go-default preference
+- 2026-04-22: remove security-program-mcp — moved to repo at ~/projects/security-program/ops/mcp-launcher.sh
+- 2026-04-22: add security-program MCP launcher wrapper
+- 2026-04-17: chore: memory janitor compression + health-check updates
+- 2026-04-17: docs: engram-go vs. Iusztin GraphRAG comparison report + workflow memory
 - 2026-04-17: feat: Opus 4.7 migration — Tier 1 literal-interpretation fixes
 - 2026-04-17: chore: snapshot rickover-validator.md as migration baseline
 - 2026-04-17: chore: snapshot live CLAUDE.md into migration branch
-- 2026-04-15: docs: extract debugging wisdom from Ollama connectivity issue
-- 2026-04-14: ops: archive writer armies profiles + remove writer agent definitions
-- 2026-04-14: ops: update AGENTS.md + bench-roster — writers moved to /write skill (Step 12)
-- 2026-04-11: feat: add K8s CronJob to auto-sync Postgres SSL cert from cert-manager
-- 2026-04-11: ops: save session state — Stage 6 gates batch 1 complete, 7 fixes pending
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  5 modified, 0 staged
+**Uncommitted**: ⚠️  41 modified, 0 staged
 
 ---
 
@@ -42,19 +44,9 @@ Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cac
 
 ---
 
-## Topic Files
+## Engram Offline?
 
-- Magazine-spread architectural comparison workflow (9-general team) → memory/magazine-comparison-workflow.md
-- Static site deploys to shared-html PVC (distroless nginx, root+ConfigMap+chown Job) → memory/static-site-pvc-deploys.md
-- Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
-- cert-manager patterns → memory/homelab-cert-manager.md
-- K8s deployment patterns → memory/homelab-k8s-patterns.md
-- Incident summaries → memory/homelab-incidents.md
-- URL validation patterns → memory/url-validation-patterns.md
-- Chart regression analysis → memory/chart-regression-2026-02-06.md
-- HTML processing patterns → memory/html-processing-patterns.md
-- Projects catalog → [PROJECTS-CATALOG.md](/home/psimmons/PROJECTS-CATALOG.md)
-- Generals Accountability System → memory/generals-accountability-system.md
+If Engram is unreachable, stage entries in `memory/fallback.md` and flush to Engram on reconnect.
 
 ---
 
