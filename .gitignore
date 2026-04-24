@@ -9,3 +9,6 @@ infisical/infisical-bin
 cover.out
 .claude/
 testdata/longmemeval/*.json
+results/
+.serena/
+.mcp.json
