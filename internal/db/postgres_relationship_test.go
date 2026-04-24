@@ -2,28 +2,16 @@ package db_test
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/testutil"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
-func testDSN(t *testing.T) string {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set — skipping integration test")
-	}
-	return dsn
-}
-
-func uniqueProject(base string) string {
-	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
-}
+func testDSN(t *testing.T) string       { return testutil.DSN(t) }
+func uniqueProject(base string) string  { return testutil.UniqueProject(base) }
 
 func newTestBackend(t *testing.T, project string) db.Backend {
 	t.Helper()

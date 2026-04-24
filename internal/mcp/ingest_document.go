@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -203,20 +202,6 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 		m.DocumentID = docID
 		if err := deps.engine.StoreWithRawBody(ctx, m, ""); err != nil {
 			return nil, fmt.Errorf("store synopsis memory: %w", err)
-		}
-		// Step 3: belt-and-braces FK link. The INSERT in step 2 already sets
-		// document_id, so this UPDATE is now redundant in the happy path.
-		// Kept as best-effort cleanup in case a future path creates the
-		// memory without the column populated. Logged but not returned —
-		// failing here after a successful memory store would leave the
-		// caller thinking the ingest failed when the row is actually fine.
-		// TODO: remove once all memory-write paths populate document_id.
-		if err := deps.backend.SetMemoryDocumentID(ctx, m.ID, docID); err != nil {
-			// Best-effort — memory + document are both persisted and the
-			// INSERT already linked them. This UPDATE would only matter if
-			// a caller bypassed StoreMemoryTx.
-			slog.Warn("SetMemoryDocumentID belt-and-braces update failed",
-				"memory_id", m.ID, "document_id", docID, "err", err)
 		}
 		return map[string]any{
 			"id":          m.ID,

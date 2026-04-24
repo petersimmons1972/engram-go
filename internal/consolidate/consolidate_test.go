@@ -6,31 +6,20 @@ package consolidate_test
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/testutil"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testDSN(t *testing.T) string {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set — skipping integration test")
-	}
-	return dsn
-}
-
-func uniqueProject(base string) string {
-	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
-}
+func testDSN(t *testing.T) string  { return testutil.DSN(t) }
+func uniqueProject(base string) string { return testutil.UniqueProject(base) }
 
 // fakeEmbedder returns deterministic vectors that encode similarity via a simple hash.
 type fakeEmbedder struct{ dims int }

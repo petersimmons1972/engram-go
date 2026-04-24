@@ -201,13 +201,12 @@ func TestHandleMemoryStoreDocument_Tier2_HugeContent(t *testing.T) {
 		docID = k
 	}
 	require.Equal(t, content, back.stored[docID])
-	require.Equal(t, docID, back.linked["m-tier2"], "Tier-2: memory must be linked to the document")
 
 	require.Len(t, eng.calls, 1)
 	stored := eng.calls[0].mem
 	require.Less(t, len(stored.Content), len(content))
 	require.Empty(t, eng.calls[0].rawBody, "Tier-2: raw documents are not chunked inline — rawBody must be empty")
-	require.Equal(t, docID, stored.DocumentID)
+	require.Equal(t, docID, stored.DocumentID, "Tier-2: memory must carry document_id")
 }
 
 func TestHandleMemoryStoreDocument_TooLarge(t *testing.T) {
