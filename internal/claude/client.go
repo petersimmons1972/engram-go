@@ -50,6 +50,7 @@ func New(apiKey string) (*Client, error) {
 // This guards against hung connections when the caller's context has no deadline.
 const claudeAPITimeout = 90 * time.Second
 
+// Complete calls CompleteWithUsage and discards the token-usage metadata.
 func (c *Client) Complete(ctx context.Context, system, prompt, executorModel, advisorModel string, advisorMaxUses, maxTokens int) (string, error) {
 	text, _, err := c.CompleteWithUsage(ctx, system, prompt, executorModel, advisorModel, advisorMaxUses, maxTokens)
 	return text, err
@@ -107,7 +108,7 @@ func (c *Client) CompleteWithUsage(ctx context.Context, system, prompt, executor
 	if err != nil {
 		return "", TokenUsage{}, fmt.Errorf("claude: HTTP request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

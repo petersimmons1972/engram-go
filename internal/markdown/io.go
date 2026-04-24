@@ -14,7 +14,7 @@ import (
 )
 
 // Export writes each memory to a separate .md file in dir.
-// File name: <id>.md
+// File name: <id>.md.
 func Export(memories []*types.Memory, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -33,11 +33,11 @@ func Export(memories []*types.Memory, dir string) error {
 func writeMemory(m *types.Memory, path string) error {
 	var sb strings.Builder
 	sb.WriteString("---\n")
-	sb.WriteString(fmt.Sprintf("id: %s\n", m.ID))
-	sb.WriteString(fmt.Sprintf("memory_type: %s\n", m.MemoryType))
-	sb.WriteString(fmt.Sprintf("importance: %d\n", m.Importance))
+	fmt.Fprintf(&sb, "id: %s\n", m.ID)
+	fmt.Fprintf(&sb, "memory_type: %s\n", m.MemoryType)
+	fmt.Fprintf(&sb, "importance: %d\n", m.Importance)
 	if len(m.Tags) > 0 {
-		sb.WriteString(fmt.Sprintf("tags: [%s]\n", strings.Join(m.Tags, ", ")))
+		fmt.Fprintf(&sb, "tags: [%s]\n", strings.Join(m.Tags, ", "))
 	}
 	sb.WriteString("---\n\n")
 	sb.WriteString(m.Content)

@@ -138,7 +138,7 @@ func sharedWordCount(a, b string) int {
 // in s, excluding domain stopwords, split on whitespace and punctuation.
 func significantWords(s string) map[string]bool {
 	words := strings.FieldsFunc(s, func(r rune) bool {
-		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+		return !('a' <= r && r <= 'z' || '0' <= r && r <= '9') //nolint:staticcheck
 	})
 	m := make(map[string]bool, len(words))
 	for _, w := range words {

@@ -142,7 +142,7 @@ func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ollama embed: HTTP %d", resp.StatusCode)
@@ -180,7 +180,7 @@ func (c *OllamaClient) modelPresent(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("ollama tags: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result struct {
 		Models []struct {
@@ -216,7 +216,7 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ollama pull: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

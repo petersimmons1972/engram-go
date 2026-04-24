@@ -62,16 +62,16 @@ func TestSafePath_BlocksSymlinkEscape(t *testing.T) {
 }
 
 func TestEnginePool_LRU_EvictsAtCap(t *testing.T) {
-	const cap = 50
+	const poolCap = 50
 	created := make(map[string]int)
-	pool := internalmcp.NewEnginePool(func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
+	pool := internalmcp.NewEnginePool(func(_ context.Context, project string) (*internalmcp.EngineHandle, error) {
 		created[project]++
 		return &internalmcp.EngineHandle{}, nil
 	})
 	ctx := context.Background()
 
 	// Fill pool to capacity.
-	for i := range cap {
+	for i := range poolCap {
 		project := fmt.Sprintf("proj-%d", i)
 		_, err := pool.Get(ctx, project)
 		require.NoError(t, err)

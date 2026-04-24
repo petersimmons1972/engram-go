@@ -340,12 +340,6 @@ func isConstraintMemory(m *types.Memory) bool {
 	return false
 }
 
-// assessConstraintMatch scores a constraint memory against the proposed action.
-// This is the public form that wraps assessConstraintMatchWithRecallFlag with
-// viaRecall=false, preserving call-sites that do not need the recall flag.
-func assessConstraintMatch(m *types.Memory, query string, profile actionProfile, staleAfterDays int) (constraintMatch, bool) {
-	return assessConstraintMatchWithRecallFlag(m, query, profile, staleAfterDays, false)
-}
 
 // assessConstraintMatchWithRecallFlag scores the memory with an explicit recall
 // provenance flag. When viaRecall is true and the computed score would be 0,

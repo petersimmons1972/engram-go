@@ -2130,7 +2130,7 @@ func fetchInstalledOllamaModels(ctx context.Context, baseURL string) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	var result struct {
 		Models []struct {
 			Name string `json:"name"`

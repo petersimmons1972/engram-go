@@ -159,7 +159,7 @@ func (w *AuditWorker) RunPass(ctx context.Context) ([]SnapshotSummary, error) {
 		return nil, nil
 	}
 	defer func() {
-		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool))
+		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool)) //nolint:errcheck
 	}()
 
 	queries, err := w.loadActiveQueries(ctx, "")

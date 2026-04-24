@@ -19,7 +19,7 @@ import (
 // ErrModelNotFound is returned by SummarizeContent when Ollama responds with
 // HTTP 404 — meaning the requested model has not been pulled yet. The worker
 // backs off for modelNotFoundBackoff before retrying so it does not spam logs
-// or burn connections every 30 seconds. (#151)
+// or burn connections every 30 seconds (#151).
 var ErrModelNotFound = errors.New("ollama model not found")
 
 const modelNotFoundBackoff = 10 * time.Minute
@@ -84,7 +84,7 @@ func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (st
 	if err != nil {
 		return "", fmt.Errorf("ollama generate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

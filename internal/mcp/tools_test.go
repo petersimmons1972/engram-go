@@ -17,7 +17,7 @@ import (
 func TestEnginePool_ConcurrentFastPath(t *testing.T) {
 	var factoryCalls atomic.Int64
 
-	pool := internalmcp.NewEnginePool(func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
+	pool := internalmcp.NewEnginePool(func(_ context.Context, project string) (*internalmcp.EngineHandle, error) {
 		factoryCalls.Add(1)
 		return &internalmcp.EngineHandle{}, nil
 	})
@@ -56,7 +56,7 @@ func TestEnginePool_ConcurrentFastPath(t *testing.T) {
 
 func TestEnginePool_GetOrCreate_SameProject_SameInstance(t *testing.T) {
 	calls := 0
-	pool := internalmcp.NewEnginePool(func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
+	pool := internalmcp.NewEnginePool(func(_ context.Context, project string) (*internalmcp.EngineHandle, error) {
 		calls++
 		return &internalmcp.EngineHandle{}, nil
 	})

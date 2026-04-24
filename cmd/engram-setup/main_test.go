@@ -31,7 +31,7 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}))
 		defer srv.Close()
@@ -89,7 +89,7 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on 403 Forbidden (non-localhost call)", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
 		}))
 		defer srv.Close()
@@ -119,7 +119,7 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on empty token", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(setupResponse{Token: "", Endpoint: "http://x/mcp"})
 		}))
@@ -132,7 +132,7 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on token shorter than 12 chars", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(setupResponse{Token: "short", Endpoint: "http://x/mcp"})
 		}))
@@ -145,7 +145,7 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on malformed JSON", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{not valid json`))
 		}))
@@ -159,7 +159,7 @@ func TestFetchSetupToken(t *testing.T) {
 
 	t.Run("returns error when server unreachable (timeout path)", func(t *testing.T) {
 		// Use a closed server so the connection is refused immediately.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		srv.Close() // close before calling
 		_, err := fetchSetupToken(srv.URL)
 		if err == nil {

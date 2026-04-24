@@ -16,7 +16,7 @@ func fakeOllama(t *testing.T, tagsModels []string, embedDims int) *httptest.Serv
 	t.Helper()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
 		type model struct {
 			Name string `json:"name"`
 		}
@@ -30,7 +30,7 @@ func fakeOllama(t *testing.T, tagsModels []string, embedDims int) *httptest.Serv
 		json.NewEncoder(w).Encode(resp{Models: models})
 	})
 
-	mux.HandleFunc("/api/embed", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/embed", func(w http.ResponseWriter, _ *http.Request) {
 		vec := make([]float32, embedDims)
 		for i := range vec {
 			vec[i] = float32(i) / float32(embedDims)
@@ -41,7 +41,7 @@ func fakeOllama(t *testing.T, tagsModels []string, embedDims int) *httptest.Serv
 		json.NewEncoder(w).Encode(resp{Embeddings: [][]float32{vec}})
 	})
 
-	mux.HandleFunc("/api/pull", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pull", func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 	})
 

@@ -29,7 +29,7 @@ const (
 	RelTypeResolvedBy  = "resolved_by"
 	RelTypeContradicts = "contradicts" // set by sleep consolidation daemon
 
-	// Semantic types from open-brain vocabulary (additive merge, v3.x)
+	// Semantic types from open-brain vocabulary (additive merge, v3.x).
 	RelTypeSupports    = "supports"      // one memory strengthens another's evidence
 	RelTypeDerivedFrom = "derived_from"  // citation chain — memory derived from source
 	RelTypePartOf      = "part_of"       // hierarchical containment

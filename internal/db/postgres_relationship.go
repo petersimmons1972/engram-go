@@ -20,7 +20,7 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctx) //nolint:errcheck
 
 	var dummy int
 	if err := tx.QueryRow(ctx,
@@ -183,7 +183,7 @@ func (b *PostgresBackend) DecayAllEdges(ctx context.Context, project string, dec
 	if err != nil {
 		return 0, 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctx) //nolint:errcheck
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE relationships SET strength=GREATEST(0.0, strength-$1)

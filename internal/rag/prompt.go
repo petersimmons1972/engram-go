@@ -21,7 +21,7 @@ func AssemblePrompt(question string, chunks []types.SearchResult) string {
 		if chunk.Memory != nil {
 			ts = chunk.Memory.CreatedAt.Format("2006-01-02T15:04:05Z")
 		}
-		sb.WriteString(fmt.Sprintf("\n[%d] (%s) %s", i+1, ts, chunk.MatchedChunk))
+		fmt.Fprintf(&sb, "\n[%d] (%s) %s", i+1, ts, chunk.MatchedChunk)
 	}
 
 	sb.WriteString("\n\nAnswer based on the above excerpts.")

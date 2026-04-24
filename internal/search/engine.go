@@ -153,7 +153,6 @@ func (e *SearchEngine) Embedder() embed.Client {
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
 	ollamaURL, summarizeModel string, summarizeEnabled bool,
 	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration) *SearchEngine {
-
 	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.StartWithContext(ctx)
 

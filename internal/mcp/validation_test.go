@@ -77,7 +77,7 @@ func TestValidateProjectName_RejectsBidiControlChars(t *testing.T) {
 	for _, tc := range bidiCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Embed the codepoint in an otherwise valid project name.
-			s := "proj" + string([]rune{tc.codepoint}) + "ect"
+			s := "proj" + string([]rune{tc.codepoint}) + "ect" //nolint:misspell
 			err := validateProjectName(s)
 			require.Error(t, err, "expected error for codepoint U+%04X", tc.codepoint)
 			assert.Contains(t, err.Error(), "disallowed codepoint")

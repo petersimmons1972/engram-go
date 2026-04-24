@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -196,11 +197,15 @@ type setupResponse struct {
 
 func healthCheck(base string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(base + "/health")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/health", nil)
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
@@ -209,11 +214,15 @@ func healthCheck(base string) error {
 
 func fetchSetupToken(base string) (*setupResponse, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(base + "/setup-token")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/setup-token", nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("/setup-token is localhost-only — run engram-setup directly on the host machine, not inside the container")
 	}

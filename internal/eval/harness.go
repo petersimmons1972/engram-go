@@ -1,3 +1,4 @@
+// Package eval provides precision/recall metrics for retrieval evaluation.
 package eval
 
 import "math"

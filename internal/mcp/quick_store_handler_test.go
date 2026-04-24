@@ -50,8 +50,7 @@ func TestQuickStoreHandler_HappyPath(t *testing.T) {
 		"importance": 1,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/quick-store", bytes.NewReader(body))
-	req = req.WithContext(context.Background())
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	s.handleQuickStore(w, req)
@@ -70,7 +69,7 @@ func TestQuickStoreHandler_EmptyContent(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"content": "", "project": "global"})
 
-	req := httptest.NewRequest(http.MethodPost, "/quick-store", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	s.handleQuickStore(w, req)
@@ -85,7 +84,7 @@ func TestQuickStoreHandler_MissingContent(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"project": "global"})
 
-	req := httptest.NewRequest(http.MethodPost, "/quick-store", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	s.handleQuickStore(w, req)
@@ -98,7 +97,7 @@ func TestQuickStoreHandler_MissingContent(t *testing.T) {
 func TestQuickStoreHandler_WrongMethod(t *testing.T) {
 	s := newQuickStoreServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/quick-store", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/quick-store", nil)
 	w := httptest.NewRecorder()
 
 	s.handleQuickStore(w, req)
@@ -111,7 +110,7 @@ func TestQuickStoreHandler_WrongMethod(t *testing.T) {
 func TestQuickStoreHandler_InvalidJSON(t *testing.T) {
 	s := newQuickStoreServer(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/quick-store", bytes.NewReader([]byte("not json {")))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader([]byte("not json {")))
 	w := httptest.NewRecorder()
 
 	s.handleQuickStore(w, req)

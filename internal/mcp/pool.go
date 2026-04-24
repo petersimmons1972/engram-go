@@ -122,7 +122,7 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	if err != nil {
 		return nil, err
 	}
-	return v.(*EngineHandle), nil
+	return v.(*EngineHandle), nil //nolint:errcheck
 }
 
 // evictLRULocked removes the engine with the oldest lastAccess time.

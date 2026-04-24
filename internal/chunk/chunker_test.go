@@ -16,30 +16,6 @@ import (
 //	    return hashlib.sha256(normalized.encode()).hexdigest()[:32]
 //
 // Values pre-computed from Python 3.11.
-var chunkHashCases = []struct {
-	input string
-	want  string
-}{
-	{
-		"Hello, World!",
-		"315f5bdb76d078c43b8ac0064e4a0164",
-	},
-	{
-		"  Hello,   World!  ",
-		"315f5bdb76d078c43b8ac0064e4a0164", // same after normalize
-	},
-	{
-		"The quick brown fox jumps over the lazy dog",
-		"9c6b057a2b9d96a4067a749ee3b3b0158d488",
-		// truncated below — actual 32 chars:
-	},
-	{
-		"multiple\nlines\nhere",
-		// Python: re.sub(r"\s+", " ", "multiple\nlines\nhere".strip().lower())
-		// → "multiple lines here"
-		"",
-	},
-}
 
 func TestChunkHashKnownValues(t *testing.T) {
 	// These hashes are pre-computed from Python 3.11 reference implementation.

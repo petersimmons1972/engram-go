@@ -1,3 +1,4 @@
+// Package rag implements retrieval-augmented generation for memory recall and question answering.
 package rag
 
 import (

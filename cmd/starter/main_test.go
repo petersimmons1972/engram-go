@@ -240,7 +240,7 @@ func TestGetAccessToken(t *testing.T) {
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 		}))
 		defer srv.Close()
@@ -255,7 +255,7 @@ func TestGetAccessToken(t *testing.T) {
 	})
 
 	t.Run("returns error on empty access token", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"accessToken": ""})
 		}))
@@ -268,7 +268,7 @@ func TestGetAccessToken(t *testing.T) {
 	})
 
 	t.Run("returns error on malformed JSON", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{not valid json`))
 		}))
@@ -287,7 +287,7 @@ func TestGetAccessToken(t *testing.T) {
 
 func TestGetSecret(t *testing.T) {
 	t.Run("returns secret value on 200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"secret": map[string]string{"secretValue": "supersecret"},
@@ -320,7 +320,7 @@ func TestGetSecret(t *testing.T) {
 	})
 
 	t.Run("returns error on empty secret value", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"secret": map[string]string{"secretValue": ""},

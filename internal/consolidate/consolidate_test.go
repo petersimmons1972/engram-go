@@ -52,14 +52,6 @@ func (f *fakeEmbedder) Dimensions() int { return f.dims }
 
 var _ embed.Client = (*fakeEmbedder)(nil)
 
-func newTestRunner(t *testing.T, project string) *consolidate.Runner {
-	t.Helper()
-	ctx := context.Background()
-	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
-	require.NoError(t, err)
-	t.Cleanup(func() { backend.Close() })
-	return consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
-}
 
 // ── InferRelationships ────────────────────────────────────────────────────────
 

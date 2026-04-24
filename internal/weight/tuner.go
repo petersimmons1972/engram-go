@@ -83,10 +83,6 @@ type tunerQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// tunerTxBeginner can begin a transaction — satisfied by *pgxpool.Pool.
-type tunerTxBeginner interface {
-	Begin(ctx context.Context) (pgx.Tx, error)
-}
 
 // TunerWorker periodically checks failure event distributions and applies
 // weight adjustments when a dominant failure class is detected.
@@ -158,7 +154,7 @@ func (w *TunerWorker) RunPass(ctx context.Context) error {
 		return nil
 	}
 	defer func() {
-		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool))
+		conn.QueryRow(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey).Scan(new(bool)) //nolint:errcheck
 	}()
 
 	projects, err := w.projectsWithRecentEvents(ctx)

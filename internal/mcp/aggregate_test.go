@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testDSN_agg returns the integration-test DSN, skipping if unset.
-func testDSN_agg(t *testing.T) string {
+// testDSNAgg returns the integration-test DSN, skipping if unset.
+func testDSNAgg(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -29,8 +29,8 @@ func testDSN_agg(t *testing.T) string {
 	return dsn
 }
 
-// uniqueProject_agg generates a collision-free project name for each test run.
-func uniqueProject_agg(base string) string {
+// uniqueProjectAgg generates a collision-free project name for each test run.
+func uniqueProjectAgg(base string) string {
 	return fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
 }
 
@@ -41,8 +41,8 @@ func uniqueProject_agg(base string) string {
 // (may be empty, but must be present and be a []any).
 func TestHandleMemoryAggregate_ByTag(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("agg-tag")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("agg-tag")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
@@ -62,8 +62,8 @@ func TestHandleMemoryAggregate_ByTag(t *testing.T) {
 // Same structural requirements as the tag test.
 func TestHandleMemoryAggregate_ByType(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("agg-type")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("agg-type")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
@@ -83,8 +83,8 @@ func TestHandleMemoryAggregate_ByType(t *testing.T) {
 // by="failure_class". Response must contain "by"=="failure_class".
 func TestHandleMemoryAggregate_ByFailureClass(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("agg-fc")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("agg-fc")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
@@ -100,8 +100,8 @@ func TestHandleMemoryAggregate_ByFailureClass(t *testing.T) {
 // empty (non-nil) slice — not a missing key and not null.
 func TestHandleMemoryAggregate_EmptyProject(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("agg-empty")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("agg-empty")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	out := mcp.CallHandleMemoryAggregate(ctx, t, pool, map[string]any{
@@ -122,8 +122,8 @@ func TestHandleMemoryAggregate_EmptyProject(t *testing.T) {
 // unrecognised by= value. The handler must return an error.
 func TestHandleMemoryAggregate_InvalidBy(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("agg-invalid")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("agg-invalid")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	mcp.CallHandleMemoryAggregateExpectError(ctx, t, pool, map[string]any{
@@ -164,8 +164,8 @@ func TestHandleMemoryAggregate_LimitClamping(t *testing.T) {
 // return an error about an invalid failure_class or invalid UUID format.
 func TestHandleMemoryFeedback_WithClass(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("fb-class")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("fb-class")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	out := mcp.CallHandleMemoryFeedbackWithClass(ctx, t, pool, map[string]any{
@@ -186,8 +186,8 @@ func TestHandleMemoryFeedback_WithClass(t *testing.T) {
 // Uses a valid UUID for event_id so UUID validation does not mask the class error.
 func TestHandleMemoryFeedback_InvalidClass(t *testing.T) {
 	ctx := context.Background()
-	dsn := testDSN_agg(t)
-	proj := uniqueProject_agg("fb-badclass")
+	dsn := testDSNAgg(t)
+	proj := uniqueProjectAgg("fb-badclass")
 	pool := mcp.NewTestPoolWithDSN(t, ctx, dsn, proj)
 
 	mcp.CallHandleMemoryFeedbackWithClassExpectError(ctx, t, pool, map[string]any{

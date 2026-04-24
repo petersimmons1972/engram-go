@@ -122,7 +122,7 @@ func TestFromBlobMalformed(t *testing.T) {
 
 // TestPythonCompatibility verifies byte-level compatibility with Python struct.pack.
 // Python: struct.pack("3f", 1.0, -0.5, 0.25)
-// Result: b'\x00\x00\x80?\x00\x00\x00\xbf\x00\x00\x80>'
+// Result: b'\x00\x00\x80?\x00\x00\x00\xbf\x00\x00\x80>'.
 func TestPythonCompatibility(t *testing.T) {
 	input := []float32{1.0, -0.5, 0.25}
 	blob := embed.ToBlob(input)

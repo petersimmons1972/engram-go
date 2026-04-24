@@ -312,7 +312,7 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`)
+			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`) //nolint:errcheck
 			return
 		}
 		// ConstantTimeCompare leaks length when len(got) != len(want).
@@ -325,7 +325,7 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`)
+			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`) //nolint:errcheck
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -360,7 +360,7 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 		if subtle.ConstantTimeCompare(storedFP, expected) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"error":"forbidden","hint":"session bearer mismatch"}`)
+			fmt.Fprint(w, `{"error":"forbidden","hint":"session bearer mismatch"}`) //nolint:errcheck
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -733,7 +733,7 @@ func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
 //
 // POST /quick-store
 // Authorization: Bearer <token>
-// {"content":"...","project":"...","tags":[...],"importance":N}
+// {"content":"...","project":"...","tags":[...],"importance":N}.
 func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

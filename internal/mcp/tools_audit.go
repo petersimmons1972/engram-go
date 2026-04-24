@@ -48,8 +48,8 @@ func newAuditWorker(pool *EnginePool, cfg Config) *audit.AuditWorker {
 
 // handleMemoryAuditAddQuery registers a new canonical query for drift monitoring.
 //
-// Required args: project, query
-// Optional args: description
+// Required args: project, query.
+// Optional args: description.
 func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
@@ -84,7 +84,7 @@ func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.
 
 // handleMemoryAuditListQueries lists all canonical queries for a project.
 //
-// Required args: project (empty returns all queries across all projects)
+// Required args: project (empty returns all queries across all projects).
 func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
@@ -124,7 +124,7 @@ func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcp
 
 // handleMemoryAuditDeactivateQuery deactivates a canonical query (marks active=false).
 //
-// Required args: query_id
+// Required args: query_id.
 func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
@@ -147,7 +147,7 @@ func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req
 
 // handleMemoryAuditRun runs a full audit pass for a project immediately.
 //
-// Required args: project
+// Required args: project.
 func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
@@ -179,8 +179,8 @@ func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // handleMemoryAuditCompare returns the snapshot history for a canonical query,
 // enabling comparison of retrieval ranking over time.
 //
-// Required args: query_id
-// Optional args: limit (default 10)
+// Required args: query_id.
+// Optional args: limit (default 10).
 func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	if cfg.PgPool == nil && cfg.testAuditDB == nil {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
@@ -241,7 +241,7 @@ func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.C
 
 // handleMemoryWeightHistory returns the current weights and tuning history for a project.
 //
-// Required args: project
+// Required args: project.
 func handleMemoryWeightHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args, _ := req.Params.Arguments.(map[string]any)
 	project, err := getProject(args, "")

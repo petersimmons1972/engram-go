@@ -159,19 +159,6 @@ func (b migrateReadyBackend) Begin(_ context.Context) (db.Tx, error) { return no
 
 var _ db.Backend = migrateReadyBackend{}
 
-// newMigratePool creates an EnginePool backed by migrateReadyBackend.
-func newMigratePool(t *testing.T, storedDims string, clientDims int) *EnginePool {
-	t.Helper()
-	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
-		be := migrateReadyBackend{dimBackend: dimBackend{storedDims: storedDims}}
-		emb := dimEmbedder{dims: clientDims}
-		engine := search.New(ctx, be, emb, project,
-			"http://ollama-test:11434", "", false, nil, 0)
-		t.Cleanup(engine.Close)
-		return &EngineHandle{Engine: engine}, nil
-	}
-	return NewEnginePool(factory)
-}
 
 // TestHandleMemoryMigrateEmbedder_MigrateError verifies that when MigrateEmbedder
 // itself returns an error, the handler surfaces that error and does not fire

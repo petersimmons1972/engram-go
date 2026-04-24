@@ -1,3 +1,4 @@
+// Package reembed provides a background worker that re-embeds chunks with NULL embeddings.
 package reembed
 
 import (

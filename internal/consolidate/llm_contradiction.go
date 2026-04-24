@@ -84,7 +84,7 @@ func ClassifyContradictionLLM(ctx context.Context, contentA, contentB, ollamaURL
 	if err != nil {
 		return false, fmt.Errorf("classifyContradictionLLM: HTTP: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

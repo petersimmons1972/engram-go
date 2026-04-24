@@ -1,3 +1,4 @@
+// Package entity provides entity extraction, deduplication, and graph-building for memories.
 package entity
 
 import "strings"

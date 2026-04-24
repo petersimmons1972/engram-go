@@ -84,7 +84,7 @@ func TestStoreDocument_EmptyContent_NoDB(t *testing.T) {
 // inside pgxpool. That is fine: we only need the line counter to advance past
 // the function's opening statement, and a panic inside pool.Exec still counts
 // the lines leading up to it as executed.
-func TestDocumentFuncs_NilPoolCoverage(t *testing.T) {
+func TestDocumentFuncs_NilPoolCoverage(_ *testing.T) {
 	b := &PostgresBackend{}
 	ctx := context.Background()
 

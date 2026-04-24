@@ -73,7 +73,7 @@ func TestRBO_UnequalLengths(t *testing.T) {
 	b := []string{"a", "b"}
 	got := RBO(a, b, 0.9)
 	// k=2, both agree at depth 2: RBO = (1-0.9)*(1/1 + 0.9*2/2) = (0.1)*(1+0.9) = 0.19
-	want := (1 - 0.9) * (math.Pow(0.9, 0)*1.0/1.0 + math.Pow(0.9, 1)*2.0/2.0)
+	want := (1 - 0.9) * (1.0 + 0.9)
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("RBO unequal lengths k=2 agree: want %f, got %f", want, got)
 	}

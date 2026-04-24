@@ -46,10 +46,7 @@ func isValidInfisicalDomain(domain string) bool {
 	}
 	// Strip the scheme to get the raw host, then reject raw IP literals.
 	host := domain[len("https://"):]
-	if net.ParseIP(host) != nil {
-		return false
-	}
-	return true
+	return net.ParseIP(host) == nil
 }
 
 // infisicalHTTPClient has explicit timeouts so an unreachable Infisical
@@ -169,7 +166,7 @@ func getAccessToken(ctx context.Context, domain, clientID, clientSecret string) 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("status %d: %s", resp.StatusCode, raw)
@@ -203,7 +200,7 @@ func getSecret(ctx context.Context, domain, token, projectID, environment, secre
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("status %d: %s", resp.StatusCode, raw)

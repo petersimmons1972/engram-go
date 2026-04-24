@@ -81,9 +81,3 @@ func stdHex(s string) string {
 	return hex.EncodeToString(b[:])
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

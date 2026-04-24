@@ -244,7 +244,7 @@ func TestAdaptiveImportance_UsedInRecall(t *testing.T) {
 	results, err := engine.Recall(ctx, "gRPC microservices", 10, "normal")
 	require.NoError(t, err)
 
-	var rankHigh, rankLow int = -1, -1
+	rankHigh, rankLow := -1, -1
 	for i, r := range results {
 		if r.Memory != nil {
 			if r.Memory.ID == mHigh.ID {

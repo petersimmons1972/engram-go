@@ -284,7 +284,7 @@ func TestRunProjectAudit_Baseline(t *testing.T) {
 	}
 	queryCalled := 0
 	db := &stubQuerier{
-		queryFn: func(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+		queryFn: func(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
 			queryCalled++
 			if queryCalled == 1 {
 				// loadQueriesByProject

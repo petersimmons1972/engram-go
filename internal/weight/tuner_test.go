@@ -371,7 +371,7 @@ func TestMaybeAdjust_StaleRanking_WritesWeights(t *testing.T) {
 	// LoadWeights returns defaults (no row).
 	callCount := 0
 	db := &tunerStubDB{
-		queryRowFn: func(sql string, _ ...any) pgx.Row {
+		queryRowFn: func(_ string, _ ...any) pgx.Row {
 			callCount++
 			if callCount == 1 {
 				// cooldown check: no history
@@ -617,7 +617,7 @@ func TestGetHistory_DefaultLimit(t *testing.T) {
 func TestResetToDefaults_Success(t *testing.T) {
 	execCalled := false
 	db := &tunerStubDB{
-		execFn: func(sql string, args ...any) (pgconn.CommandTag, error) {
+		execFn: func(_ string, _ ...any) (pgconn.CommandTag, error) {
 			execCalled = true
 			return pgconn.NewCommandTag("DELETE 1"), nil
 		},
