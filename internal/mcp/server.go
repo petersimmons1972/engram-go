@@ -251,6 +251,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	msgHandler := s.withSessionFingerprint(sse.MessageHandler(), apiKey)
 	mux.Handle("/message", s.applyMiddleware(msgHandler, apiKey, rl))
 
+	// /quick-store — sessionless REST endpoint for hook scripts and CLI callers
+	// that cannot establish an SSE session (e.g. PreCompact hooks).
+	mux.Handle("/quick-store", s.applyMiddleware(http.HandlerFunc(s.handleQuickStore), apiKey, rl))
+
 	// All other authenticated routes (including /sse) go through the standard middleware.
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
@@ -721,4 +725,78 @@ func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
 		slog.Warn("memory_store: enqueue extraction job failed",
 			"id", memID, "project", project, "err", eerr)
 	}
+}
+
+// handleQuickStore is a sessionless REST endpoint that stores a single memory
+// without requiring an active SSE session. Used by hook scripts (e.g. PreCompact)
+// and CLI callers that cannot perform the SSE handshake.
+//
+// POST /quick-store
+// Authorization: Bearer <token>
+// {"content":"...","project":"...","tags":[...],"importance":N}
+func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Content    string   `json:"content"`
+		Project    string   `json:"project"`
+		Tags       []string `json:"tags"`
+		Importance int      `json:"importance"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	args := map[string]any{"content": body.Content}
+	if body.Project != "" {
+		args["project"] = body.Project
+	}
+	if len(body.Tags) > 0 {
+		tags := make([]any, len(body.Tags))
+		for i, tag := range body.Tags {
+			tags[i] = tag
+		}
+		args["tags"] = tags
+	}
+	if body.Importance != 0 {
+		args["importance"] = float64(body.Importance)
+	}
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = args
+
+	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.IsError {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false}) //nolint:errcheck
+		return
+	}
+
+	var id string
+	for _, c := range result.Content {
+		if tc, ok := c.(mcpgo.TextContent); ok {
+			var m map[string]any
+			if json.Unmarshal([]byte(tc.Text), &m) == nil {
+				if v, ok := m["id"].(string); ok {
+					id = v
+				}
+			}
+			break
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id}) //nolint:errcheck
 }
