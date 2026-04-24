@@ -1,0 +1,145 @@
+{
+  "cleanupPeriodDays": 365,
+  "env": {
+    "CLAUDE_STATUS_DISPLAY_MODE": "colors",
+    "CLAUDE_STATUS_PLAN": "pro",
+    "CLAUDE_STATUS_INFO_MODE": "emoji",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
+    "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+  },
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "WebSearch",
+      "WebFetch",
+      "mcp__github__*",
+      "mcp__postgres__*",
+      "mcp__Ref__*",
+      "mcp__claude_ai_Gmail__*",
+      "mcp__claude_ai_Google_Calendar__*"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -fd *)",
+      "Bash(git clean -f *)",
+      "Write(~/projects/generals)",
+      "Write(~/projects/generals/*)",
+      "Edit(~/projects/generals)",
+      "Edit(~/projects/generals/*)",
+      "Bash(cd ~/projects/generals*)",
+      "Bash(* ~/projects/generals*)",
+      "Write(~/projects/security-intelligence-business)",
+      "Write(~/projects/security-intelligence-business/*)",
+      "Edit(~/projects/security-intelligence-business)",
+      "Edit(~/projects/security-intelligence-business/*)",
+      "Bash(cd ~/projects/security-intelligence-business*)",
+      "Bash(* ~/projects/security-intelligence-business*)"
+    ]
+  },
+  "model": "sonnet",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruff-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "pytest --lf -x 2>&1 | tail -20"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/instinct-post-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/pytest-precommit.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/instinct-pre-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/pre-compact-engram.sh",
+            "timeout": 8,
+            "statusMessage": "Storing session snapshot to engram before compaction"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-token-refresh.sh",
+            "timeout": 10,
+            "statusMessage": "Refreshing engram MCP token"
+          },
+          {
+            "type": "command",
+            "command": "~/bin/generate-session-context.py",
+            "statusMessage": "Generating session context"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/sync-armies-xp.sh",
+            "timeout": 30,
+            "statusMessage": "Syncing armies XP from GitHub"
+          },
+          {
+            "type": "command",
+            "command": "~/.armies/bin/sync-to-claude-agents.sh",
+            "timeout": 15,
+            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "frontend-design@claude-code-plugins": true,
+    "gopls-lsp@claude-plugins-official": true
+  },
+  "effortLevel": "medium",
+  "autoMemoryEnabled": true,
+  "skipDangerousModePermissionPrompt": true
+}
