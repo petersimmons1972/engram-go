@@ -35,17 +35,9 @@ Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cac
 
 ---
 
-## Topic Files
+## Engram Offline?
 
-- Homelab quick reference (triage, fixes, warnings, anti-patterns) → memory/homelab-quick-reference.md
-- cert-manager patterns → memory/homelab-cert-manager.md
-- K8s deployment patterns → memory/homelab-k8s-patterns.md
-- Incident summaries → memory/homelab-incidents.md
-- URL validation patterns → memory/url-validation-patterns.md
-- Chart regression analysis → memory/chart-regression-2026-02-06.md
-- HTML processing patterns → memory/html-processing-patterns.md
-- Projects catalog → [PROJECTS-CATALOG.md](/home/psimmons/PROJECTS-CATALOG.md)
-- Generals Accountability System → memory/generals-accountability-system.md
+If Engram is unreachable, stage entries in `memory/fallback.md` and flush to Engram on reconnect.
 
 ---
 

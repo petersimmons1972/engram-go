@@ -1,2 +1,0 @@
-usb-audio-conferencing.md
-homelab-quick-reference.md

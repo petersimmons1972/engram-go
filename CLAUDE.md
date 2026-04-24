@@ -1,5 +1,10 @@
 # Claude Assistant Instructions
 
+## Repository Scope
+- This project is **Clearwatch only**. The SIB repo is DEPRECATED — never dispatch agents, fixes, or commits to it.
+- All NHI/SSPM/vendor research MUST be written through the K8s PostgreSQL database, NOT directly to git/markdown files.
+- Confirm target repo and storage layer before starting multi-file operations.
+
 ## Behavioral Rules
 - Never tell the user to do something manually that you can do yourself — just do it.
 - **Markdown tables**: pad columns for alignment, use emoji swatches (🔵🟡🟢⚫⚪✅❌⚠️), never leave hex codes unformatted in a cell.
@@ -73,11 +78,17 @@ Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 
 ### Rule 6 — Fallback to filesystem
 - **Trigger:** Engram unreachable after one retry within 30 seconds.
-- **Action:** Fall back to `~/.claude/projects/-home-psimmons/memory/`. Files are source of truth for structure; Engram is source of truth for learned context.
+- **Action:** Write the memory entry to `~/.claude/projects/-home-psimmons/memory/fallback.md` using the format defined in that file. On Engram reconnect, flush all pending entries via `memory_store` and clear them from the file.
+- **Note:** `fallback.md` is a staging file only — nothing should live there permanently.
 
 ### Rule 7 — Dispute tracking (Eisenhower only)
 - **Trigger:** Before Eisenhower adjudicates a user-raised dispute.
 - **Action:** `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do NOT adjudicate — escalate to founder. Store each adjudication as: `content="DISPUTE: <description> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
+
+## Test-After-Edit Protocol
+- After any code edit, run the relevant test suite before moving to the next task
+- When updating code that has existing tests, check whether tests encode buggy behavior — update both in the same commit
+- Watch for hardcoded counts/constants (e.g., chart counts) that break when adding/removing items
 
 ## Workflow
 - **Test first.** Failing test before first line of implementation. Run tests after EVERY edit. Never batch untested changes.
@@ -103,6 +114,11 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 - **Continuity test:** Could the next session pick up every open defect from GitHub Issues alone?
 - File issues FIRST, then report status.
 - **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
+
+## Issue Tracking Compliance
+- ALWAYS file GitHub issues for every defect/bug discovered during smoketests, QA, or report generation BEFORE attempting fixes
+- Use `gh issue create` with clear title, reproduction steps, and labels
+- Reference issue numbers in commit messages and PRs
 
 ## CLI Tool Preferences
 - **HTTP requests:** use `xh` not `curl` — cleaner output, no flags needed for JSON
