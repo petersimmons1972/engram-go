@@ -1,0 +1,14 @@
+# instinct.timer — fires instinct.service periodically.
+# Only needed in timer-triggered mode; hook-triggered is the default.
+# Adjust OnCalendar to taste (default: every 2 hours).
+
+[Unit]
+Description=Instinct pattern consolidation timer
+
+[Timer]
+OnCalendar=*-*-* 00/2:00:00
+Persistent=true
+Unit=instinct.service
+
+[Install]
+WantedBy=timers.target

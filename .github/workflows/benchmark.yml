@@ -1,0 +1,26 @@
+name: benchmark
+
+on:
+  pull_request:
+    paths:
+      - "models/candidates.yaml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build benchmark binary
+        run: go build ./cmd/benchmark/...
+      - name: Validate manifest (dry-run)
+        run: go run ./cmd/benchmark --dry-run
+      - name: Post manifest summary
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "### Manifest validation passed" >> $GITHUB_STEP_SUMMARY
+          echo "$(go run ./cmd/benchmark --dry-run 2>&1)" >> $GITHUB_STEP_SUMMARY

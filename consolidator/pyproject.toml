@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "instinct"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.50.0",
+    "mcp>=1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["instinct"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+# Install dev dependencies with: uv sync --group dev
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
