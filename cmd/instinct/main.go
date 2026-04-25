@@ -150,6 +150,48 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// loadAndRotate reads the buffer JSONL. Returns empty if file missing or
+// line count < minEvents. On success renames to .processed and returns events + new path.
+func loadAndRotate(bufferPath string, minEvents int) ([]Event, string) {
+	data, err := os.ReadFile(bufferPath)
+	if err != nil {
+		return nil, ""
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var valid []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			valid = append(valid, l)
+		}
+	}
+
+	if len(valid) < minEvents {
+		return nil, ""
+	}
+
+	var events []Event
+	for _, l := range valid {
+		var e Event
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			slog.Warn("instinct: skipping malformed line", "err", err)
+			continue
+		}
+		events = append(events, e)
+	}
+
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	dir := filepath.Dir(bufferPath)
+	base := filepath.Base(bufferPath)
+	processedPath := filepath.Join(dir, base+"."+ts+".processed")
+	if err := os.Rename(bufferPath, processedPath); err != nil {
+		slog.Error("instinct: failed to rotate buffer", "err", err)
+		return nil, ""
+	}
+
+	return events, processedPath
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -169,9 +211,3 @@ func run(_ context.Context, _ config) error {
 	return nil
 }
 
-// ── Suppress unused-import warnings ──────────────────────────────────────────
-// These packages are imported now to avoid churn when later tasks add usage.
-
-var _ = filepath.Join
-var _ = strings.TrimSpace
-var _ = time.Now

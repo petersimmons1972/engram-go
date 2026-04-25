@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +51,65 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.minEvents != 20 {
 		t.Errorf("default minEvents = %d, want 20", cfg.minEvents)
+	}
+}
+
+func TestLoadAndRotate_BelowMinEvents(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	lines := strings.Repeat(`{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"abc","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}`+"\n", 3)
+	os.WriteFile(buf, []byte(lines), 0600)
+
+	events, processedPath := loadAndRotate(buf, 5)
+	if len(events) != 0 {
+		t.Errorf("want 0 events, got %d", len(events))
+	}
+	if processedPath != "" {
+		t.Errorf("want empty processedPath, got %q", processedPath)
+	}
+	if _, err := os.Stat(buf); err != nil {
+		t.Errorf("buffer file should still exist: %v", err)
+	}
+}
+
+func TestLoadAndRotate_SkipsMalformed(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	valid := `{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"abc","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}`
+	content := strings.Repeat(valid+"\n", 4) + "not-json\n" + valid + "\n"
+	os.WriteFile(buf, []byte(content), 0600)
+
+	events, _ := loadAndRotate(buf, 5)
+	if len(events) != 5 {
+		t.Errorf("want 5 valid events, got %d", len(events))
+	}
+}
+
+func TestLoadAndRotate_Rotates(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	valid := `{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"abc","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}`
+	content := strings.Repeat(valid+"\n", 5)
+	os.WriteFile(buf, []byte(content), 0600)
+
+	_, processedPath := loadAndRotate(buf, 5)
+	if processedPath == "" {
+		t.Fatal("want non-empty processedPath")
+	}
+	if _, err := os.Stat(buf); !os.IsNotExist(err) {
+		t.Errorf("original buffer should be renamed, stat err: %v", err)
+	}
+	if _, err := os.Stat(processedPath); err != nil {
+		t.Errorf("processed file should exist: %v", err)
+	}
+	if !strings.Contains(processedPath, ".processed") {
+		t.Errorf("processedPath %q should contain .processed", processedPath)
+	}
+}
+
+func TestLoadAndRotate_Missing(t *testing.T) {
+	events, path := loadAndRotate("/nonexistent/buffer.jsonl", 20)
+	if len(events) != 0 || path != "" {
+		t.Errorf("want empty result for missing file, got %d events, path=%q", len(events), path)
 	}
 }
