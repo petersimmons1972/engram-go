@@ -27,7 +27,11 @@ environment (e.g., export INSTINCT_ENABLED=0 in ~/.bashrc).
 
 Press ENTER to accept and continue, or Ctrl-C to abort.
 DISCLOSURE
-read -r
+if ! read -r 2>/dev/null; then
+    echo "ERROR: installer requires an interactive terminal for consent."
+    echo "       Re-run from a TTY, or set INSTINCT_ENABLED=0 to skip collection."
+    exit 1
+fi
 
 echo "Installing instinct hooks..."
 

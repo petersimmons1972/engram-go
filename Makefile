@@ -9,7 +9,7 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 ## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
-up:
+up: check-env
 	@if ! grep -qs '^POSTGRES_PASSWORD=' .env 2>/dev/null && [ -z "$$POSTGRES_PASSWORD" ]; then \
 	    echo "ERROR: POSTGRES_PASSWORD is not set. Run 'make init' to generate one."; \
 	    exit 1; \
@@ -78,8 +78,8 @@ check-env:
 	@if grep -qsE '^(POSTGRES_PASSWORD|ENGRAM_API_KEY)=change_me' .env 2>/dev/null; then \
 	    echo "ERROR: .env still contains placeholder credentials. Run 'make init'."; exit 1; \
 	fi
-	@if [ ! -f .env ] || ! grep -qs '^POSTGRES_PASSWORD=' .env || ! grep -qs '^ENGRAM_API_KEY=' .env; then \
-	    echo "ERROR: .env missing required credentials. Run 'make init'."; exit 1; \
+	@if [ ! -f .env ] || ! grep -qsE '^POSTGRES_PASSWORD=.+' .env || ! grep -qsE '^ENGRAM_API_KEY=.+' .env; then \
+	    echo "ERROR: .env missing or has empty credentials. Run 'make init'."; exit 1; \
 	fi
 	@echo "✓ .env credentials look set"
 
