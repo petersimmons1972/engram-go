@@ -1,6 +1,6 @@
 # Connecting Your IDE
 
-Engram communicates with your IDE over Server-Sent Events — a persistent HTTP connection where the server pushes data to the client. When you point your IDE at Engram's SSE endpoint, the server sends your IDE the full list of available tools, then keeps the connection alive to carry requests and responses. From your IDE's perspective, 30 new tools just appeared. From Engram's perspective, it now has a client. The connection is live for as long as both sides are running, and your IDE does not need to poll or reconnect to get fresh results.
+Engram communicates with your IDE over Server-Sent Events — a persistent HTTP connection where the server pushes data to the client. When you point your IDE at Engram's SSE endpoint, the server sends your IDE the full list of available tools, then keeps the connection alive to carry requests and responses. From your IDE's perspective, 38 new tools just appeared. From Engram's perspective, it now has a client. The connection is live for as long as both sides are running, and your IDE does not need to poll or reconnect to get fresh results.
 
 The SSE endpoint is `http://localhost:8788/sse`. Everything below is how you tell each IDE to find it.
 
@@ -35,7 +35,7 @@ Verify the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
+You should see `engram` listed with 38 tools (43 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
 
 ---
 
@@ -208,8 +208,8 @@ The SSE transport holds an HTTP connection open indefinitely, and some reverse p
 **"Authorization required" error.**
 You have `ENGRAM_API_KEY` set in `.env`, but the IDE is not sending it in the header. Check the IDE config and confirm the header key is exactly `Authorization` and the value starts with `Bearer ` (with a space).
 
-**Wrong number of tools (expect 30 or 35).**
-Five AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 30 tools. With it, you see 35. Set the key and restart `engram-go`:
+**Wrong number of tools (expect 38 or 43).**
+Five AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 38 tools. With it, you see 43. Set the key and restart `engram-go`:
 
 ```bash
 docker compose restart engram-go
@@ -224,4 +224,4 @@ SSE sessions are bound to the bearer token presented at connection time. After a
 ---
 
 **Previous:** [Getting Started](getting-started.md) — prerequisites, startup, and configuration reference.  
-**Next:** [Tools Reference](tools.md) — all 35 tools with parameters and examples.
+**Next:** [Tools Reference](tools.md) — all 38 tools (43 with ANTHROPIC_API_KEY) with parameters and examples.

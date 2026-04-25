@@ -13,13 +13,13 @@ migration tool is used to switch.
 
 ## Available Models
 
-The curated list is in `internal/embed/models.go`. Pull any of them with
-`ollama pull <name>` and set `ENGRAM_OLLAMA_MODEL` to switch.
+Pull any of the supported models with `ollama pull <name>` and set
+`ENGRAM_OLLAMA_MODEL` to switch.
 
 | Model | Dim | Size | Best for |
 |---|---:|---:|---|
 | `nomic-embed-text` | 768 | 274 MB | Current default — smallest footprint, solid English baseline |
-| `mxbai-embed-large` | 1024 | 669 MB | Best MTEB retrieval score of locally-available Ollama models (English) |
+| `mxbai-embed-large` | 1024 | 669 MB | Best MTEB retrieval score of locally-available Ollama models (English) — recommended upgrade |
 | `bge-m3` | 1024 | 1200 MB | Multilingual corpora — 100+ languages |
 
 ---
@@ -94,9 +94,14 @@ committing to a migration.
 
 ---
 
+## The "default" Project
+
+When no `project` argument is provided to any MCP tool, Engram uses `"default"` as the implicit project name. This applies to `memory_store`, `memory_recall`, and all other tools that accept a `project` parameter. To keep memories isolated, always pass an explicit project name in production use. The `"default"` project is a convenience for quick experiments and single-project setups.
+
+---
+
 ## References
 
-- Model registry: `internal/embed/models.go`
 - Migration tool handler: `internal/mcp/tools.go` (`handleMemoryMigrateEmbedder`)
 - Dimension pre-flight rationale: GitHub issue #251
 - Startup env read: `cmd/engram/main.go:46`

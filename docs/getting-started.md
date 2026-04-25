@@ -1,6 +1,6 @@
 # Getting Started
 
-When you finish this page, you will have a running memory server, a working IDE connection, and 30 tools available to every AI assistant you use. Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while a 270 MB model downloads.
+When you finish this page, you will have a running memory server, a working IDE connection, and 38 tools available to every AI assistant you use. Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while a 270 MB model downloads.
 
 ---
 
@@ -14,6 +14,7 @@ Engram runs as three Docker containers. Before you start, confirm you have what 
 
 - **Docker Engine 20.10 or newer** — check with `docker --version`
 - **Docker Compose 2.0 or newer** — check with `docker compose version` (note: the subcommand, not `docker-compose`)
+- **Go 1.23 or newer** — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
 - **4 GB RAM free** — Ollama loads the embedding model into memory and keeps it there
 - **2 GB disk** — PostgreSQL data volume plus the Ollama model download (~270 MB)
 
@@ -135,9 +136,9 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 30 tools (35 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
+You should see `engram` listed with 38 tools (43 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
 
-When you see 30 tools, you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
+When you see 38 tools, you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
 
 ---
 

@@ -114,4 +114,4 @@ The risk of turning everything on at once is not cost — it is noise. Features 
 
 ---
 
-**Previous:** [All 19 Tools](tools.md) | **Next:** [Operations](operations.md)
+**Previous:** [All 43 Tools](tools.md) | **Next:** [Operations](operations.md)
