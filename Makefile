@@ -2,7 +2,7 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init test-explore-soak
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak
 
 ## Show available make targets
 help:
@@ -72,6 +72,16 @@ init:
 	    touch .env.machine-identity; \
 	    echo "✓ Created .env.machine-identity (empty — add Infisical credentials here if using secret management)"; \
 	fi
+
+## Verify .env contains no placeholder values before deploying.
+check-env:
+	@if grep -qsE '^(POSTGRES_PASSWORD|ENGRAM_API_KEY)=change_me' .env 2>/dev/null; then \
+	    echo "ERROR: .env still contains placeholder credentials. Run 'make init'."; exit 1; \
+	fi
+	@if [ ! -f .env ] || ! grep -qs '^POSTGRES_PASSWORD=' .env || ! grep -qs '^ENGRAM_API_KEY=' .env; then \
+	    echo "ERROR: .env missing required credentials. Run 'make init'."; exit 1; \
+	fi
+	@echo "✓ .env credentials look set"
 
 ## Configure MCP client — fetches current bearer token and writes mcpServers.engram in ~/.claude.json
 ## Run this after: first install, container restart (if key changed), or key rotation.
