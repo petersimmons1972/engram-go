@@ -192,6 +192,17 @@ func loadAndRotate(bufferPath string, minEvents int) ([]Event, string) {
 	return events, processedPath
 }
 
+// groupBySession partitions events into buckets keyed by (sessionID, projectID).
+// Each unique pair produces a separate entry in the returned map.
+func groupBySession(events []Event) map[sessionKey][]Event {
+	groups := make(map[sessionKey][]Event)
+	for _, e := range events {
+		k := sessionKey{e.SessionID, e.ProjectID}
+		groups[k] = append(groups[k], e)
+	}
+	return groups
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {

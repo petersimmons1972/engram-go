@@ -113,3 +113,28 @@ func TestLoadAndRotate_Missing(t *testing.T) {
 		t.Errorf("want empty result for missing file, got %d events, path=%q", len(events), path)
 	}
 }
+
+func TestGroupBySession(t *testing.T) {
+	events := []Event{
+		{SessionID: "sess1", ProjectID: "proj1"},
+		{SessionID: "sess1", ProjectID: "proj1"},
+		{SessionID: "sess2", ProjectID: "proj1"},
+		{SessionID: "sess1", ProjectID: "proj2"},
+	}
+	groups := groupBySession(events)
+	if len(groups) != 3 {
+		t.Errorf("want 3 groups, got %d", len(groups))
+	}
+	k1 := sessionKey{"sess1", "proj1"}
+	if len(groups[k1]) != 2 {
+		t.Errorf("want 2 events for sess1/proj1, got %d", len(groups[k1]))
+	}
+	k2 := sessionKey{"sess2", "proj1"}
+	if len(groups[k2]) != 1 {
+		t.Errorf("want 1 event for sess2/proj1, got %d", len(groups[k2]))
+	}
+	k3 := sessionKey{"sess1", "proj2"}
+	if len(groups[k3]) != 1 {
+		t.Errorf("want 1 event for sess1/proj2, got %d", len(groups[k3]))
+	}
+}
