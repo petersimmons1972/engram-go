@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const defaultBase = "http://localhost:11434"
@@ -24,7 +25,7 @@ func NewClient(base string) *Client {
 	if base == "" {
 		base = defaultBase
 	}
-	return &Client{base: base, http: &http.Client{}}
+	return &Client{base: base, http: &http.Client{Timeout: 60 * time.Second}}
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {

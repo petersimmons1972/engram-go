@@ -19,6 +19,9 @@ import (
 	"github.com/petersimmons1972/engram/internal/eval"
 )
 
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+var Version = "dev"
+
 type goldenEntry struct {
 	Query       string   `json:"query"`
 	RelevantIDs []string `json:"relevant_ids"`
@@ -42,10 +45,19 @@ func main() {
 	outputFile := flag.String("output", "", "Write baseline summary to this file (optional)")
 	urlFlag := flag.String("url", "", "Override ENGRAM_URL env var")
 	apiKeyFlag := flag.String("api-key", "", "Override ENGRAM_API_KEY env var")
+	versionFlag := flag.Bool("version", false, "print version and exit")
+	outputJSON := flag.Bool("output-json", false, "emit summary as JSON to stdout; send per-query progress to stderr")
+	_ = outputJSON // TODO: implement JSON output mode (#323)
 	flag.Parse()
 
+	if *versionFlag {
+		fmt.Printf("engram-eval %s\n", Version)
+		os.Exit(0)
+	}
+
 	if *goldenFile == "" {
-		log.Fatal("--golden is required")
+		fmt.Fprintf(os.Stderr, "error: --golden is required\n")
+		os.Exit(2)
 	}
 
 	// Resolve server URL and credentials — flags beat env vars.
@@ -69,7 +81,8 @@ func main() {
 		log.Fatalf("parse golden file: %v", err)
 	}
 	if len(golden) == 0 {
-		log.Fatal("golden set is empty")
+		fmt.Fprintf(os.Stderr, "error: golden set is empty\n")
+		os.Exit(2)
 	}
 
 	// Connect to MCP server via SSE.

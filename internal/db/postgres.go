@@ -208,8 +208,9 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}
-			// Run backfill before recording so a crash here causes a retry.
-			if err := b.backfillVectors(ctx); err != nil {
+			// Run backfill on the same connection that holds the advisory lock so
+			// the lock covers the full backfill duration (issue #292).
+			if err := b.backfillVectors(ctx, conn); err != nil {
 				return fmt.Errorf("pgvector backfill failed: %w", err)
 			}
 			// Record last — use ON CONFLICT DO NOTHING so a concurrent or retried
@@ -251,8 +252,13 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 // backfillVectors converts existing BYTEA embeddings to the new embedding_vec
 // vector(768) column. Called once after 003_pgvector.sql creates the column.
 // Idempotent: skips rows where embedding_vec is already populated.
-func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
-	rows, err := b.pool.Query(ctx, `
+//
+// The q parameter must be the same connection that holds the migration advisory
+// lock (issue #292): running the backfill on a pool connection would release the
+// lock before the backfill completes, allowing a second replica to enter the same
+// migration window and duplicate the work (or race into migration 004).
+func (b *PostgresBackend) backfillVectors(ctx context.Context, q querier) error {
+	rows, err := q.Query(ctx, `
 		SELECT id, embedding FROM chunks
 		WHERE embedding IS NOT NULL AND embedding_vec IS NULL`)
 	if err != nil {
@@ -278,7 +284,7 @@ func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
 			vec[i] = math.Float32frombits(u)
 		}
 		// Write to the new vector column using pgvector encoding.
-		if _, err := b.pool.Exec(ctx,
+		if _, err := q.Exec(ctx,
 			"UPDATE chunks SET embedding_vec = $1 WHERE id = $2",
 			pgvector.NewVector(vec), id,
 		); err != nil {
@@ -296,7 +302,7 @@ func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
 	// marking the backfill done. If remaining > 0, leave the flag set so the
 	// next startup retries the conversion rather than silently proceeding.
 	var remaining int
-	if err := b.pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL AND embedding_vec IS NULL`,
 	).Scan(&remaining); err != nil {
 		return fmt.Errorf("backfill count check: %w", err)
@@ -307,7 +313,7 @@ func (b *PostgresBackend) backfillVectors(ctx context.Context) error {
 	}
 
 	// Mark backfill done so 004 can run.
-	_, err = b.pool.Exec(ctx,
+	_, err = q.Exec(ctx,
 		`UPDATE project_meta SET value='false' WHERE project='_engram' AND key='pgvector_backfill_pending'`)
 	return err
 }
@@ -332,6 +338,15 @@ func unwrapTx(t Tx) (pgx.Tx, error) {
 // execer is satisfied by both *pgxpool.Pool and pgx.Tx.
 type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// querier is satisfied by *pgxpool.Pool and *pgxpool.Conn.
+// Used to run backfillVectors on a specific connection so that an advisory
+// lock held by that connection covers the full backfill (issue #292).
+type querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // ── Project metadata ──────────────────────────────────────────────────────────

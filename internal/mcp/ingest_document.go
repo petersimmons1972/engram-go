@@ -425,9 +425,11 @@ func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *Engi
 		}
 		// Project isolation: reject cross-project appends. A caller who started
 		// the upload under project A cannot feed parts under project B and
-		// silently ingest into the wrong project on finish. Only enforce when
-		// the caller explicitly passed a project arg — an omitted project arg
-		// falls through to the session's project without complaint.
+		// silently ingest into the wrong project on finish. Only enforced when
+		// the caller explicitly passed a project arg AND sess.project is non-empty
+		// (in practice sess.project is always non-empty because getProject always
+		// returns a non-empty default — the guard on sess.project protects against
+		// zero-value sessions only).
 		if _, passed := args["project"]; passed && sess.project != "" && project != sess.project {
 			return nil, fmt.Errorf("project mismatch: upload started with project %q, got %q", sess.project, project)
 		}
