@@ -1,4 +1,6 @@
+import json
 import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from instinct.engram_client import EngramClient
 
@@ -85,3 +87,36 @@ async def test_update_confidence_calls_memory_correct(mock_session):
     kwargs = call_args.args[1]
     assert kwargs["memory_id"] == "mem-001"
     assert kwargs["importance"] == 0.5
+
+
+def test_get_config_missing_file_raises_friendly_error(tmp_path):
+    client = EngramClient.__new__(EngramClient)
+    client._config_path = str(tmp_path / "nonexistent.json")
+    with pytest.raises(RuntimeError, match="Engram MCP config not found"):
+        client._get_config()
+
+
+def test_get_config_missing_key_raises_friendly_error(tmp_path):
+    cfg = tmp_path / "mcp_servers.json"
+    cfg.write_text(json.dumps({"mcpServers": {}}))
+    client = EngramClient.__new__(EngramClient)
+    client._config_path = str(cfg)
+    with pytest.raises(RuntimeError, match="Engram MCP server not configured"):
+        client._get_config()
+
+
+def test_get_config_returns_url_and_auth(tmp_path):
+    cfg = tmp_path / "mcp_servers.json"
+    cfg.write_text(json.dumps({
+        "mcpServers": {
+            "engram": {
+                "url": "http://localhost:8788/sse",
+                "headers": {"Authorization": "Bearer secret"}
+            }
+        }
+    }))
+    client = EngramClient.__new__(EngramClient)
+    client._config_path = str(cfg)
+    url, auth = client._get_config()
+    assert url == "http://localhost:8788/sse"
+    assert auth == "Bearer secret"

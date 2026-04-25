@@ -20,9 +20,23 @@ class EngramClient:
 
     def _get_config(self) -> tuple[str, str]:
         """Read SSE URL and Bearer token from mcp_servers.json."""
-        cfg = json.loads(Path(self._config_path).read_text())
-        engram = cfg["mcpServers"]["engram"]
-        return engram["url"], engram["headers"]["Authorization"]
+        config_path = Path(self._config_path)
+        if not config_path.exists():
+            raise RuntimeError(
+                f"Engram MCP config not found at {config_path}. "
+                "Run `claude mcp add engram` or create the file manually."
+            )
+        try:
+            cfg = json.loads(config_path.read_text())
+            engram = cfg["mcpServers"]["engram"]
+            url = engram["url"]
+            auth = engram["headers"]["Authorization"]
+        except (KeyError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Engram MCP server not configured in {config_path}. "
+                "Expected: mcpServers.engram.url and mcpServers.engram.headers.Authorization"
+            ) from exc
+        return url, auth
 
     async def __aenter__(self):
         from contextlib import AsyncExitStack
