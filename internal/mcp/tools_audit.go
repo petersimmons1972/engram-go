@@ -37,11 +37,11 @@ func (a *engineRecallerAdapter) Recall(ctx context.Context, project, query strin
 }
 
 // newAuditWorker creates an AuditWorker using cfg, injecting a test DB querier when
-// cfg.testAuditDB is set (avoids needing a real pgxpool.Pool in tests).
+// cfg.testHooks.auditDB is set (avoids needing a real pgxpool.Pool in tests).
 func newAuditWorker(pool *EnginePool, cfg Config) *audit.AuditWorker {
 	recaller := &engineRecallerAdapter{pool: pool}
-	if cfg.testAuditDB != nil {
-		return audit.NewAuditWorkerWithDB(cfg.PgPool, cfg.testAuditDB, recaller, cfg.EmbedModel, 24*time.Hour)
+	if cfg.testHooks != nil && cfg.testHooks.auditDB != nil {
+		return audit.NewAuditWorkerWithDB(cfg.PgPool, cfg.testHooks.auditDB, recaller, cfg.EmbedModel, 24*time.Hour)
 	}
 	return audit.NewAuditWorker(cfg.PgPool, recaller, cfg.EmbedModel, 24*time.Hour)
 }
@@ -51,7 +51,7 @@ func newAuditWorker(pool *EnginePool, cfg Config) *audit.AuditWorker {
 // Required args: project, query.
 // Optional args: description.
 func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil && cfg.testAuditDB == nil {
+	if cfg.PgPool == nil && (cfg.testHooks == nil || cfg.testHooks.auditDB == nil) {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -86,7 +86,7 @@ func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.
 //
 // Required args: project (empty returns all queries across all projects).
 func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil && cfg.testAuditDB == nil {
+	if cfg.PgPool == nil && (cfg.testHooks == nil || cfg.testHooks.auditDB == nil) {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -126,7 +126,7 @@ func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcp
 //
 // Required args: query_id.
 func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil && cfg.testAuditDB == nil {
+	if cfg.PgPool == nil && (cfg.testHooks == nil || cfg.testHooks.auditDB == nil) {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -149,7 +149,7 @@ func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req
 //
 // Required args: project.
 func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil && cfg.testAuditDB == nil {
+	if cfg.PgPool == nil && (cfg.testHooks == nil || cfg.testHooks.auditDB == nil) {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -182,7 +182,7 @@ func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 // Required args: query_id.
 // Optional args: limit (default 10).
 func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	if cfg.PgPool == nil && cfg.testAuditDB == nil {
+	if cfg.PgPool == nil && (cfg.testHooks == nil || cfg.testHooks.auditDB == nil) {
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
@@ -254,8 +254,8 @@ func handleMemoryWeightHistory(ctx context.Context, pool *EnginePool, req mcpgo.
 
 	var tuner *weight.TunerWorker
 	switch {
-	case cfg.testWeightTuner != nil:
-		tuner = cfg.testWeightTuner
+	case cfg.testHooks != nil && cfg.testHooks.weightTuner != nil:
+		tuner = cfg.testHooks.weightTuner
 	case cfg.PgPool != nil:
 		tuner = weight.NewTunerWorker(cfg.PgPool, 24*time.Hour)
 	default:

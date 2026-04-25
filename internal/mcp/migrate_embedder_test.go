@@ -119,8 +119,10 @@ func TestHandleMemoryMigrateEmbedder_ProbeError(t *testing.T) {
 	req := makeMigrateRequest("proj", "unreachable-model")
 	cfg := Config{
 		OllamaURL: "http://ollama-test:11434",
-		testEmbedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
-			return nil, fmt.Errorf("dial tcp: connect: connection refused")
+		testHooks: &testHooks{
+			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
+				return nil, fmt.Errorf("dial tcp: connect: connection refused")
+			},
 		},
 	}
 
@@ -139,8 +141,10 @@ func TestHandleMemoryMigrateEmbedder_DimensionMismatch(t *testing.T) {
 	req := makeMigrateRequest("proj", "wide-model")
 	cfg := Config{
 		OllamaURL: "http://ollama-test:11434",
-		testEmbedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
-			return dimEmbedder{dims: 1024}, nil // new model: 1024-dim — mismatch
+		testHooks: &testHooks{
+			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
+				return dimEmbedder{dims: 1024}, nil // new model: 1024-dim — mismatch
+			},
 		},
 	}
 
@@ -170,11 +174,13 @@ func TestHandleMemoryMigrateEmbedder_MigrateError(t *testing.T) {
 	var postMigrateFired bool
 	cfg := Config{
 		OllamaURL: "http://ollama-test:11434",
-		testMigrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
-			return nil, fmt.Errorf("db unavailable")
-		},
-		testOnPostMigrate: func(_ context.Context, _ string) {
-			postMigrateFired = true
+		testHooks: &testHooks{
+			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
+				return nil, fmt.Errorf("db unavailable")
+			},
+			onPostMigrate: func(_ context.Context, _ string) {
+				postMigrateFired = true
+			},
 		},
 	}
 
@@ -195,14 +201,16 @@ func TestHandleMemoryMigrateEmbedder_HappyPath(t *testing.T) {
 	var postMigrateFired bool
 	cfg := Config{
 		OllamaURL: "http://ollama-test:11434",
-		testEmbedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
-			return dimEmbedder{dims: 384}, nil // pre-flight passes
-		},
-		testMigrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
-			return map[string]any{"nulled": 0, "model": "same-dim-model"}, nil
-		},
-		testOnPostMigrate: func(_ context.Context, _ string) {
-			postMigrateFired = true
+		testHooks: &testHooks{
+			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
+				return dimEmbedder{dims: 384}, nil // pre-flight passes
+			},
+			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
+				return map[string]any{"nulled": 0, "model": "same-dim-model"}, nil
+			},
+			onPostMigrate: func(_ context.Context, _ string) {
+				postMigrateFired = true
+			},
 		},
 	}
 
@@ -286,8 +294,10 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed(t *testing.T) {
 	}
 	cfg := Config{
 		OllamaURL: "http://safe-ollama:11434",
-		testMigrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
-			return map[string]any{"nulled": 0, "model": "some-model"}, nil
+		testHooks: &testHooks{
+			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
+				return map[string]any{"nulled": 0, "model": "some-model"}, nil
+			},
 		},
 	}
 
@@ -304,8 +314,10 @@ func TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate(t *testing.T) {
 	req := makeMigrateRequest("proj", "same-dim-model")
 	cfg := Config{
 		OllamaURL: "http://ollama-test:11434",
-		testEmbedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
-			return dimEmbedder{dims: 384}, nil // same dim: pre-flight passes
+		testHooks: &testHooks{
+			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
+				return dimEmbedder{dims: 384}, nil // same dim: pre-flight passes
+			},
 		},
 	}
 

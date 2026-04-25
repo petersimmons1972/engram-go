@@ -18,9 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"golang.org/x/text/unicode/norm"
-	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
-	"github.com/petersimmons1972/engram/internal/weight"
 	consolidatepkg "github.com/petersimmons1972/engram/internal/consolidate"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -78,23 +76,8 @@ type Config struct {
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool
-	// testAuditDB is injected in tests to avoid needing a real pgxpool.
-	// When non-nil, audit handlers use this querier instead of PgPool.
-	testAuditDB audit.AuditQuerier
-	// testWeightTuner is injected in tests. When non-nil, handleMemoryWeightHistory
-	// uses it instead of creating a real TunerWorker from PgPool.
-	testWeightTuner *weight.TunerWorker
-	// testEmbedProbe is injected in tests to stub the Ollama connectivity probe in
-	// handleMemoryMigrateEmbedder. When non-nil it replaces the embed.NewOllamaClient call.
-	testEmbedProbe func(ctx context.Context, baseURL, model string) (embed.Client, error)
-	// testOnPostMigrate is injected in tests to stub the best-effort weight_config
-	// reset that runs after a successful MigrateEmbedder call. When non-nil it
-	// replaces the cfg.PgPool block (which requires a real pgxpool in production).
-	testOnPostMigrate func(ctx context.Context, project string)
-	// testMigrateFunc is injected in tests to replace h.Engine.MigrateEmbedder.
-	// MigrateEmbedder calls embed.NewOllamaClient internally; this seam lets
-	// tests exercise the post-migrate and return paths without Ollama.
-	testMigrateFunc func(ctx context.Context, model string) (map[string]any, error)
+	// testHooks is nil in production; set only in tests to inject stubs.
+	testHooks    *testHooks
 	claudeClient *claude.Client // set via Server.SetClaudeClient
 }
 
@@ -1346,7 +1329,10 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// Dimension pre-flight (#251): compare stored dims against the new model's output.
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
 	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
-		probeFunc := cfg.testEmbedProbe
+		var probeFunc func(ctx context.Context, baseURL, model string) (embed.Client, error)
+		if cfg.testHooks != nil {
+			probeFunc = cfg.testHooks.embedProbe
+		}
 		if probeFunc == nil {
 			probeFunc = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
 				return embed.NewOllamaClient(ctx, baseURL, model)
@@ -1369,8 +1355,8 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	}
 
 	var result map[string]any
-	if cfg.testMigrateFunc != nil {
-		result, err = cfg.testMigrateFunc(ctx, newModel)
+	if cfg.testHooks != nil && cfg.testHooks.migrateFunc != nil {
+		result, err = cfg.testHooks.migrateFunc(ctx, newModel)
 	} else {
 		result, err = h.Engine.MigrateEmbedder(ctx, newModel)
 	}
@@ -1382,8 +1368,8 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// no longer valid after the embedding model changes (#Phase4).
 	// Best-effort — a failure here does not roll back the migration.
 	// A history row is inserted before deletion so the reset is auditable.
-	if cfg.testOnPostMigrate != nil {
-		cfg.testOnPostMigrate(ctx, project)
+	if cfg.testHooks != nil && cfg.testHooks.onPostMigrate != nil {
+		cfg.testHooks.onPostMigrate(ctx, project)
 	} else if cfg.PgPool != nil {
 		histID := uuid.New().String()
 		if _, histErr := cfg.PgPool.Exec(ctx,
