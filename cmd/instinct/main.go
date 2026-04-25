@@ -420,7 +420,12 @@ func callHaiku(ctx context.Context, apiKey string, events []Event, endpoint stri
 		}},
 	})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	// Cap the Haiku call — buffer already rotated, a hung API call would
+	// block indefinitely with no recovery path.
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("instinct: haiku request build", "err", err)
 		return nil

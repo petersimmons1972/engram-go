@@ -103,6 +103,8 @@ if (( count % threshold == 0 )); then
     if command -v instinct &>/dev/null; then
         instinct >> "$LOG_FILE" 2>&1 &
         disown
+    else
+        echo "$(date -Iseconds) instinct binary not found on PATH — run hooks/install.sh" >> "$LOG_FILE"
     fi
 fi
 
