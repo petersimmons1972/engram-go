@@ -19,9 +19,14 @@ const (
 )
 
 var (
-	decayIntervalOnce    sync.Once
+	decayIntervalOnce     sync.Once
 	resolvedDecayInterval time.Duration
 )
+
+// ResetDecayIntervalForTesting resets the decay interval sync.Once so tests can inject different env var values.
+func ResetDecayIntervalForTesting() {
+	decayIntervalOnce = sync.Once{}
+}
 
 // resolveDecayInterval reads ENGRAM_DECAY_INTERVAL_HOURS and returns the
 // corresponding duration. If the env var is absent, invalid, or non-positive,

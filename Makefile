@@ -1,6 +1,8 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up down down-safe restart logs build build-postgres test setup setup-dry-run init test-explore-soak
+BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init test-explore-soak
 
 ## Show available make targets
 help:
@@ -37,6 +39,13 @@ restart: build
 ## Build the engram-go Docker image
 build:
 	docker build -t engram-go:latest -t engram-go:3.0.0 .
+
+## Build Go binaries with version injection
+go-build:
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram ./cmd/engram
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-setup ./cmd/engram-setup
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-eval ./cmd/eval
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o instinct-benchmark ./cmd/benchmark
 
 ## Tail container logs
 logs:

@@ -281,6 +281,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		Handler:           http.MaxBytesHandler(mux, maxRequestBodyBytes),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -803,6 +804,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
+	}
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"ok":false,"error":"id extraction failed"}`, http.StatusUnprocessableEntity)
+		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id}) //nolint:errcheck
 }

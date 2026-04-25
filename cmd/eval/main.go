@@ -19,6 +19,9 @@ import (
 	"github.com/petersimmons1972/engram/internal/eval"
 )
 
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+var Version = "dev"
+
 type goldenEntry struct {
 	Query       string   `json:"query"`
 	RelevantIDs []string `json:"relevant_ids"`
@@ -42,10 +45,18 @@ func main() {
 	outputFile := flag.String("output", "", "Write baseline summary to this file (optional)")
 	urlFlag := flag.String("url", "", "Override ENGRAM_URL env var")
 	apiKeyFlag := flag.String("api-key", "", "Override ENGRAM_API_KEY env var")
+	versionFlag := flag.Bool("version", false, "print version and exit")
+	outputJSON := flag.Bool("output-json", false, "emit summary as JSON to stdout; send per-query progress to stderr")
 	flag.Parse()
 
+	if *versionFlag {
+		fmt.Printf("engram-eval %s\n", Version)
+		os.Exit(0)
+	}
+
 	if *goldenFile == "" {
-		log.Fatal("--golden is required")
+		fmt.Fprintf(os.Stderr, "error: --golden is required\n")
+		os.Exit(2)
 	}
 
 	// Resolve server URL and credentials — flags beat env vars.
@@ -69,7 +80,8 @@ func main() {
 		log.Fatalf("parse golden file: %v", err)
 	}
 	if len(golden) == 0 {
-		log.Fatal("golden set is empty")
+		fmt.Fprintf(os.Stderr, "error: golden set is empty\n")
+		os.Exit(2)
 	}
 
 	// Connect to MCP server via SSE.
@@ -109,12 +121,22 @@ func main() {
 	total := len(golden)
 	var sumP, sumMRR, sumNDCG float64
 
+	// progressf writes per-query progress lines. When --output-json is set, progress
+	// goes to stderr so stdout carries only the machine-readable JSON result.
+	progressf := func(format string, args ...any) {
+		if *outputJSON {
+			fmt.Fprintf(os.Stderr, format, args...)
+		} else {
+			fmt.Printf(format, args...)
+		}
+	}
+
 	for i, entry := range golden {
 		ids, callErr := recallIDs(ctx, mcpClient, entry.Query, *project, *k)
 		if callErr != nil {
 			// Log warning and count this query as all-zeros — do not abort.
 			log.Printf("WARN [%d/%d] memory_recall failed for %q: %v", i+1, total, entry.Query, callErr)
-			fmt.Printf("[%d/%d] %q -> P@%d=0.00 MRR=0.00 NDCG@%d=0.00  (recall error)\n",
+			progressf("[%d/%d] %q -> P@%d=0.00 MRR=0.00 NDCG@%d=0.00  (recall error)\n",
 				i+1, total, entry.Query, *k, *k)
 			continue
 		}
@@ -132,13 +154,33 @@ func main() {
 		sumMRR += mrr
 		sumNDCG += ndcg
 
-		fmt.Printf("[%d/%d] %q -> P@%d=%.2f MRR=%.2f NDCG@%d=%.2f\n",
+		progressf("[%d/%d] %q -> P@%d=%.2f MRR=%.2f NDCG@%d=%.2f\n",
 			i+1, total, entry.Query, *k, p, mrr, *k, ndcg)
 	}
 
 	avgP := sumP / float64(total)
 	avgMRR := sumMRR / float64(total)
 	avgNDCG := sumNDCG / float64(total)
+
+	if *outputJSON {
+		// Emit machine-readable summary to stdout; human-readable prose omitted.
+		type jsonSummary struct {
+			AvgPrecisionAtK float64 `json:"avg_precision_at_k"`
+			AvgMRR          float64 `json:"avg_mrr"`
+			AvgNDCGAtK      float64 `json:"avg_ndcg_at_k"`
+			K               int     `json:"k"`
+			TotalQueries    int     `json:"total_queries"`
+		}
+		out, _ := json.Marshal(jsonSummary{
+			AvgPrecisionAtK: avgP,
+			AvgMRR:          avgMRR,
+			AvgNDCGAtK:      avgNDCG,
+			K:               *k,
+			TotalQueries:    total,
+		})
+		fmt.Printf("%s\n", out)
+		return
+	}
 
 	summary := buildSummary(total, *k, avgP, avgMRR, avgNDCG, provider, *outputFile)
 	fmt.Println(summary)

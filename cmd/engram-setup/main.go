@@ -29,6 +29,9 @@ import (
 	"time"
 )
 
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+var Version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "engram-setup: %v\n", err)
@@ -40,7 +43,13 @@ func run() error {
 	port := flag.Int("port", 8788, "engram server port")
 	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
 	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("engram-setup %s\n", Version)
+		os.Exit(0)
+	}
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", *port)
 

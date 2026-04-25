@@ -31,6 +31,9 @@ import (
 	_ "net/http/pprof"
 )
 
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+var Version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -41,6 +44,7 @@ func main() {
 func run() error {
 	fs := flag.NewFlagSet("engram", flag.ExitOnError)
 
+	versionFlag := fs.Bool("version", false, "print version and exit")
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
 	ollamaURL := fs.String("ollama-url", envOr("OLLAMA_URL", "http://ollama:11434"), "Ollama base URL")
 	embedModel := fs.String("model", envOr("ENGRAM_OLLAMA_MODEL", "nomic-embed-text"), "Embedding model")
@@ -63,15 +67,32 @@ func run() error {
 	auditInterval := fs.Duration("audit-interval", envDuration("ENGRAM_AUDIT_INTERVAL", 6*time.Hour), "How often the decay audit worker runs (default 6h)")
 	weightInterval := fs.Duration("weight-interval", envDuration("ENGRAM_WEIGHT_INTERVAL", 24*time.Hour), "How often the weight tuner worker runs (default 24h)")
 
+	// Knobs previously only configurable via environment variables — registered as flags
+	// so they appear in --help. Env vars remain supported as defaults (closes #306).
+	recallDefaultMode := fs.String("recall-default-mode", envOr("ENGRAM_RECALL_DEFAULT_MODE", "handle"), "Default recall output mode (handle|full|summary|id_only)")
+	fetchMaxBytes := fs.Int("fetch-max-bytes", envInt("ENGRAM_FETCH_MAX_BYTES", 65536), "Maximum bytes returned by memory_fetch")
+	exploreMaxIters := fs.Int("explore-max-iters", envInt("ENGRAM_EXPLORE_MAX_ITERS", 5), "Maximum iterations for explore_context")
+	exploreMaxWorkers := fs.Int("explore-max-workers", envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8), "Maximum parallel workers for explore_context")
+	exploreTokenBudget := fs.Int("explore-token-budget", envInt("ENGRAM_EXPLORE_TOKEN_BUDGET", 20000), "Token budget for explore_context")
+	maxDocumentBytes := fs.Int("max-document-bytes", envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024), "Maximum document size for ingest operations")
+	rawDocumentMaxBytes := fs.Int("raw-document-max-bytes", envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024), "Maximum raw document size before rejection")
+	ragMaxTokens := fs.Int("rag-max-tokens", envInt("ENGRAM_RAG_MAX_TOKENS", 4096), "Maximum tokens for RAG context assembly")
+	entityProjectsFlag := fs.String("entity-projects", envOr("ENGRAM_ENTITY_PROJECTS", ""), "Comma-separated list of projects to run entity extraction on")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+
+	if *versionFlag {
+		fmt.Printf("engram %s\n", Version)
+		os.Exit(0)
 	}
 
 	if *databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL or --database-url is required")
 	}
 	if apiKey == "" {
-		return fmt.Errorf("ENGRAM_API_KEY or --api-key is required; refusing to start without authentication")
+		return fmt.Errorf("ENGRAM_API_KEY environment variable is required (--api-key flag intentionally omitted — see issue #136)")
 	}
 
 	// Unset secrets from the process environment after reading (#139, #141, #250).
@@ -177,14 +198,14 @@ func run() error {
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
 		DataDir:                  *dataDir,
-		RecallDefaultMode:        envOr("ENGRAM_RECALL_DEFAULT_MODE", "handle"),
-		FetchMaxBytes:            envInt("ENGRAM_FETCH_MAX_BYTES", 65536),
-		ExploreMaxIters:          envInt("ENGRAM_EXPLORE_MAX_ITERS", 5),
-		ExploreMaxWorkers:        envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8),
-		ExploreTokenBudget:       envInt("ENGRAM_EXPLORE_TOKEN_BUDGET", 20000),
-		MaxDocumentBytes:         envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024),
-		RawDocumentMaxBytes:      envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024),
-		RAGMaxTokens:             envInt("ENGRAM_RAG_MAX_TOKENS", 4096),
+		RecallDefaultMode:        *recallDefaultMode,
+		FetchMaxBytes:            *fetchMaxBytes,
+		ExploreMaxIters:          *exploreMaxIters,
+		ExploreMaxWorkers:        *exploreMaxWorkers,
+		ExploreTokenBudget:       *exploreTokenBudget,
+		MaxDocumentBytes:         *maxDocumentBytes,
+		RawDocumentMaxBytes:      *rawDocumentMaxBytes,
+		RAGMaxTokens:             *ragMaxTokens,
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 		PgPool:                   sharedPool,
 	}
@@ -211,7 +232,7 @@ func run() error {
 	// Start entity extraction worker if Claude is enabled and projects are configured.
 	// The worker polls each project's extraction job queue and runs Claude to identify
 	// named entities and relations, building the GraphRAG entity index.
-	entityProjects := strings.Split(envOr("ENGRAM_ENTITY_PROJECTS", ""), ",")
+	entityProjects := strings.Split(*entityProjectsFlag, ",")
 	filteredProjects := entityProjects[:0]
 	for _, p := range entityProjects {
 		if p != "" {
