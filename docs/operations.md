@@ -91,6 +91,8 @@ For Claude Code, `make setup` configures the token automatically. For other clie
 
 **`ENGRAM_TRUST_PROXY_HEADERS`:** When Engram is behind a reverse proxy (nginx, Traefik, Caddy), set `ENGRAM_TRUST_PROXY_HEADERS=1` in `.env`. This enables the server to read the real client IP from `X-Forwarded-For` / `X-Real-IP` headers for rate limiting and `/setup-token` locality checks. Default is `false` — leave it off unless you have a trusted proxy in front.
 
+> **Security note:** Enabling this flag without a trusted L7 proxy in front allows any client with the Bearer token to supply an arbitrary `X-Forwarded-For` header, bypassing per-IP rate limiting. The Bearer token requirement still applies — this is not an authentication bypass.
+
 ---
 
 ## Data Portability
