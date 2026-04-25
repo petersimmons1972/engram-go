@@ -431,3 +431,78 @@ func TestUpsertPattern_GlobalPromotion(t *testing.T) {
 		t.Errorf("want 1 globally promoted pattern, got %d", len(e.globalStored))
 	}
 }
+
+// ── Pipeline run() tests ──────────────────────────────────────────────────────
+
+func TestRun_NoopWhenBelowMin(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	line := `{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"h","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(buf, []byte(line+line), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config{bufferPath: buf, minEvents: 5, anthropicKey: "sk-fake"}
+	if err := run(context.Background(), cfg); err != nil {
+		t.Fatalf("run() unexpected error: %v", err)
+	}
+	if _, err := os.Stat(buf); err != nil {
+		t.Errorf("buffer should still exist (noop): %v", err)
+	}
+}
+
+func TestRun_ProcessesBuffer(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-engram", "1.0.0", server.WithToolCapabilities(true))
+	var ingestCount int
+
+	for _, name := range []string{"memory_episode_start", "memory_episode_end", "memory_store", "memory_correct"} {
+		n := name
+		text := `{}`
+		if n == "memory_episode_start" {
+			text = `{"episode_id":"ep-1"}`
+		}
+		txt := text
+		mcpServer.AddTool(mcpmcp.NewTool(n), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+			return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: txt}}}, nil
+		})
+	}
+	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		ingestCount++
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{}`}}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{"memories":[]}`}}}, nil
+	})
+	ts := server.NewTestServer(mcpServer)
+	defer ts.Close()
+
+	haikuSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"test\",\"domain\":\"git\",\"evidence\":\"e\",\"tag_signature\":\"sig-t\"}]"}],"usage":{"input_tokens":5,"output_tokens":10}}`)
+	}))
+	defer haikuSrv.Close()
+
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	line := `{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"h","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(buf, []byte(line+line+line), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config{
+		bufferPath:    buf,
+		minEvents:     3,
+		engramURL:     ts.URL,
+		engramToken:   "",
+		anthropicKey:  "sk-fake",
+		haikuEndpoint: haikuSrv.URL + "/v1/messages",
+	}
+	if err := run(context.Background(), cfg); err != nil {
+		t.Fatalf("run() error: %v", err)
+	}
+	if ingestCount != 3 {
+		t.Errorf("want 3 ingest calls, got %d", ingestCount)
+	}
+	if _, err := os.Stat(buf); !os.IsNotExist(err) {
+		t.Errorf("buffer should have been rotated")
+	}
+}

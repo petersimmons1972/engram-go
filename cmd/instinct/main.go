@@ -587,8 +587,77 @@ func main() {
 	}
 }
 
-// run is the top-level pipeline. Implemented in Task 7 — stub for now.
-func run(_ context.Context, _ config) error {
+// run is the top-level pipeline: load buffer → group by session → write
+// episodes to Engram → detect patterns via Haiku → upsert patterns.
+func run(ctx context.Context, cfg config) error {
+	events, processedPath := loadAndRotate(cfg.bufferPath, cfg.minEvents)
+	if len(events) == 0 {
+		slog.Info("instinct: noop", "reason", "buffer below min events or missing")
+		return nil
+	}
+
+	slog.Info("instinct: processing", "events", len(events))
+
+	if cfg.engramURL == "" {
+		requeue(cfg.bufferPath, processedPath)
+		return fmt.Errorf("ENGRAM_BASE_URL not set")
+	}
+
+	e, err := newSSEEngram(cfg.engramURL, cfg.engramToken)
+	if err != nil {
+		requeue(cfg.bufferPath, processedPath)
+		return fmt.Errorf("newSSEEngram: %w", err)
+	}
+	if err := e.connect(ctx); err != nil {
+		requeue(cfg.bufferPath, processedPath)
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer e.close()
+
+	groups := groupBySession(events)
+	for key, group := range groups {
+		if err := writeEpisode(ctx, e, key.sessionID, key.projectID, group); err != nil {
+			slog.Error("instinct: writeEpisode failed", "session", key.sessionID, "err", err)
+		}
+	}
+
+	patterns := callHaiku(ctx, cfg.anthropicKey, events, cfg.haikuEndpoint)
+	slog.Info("instinct: detected patterns", "count", len(patterns))
+	for _, p := range patterns {
+		upsertPattern(ctx, e, p, events)
+	}
+
+	slog.Info("instinct: done", "events", len(events), "patterns", len(patterns))
 	return nil
+}
+
+func writeEpisode(ctx context.Context, e engramAPI, sessionID, projectID string, events []Event) error {
+	epID, err := e.episodeStart(ctx, sessionID, projectID)
+	if err != nil {
+		return fmt.Errorf("episodeStart: %w", err)
+	}
+	for _, ev := range events {
+		if err := e.ingest(ctx, ev, projectID, sessionID); err != nil {
+			slog.Warn("instinct: ingest failed", "tool", ev.ToolName, "err", err)
+		}
+	}
+	if epID != "" {
+		if err := e.episodeEnd(ctx, epID); err != nil {
+			slog.Warn("instinct: episodeEnd failed", "err", err)
+		}
+	}
+	return nil
+}
+
+// requeue renames a .processed file back to buffer.jsonl if the buffer no longer exists.
+func requeue(bufferPath, processedPath string) {
+	if processedPath == "" {
+		return
+	}
+	if _, err := os.Stat(bufferPath); os.IsNotExist(err) {
+		if err := os.Rename(processedPath, bufferPath); err != nil {
+			slog.Error("instinct: requeue failed", "err", err)
+		}
+	}
 }
 
