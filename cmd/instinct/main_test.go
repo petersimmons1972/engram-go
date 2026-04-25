@@ -321,3 +321,113 @@ func TestCallHaiku_EmptyResponse(t *testing.T) {
 		t.Errorf("want 0 patterns for empty response, got %d", len(patterns))
 	}
 }
+
+// ── Confidence management tests ───────────────────────────────────────────────
+
+func TestNextConfidence(t *testing.T) {
+	cases := []struct{ in, want float64 }{{0.3, 0.5}, {0.5, 0.7}, {0.7, 0.9}, {0.9, 0.9}}
+	for _, c := range cases {
+		got := nextConfidence(c.in)
+		if got != c.want {
+			t.Errorf("nextConfidence(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestPrevConfidence(t *testing.T) {
+	cases := []struct{ in, want float64 }{{0.9, 0.7}, {0.7, 0.5}, {0.5, 0.3}, {0.3, 0.3}}
+	for _, c := range cases {
+		got := prevConfidence(c.in)
+		if got != c.want {
+			t.Errorf("prevConfidence(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestPrimaryProject(t *testing.T) {
+	events := []Event{
+		{ProjectID: "proj1"}, {ProjectID: "proj1"}, {ProjectID: "proj2"},
+	}
+	got := primaryProject(events)
+	if got != "proj1" {
+		t.Errorf("primaryProject = %q, want proj1", got)
+	}
+}
+
+// mockEngram implements engramAPI for confidence tests
+type mockEngram struct {
+	stored       []Pattern
+	recalled     *recallResult
+	corrected    []float64
+	globalStored []Pattern
+}
+
+func (m *mockEngram) connect(ctx context.Context) error { return nil }
+func (m *mockEngram) close() error                      { return nil }
+func (m *mockEngram) episodeStart(ctx context.Context, s, p string) (string, error) {
+	return "ep-mock", nil
+}
+func (m *mockEngram) ingest(ctx context.Context, e Event, p, s string) error { return nil }
+func (m *mockEngram) episodeEnd(ctx context.Context, id string) error         { return nil }
+func (m *mockEngram) store(ctx context.Context, p Pattern, conf float64, proj string) (string, error) {
+	if proj == "global" {
+		m.globalStored = append(m.globalStored, p)
+	} else {
+		m.stored = append(m.stored, p)
+	}
+	return "mem-new", nil
+}
+func (m *mockEngram) recall(ctx context.Context, sig, proj string) (*recallResult, error) {
+	if proj == "global" {
+		return nil, nil // simulate not yet in global
+	}
+	return m.recalled, nil
+}
+func (m *mockEngram) correct(ctx context.Context, id string, conf float64) error {
+	m.corrected = append(m.corrected, conf)
+	return nil
+}
+
+func TestUpsertPattern_NewPattern(t *testing.T) {
+	e := &mockEngram{recalled: nil}
+	p := Pattern{Type: "workflow", Description: "test", Domain: "git", Evidence: "seen", TagSignature: "sig-test"}
+	events := []Event{{ProjectID: "proj1"}}
+	upsertPattern(context.Background(), e, p, events)
+	if len(e.stored) != 1 {
+		t.Errorf("want 1 stored pattern, got %d", len(e.stored))
+	}
+}
+
+func TestUpsertPattern_ExistingStepsUp(t *testing.T) {
+	e := &mockEngram{recalled: &recallResult{id: "mem-123", confidence: 0.3}}
+	p := Pattern{Type: "workflow", Description: "test", Domain: "git", Evidence: "seen", TagSignature: "sig-test"}
+	events := []Event{{ProjectID: "proj1"}}
+	upsertPattern(context.Background(), e, p, events)
+	if len(e.corrected) != 1 || e.corrected[0] != 0.5 {
+		t.Errorf("want correct(0.5), got %v", e.corrected)
+	}
+}
+
+func TestUpsertPattern_CorrectionStepsDown(t *testing.T) {
+	e := &mockEngram{recalled: &recallResult{id: "mem-123", confidence: 0.7}}
+	p := Pattern{Type: "correction", Description: "test", Domain: "git", Evidence: "seen", TagSignature: "sig-test"}
+	events := []Event{{ProjectID: "proj1"}}
+	upsertPattern(context.Background(), e, p, events)
+	if len(e.corrected) != 1 || e.corrected[0] != 0.5 {
+		t.Errorf("want correct(0.5), got %v", e.corrected)
+	}
+}
+
+func TestUpsertPattern_GlobalPromotion(t *testing.T) {
+	// Existing pattern at 0.7, step up to 0.9 (>= 0.8), events span 2 projects → promote globally
+	e := &mockEngram{recalled: &recallResult{id: "mem-123", confidence: 0.7}}
+	p := Pattern{Type: "workflow", Description: "test", Domain: "git", Evidence: "seen", TagSignature: "sig-test"}
+	events := []Event{{ProjectID: "proj1"}, {ProjectID: "proj2"}}
+	upsertPattern(context.Background(), e, p, events)
+	if len(e.corrected) != 1 || e.corrected[0] != 0.9 {
+		t.Errorf("want correct(0.9), got %v", e.corrected)
+	}
+	if len(e.globalStored) != 1 {
+		t.Errorf("want 1 globally promoted pattern, got %d", len(e.globalStored))
+	}
+}

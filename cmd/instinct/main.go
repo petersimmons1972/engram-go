@@ -482,6 +482,97 @@ func callHaiku(ctx context.Context, apiKey string, events []Event, endpoint stri
 	return patterns
 }
 
+// ── Confidence management ─────────────────────────────────────────────────────
+
+var confidenceSteps = []float64{0.3, 0.5, 0.7, 0.9}
+
+const promoteThreshold = 0.8
+const confidenceTolerance = 0.01
+
+func nextConfidence(current float64) float64 {
+	for i, s := range confidenceSteps {
+		if absF(current-s) < confidenceTolerance && i+1 < len(confidenceSteps) {
+			return confidenceSteps[i+1]
+		}
+	}
+	return confidenceSteps[len(confidenceSteps)-1]
+}
+
+func prevConfidence(current float64) float64 {
+	for i, s := range confidenceSteps {
+		if absF(current-s) < confidenceTolerance && i > 0 {
+			return confidenceSteps[i-1]
+		}
+	}
+	return confidenceSteps[0]
+}
+
+func absF(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// primaryProject returns the most-frequent project_id across events.
+func primaryProject(events []Event) string {
+	counts := make(map[string]int)
+	for _, e := range events {
+		counts[e.ProjectID]++
+	}
+	best, bestN := "", 0
+	for p, n := range counts {
+		if n > bestN {
+			best, bestN = p, n
+		}
+	}
+	return best
+}
+
+func upsertPattern(ctx context.Context, e engramAPI, p Pattern, events []Event) {
+	proj := primaryProject(events)
+	existing, err := e.recall(ctx, p.TagSignature, proj)
+	if err != nil {
+		slog.Error("instinct: recall failed", "sig", p.TagSignature, "err", err)
+		return
+	}
+
+	var newConf float64
+	if existing == nil {
+		if _, err := e.store(ctx, p, confidenceSteps[0], proj); err != nil {
+			slog.Error("instinct: store failed", "sig", p.TagSignature, "err", err)
+		}
+		newConf = confidenceSteps[0]
+	} else {
+		if p.Type == "correction" {
+			newConf = prevConfidence(existing.confidence)
+		} else {
+			newConf = nextConfidence(existing.confidence)
+		}
+		if absF(newConf-existing.confidence) > confidenceTolerance {
+			if err := e.correct(ctx, existing.id, newConf); err != nil {
+				slog.Error("instinct: correct failed", "id", existing.id, "err", err)
+			}
+		}
+	}
+
+	// Global promotion: confidence >= threshold AND events span >= 2 projects
+	if newConf >= promoteThreshold {
+		projects := make(map[string]struct{})
+		for _, ev := range events {
+			projects[ev.ProjectID] = struct{}{}
+		}
+		if len(projects) >= 2 {
+			global, err := e.recall(ctx, p.TagSignature, "global")
+			if err == nil && global == nil {
+				if _, err := e.store(ctx, p, newConf, "global"); err != nil {
+					slog.Error("instinct: global store failed", "sig", p.TagSignature, "err", err)
+				}
+			}
+		}
+	}
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
