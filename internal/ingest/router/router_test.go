@@ -4,6 +4,7 @@ package router_test
 // so each can be run independently in the red state.
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -157,4 +158,42 @@ func TestParseAuto_DetectMismatch(t *testing.T) {
 	require.Equal(t, router.FormatClaudeAI, format)
 	require.Nil(t, memories)
 	require.Error(t, err, "a malformed body on a detected format must return an error")
+}
+
+// ── DetectFromPath ────────────────────────────────────────────────────────────
+
+func TestDetectFromPath_ZipMagicBytes(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "export*.zip")
+	f.Write([]byte{0x50, 0x4B, 0x03, 0x04, 0x00})
+	f.Close()
+	if got := router.DetectFromPath(f.Name()); got != router.FormatSlack {
+		t.Errorf("want FormatSlack, got %q", got)
+	}
+}
+
+func TestDetectFromPath_ZipMagicNoExtension(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "export")
+	f.Write([]byte{0x50, 0x4B, 0x03, 0x04, 0x00})
+	f.Close()
+	if got := router.DetectFromPath(f.Name()); got != router.FormatSlack {
+		t.Errorf("want FormatSlack for zip magic, got %q", got)
+	}
+}
+
+func TestDetectFromPath_ClaudeAIJSON(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "claude*.json")
+	f.WriteString(`[{"chat_messages":[]}]`)
+	f.Close()
+	if got := router.DetectFromPath(f.Name()); got != router.FormatClaudeAI {
+		t.Errorf("want FormatClaudeAI, got %q", got)
+	}
+}
+
+func TestDetectFromPath_UnknownFile(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "random*.txt")
+	f.WriteString("hello world")
+	f.Close()
+	if got := router.DetectFromPath(f.Name()); got != router.FormatUnknown {
+		t.Errorf("want FormatUnknown, got %q", got)
+	}
 }

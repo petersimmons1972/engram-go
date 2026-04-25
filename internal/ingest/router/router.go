@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/petersimmons1972/engram/internal/ingest/chatgpt"
@@ -22,6 +23,7 @@ const (
 	FormatUnknown  Format = "unknown"
 	FormatClaudeAI Format = "claudeai"
 	FormatChatGPT  Format = "chatgpt"
+	FormatSlack    Format = "slack"
 )
 
 // peekSize is the number of bytes we read when sniffing a stream. 4 KiB is
@@ -125,4 +127,27 @@ func ParseAuto(r io.Reader) (Format, []*types.Memory, error) {
 		// Defensive: new Format values not handled above.
 		return FormatUnknown, nil, nil
 	}
+}
+
+var zipMagic = []byte{0x50, 0x4B, 0x03, 0x04}
+
+// DetectFromPath opens the file at path, reads the first peekSize bytes, and
+// returns the detected format. ZIP files (magic bytes PK\x03\x04) are
+// classified as FormatSlack; all others fall back to Detect.
+func DetectFromPath(path string) Format {
+	f, err := os.Open(path)
+	if err != nil {
+		return FormatUnknown
+	}
+	defer f.Close()
+	buf := make([]byte, peekSize)
+	n, _ := f.Read(buf)
+	if n < 4 {
+		return FormatUnknown
+	}
+	peek := buf[:n]
+	if bytes.HasPrefix(peek, zipMagic) {
+		return FormatSlack
+	}
+	return Detect(peek)
 }
