@@ -257,8 +257,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 			return
 		}
 		slog.Warn("setup-token accessed", "remote_ip", ip)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
+		writeJSON(w, http.StatusOK, map[string]string{
 			"token":    apiKey,
 			"endpoint": advertised + "/sse",
 			"name":     "engram",
@@ -347,10 +346,11 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		// Rate limit before auth check to prevent timing-based enumeration.
 		remoteHost := s.clientIP(r)
 		if !rl.allow(remoteHost) {
-			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`) //nolint:errcheck
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "rate_limited",
+				"hint":  "too many requests — back off and retry",
+			})
 			return
 		}
 		// ConstantTimeCompare leaks length when len(got) != len(want).
@@ -361,9 +361,10 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		want := hmac.New(sha256.New, []byte(apiKey))
 		want.Write([]byte("Bearer " + apiKey))
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`) //nolint:errcheck
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "unauthorized",
+				"hint":  "Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)",
+			})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -396,9 +397,10 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 		expected := mac.Sum(nil)
 
 		if subtle.ConstantTimeCompare(storedFP, expected) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"error":"forbidden","hint":"session bearer mismatch"}`) //nolint:errcheck
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "forbidden",
+				"hint":  "session bearer mismatch",
+			})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -734,9 +736,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		statusCode = http.StatusServiceUnavailable
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(res) //nolint:errcheck
+	writeJSON(w, statusCode, res)
 }
 
 // extractionSem caps the number of concurrent entity-extraction goroutines.
@@ -798,9 +798,7 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		Importance int      `json:"importance"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid request body"}`) //nolint:errcheck
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if strings.TrimSpace(body.Content) == "" {
@@ -829,16 +827,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
 	if err != nil {
 		slog.Error("quick-store failed", "err", err, "request_id", requestIDFromContext(r.Context()))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"store failed"}`) //nolint:errcheck
+		writeJSONError(w, http.StatusInternalServerError, "store failed")
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
 	if result.IsError {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{"ok": false}) //nolint:errcheck
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false})
 		return
 	}
 
@@ -855,9 +848,8 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if id == "" {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"ok":false,"error":"id extraction failed"}`, http.StatusUnprocessableEntity)
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "id extraction failed"})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id}) //nolint:errcheck
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
