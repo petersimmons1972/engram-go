@@ -34,14 +34,14 @@ func TestLoadConfig_EnvVars(t *testing.T) {
 }
 
 func TestLoadConfig_Defaults(t *testing.T) {
-	// Unset all env vars so we get defaults
+	// Use t.Setenv so Go restores original values after test — prevents cross-test contamination
 	for _, k := range []string{"INSTINCT_BUFFER", "INSTINCT_MIN_EVENTS", "ENGRAM_BASE_URL", "ENGRAM_API_KEY", "ANTHROPIC_API_KEY"} {
-		os.Unsetenv(k)
+		t.Setenv(k, "")
 	}
 	cfg, err := loadConfig()
-	// err is acceptable here if mcp_servers.json is absent — we only test the defaults
-	// that are populated before the fallback is attempted
-	_ = err
+	if err != nil {
+		t.Logf("loadConfig warning (acceptable if mcp_servers.json absent): %v", err)
+	}
 	home, _ := os.UserHomeDir()
 	want := home + "/.local/state/instinct/buffer.jsonl"
 	if cfg.bufferPath != want {

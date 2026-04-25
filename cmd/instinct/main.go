@@ -70,7 +70,10 @@ type config struct {
 // partially-populated config so callers that only need defaults (bufferPath,
 // minEvents) can still function.
 func loadConfig() (config, error) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return config{}, fmt.Errorf("cannot determine home directory: %w", err)
+	}
 	cfg := config{
 		bufferPath:   envOr("INSTINCT_BUFFER", home+"/.local/state/instinct/buffer.jsonl"),
 		minEvents:    envInt("INSTINCT_MIN_EVENTS", 20),
@@ -120,11 +123,10 @@ func readMCPConfig(path string) (url, token string, err error) {
 	if !ok {
 		return "", "", fmt.Errorf("no 'engram' entry in mcpServers")
 	}
-	tok := srv.Headers["Authorization"]
-	// Strip "Bearer " prefix if present.
-	if strings.HasPrefix(tok, "Bearer ") {
-		tok = tok[len("Bearer "):]
+	if srv.URL == "" {
+		return "", "", fmt.Errorf("engram entry has no url in %s", path)
 	}
+	tok := strings.TrimPrefix(srv.Headers["Authorization"], "Bearer ")
 	return srv.URL, tok, nil
 }
 
