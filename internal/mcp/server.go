@@ -118,6 +118,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	trustProxy := false
 	if v := os.Getenv("ENGRAM_TRUST_PROXY_HEADERS"); v == "1" || strings.EqualFold(v, "true") {
 		trustProxy = true
+		slog.Warn("ENGRAM_TRUST_PROXY_HEADERS is enabled — ensure a trusted reverse proxy terminates all inbound connections; direct clients can spoof X-Forwarded-For to bypass rate limiting")
 	}
 	s := &Server{pool: pool, cfg: cfg, uploads: make(map[string]*uploadSession), trustProxy: trustProxy}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
