@@ -8,6 +8,7 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 const (
@@ -96,7 +97,22 @@ const batchTimeout = 5 * time.Minute // max time for one runBatch iteration (#12
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
+	chunksProcessed := 0
 	for {
+		// Count pending chunks and update the Prometheus gauge at the start of
+		// each tick so operators can observe backlog size without waiting for a pass.
+		metrics.WorkerTicks.WithLabelValues("reembed").Inc()
+		if w.backend != nil {
+			countCtx, countCancel := context.WithTimeout(ctx, 5*time.Second)
+			if count, err := w.backend.GetPendingEmbeddingCount(countCtx, w.project); err == nil {
+				metrics.ChunksPendingReembed.Set(float64(count))
+				if count > 0 {
+					slog.Warn("reembed: chunks pending", "count", count, "project", w.project)
+				}
+			}
+			countCancel()
+		}
+
 		// Per-iteration timeout prevents an Ollama hang from blocking the worker forever.
 		iterCtx, cancel := context.WithTimeout(ctx, batchTimeout)
 		done := w.safeRunBatch(iterCtx)
@@ -105,11 +121,14 @@ func (w *Worker) run(ctx context.Context) {
 			return
 		}
 		if done {
+			slog.Info("reembed: backfill pass complete",
+				"chunks_processed", chunksProcessed, "project", w.project)
 			// ctx is already cancelled here; use a fresh context for the flag write.
 			flagCtx, flagCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer flagCancel()
 			if err := w.backend.SetMeta(flagCtx, w.project, "embedding_migration_in_progress", "false"); err != nil {
 				slog.Warn("reembed: failed to clear migration flag", "project", w.project, "err", err)
+				metrics.WorkerErrors.WithLabelValues("reembed").Inc()
 			}
 			slog.Info("reembed complete", "project", w.project)
 			return
@@ -142,6 +161,7 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 	chunks, err := w.backend.GetChunksPendingEmbedding(ctx, w.project, batchSize)
 	if err != nil {
 		slog.Warn("reembed fetch failed", "err", err)
+		metrics.WorkerErrors.WithLabelValues("reembed").Inc()
 		return false
 	}
 	if len(chunks) == 0 {

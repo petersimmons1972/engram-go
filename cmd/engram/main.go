@@ -42,6 +42,27 @@ func main() {
 }
 
 func run() error {
+	// Configure structured JSON logging when running in a container or when
+	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
+	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
+	logLevel := slog.LevelInfo
+	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
+		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
+			// Invalid level — keep INFO, log the issue after handler is set.
+			_ = err
+		}
+	}
+	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+			Level:     logLevel,
+		})))
+	} else if logLevel != slog.LevelInfo {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevel,
+		})))
+	}
+
 	fs := flag.NewFlagSet("engram", flag.ExitOnError)
 
 	versionFlag := fs.Bool("version", false, "print version and exit")

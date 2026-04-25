@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 // Default weights — must match the compile-time constants in internal/search/score.go.
@@ -111,13 +113,16 @@ func NewTunerWorkerWithDB(pool *pgxpool.Pool, db tunerQuerier, interval time.Dur
 // Fires once immediately then on each ticker tick.
 func (w *TunerWorker) Run(ctx context.Context) {
 	run := func() {
+		metrics.WorkerTicks.WithLabelValues("weight").Inc()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("weight tuner: panic", "err", r)
+				metrics.WorkerErrors.WithLabelValues("weight").Inc()
 			}
 		}()
 		if err := w.RunPass(ctx); err != nil {
 			slog.Error("weight tuner: pass failed", "err", err)
+			metrics.WorkerErrors.WithLabelValues("weight").Inc()
 		}
 	}
 
