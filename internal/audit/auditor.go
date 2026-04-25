@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 const (
@@ -116,13 +118,16 @@ func NewAuditWorkerWithDB(pool *pgxpool.Pool, db AuditQuerier, recaller Recaller
 // Fires once immediately then on each ticker tick.
 func (w *AuditWorker) Run(ctx context.Context) {
 	run := func() {
+		metrics.WorkerTicks.WithLabelValues("audit").Inc()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("audit worker: panic", "err", r)
+				metrics.WorkerErrors.WithLabelValues("audit").Inc()
 			}
 		}()
 		if _, err := w.RunPass(ctx); err != nil {
 			slog.Error("audit worker: pass failed", "err", err)
+			metrics.WorkerErrors.WithLabelValues("audit").Inc()
 		}
 	}
 
@@ -387,6 +392,17 @@ func (w *AuditWorker) runQuerySnapshot(ctx context.Context, q CanonicalQuery) (*
 
 		snap.Additions = setDiff(ids, prev.MemoryIDs)
 		snap.Removals = setDiff(prev.MemoryIDs, ids)
+
+		// Alert when RBO drops below the configured threshold (#275).
+		if q.AlertThreshold != nil && snap.RBOVsPrev != nil && *snap.RBOVsPrev < *q.AlertThreshold {
+			slog.Error("audit: retrieval drift alert — RBO below threshold",
+				"query_id", q.ID,
+				"project", q.Project,
+				"query", q.Query,
+				"rbo_vs_prev", *snap.RBOVsPrev,
+				"alert_threshold", *q.AlertThreshold,
+			)
+		}
 	}
 
 	if err := w.insertSnapshot(ctx, snap); err != nil {

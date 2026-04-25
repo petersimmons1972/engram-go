@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 // ErrModelNotFound is returned by SummarizeContent when Ollama responds with
@@ -240,6 +241,7 @@ func (w *Worker) run(ctx context.Context) {
 
 // timedRunOnce wraps safeRunOnce with a per-iteration context timeout (#120).
 func (w *Worker) timedRunOnce(ctx context.Context) {
+	metrics.WorkerTicks.WithLabelValues("summarize").Inc()
 	iterCtx, cancel := context.WithTimeout(ctx, batchTimeout)
 	defer cancel()
 	w.safeRunOnce(iterCtx)
@@ -273,6 +275,7 @@ func (w *Worker) runOnce(ctx context.Context) {
 	rows, err := w.backend.GetMemoriesPendingSummary(ctx, w.project, batchSize)
 	if err != nil {
 		slog.Warn("summarize fetch failed", "err", err)
+		metrics.WorkerErrors.WithLabelValues("summarize").Inc()
 		return
 	}
 	for _, row := range rows {

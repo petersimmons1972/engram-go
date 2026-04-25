@@ -18,10 +18,29 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/time/rate"
 
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
+
+// contextKey is a typed key for values stored in request contexts.
+// Using a named type prevents collisions with context values from other packages.
+type contextKey string
+
+// requestIDKey is the context key for the per-request correlation ID.
+const requestIDKey contextKey = "request_id"
+
+// requestIDFromContext retrieves the correlation ID stored by the middleware,
+// or returns empty string when no ID is present.
+func requestIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
 
 // rateLimiter holds per-IP token-bucket state for HTTP rate limiting (#140).
 type rateLimiter struct {
@@ -189,10 +208,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		}
 		ep, err := h.Engine.Backend().StartEpisode(ctx, "global", desc)
 		if err != nil {
-			slog.Warn("auto-episode: StartEpisode failed", "err", err)
+			slog.Warn("auto-episode: StartEpisode failed", "err", err, "request_id", requestIDFromContext(ctx))
 			return
 		}
-		slog.Info("auto-episode started", "id", ep.ID, "project", "global", "desc", desc)
+		slog.Info("auto-episode started", "id", ep.ID, "project", "global", "desc", desc, "request_id", requestIDFromContext(ctx))
 	})
 
 	// Remove the fingerprint when a session disconnects (#245).
@@ -206,11 +225,13 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
 	mux := http.NewServeMux()
 
-	// GET /health — unauthenticated; returns server status for diagnostics and readiness checks.
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
-	})
+	// GET /health — unauthenticated; returns dependency status for diagnostics and readiness checks.
+	// Probes PostgreSQL (SELECT 1) and Ollama (/api/tags) with 2-second deadlines each.
+	// Returns 200 {"status":"ok",...} when both succeed; 503 {"status":"degraded",...} otherwise.
+	mux.HandleFunc("/health", s.handleHealth)
+
+	// GET /metrics — unauthenticated Prometheus metrics endpoint.
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// GET /setup-token — local-network only; returns the current bearer token so MCP
 	// clients can self-configure without manual copy-paste.
@@ -319,6 +340,10 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		panic("engram: auth middleware called with empty apiKey — programming error")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Attach a short request correlation ID to the context for log threading (#320).
+		requestID := fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+
 		// Rate limit before auth check to prevent timing-based enumeration.
 		remoteHost := s.clientIP(r)
 		if !rl.allow(remoteHost) {
@@ -453,6 +478,8 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				result, err := handleMemoryStore(ctx, pool, req)
 				if err != nil {
+					slog.Warn("memory_store: store failed",
+						"err", err, "request_id", requestIDFromContext(ctx))
 					return result, err
 				}
 				// Enqueue entity extraction asynchronously. Runs in a detached
@@ -464,6 +491,8 @@ func (s *Server) registerTools() {
 		return nil, err
 	}
 				if memID, ok := extractResultID(result); ok {
+					slog.Debug("memory_store: stored, enqueuing extraction",
+						"id", memID, "project", project, "request_id", requestIDFromContext(ctx))
 					go enqueueExtractionAsync(pool, memID, project)
 				}
 				return result, nil
@@ -482,7 +511,12 @@ func (s *Server) registerTools() {
 			}},
 		{"memory_recall", "Recall memories by semantic + full-text query",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryRecall(ctx, pool, req, cfg)
+				result, err := handleMemoryRecall(ctx, pool, req, cfg)
+				if err != nil {
+					slog.Warn("memory_recall: failed",
+						"err", err, "request_id", requestIDFromContext(ctx))
+				}
+				return result, err
 			}},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -543,7 +577,12 @@ func (s *Server) registerTools() {
 		// Feature 6: Episodic Memory
 		{"memory_episode_start", "Start a named episode to group memories from this session",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryEpisodeStart(ctx, pool, req)
+				result, err := handleMemoryEpisodeStart(ctx, pool, req)
+				if err != nil {
+					slog.Warn("memory_episode_start: failed",
+						"err", err, "request_id", requestIDFromContext(ctx))
+				}
+				return result, err
 			}},
 		{"memory_episode_end", "End an episode with an optional summary",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -596,7 +635,12 @@ func (s *Server) registerTools() {
 		// do not need the full parameter surface.
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryQuickStore(ctx, pool, req)
+				result, err := handleMemoryQuickStore(ctx, pool, req)
+				if err != nil {
+					slog.Warn("memory_quick_store: failed",
+						"err", err, "request_id", requestIDFromContext(ctx))
+				}
+				return result, err
 			}},
 		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -631,7 +675,23 @@ func (s *Server) registerTools() {
 	}
 
 	for _, t := range tools {
-		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), t.handler)
+		// Capture loop variables before the closure.
+		toolName := t.name
+		innerHandler := t.handler
+		// Wrap every tool handler with Prometheus instrumentation: duration
+		// histogram and request counter by status ("ok"/"error").
+		instrumented := func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			timer := prometheus.NewTimer(metrics.ToolDuration.WithLabelValues(toolName))
+			defer timer.ObserveDuration()
+			result, err := innerHandler(ctx, req)
+			status := "ok"
+			if err != nil || (result != nil && result.IsError) {
+				status = "error"
+			}
+			metrics.ToolRequests.WithLabelValues(toolName, status).Inc()
+			return result, err
+		}
+		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), instrumented)
 	}
 
 	// Audit and weight tools are always available when PgPool is configured.
@@ -734,9 +794,78 @@ func (s *Server) registerTools() {
 	}
 }
 
+// handleHealth checks PostgreSQL and Ollama reachability and returns a structured
+// JSON response. Both probes use a 2-second deadline. Returns 200 when both are
+// healthy, 503 when either fails. Unauthenticated — suitable as a K8s readiness probe.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	type result struct {
+		Status   string `json:"status"`
+		Postgres string `json:"postgres"`
+		Ollama   string `json:"ollama"`
+	}
+
+	pgStatus := "ok"
+	ollamaStatus := "ok"
+
+	// Probe PostgreSQL.
+	if s.cfg.PgPool != nil {
+		pgCtx, pgCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer pgCancel()
+		if err := s.cfg.PgPool.Ping(pgCtx); err != nil {
+			pgStatus = "error"
+			slog.Warn("health: postgres probe failed", "err", err)
+		}
+	} else {
+		// No shared pool configured — skip the probe but do not report degraded.
+		// This happens in test environments that construct Server without a PgPool.
+		pgStatus = "ok"
+	}
+
+	// Probe Ollama.
+	if s.cfg.OllamaURL != "" {
+		ollamaCtx, ollamaCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer ollamaCancel()
+		ollamaTagsURL := strings.TrimRight(s.cfg.OllamaURL, "/") + "/api/tags"
+		req, err := http.NewRequestWithContext(ollamaCtx, http.MethodHead, ollamaTagsURL, nil)
+		if err == nil {
+			resp, herr := http.DefaultClient.Do(req)
+			if herr != nil {
+				ollamaStatus = "error"
+				slog.Warn("health: ollama probe failed", "err", herr)
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode >= 500 {
+					ollamaStatus = "error"
+					slog.Warn("health: ollama returned server error", "status", resp.StatusCode)
+				}
+			}
+		} else {
+			ollamaStatus = "error"
+			slog.Warn("health: could not build ollama probe request", "err", err)
+		}
+	}
+
+	res := result{
+		Status:   "ok",
+		Postgres: pgStatus,
+		Ollama:   ollamaStatus,
+	}
+	statusCode := http.StatusOK
+	if pgStatus != "ok" || ollamaStatus != "ok" {
+		res.Status = "degraded"
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(res) //nolint:errcheck
+}
+
 // enqueueExtractionAsync submits memID to the entity extraction queue via pool.
 // Intended to run in a detached goroutine; all failures are logged, never surfaced.
 func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
+	// No request context available here — this runs in a detached goroutine
+	// after the store has already returned. Use background context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	h, herr := pool.Get(ctx, project)
@@ -801,7 +930,7 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 
 	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
 	if err != nil {
-		slog.Error("quick-store failed", "err", err)
+		slog.Error("quick-store failed", "err", err, "request_id", requestIDFromContext(r.Context()))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, `{"error":"store failed"}`) //nolint:errcheck
