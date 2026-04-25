@@ -14,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -201,6 +205,164 @@ func groupBySession(events []Event) map[sessionKey][]Event {
 		groups[k] = append(groups[k], e)
 	}
 	return groups
+}
+
+// ── Engram client ─────────────────────────────────────────────────────────────
+
+type engramAPI interface {
+	connect(ctx context.Context) error
+	close() error
+	episodeStart(ctx context.Context, sessionID, projectID string) (string, error)
+	ingest(ctx context.Context, ev Event, projectID, sessionID string) error
+	episodeEnd(ctx context.Context, episodeID string) error
+	store(ctx context.Context, p Pattern, confidence float64, projectID string) (string, error)
+	recall(ctx context.Context, tagSignature, projectID string) (*recallResult, error)
+	correct(ctx context.Context, memoryID string, confidence float64) error
+}
+
+type sseEngram struct {
+	c *client.Client
+}
+
+func newSSEEngram(baseURL, token string) (*sseEngram, error) {
+	var opts []transport.ClientOption
+	if token != "" {
+		opts = append(opts, client.WithHeaders(map[string]string{
+			"Authorization": "Bearer " + token,
+		}))
+	}
+	c, err := client.NewSSEMCPClient(baseURL+"/sse", opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &sseEngram{c: c}, nil
+}
+
+func (e *sseEngram) connect(ctx context.Context) error {
+	if err := e.c.Start(ctx); err != nil {
+		return err
+	}
+	req := mcp.InitializeRequest{}
+	req.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	req.Params.ClientInfo = mcp.Implementation{Name: "instinct", Version: "1.0.0"}
+	_, err := e.c.Initialize(ctx, req)
+	return err
+}
+
+func (e *sseEngram) close() error {
+	return e.c.Close()
+}
+
+// callTool calls an MCP tool and returns the first text content as a parsed map.
+func (e *sseEngram) callTool(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	req := mcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = args
+	result, err := e.c.CallTool(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if result.IsError {
+		return nil, fmt.Errorf("%s: tool returned error", name)
+	}
+	if len(result.Content) == 0 {
+		return map[string]any{}, nil
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		return map[string]any{}, nil
+	}
+	return out, nil
+}
+
+func (e *sseEngram) episodeStart(ctx context.Context, sessionID, projectID string) (string, error) {
+	out, err := e.callTool(ctx, "memory_episode_start", map[string]any{
+		"title":   "instinct-raw:" + sessionID,
+		"project": projectID,
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, k := range []string{"episode_id", "id"} {
+		if v, ok := out[k].(string); ok && v != "" {
+			return v, nil
+		}
+	}
+	return "", nil
+}
+
+func (e *sseEngram) ingest(ctx context.Context, ev Event, projectID, sessionID string) error {
+	raw, _ := json.Marshal(ev)
+	_, err := e.callTool(ctx, "memory_ingest", map[string]any{
+		"content":     string(raw),
+		"memory_type": "context",
+		"project":     projectID,
+		"importance":  0.2,
+		"tags":        []string{"instinct-raw", "session-" + sessionID},
+	})
+	return err
+}
+
+func (e *sseEngram) episodeEnd(ctx context.Context, episodeID string) error {
+	_, err := e.callTool(ctx, "memory_episode_end", map[string]any{"episode_id": episodeID})
+	return err
+}
+
+func (e *sseEngram) store(ctx context.Context, p Pattern, confidence float64, projectID string) (string, error) {
+	content := fmt.Sprintf("%s | PROVENANCE: observed 1 time, first seen %s",
+		p.Description, time.Now().UTC().Format("2006-01-02"))
+	out, err := e.callTool(ctx, "memory_store", map[string]any{
+		"content":     content,
+		"memory_type": "pattern",
+		"project":     projectID,
+		"importance":  confidence,
+		"tags":        []string{"instinct", p.Type, p.Domain, p.TagSignature},
+	})
+	if err != nil {
+		return "", err
+	}
+	if id, ok := out["id"].(string); ok {
+		return id, nil
+	}
+	return "", nil
+}
+
+func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) (*recallResult, error) {
+	out, err := e.callTool(ctx, "memory_recall", map[string]any{
+		"query":   "instinct pattern " + tagSignature,
+		"project": projectID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	memories, _ := out["memories"].([]any)
+	for _, m := range memories {
+		mem, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		tags, _ := mem["tags"].([]any)
+		for _, t := range tags {
+			if s, ok := t.(string); ok && s == tagSignature {
+				id, _ := mem["id"].(string)
+				imp, _ := mem["importance"].(float64)
+				return &recallResult{id: id, confidence: imp}, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (e *sseEngram) correct(ctx context.Context, memoryID string, confidence float64) error {
+	_, err := e.callTool(ctx, "memory_correct", map[string]any{
+		"memory_id":  memoryID,
+		"importance": confidence,
+	})
+	return err
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────

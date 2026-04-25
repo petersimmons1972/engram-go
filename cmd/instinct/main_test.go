@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mcpmcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func TestLoadConfig_EnvVars(t *testing.T) {
@@ -136,5 +140,120 @@ func TestGroupBySession(t *testing.T) {
 	k3 := sessionKey{"sess1", "proj2"}
 	if len(groups[k3]) != 1 {
 		t.Errorf("want 1 event for sess1/proj2, got %d", len(groups[k3]))
+	}
+}
+
+// ── Engram client tests ───────────────────────────────────────────────────────
+
+func newTestEngramServer(t *testing.T) (engramAPI, func()) {
+	t.Helper()
+
+	mcpServer := server.NewMCPServer("test-engram", "1.0.0",
+		server.WithToolCapabilities(true),
+	)
+
+	mcpServer.AddTool(mcpmcp.NewTool("memory_episode_start"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{"episode_id":"ep-test-123"}`},
+		}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{}`},
+		}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_episode_end"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{}`},
+		}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_store"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{"id":"mem-abc"}`},
+		}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{"memories":[{"id":"mem-abc","importance":0.5,"tags":["instinct","sig-test"]}]}`},
+		}}, nil
+	})
+	mcpServer.AddTool(mcpmcp.NewTool("memory_correct"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
+		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
+			mcpmcp.TextContent{Type: "text", Text: `{}`},
+		}}, nil
+	})
+
+	ts := server.NewTestServer(mcpServer)
+	e, err := newSSEEngram(ts.URL, "")
+	if err != nil {
+		t.Fatalf("newSSEEngram: %v", err)
+	}
+	ctx := context.Background()
+	if err := e.connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	return e, func() {
+		e.close()
+		ts.Close()
+	}
+}
+
+func TestEngramClient_EpisodeStartAndEnd(t *testing.T) {
+	e, cleanup := newTestEngramServer(t)
+	defer cleanup()
+
+	epID, err := e.episodeStart(context.Background(), "sess1", "proj1")
+	if err != nil {
+		t.Fatalf("episodeStart: %v", err)
+	}
+	if epID != "ep-test-123" {
+		t.Errorf("episodeID = %q, want ep-test-123", epID)
+	}
+	if err := e.episodeEnd(context.Background(), epID); err != nil {
+		t.Errorf("episodeEnd: %v", err)
+	}
+}
+
+func TestEngramClient_Ingest(t *testing.T) {
+	e, cleanup := newTestEngramServer(t)
+	defer cleanup()
+
+	ev := Event{SessionID: "s1", ProjectID: "p1", ToolName: "Bash", ToolOutputSummary: "done", ExitStatus: 0}
+	if err := e.ingest(context.Background(), ev, "p1", "s1"); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+}
+
+func TestEngramClient_StoreAndRecall(t *testing.T) {
+	e, cleanup := newTestEngramServer(t)
+	defer cleanup()
+
+	p := Pattern{Type: "workflow", Description: "test", Domain: "git", Evidence: "seen 2x", TagSignature: "sig-test"}
+	id, err := e.store(context.Background(), p, 0.3, "proj1")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if id != "mem-abc" {
+		t.Errorf("stored id = %q, want mem-abc", id)
+	}
+
+	r, err := e.recall(context.Background(), "sig-test", "proj1")
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	if r == nil {
+		t.Fatal("recall returned nil, want match")
+	}
+	if r.id != "mem-abc" {
+		t.Errorf("recall id = %q, want mem-abc", r.id)
+	}
+}
+
+func TestEngramClient_Correct(t *testing.T) {
+	e, cleanup := newTestEngramServer(t)
+	defer cleanup()
+
+	if err := e.correct(context.Background(), "mem-abc", 0.7); err != nil {
+		t.Fatalf("correct: %v", err)
 	}
 }
