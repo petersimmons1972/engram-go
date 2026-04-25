@@ -18,7 +18,7 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: engram
-          POSTGRES_PASSWORD: ci_test_secret
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci-only-not-production' }}
           POSTGRES_DB: engram_test
         ports:
           - 5432:5432
@@ -38,7 +38,7 @@ jobs:
 
       - name: Test with coverage
         env:
-          TEST_DATABASE_URL: postgres://engram:ci_test_secret@localhost:5432/engram_test?sslmode=disable
+          TEST_DATABASE_URL: postgres://engram:${{ secrets.CI_POSTGRES_PASSWORD || 'ci-only-not-production' }}@localhost:5432/engram_test?sslmode=disable
         run: go test -coverprofile=coverage.out ./...
 
       - name: Coverage gate (60% minimum)
