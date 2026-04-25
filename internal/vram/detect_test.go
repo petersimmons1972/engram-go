@@ -35,3 +35,29 @@ func TestFallback(t *testing.T) {
 		t.Errorf("want source=fallback, got %q", info.Source)
 	}
 }
+
+func TestDetect_ReturnsFallbackWhenNoGPUToolsAvailable(t *testing.T) {
+	// On a CI machine without nvidia-smi, rocm-smi, or Apple sysctl,
+	// Detect() must return the 8GB fallback rather than panicking.
+	info := vram.Detect()
+	if info.GB <= 0 {
+		t.Errorf("Detect returned non-positive GB: %.1f", info.GB)
+	}
+	if info.Source == "" {
+		t.Errorf("Detect returned empty Source")
+	}
+	if info.Label == "" {
+		t.Errorf("Detect returned empty Label")
+	}
+}
+
+func TestDetect_FallbackHasExpectedValues(t *testing.T) {
+	// Fallback is the guaranteed floor — test its contract explicitly.
+	fb := vram.Fallback()
+	if fb.Source != "fallback" {
+		t.Errorf("want source=fallback, got %q", fb.Source)
+	}
+	if fb.GB != 8.0 {
+		t.Errorf("want 8.0 GB, got %.1f", fb.GB)
+	}
+}

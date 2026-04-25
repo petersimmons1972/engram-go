@@ -17,7 +17,7 @@ def prev_confidence(current: float) -> float:
 
 
 async def upsert_pattern(engram, pattern: dict, events: list[dict]) -> None:
-    project_ids = list({e["project_id"] for e in events})
+    project_ids = sorted({e["project_id"] for e in events})
     primary_project = project_ids[0]
 
     existing = await engram.query_pattern(pattern["tag_signature"], primary_project)

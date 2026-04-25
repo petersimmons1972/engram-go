@@ -154,3 +154,98 @@ func TestLoad_RejectsTooManyIncluded(t *testing.T) {
 		t.Fatal("expected error for >25 included models, got nil")
 	}
 }
+
+func TestIncluded_ReturnsOnlyIncludedModels(t *testing.T) {
+	path := writeYAML(t, `
+models:
+  - name: a:7b
+    params_b: 7
+    vram_gb: 4
+    tier: "4-6GB"
+    vendor: "V"
+    family: a
+    instruct: true
+    include: true
+    rationale: "good"
+  - name: b:13b
+    params_b: 13
+    vram_gb: 8
+    tier: "7-10GB"
+    vendor: "V"
+    family: b
+    instruct: true
+    include: false
+    rationale: "excluded"
+`)
+	m, err := manifest.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	inc := m.Included()
+	if len(inc) != 1 {
+		t.Fatalf("want 1 included, got %d", len(inc))
+	}
+	if inc[0].Name != "a:7b" {
+		t.Errorf("want a:7b, got %q", inc[0].Name)
+	}
+}
+
+func TestExcluded_ReturnsOnlyExcludedModels(t *testing.T) {
+	path := writeYAML(t, `
+models:
+  - name: a:7b
+    params_b: 7
+    vram_gb: 4
+    tier: "4-6GB"
+    vendor: "V"
+    family: a
+    instruct: true
+    include: true
+    rationale: "good"
+  - name: b:13b
+    params_b: 13
+    vram_gb: 8
+    tier: "7-10GB"
+    vendor: "V"
+    family: b
+    instruct: true
+    include: false
+    rationale: "excluded"
+`)
+	m, err := manifest.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	exc := m.Excluded()
+	if len(exc) != 1 {
+		t.Fatalf("want 1 excluded, got %d", len(exc))
+	}
+	if exc[0].Name != "b:13b" {
+		t.Errorf("want b:13b, got %q", exc[0].Name)
+	}
+}
+
+func TestIncluded_EmptyWhenAllExcluded(t *testing.T) {
+	path := writeYAML(t, `
+models:
+  - name: a:7b
+    params_b: 7
+    vram_gb: 4
+    tier: "4-6GB"
+    vendor: "V"
+    family: a
+    instruct: true
+    include: false
+    rationale: "no"
+`)
+	m, err := manifest.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(m.Included()) != 0 {
+		t.Errorf("want empty included list")
+	}
+	if len(m.Excluded()) != 1 {
+		t.Errorf("want 1 excluded, got %d", len(m.Excluded()))
+	}
+}
