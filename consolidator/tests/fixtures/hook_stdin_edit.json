@@ -1,9 +1,0 @@
-{
-  "session_id": "sess-test-001",
-  "tool_use_id": "toolu_01ABC",
-  "tool_name": "Edit",
-  "file_path": "/tmp/test.py",
-  "old_string": "foo",
-  "new_string": "bar",
-  "tool_response": "Successfully edited /tmp/test.py"
-}

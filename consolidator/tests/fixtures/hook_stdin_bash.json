@@ -1,7 +1,0 @@
-{
-  "session_id": "sess-test-001",
-  "tool_use_id": "toolu_01DEF",
-  "tool_name": "Bash",
-  "command": "pytest tests/ -x",
-  "tool_response": "3 passed in 0.12s"
-}
