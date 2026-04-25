@@ -1,0 +1,248 @@
+# models/candidates.yaml
+# Community contributions: submit a PR adding an entry below.
+# Requirements: text-only instruct variant, vram_gb <= 16, not superseded by a newer family member.
+# Max 25 include: true entries enforced at load time.
+
+models:
+  # ── ≤2GB tier ──────────────────────────────────────────────────────────────
+  - name: llama3.2:1b
+    params_b: 1.2
+    vram_gb: 1.0
+    tier: "≤2GB"
+    vendor: "Meta"
+    family: llama3
+    instruct: true
+    include: true
+    rationale: >
+      Ultra-small baseline. Useful for machines with integrated graphics or
+      very limited VRAM. Sets the floor for what is possible.
+    notes: null
+
+  - name: llama3.2:3b
+    params_b: 3.2
+    vram_gb: 2.0
+    tier: "≤2GB"
+    vendor: "Meta"
+    family: llama3
+    instruct: true
+    include: true
+    rationale: >
+      Small and fast. Recommended entry point for 4GB VRAM cards that need
+      headroom for the host OS.
+    notes: null
+
+  - name: phi3.5:3.8b
+    params_b: 3.8
+    vram_gb: 2.5
+    tier: "≤2GB"
+    vendor: "Microsoft"
+    family: phi3
+    instruct: true
+    include: true
+    rationale: >
+      Microsoft's compact instruct model. Competes with Llama 3.2 3B on
+      instruction following at similar VRAM cost.
+    notes: null
+
+  # ── 4–6GB tier ─────────────────────────────────────────────────────────────
+  - name: gemma3:4b
+    params_b: 4.3
+    vram_gb: 3.0
+    tier: "4-6GB"
+    vendor: "Google"
+    family: gemma3
+    instruct: true
+    include: true
+    rationale: >
+      Google's 4B instruct model. Strong structured output relative to size.
+    notes: null
+
+  - name: mistral:7b
+    params_b: 7.2
+    vram_gb: 4.5
+    tier: "4-6GB"
+    vendor: "Mistral AI"
+    family: mistral
+    instruct: true
+    include: true
+    rationale: >
+      Proven benchmark winner: the only model in our initial test to detect
+      all four pattern types correctly across multiple runs. Recommended
+      default for any machine with a 4GB card or larger.
+    notes: null
+
+  - name: llama3.1:8b
+    params_b: 8.0
+    vram_gb: 5.0
+    tier: "4-6GB"
+    vendor: "Meta"
+    family: llama3
+    instruct: true
+    include: true
+    rationale: >
+      Meta's flagship 8B model. Widely deployed; good baseline for comparison
+      against Mistral at the same tier.
+    notes: null
+
+  - name: deepseek-r1:8b
+    params_b: 8.0
+    vram_gb: 5.0
+    tier: "4-6GB"
+    vendor: "DeepSeek"
+    family: deepseek-r1
+    instruct: true
+    include: true
+    rationale: >
+      Reasoning-focused model. Returned valid JSON but zero patterns in initial
+      benchmark — included for community investigation of prompt tuning.
+    notes: "Thinking mode active; chain-of-thought output may need prompt adaptation."
+
+  - name: qwen2.5:7b
+    params_b: 7.6
+    vram_gb: 4.5
+    tier: "4-6GB"
+    vendor: "Alibaba"
+    family: qwen2.5
+    instruct: true
+    include: true
+    rationale: >
+      Alibaba's general 7B model. Included alongside qwen2.5-coder:7b to
+      compare general vs. code-tuned variants at identical VRAM cost.
+    notes: null
+
+  - name: qwen2.5-coder:7b
+    params_b: 7.6
+    vram_gb: 4.5
+    tier: "4-6GB"
+    vendor: "Alibaba"
+    family: qwen2.5
+    instruct: true
+    include: true
+    rationale: >
+      Code-tuned variant. Pattern detection involves structured JSON output —
+      a coder model may outperform the general variant on schema adherence.
+    notes: null
+
+  # ── 7–10GB tier ────────────────────────────────────────────────────────────
+  - name: gemma3:12b
+    params_b: 12.0
+    vram_gb: 7.5
+    tier: "7-10GB"
+    vendor: "Google"
+    family: gemma3
+    instruct: true
+    include: true
+    rationale: >
+      Google's mid-size model. Steps up from gemma3:4b with meaningfully more
+      capacity for pattern reasoning.
+    notes: null
+
+  - name: mistral-nemo:12b
+    params_b: 12.0
+    vram_gb: 7.5
+    tier: "7-10GB"
+    vendor: "Mistral AI"
+    family: mistral
+    instruct: true
+    include: true
+    rationale: >
+      Mistral's newer 12B model. Direct comparison to mistral:7b to evaluate
+      whether the extra 5GB VRAM cost buys meaningful pattern detection gains.
+    notes: null
+
+  - name: phi4:14b
+    params_b: 14.0
+    vram_gb: 9.0
+    tier: "7-10GB"
+    vendor: "Microsoft"
+    family: phi4
+    instruct: true
+    include: true
+    rationale: >
+      Microsoft's 14B flagship. Strong instruction following in published
+      benchmarks; first-time test against the pattern detection task.
+    notes: null
+
+  - name: qwen2.5:14b
+    params_b: 14.0
+    vram_gb: 9.0
+    tier: "7-10GB"
+    vendor: "Alibaba"
+    family: qwen2.5
+    instruct: true
+    include: true
+    rationale: >
+      Scales up from qwen2.5:7b. Evaluates whether doubling parameters
+      improves pattern detection at the cost of VRAM.
+    notes: null
+
+  - name: deepseek-r1:14b
+    params_b: 14.8
+    vram_gb: 9.0
+    tier: "7-10GB"
+    vendor: "DeepSeek"
+    family: deepseek-r1
+    instruct: true
+    include: true
+    rationale: >
+      Larger reasoning model. Zero patterns in initial benchmark — evaluation
+      candidate only. Included to test whether extra capacity unlocks the
+      chain-of-thought for structured output.
+    notes: "Thinking mode active. Valid JSON produced but zero patterns detected in prior run."
+
+  # ── Excluded (documented rejections) ───────────────────────────────────────
+  - name: qwen3.5:27b
+    params_b: 27.8
+    vram_gb: 17.0
+    tier: "excluded"
+    vendor: "Alibaba"
+    family: qwen3
+    instruct: true
+    include: false
+    rationale: >
+      Exceeds the 16GB VRAM limit. Cannot run safely on a 20GB card with
+      host OS headroom. Excluded until a quantised variant fits the budget.
+    notes: null
+
+  - name: qwen3:8b
+    params_b: 8.2
+    vram_gb: 5.0
+    tier: "excluded"
+    vendor: "Alibaba"
+    family: qwen3
+    instruct: true
+    include: false
+    rationale: >
+      Built-in thinking mode leaks thinking tokens into the JSON content field,
+      producing invalid output regardless of prompt. The /no_think prefix was
+      tested and confirmed ineffective. Excluded until Ollama resolves the
+      format:json + thinking mode interaction.
+    notes: "Thinking tokens leak into content field. format:json incompatible with Qwen 3 thinking mode."
+
+  - name: gemma4:e4b
+    params_b: 8.0
+    vram_gb: 5.0
+    tier: "excluded"
+    vendor: "Google"
+    family: gemma4
+    instruct: true
+    include: false
+    rationale: >
+      Multimodal model (text + image). Produced valid JSON but zero patterns
+      across two independent benchmark runs. Excluded; may be re-evaluated
+      with a prompt tuned for multimodal instruct style.
+    notes: "Multimodal. Zero patterns detected in both benchmark runs."
+
+  - name: gpt-oss:latest
+    params_b: 20.9
+    vram_gb: 13.0
+    tier: "excluded"
+    vendor: "OpenAI"
+    family: gpt-oss
+    instruct: true
+    include: false
+    rationale: >
+      Thinking mode (Harmony format) leaks into the JSON content field via
+      <|channel|>analysis markers, producing invalid output. Excluded for the
+      same reason as qwen3:8b until Ollama's format:json handles this family.
+    notes: "Harmony-format thinking tokens leak into content. JSON invalid on all test runs."

@@ -1,0 +1,28 @@
+# instinct.service — optional systemd service unit for timer-based consolidation.
+#
+# By default instinct runs hook-triggered (PostToolUse fires every N events).
+# This unit is provided for environments where timer-based triggering is preferred
+# (e.g., shared machines, background processing without an active Claude session).
+#
+# Installation (if you want timer mode):
+#   cp ops/instinct.service ~/.config/systemd/user/
+#   cp ops/instinct.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now instinct.timer
+#
+# Hook-triggered mode (default) does NOT need these units.
+
+[Unit]
+Description=Instinct pattern consolidator
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 -m instinct.run
+WorkingDirectory=%h
+StandardOutput=append:%S/instinct/run.log
+StandardError=append:%S/instinct/run.log
+Environment=PYTHONPATH=%h/projects/engram-go/consolidator
+
+[Install]
+WantedBy=default.target
