@@ -63,16 +63,24 @@ _REDACT = [
     # Most specific first — full var names before generic keyword match
     re.compile(r"(?i)(INFISICAL_CLIENT_(?:ID|SECRET)|ENGRAM_API_KEY|POSTGRES_PASSWORD)\s*=\s*\S+"),
     re.compile(r"(?i)postgres://[^@\s]+@\S+"),
-    re.compile(r"(?i)(password|passwd|secret|api[_-]?key|token|bearer|auth)\s*[=:]\s*\S+"),
-    re.compile(r"[A-Za-z0-9+/]{40,}={0,2}"),
-    re.compile(r"[0-9a-f]{48,}"),
+    # Shell KEY=VALUE and HTTP header KEY: VALUE forms
+    re.compile(r"(?i)\b(password|passwd|secret|api[_-]?key|token|bearer|auth\w*)\s*[=:]\s*\S+"),
+    # JSON "key": "value" form
+    re.compile(r'(?i)"(password|passwd|secret|api[_-]?key|token|bearer|auth\w*)"\s*:\s*"[^"]*"'),
+    # JWTs: three base64url segments separated by dots
+    re.compile(r"[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}"),
+    # Standard base64 and URL-safe base64 (GitHub PATs, Anthropic keys, etc.)
+    re.compile(r"[A-Za-z0-9+/\-_]{40,}={0,2}"),
+    # Uppercase or lowercase hex blobs ≥48 chars
+    re.compile(r"[0-9a-fA-F]{48,}"),
 ]
 def _redact(text):
     for pat in _REDACT:
         text = pat.sub("[REDACTED]", text)
     return text
 
-tool_output_summary = _redact(str(resp)[:200].replace("\n", " "))
+# Redact before truncating — a secret straddling char 200 would evade patterns if truncated first
+tool_output_summary = _redact(str(resp).replace("\n", " "))[:200]
 
 event = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
