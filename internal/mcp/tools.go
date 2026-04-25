@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/markdown"
+	"github.com/petersimmons1972/engram/internal/netutil"
 	"github.com/petersimmons1972/engram/internal/rag"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -1316,6 +1319,22 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 		return nil, fmt.Errorf("new_model is required")
 	}
 
+	// Resolve the Ollama URL for this operation: caller may supply ollama_url to
+	// override the server default; if present, apply the same SSRF guard used at
+	// startup (#291). Only literal private IPs are blocked — hostnames are allowed
+	// because they resolve to container IPs by design and are not attacker-controlled.
+	ollamaURL := cfg.OllamaURL
+	if raw := getString(args, "ollama_url", ""); raw != "" {
+		parsed, parseErr := url.ParseRequestURI(raw)
+		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, fmt.Errorf("invalid ollama_url %q: must be an http:// or https:// URL", raw)
+		}
+		if host := parsed.Hostname(); net.ParseIP(host) != nil && netutil.IsPrivateIP(host) {
+			return nil, fmt.Errorf("invalid ollama_url: IP %q is in a private/reserved range (SSRF protection)", host)
+		}
+		ollamaURL = raw
+	}
+
 	// Dimension pre-flight (#251): compare stored dims against the new model's output.
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
 	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
@@ -1325,7 +1344,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 				return embed.NewOllamaClient(ctx, baseURL, model)
 			}
 		}
-		probeClient, probeErr := probeFunc(ctx, cfg.OllamaURL, newModel)
+		probeClient, probeErr := probeFunc(ctx, ollamaURL, newModel)
 		if probeErr != nil {
 			return nil, fmt.Errorf("cannot verify new embedder model dimensions: %w", probeErr)
 		}

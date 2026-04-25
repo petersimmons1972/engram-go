@@ -211,6 +211,90 @@ func TestHandleMemoryMigrateEmbedder_HappyPath(t *testing.T) {
 	require.True(t, postMigrateFired, "testOnPostMigrate must fire on success path")
 }
 
+// ---------------------------------------------------------------------------
+// E4: SSRF check on ollama_url argument (#291)
+// ---------------------------------------------------------------------------
+
+// TestHandleMemoryMigrateEmbedder_OllamaURL_PrivateIPBlocked verifies that
+// supplying a private-IP literal as ollama_url is rejected before any Ollama
+// call is made. This closes the bypass that would allow an attacker to redirect
+// the embedder to an internal service.
+func TestHandleMemoryMigrateEmbedder_OllamaURL_PrivateIPBlocked(t *testing.T) {
+	pool := newDimPool(t, "", 384) // no stored dims — pre-flight won't fire
+
+	// Build request with ollama_url pointing at a private IP.
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"project":    "proj",
+		"new_model":  "some-model",
+		"ollama_url": "http://192.168.1.100:11434",
+	}
+	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SSRF protection", "private IP in ollama_url must be rejected")
+}
+
+// TestHandleMemoryMigrateEmbedder_OllamaURL_LoopbackBlocked verifies that
+// loopback IPs in ollama_url are also rejected.
+func TestHandleMemoryMigrateEmbedder_OllamaURL_LoopbackBlocked(t *testing.T) {
+	pool := newDimPool(t, "", 384)
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"project":    "proj",
+		"new_model":  "some-model",
+		"ollama_url": "http://127.0.0.1:11434",
+	}
+	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SSRF protection", "loopback IP in ollama_url must be rejected")
+}
+
+// TestHandleMemoryMigrateEmbedder_OllamaURL_InvalidURLBlocked verifies that
+// a malformed ollama_url is rejected early.
+func TestHandleMemoryMigrateEmbedder_OllamaURL_InvalidURLBlocked(t *testing.T) {
+	pool := newDimPool(t, "", 384)
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"project":    "proj",
+		"new_model":  "some-model",
+		"ollama_url": "not-a-url",
+	}
+	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid ollama_url", "malformed URL must be rejected")
+}
+
+// TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed verifies that a
+// hostname-based ollama_url (not a raw IP) is accepted and forwarded — matching
+// the startup-time behavior that allows container hostnames like "ollama".
+func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed(t *testing.T) {
+	pool := newDimPool(t, "", 384) // no stored dims — pre-flight skipped
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"project":    "proj",
+		"new_model":  "some-model",
+		"ollama_url": "http://custom-ollama:11434",
+	}
+	cfg := Config{
+		OllamaURL: "http://safe-ollama:11434",
+		testMigrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
+			return map[string]any{"nulled": 0, "model": "some-model"}, nil
+		},
+	}
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.NoError(t, err, "hostname-based ollama_url must be accepted")
+}
+
 // TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate verifies that when
 // probe succeeds and dimensions match, the pre-flight passes and execution reaches
 // MigrateEmbedder. The noop backend panics there — we recover and assert we got

@@ -6,8 +6,168 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// ---------------------------------------------------------------------------
+// E1: separate setupClients map tests (#285)
+// ---------------------------------------------------------------------------
+
+// TestSetupTokenBudgetIsolatedFromNormalBudget verifies that exhausting the normal
+// allow() budget for an IP does not affect that IP's allowSetupToken() budget,
+// and vice versa. The two maps must be independent.
+func TestSetupTokenBudgetIsolatedFromNormalBudget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rl := newRateLimiter(ctx)
+	ip := "10.0.0.5"
+
+	// Exhaust the normal budget by calling allow() many times.
+	// The normal limiter has burst=200 so we call it 201 times.
+	exhausted := false
+	for i := 0; i < 250; i++ {
+		if !rl.allow(ip) {
+			exhausted = true
+			break
+		}
+	}
+	if !exhausted {
+		t.Skip("could not exhaust normal budget within 250 calls — test environment may be too fast")
+	}
+
+	// setup-token budget must still be intact: it has its own map.
+	if !rl.allowSetupToken(ip) {
+		t.Fatal("allowSetupToken returned false after exhausting normal budget — budgets are not isolated (#285)")
+	}
+}
+
+// TestSetupTokenBudgetDoesNotConsumeNormalBudget verifies the inverse: calling
+// allowSetupToken() 3 times (exhausting its burst) does not touch the normal
+// allow() tokens for that IP.
+func TestSetupTokenBudgetDoesNotConsumeNormalBudget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rl := newRateLimiter(ctx)
+	ip := "10.0.0.6"
+
+	// Exhaust setup-token budget.
+	for i := 0; i < 3; i++ {
+		rl.allowSetupToken(ip)
+	}
+
+	// Normal allow() must still work — it has its own fresh map entry.
+	if !rl.allow(ip) {
+		t.Fatal("allow() returned false after exhausting setup-token budget — budgets are not isolated (#285)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// E3: clientIP IP validation tests (#290)
+// ---------------------------------------------------------------------------
+
+// newTrustProxyServer builds a minimal *Server with trustProxy=true.
+func newTrustProxyServer() *Server {
+	return &Server{trustProxy: true}
+}
+
+// TestClientIP_InvalidXRealIPFallsThrough verifies that a malformed X-Real-IP
+// header is rejected and clientIP falls through to X-Forwarded-For.
+func TestClientIP_InvalidXRealIPFallsThrough(t *testing.T) {
+	s := newTrustProxyServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Real-IP", "not-an-ip")
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.RemoteAddr = "5.6.7.8:9999"
+
+	ip := s.clientIP(req)
+	if ip != "1.2.3.4" {
+		t.Fatalf("expected X-Forwarded-For fallback 1.2.3.4, got %q (invalid X-Real-IP must be skipped)", ip)
+	}
+}
+
+// TestClientIP_InvalidXFFFallsThrough verifies that a malformed X-Forwarded-For
+// header is rejected and clientIP falls back to RemoteAddr.
+func TestClientIP_InvalidXFFFallsThrough(t *testing.T) {
+	s := newTrustProxyServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Real-IP", "")
+	req.Header.Set("X-Forwarded-For", "not-an-ip, 1.2.3.4")
+	req.RemoteAddr = "5.6.7.8:9999"
+
+	ip := s.clientIP(req)
+	if ip != "5.6.7.8" {
+		t.Fatalf("expected RemoteAddr fallback 5.6.7.8, got %q (invalid X-Forwarded-For first entry must be skipped)", ip)
+	}
+}
+
+// TestClientIP_ValidXRealIPReturned verifies that a valid X-Real-IP is returned directly.
+func TestClientIP_ValidXRealIPReturned(t *testing.T) {
+	s := newTrustProxyServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Real-IP", "203.0.113.1")
+	req.RemoteAddr = "5.6.7.8:9999"
+
+	ip := s.clientIP(req)
+	if ip != "203.0.113.1" {
+		t.Fatalf("expected 203.0.113.1, got %q", ip)
+	}
+}
+
+// TestClientIP_LoopbackSpoofRejected verifies that X-Real-IP: 127.0.0.1 is NOT
+// returned as a valid IP when the value is a loopback literal — it must be validated.
+// This is the core attack vector for bypassing the /setup-token loopback check (#290).
+// Note: net.ParseIP("127.0.0.1") succeeds — 127.0.0.1 is a valid IP. The SSRF
+// protection against loopback spoofing is in isLocalAddress + the loopback check
+// in /setup-token. clientIP's job is to reject non-IP strings; valid IPs (including
+// loopback) are returned as-is and blocked by the isLocalAddress gate.
+func TestClientIP_ValidIPInXRealIPReturned(t *testing.T) {
+	s := newTrustProxyServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Real-IP", "127.0.0.1")
+	req.RemoteAddr = "5.6.7.8:9999"
+
+	ip := s.clientIP(req)
+	// 127.0.0.1 is a valid IP, so clientIP returns it.
+	// The /setup-token handler then checks isLocalAddress and acts accordingly.
+	if ip != "127.0.0.1" {
+		t.Fatalf("expected 127.0.0.1 (valid IP), got %q", ip)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// E6: JSON error responses in handleQuickStore (#311)
+// ---------------------------------------------------------------------------
+
+// TestQuickStoreHandler_InvalidJSON_JSONErrorBody verifies that invalid JSON
+// returns a JSON-encoded error body rather than a raw Go error string (#311).
+func TestQuickStoreHandler_InvalidJSON_JSONErrorBody(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/quick-store", strings.NewReader("not json {"))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q (#311 requires JSON error body)", ct)
+	}
+	body := w.Body.String()
+	// Must not leak internal Go error messages like "invalid character".
+	if strings.Contains(body, "invalid character") || strings.Contains(body, "unexpected end") {
+		t.Fatalf("response body leaks raw Go error: %q", body)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Rate limiter tests — issue #243

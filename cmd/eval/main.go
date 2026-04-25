@@ -44,7 +44,6 @@ func main() {
 	project := flag.String("project", "default", "Engram project name to query")
 	outputFile := flag.String("output", "", "Write baseline summary to this file (optional)")
 	urlFlag := flag.String("url", "", "Override ENGRAM_URL env var")
-	apiKeyFlag := flag.String("api-key", "", "Override ENGRAM_API_KEY env var")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	outputJSON := flag.Bool("output-json", false, "emit summary as JSON to stdout; send per-query progress to stderr")
 	flag.Parse()
@@ -65,9 +64,6 @@ func main() {
 		serverURL = *urlFlag
 	}
 	apiKey := os.Getenv("ENGRAM_API_KEY")
-	if *apiKeyFlag != "" {
-		apiKey = *apiKeyFlag
-	}
 	provider := envOr("ENGRAM_EMBED_PROVIDER", "ollama")
 
 	// Load golden set.
