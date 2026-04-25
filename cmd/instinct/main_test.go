@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,5 +258,66 @@ func TestEngramClient_Correct(t *testing.T) {
 
 	if err := e.correct(context.Background(), "mem-abc", 0.7); err != nil {
 		t.Fatalf("correct: %v", err)
+	}
+}
+
+// ── Haiku client tests ────────────────────────────────────────────────────────
+
+func TestCallHaiku_ValidPatterns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"User runs tests after edits\",\"domain\":\"testing\",\"evidence\":\"edit then test 3x\",\"tag_signature\":\"sig-edit-test\"}]"}],"usage":{"input_tokens":10,"output_tokens":50}}`)
+	}))
+	defer srv.Close()
+
+	events := []Event{{ToolName: "Edit", ToolOutputSummary: "saved", ExitStatus: 0}}
+	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	if len(patterns) != 1 {
+		t.Fatalf("want 1 pattern, got %d", len(patterns))
+	}
+	if patterns[0].TagSignature != "sig-edit-test" {
+		t.Errorf("tag_signature = %q, want sig-edit-test", patterns[0].TagSignature)
+	}
+}
+
+func TestCallHaiku_SkipsInvalidPatterns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"ok\",\"domain\":\"git\",\"evidence\":\"x\",\"tag_signature\":\"sig-ok\"},{\"type\":\"correction\",\"description\":\"bad\",\"domain\":\"bash\",\"evidence\":\"y\"}]"}],"usage":{"input_tokens":5,"output_tokens":20}}`)
+	}))
+	defer srv.Close()
+
+	events := []Event{{ToolName: "Bash", ToolOutputSummary: "err", ExitStatus: 1}}
+	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	if len(patterns) != 1 {
+		t.Fatalf("want 1 valid pattern (invalid skipped), got %d", len(patterns))
+	}
+	if patterns[0].TagSignature != "sig-ok" {
+		t.Errorf("tag_signature = %q, want sig-ok", patterns[0].TagSignature)
+	}
+}
+
+func TestCallHaiku_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	events := []Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
+	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	if len(patterns) != 0 {
+		t.Errorf("want 0 patterns on API error, got %d", len(patterns))
+	}
+}
+
+func TestCallHaiku_EmptyResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"[]"}],"usage":{"input_tokens":5,"output_tokens":2}}`)
+	}))
+	defer srv.Close()
+
+	patterns := callHaiku(context.Background(), "sk-ant-fake", []Event{}, srv.URL+"/v1/messages")
+	if len(patterns) != 0 {
+		t.Errorf("want 0 patterns for empty response, got %d", len(patterns))
 	}
 }

@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -363,6 +366,120 @@ func (e *sseEngram) correct(ctx context.Context, memoryID string, confidence flo
 		"importance": confidence,
 	})
 	return err
+}
+
+// ── Haiku client ──────────────────────────────────────────────────────────────
+
+const instinctSystemPrompt = `You are a pattern detection system analyzing Claude Code tool call sequences.
+
+Analyze the tool call events and identify recurring patterns of these types:
+
+1. CORRECTION: Evidence the user corrected the AI — re-do after rollback, "don't X" instruction, same action reversed within 3 steps.
+2. ERROR_RESOLUTION: The same error (matching exit_status=1 + similar output_summary) followed by the same fix tool sequence, 2+ times.
+3. WORKFLOW: A sequence of 3+ tool calls that recurs within the same session or across sessions in this batch.
+
+Return a JSON array. Each pattern object must have these exact fields:
+{
+  "type": "correction" | "error_resolution" | "workflow",
+  "description": "<human-readable pattern, one sentence, present tense>",
+  "domain": "<one word: testing | git | editing | bash | agent | general>",
+  "evidence": "<brief explanation of what you observed, max 100 chars>",
+  "tag_signature": "<stable slug for deduplication, e.g. 'sig-edit-test-fail-edit'>"
+}
+
+If no patterns are found, return []. Return ONLY the JSON array — no prose, no markdown fences.`
+
+const haikuModel = "claude-haiku-4-5-20251001"
+const anthropicEndpoint = "https://api.anthropic.com/v1/messages"
+
+// callHaiku sends events to Claude Haiku for pattern detection.
+// endpoint is injectable for testing; pass "" to use the production endpoint.
+// Returns empty slice on any error — patterns are best-effort.
+func callHaiku(ctx context.Context, apiKey string, events []Event, endpoint string) []Pattern {
+	if endpoint == "" {
+		endpoint = anthropicEndpoint
+	}
+
+	var sb strings.Builder
+	for _, e := range events {
+		fmt.Fprintf(&sb, "[%s] %s | %s | exit=%d\n",
+			e.Timestamp, e.ToolName, e.ToolOutputSummary, e.ExitStatus)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"model":      haikuModel,
+		"max_tokens": 1024,
+		"system": []map[string]any{{
+			"type":          "text",
+			"text":          instinctSystemPrompt,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		}},
+		"messages": []map[string]any{{
+			"role":    "user",
+			"content": sb.String(),
+		}},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		slog.Error("instinct: haiku request build", "err", err)
+		return nil
+	}
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Error("instinct: haiku HTTP", "err", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Error("instinct: haiku non-200", "status", resp.StatusCode)
+		return nil
+	}
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Error("instinct: haiku read body", "err", err)
+		return nil
+	}
+
+	var apiResp struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &apiResp); err != nil || len(apiResp.Content) == 0 {
+		slog.Error("instinct: haiku parse response", "err", err)
+		return nil
+	}
+
+	text := apiResp.Content[0].Text
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+
+	var rawPatterns []Pattern
+	if err := json.Unmarshal([]byte(text), &rawPatterns); err != nil {
+		slog.Warn("instinct: haiku JSON parse", "err", err)
+		return nil
+	}
+
+	var patterns []Pattern
+	for _, p := range rawPatterns {
+		if p.Type == "" || p.Description == "" || p.Domain == "" || p.Evidence == "" || p.TagSignature == "" {
+			slog.Warn("instinct: skipping pattern with missing fields", "tag", p.TagSignature)
+			continue
+		}
+		patterns = append(patterns, p)
+	}
+	return patterns
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
