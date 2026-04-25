@@ -559,6 +559,11 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngest(ctx, pool, req, cfg)
 			}},
+		{"memory_ingest_export",
+			"Ingest a server-local AI conversation export file (Slack workspace .zip, Claude.ai conversations.json, or ChatGPT conversations.json). Parses the file, auto-detects format, and stores one memory per conversation or channel.",
+			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+				return handleMemoryIngestExport(ctx, pool, req, cfg)
+			}},
 		// Feature 4: Cross-Project Knowledge Federation
 		{"memory_projects", "List all projects with memory counts",
 			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
