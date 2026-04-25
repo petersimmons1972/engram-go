@@ -42,6 +42,7 @@ func main() {
 		useLiveBuffer = flag.Bool("use-live-buffer", false, "use ~/.local/state/instinct/buffer.jsonl instead of fixture")
 		quiet         = flag.Bool("quiet", false, "suppress per-model progress output on stderr")
 	)
+	_ = quiet // TODO: implement quiet mode (#324)
 	flag.Parse()
 
 	fmt.Printf("instinct-benchmark %s\n", Version)
