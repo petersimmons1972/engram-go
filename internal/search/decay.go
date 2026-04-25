@@ -3,15 +3,49 @@ package search
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
 )
 
 const (
+	// decayFactor is the spaced-repetition multiplier. Not currently configurable
+	// by design — adjusting it changes the algorithm's behavior, not a tuning curve.
 	decayFactor          = 0.95
 	defaultDecayInterval = 8 * time.Hour
 )
+
+var (
+	decayIntervalOnce    sync.Once
+	resolvedDecayInterval time.Duration
+)
+
+// resolveDecayInterval reads ENGRAM_DECAY_INTERVAL_HOURS and returns the
+// corresponding duration. If the env var is absent, invalid, or non-positive,
+// it returns defaultDecayInterval (8h) and logs a warning for invalid values.
+// The result is cached after the first call.
+func resolveDecayInterval() time.Duration {
+	decayIntervalOnce.Do(func() {
+		interval := defaultDecayInterval
+		if raw := os.Getenv("ENGRAM_DECAY_INTERVAL_HOURS"); raw != "" {
+			v, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				slog.Warn("ENGRAM_DECAY_INTERVAL_HOURS: invalid float, using default",
+					"value", raw, "default", defaultDecayInterval)
+			} else if v <= 0 {
+				slog.Warn("ENGRAM_DECAY_INTERVAL_HOURS: must be positive, using default",
+					"value", v, "default", defaultDecayInterval)
+			} else {
+				interval = time.Duration(float64(time.Hour) * v)
+			}
+		}
+		resolvedDecayInterval = interval
+	})
+	return resolvedDecayInterval
+}
 
 // DecayWorker is a background goroutine that applies spaced-repetition decay to
 // memories whose next_review_at timestamp has passed. It multiplies
@@ -26,11 +60,14 @@ type DecayWorker struct {
 	done     chan struct{}
 }
 
-// NewDecayWorker creates a DecayWorker. interval is how often the decay pass runs;
-// pass 0 to use the default (8 hours). The worker does not start until Start() is called.
+// NewDecayWorker creates a DecayWorker. interval is how often the decay pass runs.
+// When interval is 0, the worker first checks ENGRAM_DECAY_INTERVAL_HOURS; if
+// that env var is absent or invalid, it falls back to defaultDecayInterval (8h).
+// A non-zero caller-supplied interval is always used as-is.
+// The worker does not start until Start() is called.
 func NewDecayWorker(backend db.Backend, project string, interval time.Duration) *DecayWorker {
 	if interval <= 0 {
-		interval = defaultDecayInterval
+		interval = resolveDecayInterval()
 	}
 	return &DecayWorker{
 		backend:  backend,

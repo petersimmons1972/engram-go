@@ -14,6 +14,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/ingest/router"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -489,24 +490,52 @@ func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *Engi
 	}
 }
 
-// runStreamIngest funnels a fully assembled body into execStoreDocument and
-// wraps the result in an MCP tool response.
+// runStreamIngest funnels a fully assembled body into the router (for export
+// fan-out) or execStoreDocument (for plain documents), and wraps the result in
+// an MCP tool response.
 func runStreamIngest(ctx context.Context, pool *EnginePool, project, body string, cfg Config, maxDoc, rawMax int) (*mcpgo.CallToolResult, error) {
 	_ = cfg // reserved for future options (e.g. memory_type override)
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
+	engine := h.Engine
+	deps := storeDocumentDeps{
+		engine:  engineStorerAdapter{store: engine.StoreWithRawBody},
+		backend: backendDocumentAdapter{b: engine.Backend()},
+	}
+	return runStreamIngestWithDeps(ctx, deps, project, body, maxDoc, rawMax)
+}
+
+// runStreamIngestWithDeps is the testable core of runStreamIngest. It accepts
+// storeDocumentDeps directly so unit tests can inject stubs without a real
+// SearchEngine or PostgreSQL backend.
+//
+// Behaviour:
+//  1. Attempt router.ParseAuto on the body. If format is detected (ClaudeAI or
+//     ChatGPT), fan out into individual memories via runExportFanout.
+//  2. If ParseAuto returns a parse error on a detected format, propagate it —
+//     this is a real error, not a reason to fall back to single-doc storage.
+//  3. If format is Unknown, fall through to the existing single-memory path.
+func runStreamIngestWithDeps(ctx context.Context, deps storeDocumentDeps, project, body string, maxDoc, rawMax int) (*mcpgo.CallToolResult, error) {
+	// Try the router first. If it detects a known export format, fan out.
+	format, memories, err := router.ParseAuto(strings.NewReader(body))
+	if err != nil {
+		// Detection succeeded but parsing failed — real error, don't fall back.
+		return nil, fmt.Errorf("runStreamIngest: export parse failed: %w", err)
+	}
+
+	if format != router.FormatUnknown {
+		// Detected export format: fan out into one memory per conversation.
+		return runExportFanout(ctx, deps, project, format, memories)
+	}
+
+	// Fall through: plain document — use the original single-memory path.
 	m := &types.Memory{
 		ID:         types.NewMemoryID(),
 		MemoryType: types.MemoryTypeContext,
 		Project:    project,
 		Importance: 2,
-	}
-	engine := h.Engine
-	deps := storeDocumentDeps{
-		engine: engineStorerAdapter{store: engine.StoreWithRawBody},
-		backend: backendDocumentAdapter{b: engine.Backend()},
 	}
 	out, err := execStoreDocument(ctx, deps, m, body, maxDoc, rawMax)
 	if err != nil {
@@ -526,4 +555,27 @@ func runStreamIngest(ctx context.Context, pool *EnginePool, project, body string
 	renamed["status"] = out["status"]
 	renamed["mode"] = out["mode"]
 	return toolResult(renamed)
+}
+
+// runExportFanout stores each memory in a parsed export individually via
+// engine.StoreWithRawBody and returns a fanout summary response. Called by
+// both runStreamIngestWithDeps and directly by integration tests.
+func runExportFanout(ctx context.Context, deps storeDocumentDeps, project string, format router.Format, memories []*types.Memory) (*mcpgo.CallToolResult, error) {
+	ids := make([]string, 0, len(memories))
+	for _, m := range memories {
+		// Stamp the project on every memory — the parsers don't know which
+		// project the user intends to store into.
+		m.Project = project
+		if err := deps.engine.StoreWithRawBody(ctx, m, ""); err != nil {
+			return nil, fmt.Errorf("runExportFanout: store memory %q: %w", m.ID, err)
+		}
+		ids = append(ids, string(m.ID))
+	}
+	return toolResult(map[string]any{
+		"status":          "ok",
+		"mode":            "export-fanout",
+		"format":          string(format),
+		"memories_stored": len(ids),
+		"memory_ids":      ids,
+	})
 }
