@@ -277,6 +277,7 @@ func (e *sseEngram) callTool(ctx context.Context, name string, args map[string]a
 	}
 	var out map[string]any
 	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
+		slog.Warn("instinct: callTool JSON parse failed", "tool", name, "err", err)
 		return map[string]any{}, nil
 	}
 	return out, nil
@@ -650,6 +651,8 @@ func writeEpisode(ctx context.Context, e engramAPI, sessionID, projectID string,
 		if err := e.episodeEnd(ctx, epID); err != nil {
 			slog.Warn("instinct: episodeEnd failed", "err", err)
 		}
+	} else {
+		slog.Warn("instinct: episodeStart returned no ID — episode left open", "session", sessionID, "project", projectID)
 	}
 	return nil
 }

@@ -506,3 +506,56 @@ func TestRun_ProcessesBuffer(t *testing.T) {
 		t.Errorf("buffer should have been rotated")
 	}
 }
+
+func TestRequeue_EmptyProcessedPath(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	// processedPath="" → noop, buffer not created
+	requeue(buf, "")
+	if _, err := os.Stat(buf); !os.IsNotExist(err) {
+		t.Errorf("requeue with empty processedPath should not create buffer")
+	}
+}
+
+func TestRequeue_BufferAbsent_RenamesBack(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	processed := filepath.Join(dir, "buffer.jsonl.20260101T000000Z.processed")
+	if err := os.WriteFile(processed, []byte(`{"session_id":"s1"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// buffer does not exist → requeue should rename processed back
+	requeue(buf, processed)
+	if _, err := os.Stat(buf); err != nil {
+		t.Errorf("buffer should be restored after requeue: %v", err)
+	}
+	if _, err := os.Stat(processed); !os.IsNotExist(err) {
+		t.Errorf("processed file should be gone after requeue")
+	}
+}
+
+func TestRequeue_BufferPresent_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	processed := filepath.Join(dir, "buffer.jsonl.20260101T000000Z.processed")
+	// Both files exist — new events arrived while processing; requeue must not overwrite
+	if err := os.WriteFile(buf, []byte(`{"session_id":"new"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(processed, []byte(`{"session_id":"old"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	requeue(buf, processed)
+	// Buffer should still contain only the new events
+	data, err := os.ReadFile(buf)
+	if err != nil {
+		t.Fatalf("buffer should still exist: %v", err)
+	}
+	if string(data) != `{"session_id":"new"}`+"\n" {
+		t.Errorf("buffer content changed unexpectedly: %q", data)
+	}
+	// Processed file should still exist (not renamed)
+	if _, err := os.Stat(processed); err != nil {
+		t.Errorf("processed file should still exist when buffer is present: %v", err)
+	}
+}
