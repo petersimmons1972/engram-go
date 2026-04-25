@@ -88,5 +88,5 @@
   <text x="232" y="322" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="600" fill="#f0f6fc" text-anchor="middle">Desktop</text>
 
   <!-- Bottom label -->
-  <text x="450" y="375" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#8b949e" text-anchor="middle">35 tools available  ·  30 base tools + 5 AI-enhanced tools (require ANTHROPIC_API_KEY)</text>
+  <text x="450" y="375" font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" fill="#8b949e" text-anchor="middle">43 tools available  ·  38 base tools + 5 AI-enhanced tools (require ANTHROPIC_API_KEY)</text>
 </svg>

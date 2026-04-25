@@ -54,7 +54,7 @@ Every new tool handler needs at minimum three tests:
 
 These three tests catch the failure modes that appear in production within the first week. A handler with only a happy path test is untested for the cases that actually break.
 
-See `internal/tools/memory_store_test.go` for examples of what adequate coverage looks like in this codebase.
+See `internal/mcp/tools_test.go` for examples of what adequate coverage looks like in this codebase.
 
 ---
 

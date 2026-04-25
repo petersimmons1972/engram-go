@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,21 @@ import (
 	"syscall"
 	"time"
 )
+
+const usageText = `Usage: starter [subcommand]
+
+Subcommands:
+  server    Start the engram MCP server
+  migrate   Run database migrations only
+  setup     Configure the MCP client
+
+Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
+exec-replaces itself with /engram.
+`
+
+func printUsage() {
+	fmt.Fprint(os.Stdout, usageText)
+}
 
 // patchDatabaseURLPassword replaces the password in a PostgreSQL DSN with
 // the supplied password. Returns the original dsn unchanged on any parse error.
@@ -65,10 +81,36 @@ var infisicalHTTPClient = &http.Client{
 }
 
 func main() {
-	clientID := mustEnv("INFISICAL_CLIENT_ID")
+	help := flag.Bool("h", false, "show help and exit")
+	flag.BoolVar(help, "help", false, "show help and exit")
+	flag.Usage = func() {
+		printUsage()
+	}
+	flag.Parse()
+
+	// Handle "help" subcommand and -h/--help flags — all exit 0.
+	args := flag.Args()
+	if *help || (len(args) > 0 && args[0] == "help") {
+		printUsage()
+		os.Exit(0)
+	}
+
+	clientID := os.Getenv("INFISICAL_CLIENT_ID")
+
+	// If INFISICAL_CLIENT_ID is absent, skip the Infisical flow entirely.
+	// The environment must already contain ENGRAM_API_KEY in this case.
+	if clientID == "" {
+		if os.Getenv("ENGRAM_API_KEY") == "" {
+			fatalf("no secret source configured: set INFISICAL_CLIENT_ID (+ INFISICAL_CLIENT_SECRET) to fetch secrets from Infisical, or set ENGRAM_API_KEY directly in the environment")
+		}
+		// ENGRAM_API_KEY is already set — exec directly without touching the env.
+		execEngram(args, filteredEnv())
+		return
+	}
+
 	clientSecret := mustEnv("INFISICAL_CLIENT_SECRET")
 	domain := envOr("INFISICAL_DOMAIN", "https://infisical.petersimmons.com")
-	projectID := envOr("INFISICAL_PROJECT_ID", "f49c5b01-4bd1-4883-afbd-51c1fef53a2f")
+	projectID := mustEnv("INFISICAL_PROJECT_ID")
 	env := envOr("INFISICAL_ENV", "prod")
 	secretPath := envOr("INFISICAL_SECRET_PATH", "/apps/engram")
 
@@ -109,15 +151,19 @@ func main() {
 	// environment before exec-replacing ourselves with engram. The engram process
 	// has no need for these credentials — keeping them in /proc/PID/environ leaks
 	// them to any process that can read /proc (#138, #139).
-	cleanEnv := filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD")
+	execEngram(args, filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD"))
+}
 
+// execEngram validates subcommand arguments and exec-replaces the current
+// process with /engram using the supplied environment.
+func execEngram(args []string, cleanEnv []string) {
 	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		if !strings.HasPrefix(arg, "-") && !allowed[arg] {
 			fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
 		}
 	}
-	argv := append([]string{"/engram"}, os.Args[1:]...)
+	argv := append([]string{"/engram"}, args...)
 	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)
 	}
