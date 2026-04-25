@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,21 @@ import (
 	"syscall"
 	"time"
 )
+
+const usageText = `Usage: starter [subcommand]
+
+Subcommands:
+  server    Start the engram MCP server
+  migrate   Run database migrations only
+  setup     Configure the MCP client
+
+Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
+exec-replaces itself with /engram.
+`
+
+func printUsage() {
+	fmt.Fprint(os.Stdout, usageText)
+}
 
 // patchDatabaseURLPassword replaces the password in a PostgreSQL DSN with
 // the supplied password. Returns the original dsn unchanged on any parse error.
@@ -65,6 +81,20 @@ var infisicalHTTPClient = &http.Client{
 }
 
 func main() {
+	help := flag.Bool("h", false, "show help and exit")
+	flag.BoolVar(help, "help", false, "show help and exit")
+	flag.Usage = func() {
+		printUsage()
+	}
+	flag.Parse()
+
+	// Handle "help" subcommand and -h/--help flags — all exit 0.
+	args := flag.Args()
+	if *help || (len(args) > 0 && args[0] == "help") {
+		printUsage()
+		os.Exit(0)
+	}
+
 	clientID := mustEnv("INFISICAL_CLIENT_ID")
 	clientSecret := mustEnv("INFISICAL_CLIENT_SECRET")
 	domain := envOr("INFISICAL_DOMAIN", "https://infisical.petersimmons.com")
@@ -112,12 +142,12 @@ func main() {
 	cleanEnv := filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD")
 
 	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		if !strings.HasPrefix(arg, "-") && !allowed[arg] {
 			fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
 		}
 	}
-	argv := append([]string{"/engram"}, os.Args[1:]...)
+	argv := append([]string{"/engram"}, args...)
 	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)
 	}
