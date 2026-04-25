@@ -50,6 +50,20 @@ def test_load_and_rotate_rotates_buffer_when_20_plus_events(tmp_path):
     assert len(processed) == 1
 
 
+def test_load_and_rotate_logs_skipped_malformed_lines(tmp_path, capsys):
+    buffer = tmp_path / "buffer.jsonl"
+    good = make_events(19)
+    with buffer.open("w") as f:
+        for e in good:
+            f.write(json.dumps(e) + "\n")
+        f.write("this is not json\n")  # 1 malformed line → 20 total lines
+    events = load_and_rotate_buffer(buffer)
+    assert len(events) == 19
+    assert not buffer.exists()  # still rotated
+    out = capsys.readouterr().out
+    assert "1 malformed" in out
+
+
 def test_group_by_session_splits_correctly():
     events = make_events(3, session_id="s1") + make_events(2, session_id="s2")
     groups = group_by_session(events)
