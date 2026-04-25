@@ -165,9 +165,9 @@ func (q *happyTestQuerier) QueryRow(_ context.Context, sql string, args ...any) 
 // makeTestConfig creates a Config with an injected stub DB and nil PgPool.
 func makeTestConfig(db audit.AuditQuerier) Config {
 	return Config{
-		testAuditDB: db,
-		PgPool:      nil,
-		EmbedModel:  "test-model",
+		testHooks: &testHooks{auditDB: db},
+		PgPool:    nil,
+		EmbedModel: "test-model",
 	}
 }
 
@@ -461,9 +461,9 @@ func (s *weightStubDB) QueryRow(_ context.Context, sql string, args ...any) pgx.
 func makeTestConfigWithWeightTuner(db *weightStubDB) Config {
 	tuner := weight.NewTunerWorkerWithDB(nil, db, time.Hour)
 	return Config{
-		testWeightTuner: tuner,
-		PgPool:          nil,
-		EmbedModel:      "test-model",
+		testHooks:  &testHooks{weightTuner: tuner},
+		PgPool:     nil,
+		EmbedModel: "test-model",
 	}
 }
 

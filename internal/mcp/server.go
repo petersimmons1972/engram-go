@@ -257,8 +257,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 			return
 		}
 		slog.Warn("setup-token accessed", "remote_ip", ip)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
+		writeJSON(w, http.StatusOK, map[string]string{
 			"token":    apiKey,
 			"endpoint": advertised + "/sse",
 			"name":     "engram",
@@ -347,10 +346,11 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		// Rate limit before auth check to prevent timing-based enumeration.
 		remoteHost := s.clientIP(r)
 		if !rl.allow(remoteHost) {
-			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprint(w, `{"error":"rate_limited","hint":"too many requests — back off and retry"}`) //nolint:errcheck
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "rate_limited",
+				"hint":  "too many requests — back off and retry",
+			})
 			return
 		}
 		// ConstantTimeCompare leaks length when len(got) != len(want).
@@ -361,9 +361,10 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		want := hmac.New(sha256.New, []byte(apiKey))
 		want.Write([]byte("Bearer " + apiKey))
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":"unauthorized","hint":"Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)"}`) //nolint:errcheck
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "unauthorized",
+				"hint":  "Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)",
+			})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -396,9 +397,10 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 		expected := mac.Sum(nil)
 
 		if subtle.ConstantTimeCompare(storedFP, expected) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"error":"forbidden","hint":"session bearer mismatch"}`) //nolint:errcheck
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "forbidden",
+				"hint":  "session bearer mismatch",
+			})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -465,332 +467,210 @@ func (s *Server) clientIP(r *http.Request) string {
 	return host
 }
 
-func (s *Server) registerTools() {
-	pool := s.pool
-	cfg := s.cfg
+// toolHandler is the unified handler signature for all registered MCP tools.
+// Handlers that don't use cfg accept it with a blank identifier.
+type toolHandler func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error)
 
-	tools := []struct {
-		name    string
-		desc    string
-		handler func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)
-	}{
-		{"memory_store", "Store a focused memory (<=10k chars)",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				result, err := handleMemoryStore(ctx, pool, req)
-				if err != nil {
-					slog.Warn("memory_store: store failed",
-						"err", err, "request_id", requestIDFromContext(ctx))
-					return result, err
-				}
-				// Enqueue entity extraction asynchronously. Runs in a detached
-				// goroutine with its own context so it never blocks memory_store.
-				// Non-fatal: if the enqueue fails the store has already succeeded.
-				args := req.GetArguments()
-				project, err := getProject(args, "default")
-	if err != nil {
-		return nil, err
+// noConfig adapts a pool-only handler (no cfg parameter) to toolHandler.
+func noConfig(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)) toolHandler {
+	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, _ Config) (*mcpgo.CallToolResult, error) {
+		return h(ctx, pool, req)
 	}
-				if memID, ok := extractResultID(result); ok {
-					slog.Debug("memory_store: stored, enqueuing extraction",
-						"id", memID, "project", project, "request_id", requestIDFromContext(ctx))
-					go enqueueExtractionAsync(pool, memID, project)
-				}
-				return result, nil
-			}},
-		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStoreDocument(ctx, pool, req, cfg)
-			}},
-		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
-			}},
-		{"memory_store_batch", "Store multiple memories in one call",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStoreBatch(ctx, pool, req)
-			}},
-		{"memory_recall", "Recall memories by semantic + full-text query",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				result, err := handleMemoryRecall(ctx, pool, req, cfg)
-				if err != nil {
-					slog.Warn("memory_recall: failed",
-						"err", err, "request_id", requestIDFromContext(ctx))
-				}
-				return result, err
-			}},
-		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryFetch(ctx, pool, req, cfg)
-			}},
-		{"memory_list", "List memories with optional filters",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryList(ctx, pool, req)
-			}},
-		{"memory_connect", "Create a directed relationship between two memories. relation_type values: caused_by, relates_to, depends_on, supersedes, used_in, resolved_by, contradicts, supports, derived_from, part_of, follows",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryConnect(ctx, pool, req)
-			}},
-		{"memory_correct", "Update content, tags, or importance on an existing memory",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryCorrect(ctx, pool, req)
-			}},
-		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryForget(ctx, pool, req)
-			}},
-		{"memory_history", "Return the full version chain for a memory",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryHistory(ctx, pool, req)
-			}},
-		{"memory_timeline", "Recall memories that were active at a given point in time (as_of param, RFC3339)",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryTimeline(ctx, pool, req)
-			}},
-		{"memory_summarize", "Immediately summarize a memory",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemorySummarize(ctx, pool, req, cfg)
-			}},
-		{"memory_resummarize", "Clear all summaries for a project — they regenerate automatically within 60s",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryResummarize(ctx, pool, req)
-			}},
-		{"memory_status", "Return project statistics",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryStatus(ctx, pool, req)
-			}},
-		{"memory_feedback", "Record retrieval feedback. failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryFeedback(ctx, pool, req)
-			}},
-		{"memory_aggregate", "Group and count memories. by=tag|type|failure_class. filter: optional ILIKE substring — tag mode only, error for failure_class.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAggregate(ctx, pool, req)
-			}},
-		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryConsolidate(ctx, pool, req, cfg)
-			}},
-		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemorySleep(ctx, pool, req, cfg)
-			}},
-		// Feature 6: Episodic Memory
-		{"memory_episode_start", "Start a named episode to group memories from this session",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				result, err := handleMemoryEpisodeStart(ctx, pool, req)
-				if err != nil {
-					slog.Warn("memory_episode_start: failed",
-						"err", err, "request_id", requestIDFromContext(ctx))
-				}
-				return result, err
-			}},
-		{"memory_episode_end", "End an episode with an optional summary",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryEpisodeEnd(ctx, pool, req)
-			}},
-		{"memory_episode_list", "List recent episodes for a project",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryEpisodeList(ctx, pool, req)
-			}},
-		{"memory_episode_recall", "Return all memories from a specific episode in chronological order",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryEpisodeRecall(ctx, pool, req)
-			}},
-		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryVerify(ctx, pool, req)
-			}},
-		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding. Also resets any learned adaptive weights for the project to compile-time defaults.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryMigrateEmbedder(ctx, pool, req, cfg)
-			}},
-		{"memory_export_all", "Export all memories to markdown files",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryExportAll(ctx, pool, req, cfg)
-			}},
-		{"memory_import_claudemd", "Import a CLAUDE.md file as structured memories",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryImportClaudeMD(ctx, pool, req, cfg)
-			}},
-		{"memory_ingest", "Ingest a file or directory as document memories",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryIngest(ctx, pool, req, cfg)
-			}},
-		{"memory_ingest_export",
-			"Ingest a server-local AI conversation export file (Slack workspace .zip, Claude.ai conversations.json, or ChatGPT conversations.json). Parses the file, auto-detects format, and stores one memory per conversation or channel.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryIngestExport(ctx, pool, req, cfg)
-			}},
-		// Feature 4: Cross-Project Knowledge Federation
-		{"memory_projects", "List all projects with memory counts",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryProjects(ctx, pool, req)
-			}},
-		{"memory_adopt", "Create a cross-project reference relationship",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAdopt(ctx, pool, req)
-			}},
-		// Simplified front-door tools — wrappers over the expert-surface tools
-		// with sensible defaults injected. Designed for LLM orchestrators that
-		// do not need the full parameter surface.
-		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				result, err := handleMemoryQuickStore(ctx, pool, req)
-				if err != nil {
-					slog.Warn("memory_quick_store: failed",
-						"err", err, "request_id", requestIDFromContext(ctx))
-				}
-				return result, err
-			}},
-		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryQuery(ctx, pool, req, cfg)
-			}},
-		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryExpand(ctx, pool, req)
-			}},
-		// Safety constraint verification tools
-		{"get_constraints", "List constraint and policy memories relevant to an optional query",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleGetConstraints(ctx, pool, req)
-			}},
-		{"check_constraints", "Classify a proposed action and return matching constraints with a verification decision",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleCheckConstraints(ctx, pool, req)
-			}},
-		{"verify_before_acting", "Run the full constraint verification pipeline and return a proceed/warn/require_approval/block decision",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleVerifyBeforeActing(ctx, pool, req)
-			}},
-		// Phase 5: Pluggable Embedder — model registry and eval
-		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryModels(ctx, pool, req, cfg)
-			}},
-		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryEmbeddingEval(ctx, pool, req, cfg)
-			}},
-	}
+}
 
-	for _, t := range tools {
-		// Capture loop variables before the closure.
-		toolName := t.name
-		innerHandler := t.handler
-		// Wrap every tool handler with Prometheus instrumentation: duration
-		// histogram and request counter by status ("ok"/"error").
-		instrumented := func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// withEntityEnqueue wraps handleMemoryStore to async-enqueue entity extraction on success.
+func withEntityEnqueue(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)) toolHandler {
+	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, _ Config) (*mcpgo.CallToolResult, error) {
+		result, err := h(ctx, pool, req)
+		if err != nil {
+			slog.Warn("memory_store: store failed", "err", err, "request_id", requestIDFromContext(ctx))
+			return result, err
+		}
+		// Enqueue entity extraction asynchronously. Runs in a detached goroutine
+		// with its own context so it never blocks memory_store.
+		// Non-fatal: if the enqueue fails the store has already succeeded.
+		args := req.GetArguments()
+		project, err := getProject(args, "default")
+		if err != nil {
+			return nil, err
+		}
+		if memID, ok := extractResultID(result); ok {
+			slog.Debug("memory_store: stored, enqueuing extraction",
+				"id", memID, "project", project, "request_id", requestIDFromContext(ctx))
+			go enqueueExtractionAsync(pool, memID, project)
+		}
+		return result, nil
+	}
+}
+
+// withWarnLog wraps a handler to emit slog.Warn when it returns an error.
+func withWarnLog(name string, h toolHandler) toolHandler {
+	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+		result, err := h(ctx, pool, req, cfg)
+		if err != nil {
+			slog.Warn(name+": failed", "err", err, "request_id", requestIDFromContext(ctx))
+		}
+		return result, err
+	}
+}
+
+// registerTool adds a tool to the MCP server wrapped with Prometheus instrumentation.
+func (s *Server) registerTool(name, desc string, h toolHandler) {
+	pool, cfg := s.pool, s.cfg
+	toolName := name
+	s.mcp.AddTool(mcpgo.NewTool(name, mcpgo.WithDescription(desc)),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			timer := prometheus.NewTimer(metrics.ToolDuration.WithLabelValues(toolName))
 			defer timer.ObserveDuration()
-			result, err := innerHandler(ctx, req)
+			result, err := h(ctx, pool, req, cfg)
 			status := "ok"
 			if err != nil || (result != nil && result.IsError) {
 				status = "error"
 			}
 			metrics.ToolRequests.WithLabelValues(toolName, status).Inc()
 			return result, err
-		}
-		s.mcp.AddTool(mcpgo.NewTool(t.name, mcpgo.WithDescription(t.desc)), instrumented)
+		})
+}
+
+func (s *Server) registerTools() {
+	type toolDef struct {
+		name    string
+		desc    string
+		handler toolHandler
+	}
+	tools := []toolDef{
+		// Core store operations
+		{"memory_store", "Store a focused memory (<=10k chars)",
+			withEntityEnqueue(handleMemoryStore)},
+		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
+			handleMemoryStoreDocument},
+		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
+			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
+			}},
+		{"memory_store_batch", "Store multiple memories in one call",
+			noConfig(handleMemoryStoreBatch)},
+		// Recall and retrieval
+		{"memory_recall", "Recall memories by semantic + full-text query",
+			withWarnLog("memory_recall", handleMemoryRecall)},
+		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
+			handleMemoryFetch},
+		{"memory_list", "List memories with optional filters",
+			noConfig(handleMemoryList)},
+		{"memory_history", "Return the full version chain for a memory",
+			noConfig(handleMemoryHistory)},
+		{"memory_timeline", "Recall memories that were active at a given point in time (as_of param, RFC3339)",
+			noConfig(handleMemoryTimeline)},
+		// Graph operations
+		{"memory_connect", "Create a directed relationship between two memories. relation_type values: caused_by, relates_to, depends_on, supersedes, used_in, resolved_by, contradicts, supports, derived_from, part_of, follows",
+			noConfig(handleMemoryConnect)},
+		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
+			noConfig(handleMemoryExpand)},
+		// Mutations
+		{"memory_correct", "Update content, tags, or importance on an existing memory",
+			noConfig(handleMemoryCorrect)},
+		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
+			noConfig(handleMemoryForget)},
+		// Maintenance
+		{"memory_summarize", "Immediately summarize a memory",
+			handleMemorySummarize},
+		{"memory_resummarize", "Clear all summaries for a project — they regenerate automatically within 60s",
+			noConfig(handleMemoryResummarize)},
+		{"memory_status", "Return project statistics",
+			noConfig(handleMemoryStatus)},
+		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
+			noConfig(handleMemoryVerify)},
+		// Feedback and aggregation
+		{"memory_feedback", "Record retrieval feedback. failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
+			noConfig(handleMemoryFeedback)},
+		{"memory_aggregate", "Group and count memories. by=tag|type|failure_class. filter: optional ILIKE substring — tag mode only, error for failure_class.",
+			noConfig(handleMemoryAggregate)},
+		// Consolidation
+		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
+			handleMemoryConsolidate},
+		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
+			handleMemorySleep},
+		// Episodes
+		{"memory_episode_start", "Start a named episode to group memories from this session",
+			withWarnLog("memory_episode_start", noConfig(handleMemoryEpisodeStart))},
+		{"memory_episode_end", "End an episode with an optional summary",
+			noConfig(handleMemoryEpisodeEnd)},
+		{"memory_episode_list", "List recent episodes for a project",
+			noConfig(handleMemoryEpisodeList)},
+		{"memory_episode_recall", "Return all memories from a specific episode in chronological order",
+			noConfig(handleMemoryEpisodeRecall)},
+		// Embedder management
+		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding. Also resets any learned adaptive weights for the project to compile-time defaults.",
+			handleMemoryMigrateEmbedder},
+		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
+			handleMemoryModels},
+		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
+			handleMemoryEmbeddingEval},
+		// Import / export
+		{"memory_export_all", "Export all memories to markdown files",
+			handleMemoryExportAll},
+		{"memory_import_claudemd", "Import a CLAUDE.md file as structured memories",
+			handleMemoryImportClaudeMD},
+		{"memory_ingest", "Ingest a file or directory as document memories",
+			handleMemoryIngest},
+		{"memory_ingest_export",
+			"Ingest a server-local AI conversation export file (Slack workspace .zip, Claude.ai conversations.json, or ChatGPT conversations.json). Parses the file, auto-detects format, and stores one memory per conversation or channel.",
+			handleMemoryIngestExport},
+		// Cross-project federation
+		{"memory_projects", "List all projects with memory counts",
+			noConfig(handleMemoryProjects)},
+		{"memory_adopt", "Create a cross-project reference relationship",
+			noConfig(handleMemoryAdopt)},
+		// Simplified front-door tools
+		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
+			withWarnLog("memory_quick_store", noConfig(handleMemoryQuickStore))},
+		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
+			handleMemoryQuery},
+		// Safety constraint verification
+		{"get_constraints", "List constraint and policy memories relevant to an optional query",
+			noConfig(handleGetConstraints)},
+		{"check_constraints", "Classify a proposed action and return matching constraints with a verification decision",
+			noConfig(handleCheckConstraints)},
+		{"verify_before_acting", "Run the full constraint verification pipeline and return a proceed/warn/require_approval/block decision",
+			noConfig(handleVerifyBeforeActing)},
+		// Audit and weight tuning
+		{"memory_audit_add_query", "Register a canonical query for retrieval drift monitoring",
+			handleMemoryAuditAddQuery},
+		{"memory_audit_list_queries", "List canonical queries registered for drift monitoring in a project",
+			handleMemoryAuditListQueries},
+		{"memory_audit_deactivate_query", "Deactivate a canonical query (stops future drift snapshots)",
+			handleMemoryAuditDeactivateQuery},
+		{"memory_audit_run", "Run a decay audit pass for a project immediately and return snapshot summaries",
+			handleMemoryAuditRun},
+		{"memory_audit_compare", "Compare retrieval snapshots for a canonical query to detect ranking drift",
+			handleMemoryAuditCompare},
+		{"memory_weight_history", "Return current retrieval weights and tuning history for a project",
+			handleMemoryWeightHistory},
+		// Diagnose (always available — no Claude required)
+		{"memory_diagnose", "Return evidence map for recalled memories: conflicts, confidence, invalidated sources — no synthesis",
+			noConfig(handleMemoryDiagnose)},
+	}
+	for _, t := range tools {
+		s.registerTool(t.name, t.desc, t.handler)
 	}
 
-	// Audit and weight tools are always available when PgPool is configured.
-	{
-		pool := s.pool
-		cfg := s.cfg
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_audit_add_query",
-				mcpgo.WithDescription("Register a canonical query for retrieval drift monitoring")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAuditAddQuery(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_audit_list_queries",
-				mcpgo.WithDescription("List canonical queries registered for drift monitoring in a project")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAuditListQueries(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_audit_deactivate_query",
-				mcpgo.WithDescription("Deactivate a canonical query (stops future drift snapshots)")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAuditDeactivateQuery(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_audit_run",
-				mcpgo.WithDescription("Run a decay audit pass for a project immediately and return snapshot summaries")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAuditRun(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_audit_compare",
-				mcpgo.WithDescription("Compare retrieval snapshots for a canonical query to detect ranking drift")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAuditCompare(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_weight_history",
-				mcpgo.WithDescription("Return current retrieval weights and tuning history for a project")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryWeightHistory(ctx, pool, req, cfg)
-			},
-		)
-	}
-
-	// memory_diagnose is always available — no Claude required.
-	{
-		pool := s.pool
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_diagnose",
-				mcpgo.WithDescription("Return evidence map for recalled memories: conflicts, confidence, invalidated sources — no synthesis")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryDiagnose(ctx, pool, req)
-			},
-		)
-	}
-
-	// memory_reason is registered only when a Claude client is available.
+	// Claude-required tools: registered only when a client is available.
 	if s.cfg.ClaudeEnabled {
-		pool := s.pool
-		cfg := s.cfg
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_reason",
-				mcpgo.WithDescription("Recall memories and synthesize a grounded answer using Claude")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryReason(ctx, pool, req, cfg)
-			},
-		)
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_explore",
-				mcpgo.WithDescription("Iterative recall+score+synthesis loop — returns a single grounded answer (A3)")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryExplore(ctx, pool, req, cfg)
-			},
-		)
-
+		s.registerTool("memory_reason",
+			"Recall memories and synthesize a grounded answer using Claude",
+			handleMemoryReason)
+		s.registerTool("memory_explore",
+			"Iterative recall+score+synthesis loop — returns a single grounded answer (A3)",
+			handleMemoryExplore)
 		// memory_query_document (A5): query a single large document by regex/substring
 		// or semantic recall and synthesize an answer with Claude.
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_query_document",
-				mcpgo.WithDescription("Query a large document stored in memory using regex/substring matching or semantic search. Returns relevant spans and an AI-synthesized answer.")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryQueryDocument(ctx, pool, req, cfg)
-			},
-		)
-
+		s.registerTool("memory_query_document",
+			"Query a large document stored in memory using regex/substring matching or semantic search. Returns relevant spans and an AI-synthesized answer.",
+			handleMemoryQueryDocument)
 		// memory_ask (P2): retrieval-augmented question answering with numbered citations.
-		s.mcp.AddTool(
-			mcpgo.NewTool("memory_ask",
-				mcpgo.WithDescription("Answer a question using stored memories as context. Returns answer + numbered citations.")),
-			func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-				return handleMemoryAsk(ctx, pool, req, cfg)
-			},
-		)
+		s.registerTool("memory_ask",
+			"Answer a question using stored memories as context. Returns answer + numbered citations.",
+			handleMemoryAsk)
 	}
 }
 
@@ -856,9 +736,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		statusCode = http.StatusServiceUnavailable
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(res) //nolint:errcheck
+	writeJSON(w, statusCode, res)
 }
 
 // extractionSem caps the number of concurrent entity-extraction goroutines.
@@ -920,9 +798,7 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		Importance int      `json:"importance"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid request body"}`) //nolint:errcheck
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if strings.TrimSpace(body.Content) == "" {
@@ -951,16 +827,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
 	if err != nil {
 		slog.Error("quick-store failed", "err", err, "request_id", requestIDFromContext(r.Context()))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"store failed"}`) //nolint:errcheck
+		writeJSONError(w, http.StatusInternalServerError, "store failed")
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
 	if result.IsError {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{"ok": false}) //nolint:errcheck
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false})
 		return
 	}
 
@@ -977,9 +848,8 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if id == "" {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"ok":false,"error":"id extraction failed"}`, http.StatusUnprocessableEntity)
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "id extraction failed"})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id}) //nolint:errcheck
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
