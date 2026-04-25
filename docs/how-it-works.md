@@ -114,7 +114,7 @@ When an agent calls `memory_recall`, the default response contains full memory o
 }
 ```
 
-Handle mode is the **default** since the A6 configuration change. To get full content, pass `mode="full"` explicitly or set `ENGRAM_RECALL_DEFAULT_MODE=full`.
+Handle mode is the **default**. To get full content, pass `detail="full"` explicitly or set `ENGRAM_RECALL_DEFAULT_MODE=full`.
 
 To expand a specific handle into full content, call `memory_fetch` with the ID and the desired detail level:
 
@@ -155,7 +155,7 @@ The result is a single synthesis response:
 | You know what you're looking for | `memory_recall` — single fast lookup |
 | Open-ended question, uncertain what's stored | `memory_explore` — iterative synthesis |
 | You need a synthesized answer, not a list of memories | `memory_explore` |
-| You want raw memory objects to reason over yourself | `memory_recall` with `mode="full"` |
+| You want raw memory objects to reason over yourself | `memory_recall` with `detail="full"` |
 
 Configuration env vars: `ENGRAM_EXPLORE_MAX_ITERS` (default 5), `ENGRAM_EXPLORE_MAX_WORKERS` (default 8), `ENGRAM_EXPLORE_TOKEN_BUDGET` (default 20000).
 

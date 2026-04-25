@@ -8,16 +8,11 @@ Your memory store is not code. You cannot reconstruct it from a git repository. 
 
 One backup command stands between you and losing all of it.
 
-The data lives in a Docker named volume (`engram_pgdata`). The simplest backup is a `pg_dump` piped to a compressed file:
+The data lives in a Docker named volume (`engram_pgdata`). Back it up with a `pg_dump` piped to a compressed file:
 
 ```bash
+mkdir -p backups
 docker exec engram-postgres pg_dump -U engram engram | gzip > backups/engram-$(date +%Y%m%d).sql.gz
-```
-
-Or use the included script:
-
-```bash
-bash bin/backup-postgres.sh
 ```
 
 Keep the last 7 days. The entire backup for a typical memory store — a few hundred memories, their chunks, and graph edges — is 1–5 MB. Storage is not the constraint.
@@ -195,13 +190,39 @@ There is no limit on the number of projects. The operational cost of adding a pr
 
 ## Background Workers
 
-Three goroutines start with the server and run continuously. They are always on and require no configuration. Here is what each one does — and what degrades without it.
+Five goroutines start with the server and run continuously. They are always on and require no configuration. A sixth — the entity extraction worker — starts only when `ANTHROPIC_API_KEY` is set and `ENGRAM_ENTITY_PROJECTS` is non-empty. Here is what each one does and what degrades without it.
 
 **Summarizer (60-second tick):** Finds memories without generated summaries and calls the configured model — Ollama by default, Claude Haiku if `ENGRAM_CLAUDE_SUMMARIZE=true`. Without the summarizer, `detail="summary"` requests fall back to matched chunks, which are accurate but longer and less synthesized. Failures are logged but do not crash the worker — a memory without a summary is not broken, it just returns slightly more verbose results.
 
 **Re-embedder (30-second tick):** Finds chunks with null embedding vectors and fills them in. Without the re-embedder, new memories would be stored but invisible to semantic search — you could recall them by keyword or recency, but vector similarity would not find them. This goroutine also handles chunks from an in-progress model migration. It runs until there is nothing left to embed, then idles.
 
 **Retention worker (24-hour tick):** Deletes `retrieval_events` rows older than 90 days. Runs once immediately at startup (catch-up pass) and then every 24 hours. Logs `rows_deleted` at INFO. Without the retention worker, the `retrieval_events` table grows without bound — every recall query adds a row, and over months of use that table becomes a significant fraction of your database size. The 90-day window keeps retrieval quality metrics meaningful (recent feedback matters more than old feedback) while keeping the table bounded without manual maintenance. Note: `memory_aggregate(by="failure_class")` and retrieval quality metrics do not see events older than 90 days.
+
+**Audit worker (`ENGRAM_AUDIT_INTERVAL`, default 6h):** Re-runs canonical queries registered via `memory_audit_add_query` and records ranking snapshots. Detects retrieval drift — when the same query returns different results over time — and surfaces it via `memory_audit_compare`. Without the audit worker, ranking drift accumulates silently; you only notice it when recall quality degrades.
+
+**Weight tuner (`ENGRAM_WEIGHT_INTERVAL`, default 24h):** Reads per-project failure-class event aggregates and adjusts the four retrieval signal weights (vector, BM25, recency, precision) toward better performance. Without the weight tuner, weights remain at compiled defaults for all projects regardless of their retrieval patterns. Use `memory_weight_history` to inspect the current weights and tuning history.
+
+**Entity extraction worker (conditional — one goroutine per project in `ENGRAM_ENTITY_PROJECTS`):** Polls the extraction job queue and uses Claude to identify named entities and relations, building the GraphRAG entity index for each project. Only starts when `ANTHROPIC_API_KEY` is set and `ENGRAM_ENTITY_PROJECTS` is non-empty. Without it, entity-graph enrichment does not run — `memory_recall` still works, but graph-based connections between entities are not automatically inferred.
+
+---
+
+## Hooks and the Instinct Consolidator
+
+The `hooks/` directory contains optional Claude Code hooks that capture tool calls to a local buffer and periodically trigger a companion project called **instinct** to consolidate them into Engram memories.
+
+**What `hooks/post-tool-use.sh` does:** After every Claude Code tool call, this hook reads the tool call JSON from stdin, filters for meaningful write operations (file edits, shell commands, MCP write tools), and appends a hashed event record to a local JSONL buffer at `~/.local/state/instinct/buffer.jsonl`. Every N events (default: 20), it spawns the instinct consolidator in the background to process the buffer and store distilled context into Engram.
+
+**What `consolidator/` is:** The `consolidator/` directory is the source tree for a companion project called **instinct** (`consolidator/instinct/`). Instinct reads the tool-call buffer and uses Claude to extract patterns, decisions, and context worth storing as memories. It is a separate project from the core Engram server and is **not required** for the server to run. Engram works fully without it — hooks and instinct are an optional productivity layer on top of the core MCP server.
+
+**Why the hook references `$HOME/projects/instinct/consolidator`:** The instinct consolidator is expected to live at `~/projects/instinct/consolidator` as a separate companion repository, not inside this repo. The `consolidator/` directory here is its source; the hook assumes you have cloned or installed it at that path.
+
+**How to install:**
+
+```bash
+bash hooks/install.sh
+```
+
+`install.sh` copies the hook scripts to `~/.claude/hooks/`, registers them in `~/.claude/settings.json`, and sets up the Python venv in `consolidator/`. It is idempotent — safe to run multiple times. To disable the hooks without uninstalling them, set `INSTINCT_ENABLED=0` in your environment.
 
 ---
 

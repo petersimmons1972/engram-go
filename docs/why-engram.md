@@ -63,10 +63,23 @@ Engram runs four search signals on every recall and combines them into a single 
 The four signals combine on every recall:
 
 ```
-composite = (vector × 0.50) + (bm25 × 0.35) + (recency × 0.15) × importance_multiplier
+composite = (vector × 0.45) + (bm25 × 0.30) + (recency × 0.10) + (precision × 0.15)
+          × importance_multiplier
 ```
 
-Importance multipliers run from 2.0x (Critical) to 0.6x (Trivial). A decision marked Critical — core system architecture, hard constraints — stays visible across long time spans. A note marked Trivial steps aside quickly and is pruned after 30 days without access.
+The precision signal reflects retrieval outcome history — how often this memory was useful when recalled before. New memories start at a neutral 0.5 (neither helped nor hurt) and shift based on feedback from `memory_feedback` calls.
+
+Importance multipliers follow the formula `(5 − importance) / 3`:
+
+| Importance level | Value | Multiplier |
+|---|---|---|
+| Critical | 0 | 1.67× |
+| High | 1 | 1.33× |
+| Neutral | 2 | 1.00× |
+| Low | 3 | 0.67× |
+| Trivial | 4 | 0.33× |
+
+A decision marked Critical — core system architecture, hard constraints — stays visible across long time spans. A note marked Trivial steps aside quickly and is pruned after 30 days without access.
 
 <p align="center"><img src="assets/svg/architecture.svg" alt="Engram Architecture" width="900"></p>
 
