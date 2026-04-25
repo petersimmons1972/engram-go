@@ -133,7 +133,11 @@ func (w *Worker) processJob(ctx context.Context, job ExtractionJob) {
 		return
 	}
 
-	existing, _ := w.db.GetEntitiesByProject(ctx, job.Project)
+	existing, err := w.db.GetEntitiesByProject(ctx, job.Project)
+	if err != nil {
+		slog.Warn("entity worker: failed to load existing entities, skipping deduplication", "project", job.Project, "err", err)
+		return
+	}
 	merged, fresh := Deduplicate(existing, candidates)
 
 	for i := range merged {

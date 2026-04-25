@@ -233,7 +233,7 @@ func findConstraintMatches(
 	limit int,
 	staleAfterDays int,
 ) ([]constraintMatch, error) {
-	ceiling := 1
+	ceiling := 3
 	window := limit * 4
 	if window < defaultConstraintWindow {
 		window = defaultConstraintWindow

@@ -34,13 +34,15 @@ func main() {
 		resultsPath   = flag.String("results", "docs/benchmark-results.json", "output results JSON")
 		docsPath      = flag.String("docs", "docs/models.md", "output documentation markdown")
 		svgPath       = flag.String("svg", "docs/assets/svg/model-tiers.svg", "output SVG diagram")
-		ollamaURL     = flag.String("ollama", "http://localhost:11434", "Ollama base URL")
-		singleModel   = flag.String("model", "", "run only this model (exact manifest name)")
+		ollamaURL     = flag.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+		singleModel   = flag.String("only-model", "", "run only this model (exact manifest name)")
 		numRuns       = flag.Int("runs", 3, "inference runs per model")
 		dryRun        = flag.Bool("dry-run", false, "validate manifest only, skip inference")
 		force         = flag.Bool("force", false, "bypass result cache")
 		useLiveBuffer = flag.Bool("use-live-buffer", false, "use ~/.local/state/instinct/buffer.jsonl instead of fixture")
+		quiet         = flag.Bool("quiet", false, "suppress per-model progress output on stderr")
 	)
+	_ = quiet // TODO: implement quiet mode (#324)
 	flag.Parse()
 
 	fmt.Printf("instinct-benchmark %s\n", Version)
@@ -111,7 +113,9 @@ func main() {
 	completedCount := 0
 
 	for _, model := range models {
-		fmt.Printf("  %-35s", model.Name)
+		if !*quiet {
+			fmt.Fprintf(os.Stderr, "  %-35s", model.Name)
+		}
 
 		if model.VRAMGB > maxVRAM {
 			result := types.ModelResult{
@@ -124,7 +128,9 @@ func main() {
 					VerdictReason: fmt.Sprintf("requires %.1fGB VRAM, available %.1fGB (with headroom)", model.VRAMGB, maxVRAM),
 				},
 			}
-			fmt.Printf("SKIP (%.1fGB VRAM > %.1fGB available)\n", model.VRAMGB, maxVRAM)
+			if !*quiet {
+				fmt.Fprintf(os.Stderr, "SKIP (%.1fGB VRAM > %.1fGB available)\n", model.VRAMGB, maxVRAM)
+			}
 			allResults = append(allResults, result)
 			continue
 		}
@@ -132,7 +138,9 @@ func main() {
 		cacheKey := cacheKeyFor(cacheKeyBase, ollamaVersion, model.Name)
 		if !*force {
 			if cached, ok, err := resultCache.Read(model.Name, cacheKey, 24*time.Hour); err == nil && ok {
-				fmt.Printf("cached  verdict=%-15s composite=%.2f\n", cached.Score.Verdict, cached.Score.Composite)
+				if !*quiet {
+					fmt.Fprintf(os.Stderr, "cached  verdict=%-15s composite=%.2f\n", cached.Score.Verdict, cached.Score.Composite)
+				}
 				allResults = append(allResults, cached)
 				completedCount++
 				continue
@@ -141,7 +149,9 @@ func main() {
 
 		runResult, err := runner.Run(ctx, client, model, eventSource, *numRuns)
 		if err != nil {
-			fmt.Printf("ERROR: %v\n", err)
+			if !*quiet {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			}
 			allResults = append(allResults, types.ModelResult{
 				Model:  model.Name,
 				VRAMGB: model.VRAMGB,
@@ -164,8 +174,10 @@ func main() {
 			Score:  score,
 		}
 
-		fmt.Printf("%-15s patterns=%-3d latency=%s\n",
-			score.Verdict, score.ValidPatterns, score.AvgLatency.Std().Round(time.Second))
+		if !*quiet {
+			fmt.Fprintf(os.Stderr, "%-15s patterns=%-3d latency=%s\n",
+				score.Verdict, score.ValidPatterns, score.AvgLatency.Std().Round(time.Second))
+		}
 
 		if err := resultCache.Write(model.Name, cacheKey, modelResult); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: cache write failed for %s: %v\n", model.Name, err)
