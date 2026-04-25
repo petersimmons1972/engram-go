@@ -12,6 +12,9 @@ CONSOLIDATOR="$HOME/projects/instinct/consolidator/.venv/bin/python"
 CONSOLIDATOR_MODULE="$HOME/projects/instinct/consolidator"
 
 mkdir -p "$BUFFER_DIR"
+chmod 700 "$BUFFER_DIR"
+touch "$BUFFER_FILE"
+chmod 600 "$BUFFER_FILE"
 
 # Read stdin — contains the tool call JSON
 raw_input=$(cat)
@@ -54,7 +57,22 @@ tool_input_hash = hashlib.sha256(raw.encode()).hexdigest()[:12]
 resp = d.get("tool_response") or ""
 if isinstance(resp, dict):
     resp = resp.get("text") or resp.get("content") or str(resp)
-tool_output_summary = str(resp)[:200].replace("\n", " ")
+
+import re
+_REDACT = [
+    # Most specific first — full var names before generic keyword match
+    re.compile(r"(?i)(INFISICAL_CLIENT_(?:ID|SECRET)|ENGRAM_API_KEY|POSTGRES_PASSWORD)\s*=\s*\S+"),
+    re.compile(r"(?i)postgres://[^@\s]+@\S+"),
+    re.compile(r"(?i)(password|passwd|secret|api[_-]?key|token|bearer|auth)\s*[=:]\s*\S+"),
+    re.compile(r"[A-Za-z0-9+/]{40,}={0,2}"),
+    re.compile(r"[0-9a-f]{48,}"),
+]
+def _redact(text):
+    for pat in _REDACT:
+        text = pat.sub("[REDACTED]", text)
+    return text
+
+tool_output_summary = _redact(str(resp)[:200].replace("\n", " "))
 
 event = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

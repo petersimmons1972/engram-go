@@ -8,6 +8,27 @@ HOOKS_SRC="$REPO_DIR/hooks"
 HOOKS_DEST="$HOME/.claude/hooks"
 SETTINGS="$HOME/.claude/settings.json"
 
+cat <<'DISCLOSURE'
+
+DATA COLLECTION NOTICE
+----------------------
+The instinct hooks observe Claude Code tool activity. On every Edit, Write, Bash,
+Task, Agent, or MCP write call, the hook captures:
+
+  - Tool name and a hash of the tool input (no raw input is stored)
+  - The first 200 characters of the tool response, with secrets redacted
+  - Session ID and a hashed project identifier
+
+This data is written to ~/.local/state/instinct/buffer.jsonl (mode 0600) and
+periodically sent to Anthropic's API by the consolidator (instinct.run).
+
+To opt out at any time without uninstalling, set INSTINCT_ENABLED=0 in your
+environment (e.g., export INSTINCT_ENABLED=0 in ~/.bashrc).
+
+Press ENTER to accept and continue, or Ctrl-C to abort.
+DISCLOSURE
+read -r
+
 echo "Installing instinct hooks..."
 
 # 1. Copy hook scripts

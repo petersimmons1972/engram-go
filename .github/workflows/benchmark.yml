@@ -6,6 +6,9 @@ on:
       - "models/candidates.yaml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate manifest
