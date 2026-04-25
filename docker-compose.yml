@@ -11,11 +11,16 @@
 #
 # GPU SETUP — read before starting:
 #
+#   Default: CPU (ollama/ollama — works everywhere, no host drivers needed).
+#
 #   NVIDIA:  Uncomment the `deploy` block under the ollama service.
 #            Requires NVIDIA Container Toolkit on the host.
 #
-#   AMD:     Change the ollama image to ollama/ollama:rocm and
-#            uncomment the `devices` block under the ollama service.
+#   AMD:     Uncomment the `# image: ollama/ollama:rocm` line and the
+#            `devices` block under the ollama service; comment out the
+#            default image line.
+#            Requires /dev/kfd and /dev/dri access (user must be in
+#            render + video groups).
 #
 #   Mac (M-series):  Docker Desktop does not pass through Metal GPU.
 #            Run Ollama natively instead:  brew install ollama && ollama serve
@@ -44,22 +49,12 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama:rocm
+    image: ollama/ollama          # CPU default — works on any host, no GPU drivers needed
+    # image: ollama/ollama:rocm   # AMD GPU — uncomment this and the devices block below
     volumes:
       - ollama-data:/root/.ollama           # model files persist across restarts
     ports:
       - "127.0.0.1:11434:11434"
-    environment:
-      # ── AMD ROCm tuning (Navi 31 / gfx1100 — RX 7900 XT) ─────────────────
-      # Forces correct gfx1100 codepath; without this ROCm may use a slower
-      # fallback path on newer Navi cards.
-      - HSA_OVERRIDE_GFX_VERSION=11.0.0
-      # Enables flash attention — significant throughput improvement on
-      # modern GPUs including gfx1100.
-      - OLLAMA_FLASH_ATTENTION=1
-      # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
-      # reload penalty after idle gaps between prompts.
-      - OLLAMA_KEEP_ALIVE=1h
     healthcheck:
       # Uses the ollama binary (already in the container) to verify the API is
       # responsive AND that the embed model Engram depends on is present.
@@ -83,12 +78,24 @@ services:
     #           capabilities: [gpu]
     #
     # ── AMD GPU (ROCm) ───────────────────────────────────────────────────────
-    # Change image to ollama/ollama:rocm above, then uncomment devices below.
+    # Switch to the rocm image above, then uncomment the environment and
+    # devices blocks below.
     # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
     #
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
+    # environment:
+    #   # Forces correct gfx1100 codepath; without this ROCm may use a slower
+    #   # fallback path on newer Navi cards.
+    #   - HSA_OVERRIDE_GFX_VERSION=11.0.0
+    #   # Enables flash attention — significant throughput improvement on
+    #   # modern GPUs including gfx1100.
+    #   - OLLAMA_FLASH_ATTENTION=1
+    #   # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
+    #   # reload penalty after idle gaps between prompts.
+    #   - OLLAMA_KEEP_ALIVE=1h
+    #
+    # devices:
+    #   - /dev/kfd:/dev/kfd
+    #   - /dev/dri:/dev/dri
 
   engram-go:
     container_name: engram-go-app

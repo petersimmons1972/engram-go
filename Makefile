@@ -1,4 +1,10 @@
-.PHONY: up down restart logs build test setup setup-dry-run init test-explore-soak
+.DEFAULT_GOAL := help
+
+.PHONY: help up down down-safe restart logs build build-postgres test setup setup-dry-run init test-explore-soak
+
+## Show available make targets
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 ## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
 up:
@@ -10,11 +16,19 @@ up:
 	    echo "ERROR: ENGRAM_API_KEY is not set. Run 'make init' to generate one."; \
 	    exit 1; \
 	fi
+	@docker image inspect engram-postgres-cg:latest > /dev/null 2>&1 || $(MAKE) build-postgres
 	docker compose up -d engram-go
 
 ## Stop engram (preserves volumes — never use 'down -v')
 down:
 	docker compose down
+
+## Stop engram safely — preserves volumes (alias for 'down', explicit name for safety)
+down-safe: down
+
+## Build the custom Postgres+pgvector image (required once before 'make up' on a fresh clone)
+build-postgres:
+	docker build -f Dockerfile.postgres -t engram-postgres-cg:latest .
 
 ## Rebuild image and restart
 restart: build
