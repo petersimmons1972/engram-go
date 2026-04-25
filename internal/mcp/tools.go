@@ -1218,6 +1218,10 @@ func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.Call
 // When cfg.ClaudeConsolidateEnabled is true and a claude client is available,
 // it uses bigramJaccard similarity + Claude review for near-duplicate merging.
 func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
 	if err != nil {
@@ -1242,6 +1246,10 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 // handleMemorySleep runs the full sleep-consolidation cycle (Feature 3).
 // cfg is passed so the handler can read OllamaURL for the LLM second pass.
 func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
 	if err != nil {
@@ -1866,6 +1874,10 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	includeTrace := getBool(args, "include_trace", false)
 	scope := parseExploreScope(args)
 
+	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("get engine for %q: %w", project, err)
@@ -1928,6 +1940,10 @@ func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRe
 		topK = 100
 	}
 	// topK == 0 means "use default" — pass 0 to Asker.TopK so Ask applies defaultTopK=10.
+
+	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
 
 	h, err := pool.Get(ctx, project)
 	if err != nil {

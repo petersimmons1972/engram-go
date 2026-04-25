@@ -861,9 +861,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res) //nolint:errcheck
 }
 
+// extractionSem caps the number of concurrent entity-extraction goroutines.
+// At 50 req/s burst each spawning a goroutine, an unbounded pool exhausts the
+// per-project pgxpool (MaxConns=10) within the 5-second async timeout window.
+// Non-blocking select: when the semaphore is full the goroutine exits immediately
+// rather than queuing, keeping goroutine count bounded.
+var extractionSem = make(chan struct{}, 20)
+
 // enqueueExtractionAsync submits memID to the entity extraction queue via pool.
 // Intended to run in a detached goroutine; all failures are logged, never surfaced.
+// Bounded by extractionSem: if more than 20 extraction goroutines are already
+// running, this call is dropped and a warning is logged.
 func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
+	select {
+	case extractionSem <- struct{}{}:
+		// acquired — proceed
+	default:
+		// semaphore full; skip this extraction rather than queuing unboundedly
+		slog.Warn("memory_store: entity extraction skipped, semaphore full",
+			"id", memID, "project", project)
+		return
+	}
+	defer func() { <-extractionSem }()
+
 	// No request context available here — this runs in a detached goroutine
 	// after the store has already returned. Use background context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
