@@ -32,11 +32,15 @@ def load_and_rotate_buffer(buffer_path: Path) -> list[dict]:
         return []
 
     events = []
+    skipped = 0
     for line in raw_lines:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
-            continue
+            skipped += 1
+
+    if skipped:
+        print(f"instinct: WARN — {skipped} malformed line(s) skipped in {buffer_path.name}")
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dest = buffer_path.parent / f"buffer.jsonl.{ts}.processed"
