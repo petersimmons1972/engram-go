@@ -3,12 +3,11 @@ package search
 import (
 	"context"
 	"log/slog"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/envconf"
 )
 
 const (
@@ -34,20 +33,7 @@ func ResetDecayIntervalForTesting() {
 // The result is cached after the first call.
 func resolveDecayInterval() time.Duration {
 	decayIntervalOnce.Do(func() {
-		interval := defaultDecayInterval
-		if raw := os.Getenv("ENGRAM_DECAY_INTERVAL_HOURS"); raw != "" {
-			v, err := strconv.ParseFloat(raw, 64)
-			if err != nil {
-				slog.Warn("ENGRAM_DECAY_INTERVAL_HOURS: invalid float, using default",
-					"value", raw, "default", defaultDecayInterval)
-			} else if v <= 0 {
-				slog.Warn("ENGRAM_DECAY_INTERVAL_HOURS: must be positive, using default",
-					"value", v, "default", defaultDecayInterval)
-			} else {
-				interval = time.Duration(float64(time.Hour) * v)
-			}
-		}
-		resolvedDecayInterval = interval
+		resolvedDecayInterval = envconf.DurationHours("ENGRAM_DECAY_INTERVAL_HOURS", defaultDecayInterval)
 	})
 	return resolvedDecayInterval
 }

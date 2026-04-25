@@ -3,9 +3,9 @@ package search
 import (
 	"log/slog"
 	"math"
-	"os"
-	"strconv"
 	"sync"
+
+	"github.com/petersimmons1972/engram/internal/envconf"
 )
 
 const (
@@ -41,34 +41,20 @@ func loadDecayConfig() {
 		floor: 0.0,
 	}
 
-	if raw := os.Getenv("ENGRAM_DECAY_RATE_PER_HOUR"); raw != "" {
-		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: invalid float, using default",
-				"value", raw, "default", decayRate)
-		} else if v <= 0 {
+	if v := envconf.Float("ENGRAM_DECAY_RATE_PER_HOUR", decayRate); v != decayRate {
+		switch {
+		case v <= 0:
 			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: must be positive, using default",
 				"value", v, "default", decayRate)
-		} else if v > 10 {
+		case v > 10:
 			slog.Warn("ENGRAM_DECAY_RATE_PER_HOUR: value >10 is unusable, using default",
 				"value", v, "default", decayRate)
-		} else {
+		default:
 			cfg.rate = v
 		}
 	}
 
-	if raw := os.Getenv("ENGRAM_DECAY_FLOOR"); raw != "" {
-		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			slog.Warn("ENGRAM_DECAY_FLOOR: invalid float, using default 0.0",
-				"value", raw)
-		} else if v < 0 || v > 1 {
-			slog.Warn("ENGRAM_DECAY_FLOOR: must be in [0,1], using default 0.0",
-				"value", v)
-		} else {
-			cfg.floor = v
-		}
-	}
+	cfg.floor = envconf.FloatBounded("ENGRAM_DECAY_FLOOR", 0.0, 0.0, 1.0)
 
 	resolvedDecay = cfg
 }
