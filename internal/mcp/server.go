@@ -25,8 +25,9 @@ import (
 
 // rateLimiter holds per-IP token-bucket state for HTTP rate limiting (#140).
 type rateLimiter struct {
-	mu      sync.Mutex
-	clients map[string]*rateLimiterEntry
+	mu           sync.Mutex
+	clients      map[string]*rateLimiterEntry
+	setupClients map[string]*rateLimiterEntry // separate budget for /setup-token (#285)
 }
 
 type rateLimiterEntry struct {
@@ -37,7 +38,10 @@ type rateLimiterEntry struct {
 // newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
 // The eviction goroutine stops when ctx is cancelled.
 func newRateLimiter(ctx context.Context) *rateLimiter {
-	rl := &rateLimiter{clients: make(map[string]*rateLimiterEntry)}
+	rl := &rateLimiter{
+		clients:      make(map[string]*rateLimiterEntry),
+		setupClients: make(map[string]*rateLimiterEntry),
+	}
 	go rl.evictLoop(ctx)
 	return rl
 }
@@ -74,7 +78,7 @@ func (rl *rateLimiter) evictLoop(ctx context.Context) {
 	}
 }
 
-// evict removes entries not seen in the last 5 minutes.
+// evict removes entries not seen in the last 5 minutes from both maps.
 func (rl *rateLimiter) evict() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -83,18 +87,25 @@ func (rl *rateLimiter) evict() {
 			delete(rl.clients, ip)
 		}
 	}
+	for ip, e := range rl.setupClients {
+		if time.Since(e.lastSeen) > 5*time.Minute {
+			delete(rl.setupClients, ip)
+		}
+	}
 }
 
 // allowSetupToken is like allow but uses a tighter budget for the /setup-token
 // endpoint: 3 requests per 5-minute window (burst 3, one token every ~100s) (#243).
+// Uses a separate setupClients map so IPs already present in the normal clients
+// map cannot consume their setup-token budget via authenticated requests (#285).
 func (rl *rateLimiter) allowSetupToken(ip string) bool {
 	rl.mu.Lock()
-	e, ok := rl.clients[ip]
+	e, ok := rl.setupClients[ip]
 	if !ok {
 		e = &rateLimiterEntry{
 			limiter: rate.NewLimiter(rate.Every(setupTokenWindow), 3),
 		}
-		rl.clients[ip] = e
+		rl.setupClients[ip] = e
 	}
 	e.lastSeen = time.Now()
 	ok = e.limiter.Allow()
@@ -408,13 +419,19 @@ func isLocalAddress(ipStr string, allowRFC1918 bool) bool {
 // ENGRAM_TRUST_PROXY_HEADERS=1 (or =true) enables proxy header trust.
 func (s *Server) clientIP(r *http.Request) string {
 	if s.trustProxy {
-		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-			return strings.TrimSpace(realIP)
+		// Validate X-Real-IP with net.ParseIP to prevent header spoofing (#290).
+		// An attacker who submits X-Real-IP: 127.0.0.1 could otherwise bypass the
+		// /setup-token loopback check when ENGRAM_TRUST_PROXY_HEADERS=1.
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			if net.ParseIP(realIP) != nil {
+				return realIP
+			}
+			// Invalid IP in X-Real-IP — fall through to X-Forwarded-For.
 		}
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			// X-Forwarded-For may be a comma-separated list; leftmost is the client.
 			parts := strings.SplitN(forwarded, ",", 2)
-			if ip := strings.TrimSpace(parts[0]); ip != "" {
+			if ip := strings.TrimSpace(parts[0]); ip != "" && net.ParseIP(ip) != nil {
 				return ip
 			}
 		}
@@ -754,7 +771,9 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		Importance int      `json:"importance"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid request body"}`) //nolint:errcheck
 		return
 	}
 	if strings.TrimSpace(body.Content) == "" {
@@ -782,7 +801,10 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 
 	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.Error("quick-store failed", "err", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"store failed"}`) //nolint:errcheck
 		return
 	}
 
