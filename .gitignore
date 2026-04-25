@@ -12,3 +12,8 @@ testdata/longmemeval/*.json
 results/
 .serena/
 .mcp.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
