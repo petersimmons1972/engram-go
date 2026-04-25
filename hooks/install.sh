@@ -20,7 +20,7 @@ Task, Agent, or MCP write call, the hook captures:
   - Session ID and a hashed project identifier
 
 This data is written to ~/.local/state/instinct/buffer.jsonl (mode 0600) and
-periodically sent to Anthropic's API by the consolidator (instinct.run).
+periodically sent to Anthropic's API by the instinct binary.
 
 To opt out at any time without uninstalling, set INSTINCT_ENABLED=0 in your
 environment (e.g., export INSTINCT_ENABLED=0 in ~/.bashrc).
@@ -87,10 +87,11 @@ print(f"  Backed up settings to {backup.name}")
 print(f"  Wrote {settings_path}")
 PYEOF
 
-# 3. Set up Python venv
-echo "Setting up Python venv..."
-cd "$REPO_DIR/consolidator"
-uv sync --group dev
-echo "  Venv ready at .venv/"
+# 3. Build instinct binary
+echo "Building instinct binary..."
+go build -o "$HOME/bin/instinct" "$REPO_DIR/cmd/instinct"
+echo "  Binary installed at $HOME/bin/instinct"
 
-echo "Done. Run 'INSTINCT_ENABLED=0' to disable without uninstalling."
+echo "Done."
+echo "  instinct binary: $HOME/bin/instinct"
+echo "  To disable without uninstalling: export INSTINCT_ENABLED=0"

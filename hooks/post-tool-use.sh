@@ -8,8 +8,6 @@ set -euo pipefail
 BUFFER_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/instinct"
 BUFFER_FILE="$BUFFER_DIR/buffer.jsonl"
 LOG_FILE="$BUFFER_DIR/run.log"
-CONSOLIDATOR="$HOME/projects/instinct/consolidator/.venv/bin/python"
-CONSOLIDATOR_MODULE="$HOME/projects/instinct/consolidator"
 
 mkdir -p "$BUFFER_DIR"
 chmod 700 "$BUFFER_DIR"
@@ -102,10 +100,11 @@ echo "$parsed" >> "$BUFFER_FILE"
 count=$(wc -l < "$BUFFER_FILE" 2>/dev/null || echo 0)
 threshold="${INSTINCT_CONSOLIDATE_EVERY:-20}"
 if (( count % threshold == 0 )); then
-    if [[ -x "$CONSOLIDATOR" ]]; then
-        PYTHONPATH="$CONSOLIDATOR_MODULE" \
-            "$CONSOLIDATOR" -m instinct.run >> "$LOG_FILE" 2>&1 &
+    if command -v instinct &>/dev/null; then
+        instinct >> "$LOG_FILE" 2>&1 &
         disown
+    else
+        echo "$(date -Iseconds) instinct binary not found on PATH — run hooks/install.sh" >> "$LOG_FILE"
     fi
 fi
 

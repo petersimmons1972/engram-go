@@ -1,3 +1,0 @@
-{"timestamp":"2026-04-22T10:00:00Z","session_id":"sess-aaa","project_id":"abc123def456","tool_name":"Edit","tool_input_hash":"aabbccdd1234","tool_output_summary":"Edited consolidator/run.py lines 1-10","exit_status":0,"schema_version":1}
-{"timestamp":"2026-04-22T10:01:00Z","session_id":"sess-aaa","project_id":"abc123def456","tool_name":"Bash","tool_input_hash":"bbccddee2345","tool_output_summary":"pytest tests/ -x: 3 passed","exit_status":0,"schema_version":1}
-{"timestamp":"2026-04-22T10:02:00Z","session_id":"sess-aaa","project_id":"abc123def456","tool_name":"Edit","tool_input_hash":"ccddee3456ff","tool_output_summary":"Edited consolidator/run.py lines 20-30","exit_status":0,"schema_version":1}
