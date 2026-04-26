@@ -287,6 +287,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// that cannot establish an SSE session (e.g. PreCompact hooks).
 	mux.Handle("/quick-store", s.applyMiddleware(http.HandlerFunc(s.handleQuickStore), apiKey, rl))
 
+	// /quick-recall — sessionless REST endpoint for reading memories without an
+	// active SSE session (e.g. Python subprocesses in the Clearwatch pipeline).
+	mux.Handle("/quick-recall", s.applyMiddleware(http.HandlerFunc(s.handleQuickRecall), apiKey, rl))
+
 	// All other authenticated routes (including /sse) go through the standard middleware.
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
@@ -852,4 +856,134 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// handleQuickRecall is a sessionless REST endpoint that recalls memories by
+// semantic + full-text query without requiring an active SSE session. Used by
+// Python subprocesses and other callers (e.g. the Clearwatch pipeline) that
+// cannot perform the SSE handshake.
+//
+// POST /quick-recall
+// Authorization: Bearer <token>
+// {"query":"...","project":"...","tags":[...],"limit":N}
+//
+// Returns {"results":[{"id":"...","summary":"...","content":"...","tags":[...],"score":N},...]}
+// On no results returns {"results":[]}, never an error.
+func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Query   string   `json:"query"`
+		Project string   `json:"project"`
+		Tags    []string `json:"tags"`
+		Limit   int      `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.Project) == "" {
+		writeJSONError(w, http.StatusBadRequest, "project is required")
+		return
+	}
+	if strings.TrimSpace(body.Query) == "" {
+		writeJSONError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+
+	// Clamp limit: default 5, max 20.
+	limit := body.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	args := map[string]any{
+		"project": body.Project,
+		"query":   body.Query,
+		"top_k":   float64(limit),
+	}
+	if len(body.Tags) > 0 {
+		tags := make([]any, len(body.Tags))
+		for i, tag := range body.Tags {
+			tags[i] = tag
+		}
+		args["tags"] = tags
+	}
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = args
+
+	result, err := handleMemoryRecall(r.Context(), s.pool, req, s.cfg)
+	if err != nil {
+		slog.Error("quick-recall failed", "err", err, "request_id", requestIDFromContext(r.Context()))
+		writeJSONError(w, http.StatusInternalServerError, "recall failed")
+		return
+	}
+
+	// Extract the JSON payload from the tool result text.
+	var raw map[string]any
+	for _, c := range result.Content {
+		if tc, ok := c.(mcpgo.TextContent); ok {
+			if jsonErr := json.Unmarshal([]byte(tc.Text), &raw); jsonErr == nil {
+				break
+			}
+		}
+	}
+
+	// Map full SearchResult slice to the slim wire format the caller expects.
+	// Graceful degradation: if we can't parse the results, return empty array.
+	type wireResult struct {
+		ID      string   `json:"id"`
+		Summary string   `json:"summary"`
+		Content string   `json:"content"`
+		Tags    []string `json:"tags"`
+		Score   float64  `json:"score"`
+	}
+
+	out := make([]wireResult, 0)
+	if rawResults, ok := raw["results"]; ok {
+		if arr, ok := rawResults.([]any); ok {
+			for _, item := range arr {
+				obj, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				mem, _ := obj["memory"].(map[string]any)
+				score, _ := obj["score"].(float64)
+
+				var id, summary, content string
+				var tags []string
+				if mem != nil {
+					id, _ = mem["id"].(string)
+					summary, _ = mem["summary"].(string)
+					content, _ = mem["content"].(string)
+					if rawTags, ok := mem["tags"].([]any); ok {
+						for _, t := range rawTags {
+							if s, ok := t.(string); ok {
+								tags = append(tags, s)
+							}
+						}
+					}
+				}
+				if tags == nil {
+					tags = []string{}
+				}
+				out = append(out, wireResult{
+					ID:      id,
+					Summary: summary,
+					Content: content,
+					Tags:    tags,
+					Score:   score,
+				})
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"results": out})
 }
