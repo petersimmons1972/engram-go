@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/stretchr/testify/require"
@@ -69,4 +70,54 @@ func TestEnginePool_GetOrCreate_SameProject_SameInstance(t *testing.T) {
 
 	require.Same(t, h1, h2)
 	require.Equal(t, 1, calls)
+}
+
+// TestPoolGet_FactoryTimeout verifies that Pool.Get() does not block indefinitely
+// when the factory hangs. The factory blocks until its context is cancelled. With
+// the 10s internal timeout, Get() should return an error well within the 15s test
+// deadline rather than blocking for the duration of the outer context.
+func TestPoolGet_FactoryTimeout(t *testing.T) {
+	// This channel lets us signal when the factory has started so we know
+	// the singleflight is in progress before we start measuring.
+	factoryStarted := make(chan struct{})
+
+	pool := internalmcp.NewEnginePool(func(ctx context.Context, _ string) (*internalmcp.EngineHandle, error) {
+		// Signal that the factory has been entered.
+		close(factoryStarted)
+		// Block until our context is cancelled — simulates a hung DB migration.
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	// The outer context has a generous deadline so it does not mask the fix.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Run Get in a goroutine so we can measure how long it takes.
+	type result struct {
+		h   *internalmcp.EngineHandle
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		h, err := pool.Get(ctx, "slow-project")
+		done <- result{h, err}
+	}()
+
+	// Wait until the factory is executing so we know the slow path is active.
+	select {
+	case <-factoryStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("factory never started within 5s")
+	}
+
+	// The factory is now blocked. Get() must return an error within the 10s
+	// internal timeout, not after the 30s outer context expires.
+	select {
+	case r := <-done:
+		require.Error(t, r.err, "expected an error when factory times out")
+		require.Nil(t, r.h, "expected nil handle on timeout")
+	case <-time.After(15 * time.Second):
+		t.Fatal("Pool.Get() blocked for 15s — factory timeout is not working")
+	}
 }

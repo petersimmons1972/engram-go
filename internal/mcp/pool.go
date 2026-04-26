@@ -96,7 +96,13 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 		}
 		p.mu.RUnlock()
 
-		h, err := p.factory(ctx, project)
+		// Bound the factory with a 10s timeout so a slow DB migration (schema
+		// init, connection pool setup) cannot block the caller indefinitely.
+		// singleflight does NOT cache errors, so a timeout here allows the next
+		// Get() call to retry the factory rather than returning a stale error.
+		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer initCancel()
+		h, err := p.factory(initCtx, project)
 		if err != nil {
 			return nil, err
 		}
