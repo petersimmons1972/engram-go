@@ -227,7 +227,9 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 
 	// GET /health — unauthenticated; returns dependency status for diagnostics and readiness checks.
 	// Probes PostgreSQL (SELECT 1) and Ollama (/api/tags) with 2-second deadlines each.
-	// Returns 200 {"status":"ok",...} when both succeed; 503 {"status":"degraded",...} otherwise.
+	// Returns 200 {"status":"ok",...} when all probes pass; 200 {"status":"degraded","ollama":"degraded",...}
+	// when Ollama was unavailable at startup (OllamaDegraded=true); 503 {"status":"degraded",...} when
+	// a previously-healthy dependency is now unreachable.
 	mux.HandleFunc("/health", s.handleHealth)
 
 	// GET /metrics — unauthenticated Prometheus metrics endpoint.
@@ -679,8 +681,17 @@ func (s *Server) registerTools() {
 }
 
 // handleHealth checks PostgreSQL and Ollama reachability and returns a structured
-// JSON response. Both probes use a 2-second deadline. Returns 200 when both are
-// healthy, 503 when either fails. Unauthenticated — suitable as a K8s readiness probe.
+// JSON response. Both probes use a 2-second deadline.
+//
+// Status semantics:
+//   - 200 {"status":"ok",...}      — all probes pass.
+//   - 200 {"status":"degraded",...} — Ollama failed at startup (OllamaDegraded=true)
+//     and the live probe also fails. The server is operational; embeddings are
+//     unavailable until Ollama recovers.
+//   - 503 {"status":"degraded",...} — a probe that was healthy at startup is now
+//     unreachable (Postgres failure, or Ollama failure when OllamaDegraded=false).
+//
+// Unauthenticated — suitable as a K8s readiness probe.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	type result struct {
 		Status   string `json:"status"`
@@ -708,6 +719,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	// Probe Ollama. Use context.Background() for the same reason as the Postgres
 	// probe: the request context deadline must not short-circuit a healthy probe.
+	ollamaLiveOK := false
 	if s.cfg.OllamaURL != "" {
 		ollamaCtx, ollamaCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer ollamaCancel()
@@ -723,11 +735,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				if resp.StatusCode >= 500 {
 					ollamaStatus = "error"
 					slog.Warn("health: ollama returned server error", "status", resp.StatusCode)
+				} else {
+					ollamaLiveOK = true
 				}
 			}
 		} else {
 			ollamaStatus = "error"
 			slog.Warn("health: could not build ollama probe request", "err", err)
+		}
+	}
+
+	// When OllamaDegraded is set, Ollama was unavailable at startup but the server
+	// started anyway. If Ollama has since recovered, promote to "ok". If it is
+	// still unreachable, report "degraded" rather than "error" — the server itself
+	// is operational and the degraded state is expected/known.
+	if s.cfg.OllamaDegraded {
+		if ollamaLiveOK {
+			ollamaStatus = "ok"
+		} else {
+			ollamaStatus = "degraded"
 		}
 	}
 
@@ -737,9 +763,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Ollama:   ollamaStatus,
 	}
 	statusCode := http.StatusOK
-	if pgStatus != "ok" || ollamaStatus != "ok" {
+	// Return 503 only for hard failures: Postgres down, or Ollama down when it was
+	// healthy at startup (not in degraded mode). A degraded Ollama (startup miss)
+	// keeps 200 so K8s readiness probes do not kill a running server.
+	if pgStatus != "ok" || (ollamaStatus == "error") {
 		res.Status = "degraded"
 		statusCode = http.StatusServiceUnavailable
+	} else if ollamaStatus == "degraded" {
+		res.Status = "degraded"
+		// statusCode stays 200 — server is operational
 	}
 
 	writeJSON(w, statusCode, res)

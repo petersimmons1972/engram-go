@@ -334,6 +334,74 @@ func TestWithSessionFingerprint_PassesThroughNoSessionID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// E6: non-fatal Ollama startup probe — degraded mode
+// ---------------------------------------------------------------------------
+
+// TestHealthProbe_OllamaDegraded_Returns200WithDegradedField verifies that when
+// OllamaDegraded is set (Ollama was unreachable at startup) and the live health
+// probe also fails, /health returns 200 (server is up) with "ollama":"degraded".
+// This replaces the previous behaviour where Ollama failure always returned 503.
+func TestHealthProbe_OllamaDegraded_Returns200WithDegradedField(t *testing.T) {
+	// Point the server at a URL that will always fail (nothing listening).
+	// Use a port on 127.0.0.1 that is almost certainly unbound.
+	unreachableOllama := "http://127.0.0.1:19999"
+
+	s := &Server{
+		cfg: Config{
+			OllamaURL:      unreachableOllama,
+			OllamaDegraded: true, // set as if startup probe failed
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	s.handleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when OllamaDegraded=true, got %d — degraded startup should not cause 503", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"degraded"`) {
+		t.Fatalf("expected 'degraded' in response body, got: %s", body)
+	}
+	if !strings.Contains(body, `"ollama"`) {
+		t.Fatalf("expected 'ollama' field in response body, got: %s", body)
+	}
+}
+
+// TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK verifies that if
+// OllamaDegraded is set but the live Ollama probe now succeeds, /health returns
+// 200 with "ollama":"ok" — degraded mode is not permanent.
+func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
+	// Spin up a fake Ollama that responds successfully.
+	fakeOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeOllama.Close()
+
+	s := &Server{
+		cfg: Config{
+			OllamaURL:      fakeOllama.URL,
+			OllamaDegraded: true, // startup probe failed, but Ollama recovered
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	s.handleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when Ollama recovered, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"ok"`) {
+		t.Fatalf("expected 'ok' in response body when Ollama recovered, got: %s", body)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Health probe context isolation — issue E1
 // ---------------------------------------------------------------------------
 

@@ -149,15 +149,25 @@ func run() error {
 	// Dimensional guard: verify the embedding model returns a non-empty vector.
 	// Schema compatibility (pgvector column width) is enforced at insert time —
 	// a dimension mismatch produces a clear error on the first Store call.
-	testVec, err := embedder.Embed(ctx, "dimensional guard test")
-	if err != nil {
-		return fmt.Errorf("dimensional guard: embed test failed: %w", err)
+	//
+	// E6: the probe is bounded to 5 seconds and is non-fatal. If Ollama is
+	// unavailable at startup (slow pull, not yet ready, transient outage), the
+	// server starts in degraded mode: /health reports "ollama":"degraded" with
+	// HTTP 200 so the pod is considered live. Embedding calls will fail until
+	// Ollama recovers, which is preferable to refusing to start at all.
+	ollamaDegraded := false
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	testVec, embedErr := embedder.Embed(embedCtx, "startup probe")
+	embedCancel()
+	if embedErr != nil {
+		slog.Warn("Ollama unavailable at startup — embedding degraded; server will start anyway", "error", embedErr)
+		ollamaDegraded = true
+	} else if len(testVec) == 0 {
+		slog.Warn("Ollama startup probe returned empty vector — embedding degraded; server will start anyway")
+		ollamaDegraded = true
+	} else {
+		slog.Info("Ollama embedding verified at startup", "dims", len(testVec))
 	}
-	actualDims := len(testVec)
-	if actualDims == 0 {
-		return fmt.Errorf("dimensional guard: embedding model returned empty vector")
-	}
-	slog.Info("dimensional guard passed", "dims", actualDims)
 
 	dsn := *databaseURL
 	ollamaURLVal := *ollamaURL
@@ -229,6 +239,7 @@ func run() error {
 		RAGMaxTokens:             *ragMaxTokens,
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 		PgPool:                   sharedPool,
+		OllamaDegraded:           ollamaDegraded,
 	}
 	srv := internalmcp.NewServer(pool, cfg)
 

@@ -58,6 +58,10 @@ type Config struct {
 	// Required for Docker setups where the host appears as a bridge IP.
 	// Set via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
 	AllowRFC1918SetupToken bool
+	// OllamaDegraded is set when the startup embedding probe failed but the
+	// server continued anyway. /health returns 200 with "ollama":"degraded"
+	// rather than 503, because the server itself is operational.
+	OllamaDegraded bool
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool
