@@ -33,6 +33,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_canonical_entities_updated_at ON canonical_entities;
 CREATE TRIGGER trg_canonical_entities_updated_at
     BEFORE UPDATE ON canonical_entities
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

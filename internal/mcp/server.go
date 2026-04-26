@@ -907,6 +907,9 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 		"project": body.Project,
 		"query":   body.Query,
 		"top_k":   float64(limit),
+		// Force full-results mode so the response contains a "results" key with
+		// memory objects rather than opaque handles (the server default is "handle").
+		"mode": "summary",
 	}
 	if len(body.Tags) > 0 {
 		tags := make([]any, len(body.Tags))
