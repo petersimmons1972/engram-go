@@ -79,9 +79,10 @@ func parseRecallResult(t *testing.T, res *mcpgo.CallToolResult) map[string]any {
 	return out
 }
 
-// TestHandleMemoryRecall_HandleMode_EmptyQuery: empty query is rejected before
-// mode branching with a Go error (not a tool-error result).
-func TestHandleMemoryRecall_HandleMode_EmptyQuery(t *testing.T) {
+// TestMemoryRecall_EmptyQuery_ReturnsValidationError: empty query must return a
+// clean MCP tool error (IsError=true) and a nil Go error — not a WARN log.
+// The handler must not reach the DB layer for caller input mistakes.
+func TestMemoryRecall_EmptyQuery_ReturnsValidationError(t *testing.T) {
 	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -90,9 +91,31 @@ func TestHandleMemoryRecall_HandleMode_EmptyQuery(t *testing.T) {
 	}
 	cfg := Config{RecallDefaultMode: "handle"}
 
-	_, err := handleMemoryRecall(context.Background(), pool, req, cfg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "query is required")
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err, "caller input error must NOT be a Go error (would produce WARN log)")
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "empty query must return an MCP tool error result")
+	require.NotEmpty(t, res.Content)
+	text, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok)
+	require.Contains(t, text.Text, "query")
+}
+
+// TestMemoryRecall_MissingQuery_ReturnsValidationError: missing query key (not
+// supplied at all) must also return a clean MCP tool error, not a Go error.
+func TestMemoryRecall_MissingQuery_ReturnsValidationError(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		// query key omitted entirely
+	}
+	cfg := Config{RecallDefaultMode: "handle"}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err, "caller input error must NOT be a Go error (would produce WARN log)")
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "missing query must return an MCP tool error result")
 }
 
 // TestHandleMemoryRecall_HandleMode_EmptyResults: valid query against noopBackend

@@ -173,7 +173,9 @@ func TestMemoryQuery_DefaultLimit(t *testing.T) {
 	require.False(t, res.IsError)
 }
 
-// TestMemoryQuery_MissingQuery: missing query → error from delegated recall.
+// TestMemoryQuery_MissingQuery: missing query → clean MCP tool error (IsError=true),
+// not a Go error. The delegated recall handler returns the validation error at the
+// tool boundary so no WARN log is emitted.
 func TestMemoryQuery_MissingQuery(t *testing.T) {
 	pool := newTestNoopPool(t)
 	req := mcpgo.CallToolRequest{}
@@ -182,9 +184,10 @@ func TestMemoryQuery_MissingQuery(t *testing.T) {
 		// query intentionally absent
 	}
 
-	_, err := handleMemoryQuery(context.Background(), pool, req, Config{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "query is required")
+	res, err := handleMemoryQuery(context.Background(), pool, req, Config{})
+	require.NoError(t, err, "missing query must not return a Go error (would produce WARN log)")
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "missing query must return an MCP tool error result")
 }
 
 // TestMemoryQuery_DoesNotMutateOriginal: original args map must not be modified.

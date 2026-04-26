@@ -184,7 +184,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	query := getString(args, "query", "")
 	if query == "" {
-		return nil, fmt.Errorf("query is required")
+		return mcpgo.NewToolResultError("query: required"), nil
 	}
 	topK := getInt(args, "top_k", 10)
 	if topK < 1 || topK > 100 {
