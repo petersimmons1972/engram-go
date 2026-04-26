@@ -322,7 +322,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		IdleTimeout:       120 * time.Second,
 	}
 
-	slog.Info("engram ready — to configure MCP client run: make setup  (or: go run ./cmd/engram-setup)")
+	slog.Info("engram ready — to configure MCP client run: make setup  (from host machine, inside ~/projects/engram-go; or: go run ./cmd/engram-setup)")
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
@@ -369,7 +369,7 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "unauthorized",
-				"hint":  "Bearer token mismatch — run: make setup  (or: go run ./cmd/engram-setup)",
+				"hint":  "Bearer token mismatch — on the host machine run: cd ~/projects/engram-go && make setup  (or: go run ./cmd/engram-setup). Then run /mcp in Claude Code to reconnect.",
 			})
 			return
 		}

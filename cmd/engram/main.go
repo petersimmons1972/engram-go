@@ -100,12 +100,27 @@ func run() error {
 	ragMaxTokens := fs.Int("rag-max-tokens", envInt("ENGRAM_RAG_MAX_TOKENS", 4096), "Maximum tokens for RAG context assembly")
 	entityProjectsFlag := fs.String("entity-projects", envOr("ENGRAM_ENTITY_PROJECTS", ""), "Comma-separated list of projects to run entity extraction on")
 
+	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
 
 	if *versionFlag {
 		fmt.Printf("engram %s\n", Version)
+		os.Exit(0)
+	}
+
+	// Docker HEALTHCHECK support — distroless images have no shell or wget,
+	// so CMD-SHELL form is unusable. This flag lets the binary probe its own
+	// /health endpoint and exit with the appropriate code. See issue #341.
+	if *healthcheckFlag {
+		probePort := envInt("ENGRAM_PORT", 8788)
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", probePort))
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		resp.Body.Close()
 		os.Exit(0)
 	}
 

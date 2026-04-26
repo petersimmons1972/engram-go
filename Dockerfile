@@ -16,5 +16,10 @@ COPY --from=build /engram /engram
 COPY --from=build /starter /starter
 COPY --from=build /engram-setup /engram-setup
 USER nonroot
+# Exec form required — cgr.dev/chainguard/static has no shell or wget.
+# /engram --healthcheck probes its own /health endpoint and exits 0/1.
+# Closes #341.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/engram", "--healthcheck"]
 ENTRYPOINT ["/starter"]
 CMD ["server"]
