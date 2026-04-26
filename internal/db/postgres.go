@@ -32,6 +32,23 @@ type PostgresBackend struct {
 	project string // validated project slug
 }
 
+// configurePool applies connection pool tuning to cfg. Extracted so that unit
+// tests can verify the settings without requiring a live PostgreSQL connection.
+func configurePool(cfg *pgxpool.Config) {
+	cfg.MinConns = 5
+	cfg.MaxConns = 25
+	// Evict connections after 30 minutes so the pool recovers cleanly after a
+	// PostgreSQL restart or network flap. Without this, pgxpool holds connections
+	// indefinitely and stale ones are only detected at use time.
+	cfg.MaxConnLifetime = 30 * time.Minute
+	// Reap idle connections after 5 minutes to avoid holding DB slots
+	// unnecessarily during low-traffic periods.
+	cfg.MaxConnIdleTime = 5 * time.Minute
+	// Proactively ping idle connections every minute so dead ones are culled
+	// from the pool before a caller receives them.
+	cfg.HealthCheckPeriod = 1 * time.Minute
+}
+
 // NewPostgresBackend creates a new backend, validates the connection, and
 // runs schema migrations. Returns an error if the database is unreachable.
 func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBackend, error) {
@@ -47,8 +64,7 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 	if err := rejectDefaultPassword(cfg); err != nil {
 		return nil, err
 	}
-	cfg.MinConns = 2
-	cfg.MaxConns = 10
+	configurePool(cfg)
 	// tsvector (OID 3614) has no binary codec in pgx — register it as text so
 	// SELECT * queries that include search_vector don't fail in binary mode.
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {

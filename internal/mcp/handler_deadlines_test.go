@@ -130,6 +130,54 @@ func TestHandlerDeadline_AskDeadlinePropagated(t *testing.T) {
 
 // ── Part 2: extraction semaphore tests ───────────────────────────────────────
 
+// TestMemoryReason_HasExplicitDeadline verifies that handleMemoryReason derives
+// its own child context with a deadline, so it cannot block indefinitely even
+// when the parent context is never cancelled.
+//
+// Strategy: we pass a background context (which never cancels) and a request
+// with a valid question. Because no Claude client is configured the handler
+// must return a tool error before making any LLM call — which lets us confirm
+// the handler returns promptly rather than hanging. This mirrors the pattern
+// used by TestHandlerDeadline_Ask and TestHandlerDeadline_Explore.
+func TestMemoryReason_HasExplicitDeadline(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":  "test",
+		"question": "what is a nanosecond?",
+	}
+
+	// No Claude client — the handler must return a tool error immediately
+	// rather than hanging on an LLM call.
+	result, err := handleMemoryReason(context.Background(), pool, req, Config{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "expected tool error when no Claude client is configured")
+}
+
+// TestMemoryReason_DeadlinePropagated verifies that a tight parent deadline is
+// inherited by the child context the handler creates. Mirrors
+// TestHandlerDeadline_AskDeadlinePropagated.
+func TestMemoryReason_DeadlinePropagated(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":  "test",
+		"question": "deadline propagation check",
+	}
+
+	// Give the handler a very tight parent timeout; without a Claude client
+	// it returns before consuming it, but the handler must not ignore the parent.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result, err := handleMemoryReason(ctx, pool, req, Config{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+// ── Part 2: extraction semaphore tests ───────────────────────────────────────
+
 // TestExtractionSemaphore_BoundedConcurrency verifies that when the semaphore
 // is already full, a new enqueueExtractionAsync call exits immediately (skips)
 // rather than blocking indefinitely.

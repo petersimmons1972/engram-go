@@ -41,6 +41,10 @@ func buildEvidenceMap(ctx context.Context, backend interface {
 // synthesizing an answer — useful for inspecting conflicts before reasoning.
 
 func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
 	if err != nil {
