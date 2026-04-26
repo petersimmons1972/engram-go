@@ -5,8 +5,7 @@
     "CLAUDE_STATUS_PLAN": "pro",
     "CLAUDE_STATUS_INFO_MODE": "emoji",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
-    "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60"
   },
   "permissions": {
     "allow": [
@@ -20,7 +19,42 @@
       "mcp__postgres__*",
       "mcp__Ref__*",
       "mcp__claude_ai_Gmail__*",
-      "mcp__claude_ai_Google_Calendar__*"
+      "mcp__claude_ai_Google_Calendar__*",
+      "mcp__engram__memory_status",
+      "mcp__engram__memory_store",
+      "mcp__engram__memory_connect",
+      "mcp__engram__memory_recall",
+      "mcp__engram__memory_list",
+      "mcp__engram__memory_correct",
+      "mcp__engram__memory_consolidate",
+      "mcp__engram__memory_forget",
+      "mcp__engram__memory_store_batch",
+      "Skill(schedule)",
+      "Skill(linkedin-content)",
+      "Skill(update-config)",
+      "mcp__engram__memory_feedback",
+      "mcp__engram__memory_diagnose",
+      "mcp__engram__memory_verify",
+      "mcp__engram__memory_summarize",
+      "mcp__engram__memory_sleep",
+      "mcp__engram__memory_projects",
+      "Bash(cp /home/psimmons/.claude/agents/rickover-validator.md /home/psimmons/.worktrees/opus-47-migration/.claude/agents/rickover-validator.md)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'chore: snapshot rickover-validator.md as migration baseline *)",
+      "Bash(mkdir -p /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents)",
+      "Bash(cp /home/psimmons/.claude/plugins/cache/superpowers-marketplace/superpowers/5.0.7/skills/dispatching-parallel-agents/SKILL.md /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents/SKILL.md)",
+      "Bash(git checkout *)",
+      "Bash(rm .claude/agents/rickover-validator.md)",
+      "mcp__engram__memory_fetch",
+      "mcp__engram__memory_store_document",
+      "mcp__engram__memory_quick_store",
+      "mcp__security-program__scan",
+      "mcp__security-program__list_plugins",
+      "mcp__engram__memory_episode_start",
+      "mcp__engram__memory_ingest",
+      "Bash(rm /home/psimmons/.git/index.lock)",
+      "Bash(git -C /home/psimmons add .claude/projects/-home-psimmons/memory-system-optimization-plan.md docs/superpowers/plans/2026-04-01-claude-md-engram-refactor.md docs/superpowers/plans/2026-04-03-longhorn-nfs-migration.md docs/superpowers/plans/2026-04-23-engram-primary-memory.md docs/superpowers/specs/2026-04-01-claude-md-engram-refactor-design.md docs/superpowers/specs/2026-04-03-longhorn-nfs-migration-design.md)",
+      "Bash(git -C /home/psimmons diff --staged --stat)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -42,7 +76,8 @@
       "Edit(~/projects/security-intelligence-business/*)",
       "Bash(cd ~/projects/security-intelligence-business*)",
       "Bash(* ~/projects/security-intelligence-business*)"
-    ]
+    ],
+    "defaultMode": "plan"
   },
   "model": "sonnet",
   "hooks": {
@@ -52,11 +87,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/ruff-check.sh"
+            "command": "~/.claude/hooks/ruff-check.sh",
+            "timeout": 10
           },
           {
             "type": "command",
-            "command": "pytest --lf -x 2>&1 | tail -20"
+            "command": "pytest --lf -x 2>&1 | tail -20",
+            "timeout": 120
           }
         ]
       },
@@ -64,7 +101,40 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/instinct-post-tool-use.sh"
+            "command": "~/.claude/hooks/instinct-post-tool-use.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/telemetry-emit.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/stop-checks.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/telemetry-emit.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/telemetry-emit.sh",
+            "timeout": 3
           }
         ]
       }
@@ -75,15 +145,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/pytest-precommit.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
+            "command": "~/.claude/hooks/pytest-precommit.sh",
+            "timeout": 10
+          },
           {
             "type": "command",
-            "command": "~/.claude/hooks/instinct-pre-tool-use.sh"
+            "command": "~/.claude/hooks/validate-readonly-bash.sh",
+            "timeout": 5
           }
         ]
       }
@@ -106,25 +174,31 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/engram-token-refresh.sh",
-            "timeout": 10,
+            "timeout": 60,
             "statusMessage": "Refreshing engram MCP token"
           },
           {
             "type": "command",
             "command": "~/bin/generate-session-context.py",
+            "timeout": 15,
             "statusMessage": "Generating session context"
           },
           {
             "type": "command",
             "command": "~/.claude/hooks/sync-armies-xp.sh",
             "timeout": 30,
-            "statusMessage": "Syncing armies XP from GitHub"
+            "statusMessage": "Syncing armies XP from local profiles"
           },
           {
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
             "timeout": 15,
             "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/telemetry-emit.sh",
+            "timeout": 3
           }
         ]
       }
@@ -136,10 +210,13 @@
   },
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true,
-    "frontend-design@claude-code-plugins": true,
+    "frontend-design@claude-code-plugins": false,
     "gopls-lsp@claude-plugins-official": true
   },
   "effortLevel": "medium",
   "autoMemoryEnabled": true,
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "verbose": false,
+  "showTurnDuration": true,
+  "terminalProgressBarEnabled": true
 }
