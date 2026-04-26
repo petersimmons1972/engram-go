@@ -170,6 +170,27 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 // setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
 const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 
+// registerSessionHooks wires the OnRegisterSession and OnUnregisterSession
+// hooks on the MCP server. Extracted from Start so tests can call it directly
+// without binding a port.
+//
+// OnRegisterSession: stores a session→bearer HMAC fingerprint so POST /message
+// can verify the session was opened by the same bearer that is now posting (#245).
+//
+// OnUnregisterSession: removes the fingerprint when the session disconnects (#245).
+func (s *Server) registerSessionHooks(apiKey string) {
+	s.mcp.GetHooks().AddOnRegisterSession(func(_ context.Context, sess server.ClientSession) {
+		sessionID := sess.SessionID()
+		mac := hmac.New(sha256.New, []byte(apiKey))
+		mac.Write([]byte(sessionID))
+		s.sessionFingerprints.Store(sessionID, mac.Sum(nil))
+	})
+
+	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
+		s.sessionFingerprints.Delete(sess.SessionID())
+	})
+}
+
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
 // baseURL overrides the URL advertised in SSE endpoint events; when empty,
 // it defaults to http://<host>:<port>. Set this to the externally-reachable
@@ -186,38 +207,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	slog.Info("SSE base URL", "url", advertised)
 	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
 
-	// Auto-start a "global" episode on every new SSE client connection (#91).
-	// SSE sessions carry no project context, so episodes land in "global" where
-	// they can be queried via memory_episode_list/memory_episode_recall.
-	//
-	// Also store a session→bearer HMAC fingerprint so POST /message can verify
-	// the session was established by the same bearer that is now posting (#245).
-	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, sess server.ClientSession) {
-		sessionID := sess.SessionID()
-
-		// Compute HMAC(apiKey, sessionID) and store for later verification.
-		mac := hmac.New(sha256.New, []byte(apiKey))
-		mac.Write([]byte(sessionID))
-		s.sessionFingerprints.Store(sessionID, mac.Sum(nil))
-
-		desc := "Claude Code session " + time.Now().UTC().Format(time.RFC3339)
-		h, err := s.pool.Get(ctx, "global")
-		if err != nil {
-			slog.Warn("auto-episode: could not get global engine", "err", err)
-			return
-		}
-		ep, err := h.Engine.Backend().StartEpisode(ctx, "global", desc)
-		if err != nil {
-			slog.Warn("auto-episode: StartEpisode failed", "err", err, "request_id", requestIDFromContext(ctx))
-			return
-		}
-		slog.Info("auto-episode started", "id", ep.ID, "project", "global", "desc", desc, "request_id", requestIDFromContext(ctx))
-	})
-
-	// Remove the fingerprint when a session disconnects (#245).
-	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
-		s.sessionFingerprints.Delete(sess.SessionID())
-	})
+	s.registerSessionHooks(apiKey)
 
 	// setupTokenLimiter enforces 3 calls per 5-minute window per IP (#243).
 	setupLimiter := newRateLimiter(ctx) // eviction goroutine shares ctx lifetime

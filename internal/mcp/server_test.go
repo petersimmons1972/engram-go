@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
 
 // ---------------------------------------------------------------------------
@@ -398,6 +400,51 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `"ok"`) {
 		t.Fatalf("expected 'ok' in response body when Ollama recovered, got: %s", body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Auto-episode removal — issue #352
+// ---------------------------------------------------------------------------
+
+// fakeClientSession is a minimal implementation of server.ClientSession for
+// unit tests that need to fire session hooks without a real SSE connection.
+type fakeClientSession struct{ id string }
+
+func (f *fakeClientSession) SessionID() string                                      { return f.id }
+func (f *fakeClientSession) Initialize()                                             {}
+func (f *fakeClientSession) Initialized() bool                                       { return true }
+func (f *fakeClientSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification    { return nil }
+
+// TestSSEConnect_DoesNotAutoStartEpisode verifies that the OnRegisterSession
+// hook only stores the HMAC fingerprint and does NOT call StartEpisode.
+//
+// Strategy: the Server is constructed with a nil pool. If the hook attempts
+// to call s.pool.Get() (the auto-episode path), it will panic with a nil
+// pointer dereference. A recovered panic fails the test. No panic = the
+// episode path is gone.
+func TestSSEConnect_DoesNotAutoStartEpisode(t *testing.T) {
+	s := NewServer(nil, Config{}) // nil pool — any pool access panics
+
+	const apiKey = "test-key-episode-removal"
+	s.registerSessionHooks(apiKey)
+
+	sess := &fakeClientSession{id: "sess-no-episode"}
+	ctx := context.Background()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("OnRegisterSession hook panicked (auto-episode path still present): %v", r)
+		}
+	}()
+
+	// Fire the hook directly — no real SSE server needed.
+	s.mcp.GetHooks().RegisterSession(ctx, sess)
+
+	// If we reach here the hook ran without touching s.pool — episode path is absent.
+	// Also verify the fingerprint was stored (the path we must keep).
+	if _, ok := s.sessionFingerprints.Load(sess.id); !ok {
+		t.Fatal("fingerprint was not stored — session fingerprint path was accidentally removed")
 	}
 }
 
