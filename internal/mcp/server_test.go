@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -329,5 +330,59 @@ func TestWithSessionFingerprint_PassesThroughNoSessionID(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected inner handler 200, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Health probe context isolation — issue E1
+// ---------------------------------------------------------------------------
+
+// TestHealthProbe_IgnoresExpiredRequestContext verifies that handleHealth
+// uses its own independent deadline for the Ollama probe, not r.Context().
+// If the probe inherits r.Context(), an HTTP client with a sub-2s deadline
+// causes a spurious 503 even when Ollama is healthy. The fix is to use
+// context.Background() as the parent for each probe timeout.
+func TestHealthProbe_IgnoresExpiredRequestContext(t *testing.T) {
+	// Spin up a fake Ollama endpoint that responds immediately with 200.
+	ollamaHit := make(chan struct{}, 1)
+	fakeOllama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case ollamaHit <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeOllama.Close()
+
+	// Build a minimal Server pointing at the fake Ollama. No PgPool, so the
+	// Postgres probe is skipped and only the Ollama probe exercises the context.
+	s := &Server{
+		cfg: Config{OllamaURL: fakeOllama.URL},
+	}
+
+	// Create an already-cancelled request context — simulates an HTTP client
+	// whose deadline expired before the server could start the probe.
+	expiredCtx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	cancel() // cancel immediately so the context is already done
+	// Give the cancellation a moment to propagate.
+	time.Sleep(5 * time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req = req.WithContext(expiredCtx)
+	w := httptest.NewRecorder()
+
+	s.handleHealth(w, req)
+
+	// The probe must succeed (200) because Ollama is healthy; only the request
+	// context is dead. A 503 here means the probe inherited r.Context().
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (Ollama healthy), got %d — probe likely inherited expired r.Context()", w.Code)
+	}
+
+	select {
+	case <-ollamaHit:
+		// Probe reached the fake Ollama — correct.
+	default:
+		t.Fatal("fake Ollama was never contacted — probe may have short-circuited on the dead context")
 	}
 }

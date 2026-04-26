@@ -691,9 +691,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	pgStatus := "ok"
 	ollamaStatus := "ok"
 
-	// Probe PostgreSQL.
+	// Probe PostgreSQL. Use context.Background() so a short-deadline HTTP client
+	// cannot cause a false 503 — the probe needs its own independent 2s window.
 	if s.cfg.PgPool != nil {
-		pgCtx, pgCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		pgCtx, pgCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer pgCancel()
 		if err := s.cfg.PgPool.Ping(pgCtx); err != nil {
 			pgStatus = "error"
@@ -705,9 +706,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		pgStatus = "ok"
 	}
 
-	// Probe Ollama.
+	// Probe Ollama. Use context.Background() for the same reason as the Postgres
+	// probe: the request context deadline must not short-circuit a healthy probe.
 	if s.cfg.OllamaURL != "" {
-		ollamaCtx, ollamaCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		ollamaCtx, ollamaCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer ollamaCancel()
 		ollamaTagsURL := strings.TrimRight(s.cfg.OllamaURL, "/") + "/api/tags"
 		req, err := http.NewRequestWithContext(ollamaCtx, http.MethodHead, ollamaTagsURL, nil)
