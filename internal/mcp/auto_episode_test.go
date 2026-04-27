@@ -235,6 +235,41 @@ func TestSSEConnect_NilPoolDoesNotPanicWithoutFlag(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// episodeIDFromContextOrArgs shared helper
+// ---------------------------------------------------------------------------
+
+// TestEpisodeIDFromContextOrArgs_ContextWins verifies that when args has no
+// episode_id, the context value is returned.
+func TestEpisodeIDFromContextOrArgs_ContextWins(t *testing.T) {
+	ctx := withEpisodeID(context.Background(), "ep-from-context")
+	args := map[string]any{}
+	got := episodeIDFromContextOrArgs(ctx, args)
+	if got != "ep-from-context" {
+		t.Fatalf("expected ep-from-context, got %q", got)
+	}
+}
+
+// TestEpisodeIDFromContextOrArgs_ArgsWin verifies that an explicit episode_id
+// arg takes priority over the context value.
+func TestEpisodeIDFromContextOrArgs_ArgsWin(t *testing.T) {
+	ctx := withEpisodeID(context.Background(), "ep-from-context")
+	args := map[string]any{"episode_id": "ep-explicit"}
+	got := episodeIDFromContextOrArgs(ctx, args)
+	if got != "ep-explicit" {
+		t.Fatalf("expected ep-explicit, got %q", got)
+	}
+}
+
+// TestEpisodeIDFromContextOrArgs_NeitherSource verifies that an empty string
+// is returned when neither args nor context carries an episode ID.
+func TestEpisodeIDFromContextOrArgs_NeitherSource(t *testing.T) {
+	got := episodeIDFromContextOrArgs(context.Background(), map[string]any{})
+	if got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // memory_store reads episode ID from context
 // ---------------------------------------------------------------------------
 

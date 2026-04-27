@@ -42,12 +42,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	}
 	// Resolve the episode ID: explicit arg wins; fall back to context injection
 	// from the auto-episode session hook (#356).
-	episodeID := getString(args, "episode_id", "")
-	if episodeID == "" {
-		if id, ok := episodeIDFromContext(ctx); ok {
-			episodeID = id
-		}
-	}
+	episodeID := episodeIDFromContextOrArgs(ctx, args)
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     content,

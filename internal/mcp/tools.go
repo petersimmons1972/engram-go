@@ -107,6 +107,18 @@ func extractResultID(result *mcpgo.CallToolResult) (string, bool) {
 	return id, ok && id != ""
 }
 
+// episodeIDFromContextOrArgs resolves an episode ID from tool arguments (priority 1)
+// or from the session context injected by the auto-episode hook (priority 2).
+func episodeIDFromContextOrArgs(ctx context.Context, args map[string]any) string {
+	if id := getString(args, "episode_id", ""); id != "" {
+		return id
+	}
+	if id, ok := episodeIDFromContext(ctx); ok {
+		return id
+	}
+	return ""
+}
+
 // getString extracts a string arg with a fallback default.
 func getString(args map[string]any, key, def string) string {
 	if v, ok := args[key]; ok {
