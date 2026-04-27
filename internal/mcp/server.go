@@ -241,6 +241,46 @@ func (s *Server) registerSessionHooks(apiKey string) {
 	})
 }
 
+// sweepStaleEpisodes runs a ticker every hour and calls runEpisodeSweep.
+// It exits when ctx is cancelled or when EpisodeTTL == 0 (disabled).
+func (s *Server) sweepStaleEpisodes(ctx context.Context) {
+	if s.cfg.EpisodeTTL == 0 {
+		return
+	}
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runEpisodeSweep(ctx)
+		}
+	}
+}
+
+// runEpisodeSweep performs one sweep: closes all open episodes older than
+// cfg.EpisodeTTL. Errors are logged but do not propagate — the sweep is
+// best-effort. Uses a fresh background context with a 30 s timeout so that
+// a cancelled server context does not abort the final reap.
+func (s *Server) runEpisodeSweep(ctx context.Context) {
+	sweepCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	h, err := s.pool.Get(sweepCtx, "global")
+	if err != nil {
+		slog.Warn("episode-sweep: pool.Get failed", "err", err)
+		return
+	}
+	n, err := h.Engine.Backend().CloseStaleEpisodes(sweepCtx, s.cfg.EpisodeTTL)
+	if err != nil {
+		slog.Warn("episode-sweep: CloseStaleEpisodes failed", "err", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("episode-sweep: closed stale episodes", "count", n, "ttl", s.cfg.EpisodeTTL)
+	}
+}
+
 // Start begins serving SSE on host:port. Blocks until ctx is cancelled.
 // baseURL overrides the URL advertised in SSE endpoint events; when empty,
 // it defaults to http://<host>:<port>. Set this to the externally-reachable
@@ -335,6 +375,9 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 
 	// All other authenticated routes (including /sse) go through the standard middleware.
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
+
+	// Background sweeper closes crash-orphaned open episodes on an hourly interval.
+	go s.sweepStaleEpisodes(ctx)
 
 	// Background sweeper clears stale upload sessions on a 5-minute interval.
 	go func() {

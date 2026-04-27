@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,6 +62,11 @@ type Config struct {
 	// EmbedDimensions is the MRL truncation target passed to NewOllamaClientWithDims.
 	// 0 means use the model's native output dimension.
 	EmbedDimensions int
+	// EpisodeTTL is the maximum age of an open episode before the background
+	// sweeper closes it. Handles crash-orphaned episodes where SIGKILL or a
+	// container restart prevented OnUnregisterSession from firing.
+	// Default: 24h. Set to 0 to disable the sweeper entirely.
+	EpisodeTTL time.Duration
 	// OllamaDegraded is set when the startup embedding probe failed but the
 	// server continued anyway. /health returns 200 with "ollama":"degraded"
 	// rather than 503, because the server itself is operational.

@@ -262,6 +262,11 @@ func run() error {
 		PgPool:                   sharedPool,
 		OllamaDegraded:           ollamaDegraded,
 	}
+	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
+	if cfg.EpisodeTTL == 0 {
+		cfg.EpisodeTTL = 24 * time.Hour
+	}
+
 	srv := internalmcp.NewServer(pool, cfg)
 
 	// Start audit worker — monitors ranking drift by re-running canonical queries.
