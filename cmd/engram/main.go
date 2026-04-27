@@ -229,7 +229,7 @@ func run() error {
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval)
+		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 
@@ -254,6 +254,7 @@ func run() error {
 		RawDocumentMaxBytes:      *rawDocumentMaxBytes,
 		RAGMaxTokens:             *ragMaxTokens,
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
+		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
 		OllamaDegraded:           ollamaDegraded,
 	}

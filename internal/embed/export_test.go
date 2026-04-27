@@ -11,5 +11,5 @@ import (
 // transport, bypassing the DNS-rebinding SSRF guard. For use in unit tests
 // that need to point the client at a local httptest.Server.
 func NewOllamaClientWithTransport(ctx context.Context, baseURL, model string, transport http.RoundTripper) (*OllamaClient, error) {
-	return newOllamaClient(ctx, baseURL, model, transport)
+	return newOllamaClient(ctx, baseURL, model, 0, transport)
 }

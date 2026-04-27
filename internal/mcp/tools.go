@@ -58,6 +58,9 @@ type Config struct {
 	// Required for Docker setups where the host appears as a bridge IP.
 	// Set via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
 	AllowRFC1918SetupToken bool
+	// EmbedDimensions is the MRL truncation target passed to NewOllamaClientWithDims.
+	// 0 means use the model's native output dimension.
+	EmbedDimensions int
 	// OllamaDegraded is set when the startup embedding probe failed but the
 	// server continued anyway. /health returns 200 with "ollama":"degraded"
 	// rather than 503, because the server itself is operational.
@@ -112,6 +115,18 @@ func getString(args map[string]any, key, def string) string {
 		}
 	}
 	return def
+}
+
+// requireString returns an MCP tool-error result when args[key] is missing or
+// empty. Callers use the two-return pattern:
+//
+//	if errResult, v := requireString(args, "query"); errResult != nil { return errResult, nil }
+func requireString(args map[string]any, key string) (*mcpgo.CallToolResult, string) {
+	s := getString(args, key, "")
+	if s == "" {
+		return mcpgo.NewToolResultError(key + " is required"), ""
+	}
+	return nil, s
 }
 
 // bidiAndZeroWidthRanges lists Unicode codepoints that can create trust confusion

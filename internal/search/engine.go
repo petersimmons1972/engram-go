@@ -125,6 +125,7 @@ type SearchEngine struct {
 	embedder     embed.Client
 	project      string
 	ollamaURL    string
+	targetDims   int          // MRL truncation target; 0 = model native output
 	ctx          context.Context // parent lifecycle context — passed to workers via StartWithContext
 	summarizer   *summarize.Worker
 	reembedder   *reembed.Worker
@@ -152,7 +153,7 @@ func (e *SearchEngine) Embedder() embed.Client {
 // pass runs; pass 0 to use the default (8 hours).
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
 	ollamaURL, summarizeModel string, summarizeEnabled bool,
-	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration) *SearchEngine {
+	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration, targetDims ...int) *SearchEngine {
 	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.StartWithContext(ctx)
 
@@ -169,11 +170,16 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		wc = NewWeightCache(pgb.PgxPool())
 	}
 
+	var dims int
+	if len(targetDims) > 0 {
+		dims = targetDims[0]
+	}
 	return &SearchEngine{
 		backend:     backend,
 		embedder:    embedder,
 		project:     project,
 		ollamaURL:   ollamaURL,
+		targetDims:  dims,
 		ctx:         ctx,
 		summarizer:  sum,
 		reembedder:  reb,
@@ -1016,7 +1022,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	e.reembedder.Stop()
 
 	// ctx is used only for the startup probe; the returned client is context-independent.
-	newEmbedder, err := embed.NewOllamaClient(ctx, e.ollamaURL, newModel)
+	newEmbedder, err := embed.NewOllamaClientWithDims(ctx, e.ollamaURL, newModel, e.targetDims)
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
 	}

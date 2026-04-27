@@ -58,8 +58,9 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 			probeFunc = cfg.testHooks.embedProbe
 		}
 		if probeFunc == nil {
+			targetDims := cfg.EmbedDimensions
 			probeFunc = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
-				return embed.NewOllamaClient(ctx, baseURL, model)
+				return embed.NewOllamaClientWithDims(ctx, baseURL, model, targetDims)
 			}
 		}
 		probeClient, probeErr := probeFunc(ctx, ollamaURL, newModel)
