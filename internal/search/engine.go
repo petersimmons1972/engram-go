@@ -51,6 +51,9 @@ type RecallOpts struct {
 	// Mode controls response format. "" or "full" returns complete SearchResults;
 	// "handle" returns lightweight Handle references (content omitted).
 	Mode string
+	// CurrentEpisodeID is the session episode; memories with a matching episode_id
+	// score 1.15× higher via EpisodeMatch in ScoreInput. Empty string = no boost.
+	CurrentEpisodeID string
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -549,6 +552,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			Importance:         m.Importance,
 			DynamicImportance:  m.DynamicImportance,
 			RetrievalPrecision: m.RetrievalPrecision,
+			EpisodeMatch:       opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
 		}
 		var score float64
 		if e.weightCache != nil {
@@ -563,9 +567,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			ChunkScore: hit.cosine,
 			ScoreBreakdown: func() map[string]float64 {
 				bd := map[string]float64{
-					"cosine":  hit.cosine,
-					"bm25":    bm25,
-					"recency": RecencyDecay(input.HoursSince),
+					"cosine":        hit.cosine,
+					"bm25":          bm25,
+					"recency":       RecencyDecay(input.HoursSince),
+					"episode_boost": 1.0,
+				}
+				if input.EpisodeMatch {
+					bd["episode_boost"] = 1.15
 				}
 				if m.DynamicImportance != nil {
 					bd["dynamic_importance"] = *m.DynamicImportance

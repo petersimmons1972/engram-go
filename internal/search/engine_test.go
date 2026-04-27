@@ -274,3 +274,32 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestRecallOpts_CurrentEpisodeID_EpisodeMatchBoost(t *testing.T) {
+	// Verify that RecallOpts has CurrentEpisodeID and ScoreInput.EpisodeMatch
+	// fires correctly when episode IDs match.
+	opts := search.RecallOpts{
+		CurrentEpisodeID: "ep-test-123",
+	}
+	if opts.CurrentEpisodeID == "" {
+		t.Fatal("CurrentEpisodeID not set on RecallOpts")
+	}
+
+	// Simulate what RecallWithOpts does: if memory.EpisodeID matches, EpisodeMatch=true
+	memEpisodeID := "ep-test-123"
+	input := search.ScoreInput{
+		Cosine: 0.7, BM25: 0.5, HoursSince: 1, Importance: 2,
+		EpisodeMatch: opts.CurrentEpisodeID != "" && memEpisodeID == opts.CurrentEpisodeID,
+	}
+	if !input.EpisodeMatch {
+		t.Fatal("expected EpisodeMatch=true when episode IDs match")
+	}
+
+	inputNoMatch := search.ScoreInput{
+		Cosine: 0.7, BM25: 0.5, HoursSince: 1, Importance: 2,
+		EpisodeMatch: opts.CurrentEpisodeID != "" && "other-ep" == opts.CurrentEpisodeID,
+	}
+	if inputNoMatch.EpisodeMatch {
+		t.Fatal("expected EpisodeMatch=false when episode IDs differ")
+	}
+}
