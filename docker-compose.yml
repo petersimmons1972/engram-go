@@ -61,8 +61,8 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama          # CPU default — works on any host, no GPU drivers needed
-    # image: ollama/ollama:rocm   # AMD GPU — uncomment this and the devices block below
+    # image: ollama/ollama          # CPU default — works on any host, no GPU drivers needed
+    image: ollama/ollama:rocm   # AMD GPU — uncomment this and the devices block below
     volumes:
       - ollama-data:/root/.ollama           # model files persist across restarts
     ports:
@@ -94,20 +94,19 @@ services:
     # devices blocks below.
     # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
     #
-    # environment:
-    #   # Forces correct gfx1100 codepath; without this ROCm may use a slower
-    #   # fallback path on newer Navi cards.
-    #   - HSA_OVERRIDE_GFX_VERSION=11.0.0
-    #   # Enables flash attention — significant throughput improvement on
-    #   # modern GPUs including gfx1100.
-    #   - OLLAMA_FLASH_ATTENTION=1
-    #   # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
-    #   # reload penalty after idle gaps between prompts.
-    #   - OLLAMA_KEEP_ALIVE=1h
-    #
-    # devices:
-    #   - /dev/kfd:/dev/kfd
-    #   - /dev/dri:/dev/dri
+    environment:
+      # Forces correct gfx1100 codepath; without this ROCm may use a slower
+      # fallback path on newer Navi cards.
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+      # Enables flash attention — significant throughput improvement on
+      # modern GPUs including gfx1100.
+      - OLLAMA_FLASH_ATTENTION=1
+      # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
+      # reload penalty after idle gaps between prompts.
+      - OLLAMA_KEEP_ALIVE=1h
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
 
   engram-go:
     container_name: engram-go-app
@@ -147,7 +146,11 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:8788/health || exit 1"]
+      # Uses the starter binary itself (already in the distroless image) to probe
+      # /health. CMD-SHELL is not available in cgr.dev/chainguard/static images —
+      # there is no /bin/sh, wget, or curl. /starter health exits 0 on HTTP 200,
+      # 1 on any error or non-200 status.
+      test: ["CMD", "/starter", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
