@@ -52,3 +52,50 @@ func TestCompositeScore(t *testing.T) {
 	sTrivial := search.CompositeScore(search.ScoreInput{Cosine: 0.5, BM25: 0.5, HoursSince: 0, Importance: 4})
 	require.Greater(t, sCritical, sTrivial)
 }
+
+func TestCompositeScoreWithWeights_EpisodeBoost_Applied(t *testing.T) {
+	w := search.DefaultWeights()
+	input := search.ScoreInput{
+		Cosine:       0.8,
+		BM25:         0.6,
+		HoursSince:   1.0,
+		Importance:   2,
+		EpisodeMatch: true,
+	}
+	inputNoBoost := input
+	inputNoBoost.EpisodeMatch = false
+
+	withBoost := search.CompositeScoreWithWeights(input, w)
+	noBoost := search.CompositeScoreWithWeights(inputNoBoost, w)
+
+	if withBoost <= noBoost {
+		t.Fatalf("expected episode boost to increase score: with=%f no=%f", withBoost, noBoost)
+	}
+	ratio := withBoost / noBoost
+	if ratio < 1.14 || ratio > 1.16 {
+		t.Fatalf("expected ~1.15× boost, got ratio=%f", ratio)
+	}
+}
+
+func TestCompositeScoreWithWeights_NoEpisodeMatch_NoPenalty(t *testing.T) {
+	w := search.DefaultWeights()
+	input := search.ScoreInput{
+		Cosine:       0.7,
+		BM25:         0.5,
+		HoursSince:   24.0,
+		Importance:   2,
+		EpisodeMatch: false,
+	}
+	score := search.CompositeScoreWithWeights(input, w)
+	if score <= 0 {
+		t.Fatalf("expected positive score, got %f", score)
+	}
+}
+
+func TestCompositeScore_EpisodeMatch_Shorthand(t *testing.T) {
+	matched := search.CompositeScore(search.ScoreInput{Cosine: 0.9, BM25: 0.8, HoursSince: 0.5, Importance: 2, EpisodeMatch: true})
+	unmatched := search.CompositeScore(search.ScoreInput{Cosine: 0.9, BM25: 0.8, HoursSince: 0.5, Importance: 2, EpisodeMatch: false})
+	if matched <= unmatched {
+		t.Fatalf("matched should outscore unmatched: %f vs %f", matched, unmatched)
+	}
+}

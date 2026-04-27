@@ -93,6 +93,7 @@ type ScoreInput struct {
 	Importance         int      // [0,4]; 0=critical (never pruned), 4=trivial (auto-pruned)
 	DynamicImportance  *float64 // learned importance from spaced repetition; overrides Importance when non-nil
 	RetrievalPrecision *float64 // times_useful/times_retrieved; nil during cold start (<5 retrievals) → treated as 0.5
+	EpisodeMatch       bool     // true when memory.episode_id == current session episode
 }
 
 // RecencyDecay returns exp(-rate * hours), optionally clamped by a floor.
@@ -149,5 +150,8 @@ func CompositeScoreWithWeights(in ScoreInput, w Weights) float64 {
 		precision = *in.RetrievalPrecision
 	}
 	raw := w.Vector*in.Cosine + w.BM25*in.BM25 + w.Recency*recency + w.Precision*precision
+	if in.EpisodeMatch {
+		raw *= 1.15
+	}
 	return raw * boost
 }
