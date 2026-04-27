@@ -105,6 +105,9 @@ services:
       # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
       # reload penalty after idle gaps between prompts.
       - OLLAMA_KEEP_ALIVE=1h
+      # Allow 8 concurrent embedding requests — critical for LongMemEval
+      # with 16 parallel ingest workers all queuing embeds simultaneously.
+      - OLLAMA_NUM_PARALLEL=8
     devices:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
