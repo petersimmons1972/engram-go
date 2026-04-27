@@ -40,6 +40,14 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}
+	// Resolve the episode ID: explicit arg wins; fall back to context injection
+	// from the auto-episode session hook (#356).
+	episodeID := getString(args, "episode_id", "")
+	if episodeID == "" {
+		if id, ok := episodeIDFromContext(ctx); ok {
+			episodeID = id
+		}
+	}
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     content,
@@ -49,6 +57,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		Tags:        tags,
 		Immutable:   getBool(args, "immutable", false),
 		StorageMode: "focused",
+		EpisodeID:   episodeID,
 	}
 	if err := h.Engine.Store(ctx, m); err != nil {
 		return nil, err

@@ -140,6 +140,7 @@ type Server struct {
 	uploadMu            sync.Mutex
 	uploads             map[string]*uploadSession
 	sessionFingerprints sync.Map // sessionID -> []byte HMAC fingerprint (#245)
+	sessionEpisodes     sync.Map // sessionID -> episodeID string for auto-episode sessions (#356)
 	trustProxy          bool     // honour X-Forwarded-For / X-Real-IP (#255)
 }
 
@@ -176,18 +177,67 @@ const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 //
 // OnRegisterSession: stores a session→bearer HMAC fingerprint so POST /message
 // can verify the session was opened by the same bearer that is now posting (#245).
+// Also auto-starts an episode when the session context carries the auto-episode
+// flag (injected by applyMiddleware when ?auto_episode=1 is in the SSE URL) (#356).
 //
 // OnUnregisterSession: removes the fingerprint when the session disconnects (#245).
+// Also closes any auto-started episode using context.Background() — the session
+// context is already cancelled at this point (#356).
 func (s *Server) registerSessionHooks(apiKey string) {
-	s.mcp.GetHooks().AddOnRegisterSession(func(_ context.Context, sess server.ClientSession) {
+	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, sess server.ClientSession) {
 		sessionID := sess.SessionID()
+
+		// Store the HMAC fingerprint for POST /message verification (#245).
 		mac := hmac.New(sha256.New, []byte(apiKey))
 		mac.Write([]byte(sessionID))
 		s.sessionFingerprints.Store(sessionID, mac.Sum(nil))
+
+		// Auto-episode opt-in: start an episode only when ?auto_episode=1 was
+		// present in the SSE URL. The flag is injected into the context by
+		// applyMiddleware before the SSE handler calls RegisterSession (#356).
+		if !autoEpisodeFlagFromContext(ctx) {
+			return
+		}
+		h, err := s.pool.Get(ctx, "global")
+		if err != nil {
+			slog.Warn("auto-episode: pool.Get failed", "session_id", sessionID, "err", err)
+			return
+		}
+		ep, err := h.Engine.Backend().StartEpisode(ctx, "global", "auto: "+time.Now().Format(time.RFC3339))
+		if err != nil {
+			slog.Warn("auto-episode: StartEpisode failed", "session_id", sessionID, "err", err)
+			return
+		}
+		s.sessionEpisodes.Store(sessionID, ep.ID)
+		slog.Info("auto-episode: started", "session_id", sessionID, "episode_id", ep.ID)
 	})
 
 	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
-		s.sessionFingerprints.Delete(sess.SessionID())
+		sessionID := sess.SessionID()
+		s.sessionFingerprints.Delete(sessionID)
+
+		// Close any auto-started episode. Use context.Background() because the
+		// session context is already cancelled when this hook fires (#356).
+		epIDAny, ok := s.sessionEpisodes.LoadAndDelete(sessionID)
+		if !ok {
+			return
+		}
+		epID, _ := epIDAny.(string)
+		if epID == "" {
+			return
+		}
+		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		h, err := s.pool.Get(bg, "global")
+		if err != nil {
+			slog.Warn("auto-episode: pool.Get failed on disconnect", "session_id", sessionID, "episode_id", epID, "err", err)
+			return
+		}
+		if err := h.Engine.Backend().EndEpisode(bg, epID, "auto-closed: session ended"); err != nil {
+			slog.Warn("auto-episode: EndEpisode failed", "session_id", sessionID, "episode_id", epID, "err", err)
+			return
+		}
+		slog.Info("auto-episode: closed", "session_id", sessionID, "episode_id", epID)
 	})
 }
 
@@ -337,7 +387,15 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Attach a short request correlation ID to the context for log threading (#320).
 		requestID := fmt.Sprintf("%x", time.Now().UnixNano())[:12]
-		r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+
+		// Inject the auto-episode flag when ?auto_episode=1 is present in the URL.
+		// This is read by the OnRegisterSession hook to decide whether to start an
+		// episode automatically for the connecting client session (#356).
+		if r.URL.Query().Get("auto_episode") == "1" {
+			ctx = withAutoEpisodeFlag(ctx)
+		}
+		r = r.WithContext(ctx)
 
 		// Rate limit before auth check to prevent timing-based enumeration.
 		remoteHost := s.clientIP(r)
