@@ -26,6 +26,7 @@ Subcommands:
   server    Start the engram MCP server
   migrate   Run database migrations only
   setup     Configure the MCP client
+  health    Check /health endpoint and exit 0 (ok) or 1 (error)
 
 Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
 exec-replaces itself with /engram.
@@ -95,6 +96,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Health subcommand: probe the local /health endpoint and exit 0 (ok) or 1 (error).
+	// Runs before the Infisical flow — no secrets required.
+	if len(args) > 0 && args[0] == "health" {
+		runHealth()
+		return
+	}
+
 	clientID := os.Getenv("INFISICAL_CLIENT_ID")
 
 	// If INFISICAL_CLIENT_ID is absent, skip the Infisical flow entirely.
@@ -152,6 +160,25 @@ func main() {
 	// has no need for these credentials — keeping them in /proc/PID/environ leaks
 	// them to any process that can read /proc (#138, #139).
 	execEngram(args, filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD"))
+}
+
+// runHealth probes the engram /health endpoint on localhost and exits 0 if the
+// response is HTTP 200, or 1 on any error or non-200 status. Used as the
+// Docker HEALTHCHECK command in distroless images that have no shell or wget.
+func runHealth() {
+	port := "8788"
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/health")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "health: %v\n", err)
+		os.Exit(1)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "health: status %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 // execEngram validates subcommand arguments and exec-replaces the current

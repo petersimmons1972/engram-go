@@ -214,6 +214,44 @@ func TestValidateContent_Empty(t *testing.T) {
 	require.NoError(t, validateContent(""))
 }
 
+// ── requireString ────────────────────────────────────────────────────────────
+
+func TestRequireString_MissingKey_ReturnsMCPError(t *testing.T) {
+	result, val := requireString(map[string]any{}, "query")
+	if result == nil {
+		t.Fatal("expected MCP error result, got nil")
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true")
+	}
+	if val != "" {
+		t.Fatalf("expected empty string, got %q", val)
+	}
+}
+
+func TestRequireString_PresentKey_ReturnsValue(t *testing.T) {
+	result, val := requireString(map[string]any{"query": "hello"}, "query")
+	if result != nil {
+		t.Fatalf("expected nil result, got error: %v", result.Content)
+	}
+	if val != "hello" {
+		t.Fatalf("expected 'hello', got %q", val)
+	}
+}
+
+func TestRequireString_EmptyValue_ReturnsMCPError(t *testing.T) {
+	result, val := requireString(map[string]any{"query": ""}, "query")
+	if result == nil {
+		t.Fatal("expected MCP error result for empty string, got nil")
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true")
+	}
+	if val != "" {
+		t.Fatalf("expected empty string, got %q", val)
+	}
+}
+
 // min is a small helper for Go <1.21 compatibility in tests.
 func min(a, b int) int {
 	if a < b {

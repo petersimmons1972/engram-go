@@ -448,7 +448,11 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	queryVec, err := e.getEmbedder().Embed(ctx, query)
+	// Independent 15s deadline (E5): isolates embed from the request context so
+	// a slow Ollama cannot consume the full server WriteTimeout.
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer embedCancel()
+	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
@@ -710,7 +714,11 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
-	queryVec, err := e.getEmbedder().Embed(ctx, query)
+	// Independent 15s deadline (E5): isolates embed from the request context so
+	// a slow Ollama cannot consume the full server WriteTimeout.
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer embedCancel()
+	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
