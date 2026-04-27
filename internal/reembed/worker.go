@@ -4,6 +4,7 @@ package reembed
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
@@ -18,15 +19,19 @@ const (
 
 // Worker re-embeds chunks with NULL embedding for a project.
 type Worker struct {
-	backend  db.Backend
-	embedder embed.Client
-	project  string
-	active   bool
-	cancel   context.CancelFunc
-	done     chan struct{}
+	backend    db.Backend
+	embedder   embed.Client
+	project    string
+	active     bool
+	cancel     context.CancelFunc
+	done       chan struct{}
+	notify     chan struct{} // wakes the poll loop early; buffered size 1
+	startOnce  sync.Once    // ensures the goroutine starts exactly once
+	parentCtx  context.Context
 }
 
-// NewWorker creates a Worker. If active=false, Start is a no-op.
+// NewWorker creates a Worker. If active=false, the goroutine starts only when
+// Notify() is first called (lazy activation for new projects).
 func NewWorker(backend db.Backend, embedder embed.Client, project string, active bool) *Worker {
 	return &Worker{
 		backend:  backend,
@@ -34,6 +39,7 @@ func NewWorker(backend db.Backend, embedder embed.Client, project string, active
 		project:  project,
 		active:   active,
 		done:     make(chan struct{}),
+		notify:   make(chan struct{}, 1),
 	}
 }
 
@@ -71,20 +77,48 @@ func (w *Worker) Start() {
 
 // StartWithContext launches the background goroutine using ctx as the parent
 // lifecycle context. The worker stops when ctx is cancelled.
+// If active=false at construction time, the goroutine starts lazily on the
+// first Notify() call instead of immediately.
 func (w *Worker) StartWithContext(ctx context.Context) {
+	w.parentCtx = ctx
 	if !w.active {
-		close(w.done)
 		return
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	w.cancel = cancel
-	go w.run(ctx)
+	w.startOnce.Do(func() {
+		runCtx, cancel := context.WithCancel(ctx)
+		w.cancel = cancel
+		go w.run(runCtx)
+	})
+}
+
+// Notify wakes the reembed worker to process newly available NULL-embedded
+// chunks. If the worker was not yet started (inactive project at startup),
+// it is lazily activated now. Safe to call from any goroutine.
+func (w *Worker) Notify() {
+	w.active = true
+	if w.parentCtx != nil {
+		w.startOnce.Do(func() {
+			runCtx, cancel := context.WithCancel(w.parentCtx)
+			w.cancel = cancel
+			go w.run(runCtx)
+		})
+	}
+	select {
+	case w.notify <- struct{}{}:
+	default: // already pending; skip
+	}
 }
 
 // Stop signals the worker and waits up to 8s.
+// If the goroutine was never started (inactive project, no Notify() called),
+// Stop returns immediately.
 func (w *Worker) Stop() {
 	if w.cancel != nil {
 		w.cancel()
+	} else {
+		// Goroutine never started; close done so callers don't block.
+		w.startOnce.Do(func() { close(w.done) })
+		return
 	}
 	select {
 	case <-w.done:
@@ -97,7 +131,7 @@ const batchTimeout = 5 * time.Minute // max time for one runBatch iteration (#12
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
-	chunksProcessed := 0
+	migrationCleared := false
 	for {
 		// Count pending chunks and update the Prometheus gauge at the start of
 		// each tick so operators can observe backlog size without waiting for a pass.
@@ -115,27 +149,27 @@ func (w *Worker) run(ctx context.Context) {
 
 		// Per-iteration timeout prevents an Ollama hang from blocking the worker forever.
 		iterCtx, cancel := context.WithTimeout(ctx, batchTimeout)
-		done := w.safeRunBatch(iterCtx)
+		batchDone := w.safeRunBatch(iterCtx)
 		cancel()
 		if ctx.Err() != nil {
 			return
 		}
-		if done {
-			slog.Info("reembed: backfill pass complete",
-				"chunks_processed", chunksProcessed, "project", w.project)
-			// ctx is already cancelled here; use a fresh context for the flag write.
+		if batchDone && !migrationCleared {
+			slog.Info("reembed: backfill pass complete", "project", w.project)
 			flagCtx, flagCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer flagCancel()
 			if err := w.backend.SetMeta(flagCtx, w.project, "embedding_migration_in_progress", "false"); err != nil {
 				slog.Warn("reembed: failed to clear migration flag", "project", w.project, "err", err)
 				metrics.WorkerErrors.WithLabelValues("reembed").Inc()
 			}
+			flagCancel()
 			slog.Info("reembed complete", "project", w.project)
-			return
+			migrationCleared = true
 		}
+		// Worker stays alive to service future Notify() calls from Store().
 		select {
 		case <-ctx.Done():
 			return
+		case <-w.notify:
 		case <-time.After(pollInterval):
 		}
 	}

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -265,48 +264,26 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		return nil, nil
 	}
 
-	// Parallelize embedding across all new chunks (#118).
-	// Limit concurrency to 8 to avoid overwhelming Ollama.
-	const maxConcurrent = 8
+	// All new chunks are stored with nil embeddings. The reembed worker backfills
+	// them asynchronously, keeping the store path fully decoupled from Ollama.
+	// This eliminates the 48-minute hang caused by Ollama blocking the MCP call.
 	chunks := make([]*types.Chunk, len(pending))
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(maxConcurrent)
-	embedder := e.getEmbedder()
-
 	for j, p := range pending {
-		j, p := j, p // capture loop variables
-		eg.Go(func() error {
-			// Embedding is best-effort (#108): if Ollama is unavailable the chunk
-			// is stored with a NULL embedding. The reembed worker detects pending
-			// chunks at next server start (NewWorkerFromMeta) and backfills them.
-			// Memory storage is never blocked by an embedder outage.
-			embedding, err := embedder.Embed(egCtx, p.candidate.Text)
-			if err != nil {
-				slog.Warn("embed chunk failed — storing with NULL embedding for reembed worker",
-					"memory", m.ID, "chunk_idx", p.idx, "err", err)
-				embedding = nil
-			}
-			ch := &types.Chunk{
-				ID:         types.NewMemoryID(),
-				MemoryID:   m.ID,
-				ChunkText:  p.candidate.Text,
-				ChunkIndex: p.idx,
-				ChunkHash:  p.hash,
-				ChunkType:  p.candidate.ChunkType,
-				Project:    e.project,
-				Embedding:  embedding,
-			}
-			if p.candidate.HasHeading {
-				heading := p.candidate.SectionHeading
-				ch.SectionHeading = &heading
-			}
-			chunks[j] = ch
-			return nil
-		})
-	}
-
-	if err := eg.Wait(); err != nil {
-		return nil, err
+		ch := &types.Chunk{
+			ID:         types.NewMemoryID(),
+			MemoryID:   m.ID,
+			ChunkText:  p.candidate.Text,
+			ChunkIndex: p.idx,
+			ChunkHash:  p.hash,
+			ChunkType:  p.candidate.ChunkType,
+			Project:    e.project,
+			Embedding:  nil,
+		}
+		if p.candidate.HasHeading {
+			heading := p.candidate.SectionHeading
+			ch.SectionHeading = &heading
+		}
+		chunks[j] = ch
 	}
 	return chunks, nil
 }
@@ -383,7 +360,13 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if len(chunks) > 0 {
+		e.reembedder.Notify()
+	}
+	return nil
 }
 
 // StoreBatch stores multiple memories atomically (#115).
@@ -430,6 +413,7 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	hasChunks := false
 	for _, p := range prepared {
 		if err := e.backend.StoreMemoryTx(ctx, tx, p.mem); err != nil {
 			return err
@@ -438,9 +422,16 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 			if err := e.backend.StoreChunksTx(ctx, tx, p.chunks); err != nil {
 				return err
 			}
+			hasChunks = true
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if hasChunks {
+		e.reembedder.Notify()
+	}
+	return nil
 }
 
 // Recall retrieves the topK most relevant memories for query.

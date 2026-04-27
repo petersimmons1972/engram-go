@@ -75,7 +75,9 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m2))
 
-	chunks, err := engine.Backend().GetAllChunksWithEmbeddings(ctx, proj, 10_000)
+	// Use GetChunksPendingEmbedding (no embedding filter) since chunks now store
+	// with nil embeddings until the reembed worker runs.
+	chunks, err := engine.Backend().GetChunksPendingEmbedding(ctx, proj, 10_000)
 	require.NoError(t, err)
 	require.Len(t, chunks, 1, "identical content should produce exactly one stored chunk")
 }
@@ -251,8 +253,9 @@ func TestStore_RawBodyUsedForChunking(t *testing.T) {
 	require.NoError(t, engine.Store(ctx, m))
 
 	// Retrieve all chunks for this memory and assert they come from rawBody,
-	// not from the synopsis.
-	chunks, err := engine.Backend().GetAllChunksWithEmbeddings(ctx, proj, 100)
+	// not from the synopsis. Use GetChunksForMemory (no embedding filter) since
+	// chunks are now stored with nil embeddings until the reembed worker runs.
+	chunks, err := engine.Backend().GetChunksForMemory(ctx, m.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, chunks, "at least one chunk must be stored")
 
