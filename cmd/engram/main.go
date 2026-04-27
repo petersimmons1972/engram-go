@@ -69,6 +69,7 @@ func run() error {
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
 	ollamaURL := fs.String("ollama-url", envOr("OLLAMA_URL", "http://ollama:11434"), "Ollama base URL")
 	embedModel := fs.String("model", envOr("ENGRAM_OLLAMA_MODEL", "nomic-embed-text"), "Embedding model")
+	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
 	// #136: ANTHROPIC_API_KEY is intentionally NOT a CLI flag — secrets in CLI flags
@@ -156,7 +157,7 @@ func run() error {
 	safeOllamaURL.User = nil
 	slog.Info("connecting to Ollama", "url", safeOllamaURL.String(), "model", *embedModel)
 
-	embedder, err := embed.NewOllamaClient(ctx, *ollamaURL, *embedModel)
+	embedder, err := embed.NewOllamaClientWithDims(ctx, *ollamaURL, *embedModel, *embedDims)
 	if err != nil {
 		return fmt.Errorf("ollama: %w", err)
 	}

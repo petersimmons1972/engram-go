@@ -32,23 +32,31 @@ const maxEmbedResponseBytes = 10 * 1024 * 1024 // 10 MiB (#16)
 
 // OllamaClient calls the local Ollama /api/embed endpoint.
 type OllamaClient struct {
-	baseURL  string
-	model    string
-	dims     int
-	http     *http.Client // short-timeout client for embed/list requests
-	pullHTTP *http.Client // no client-level timeout for long model pulls
+	baseURL    string
+	model      string
+	dims       int
+	targetDims int         // MRL truncation target; 0 = use model native output
+	http       *http.Client // short-timeout client for embed/list requests
+	pullHTTP   *http.Client // no client-level timeout for long model pulls
 }
 
 // NewOllamaClient constructs an OllamaClient and validates connectivity.
 // If the model is absent from Ollama, it triggers a pull and waits (max 5 min).
 func NewOllamaClient(ctx context.Context, baseURL, model string) (*OllamaClient, error) {
-	return newOllamaClient(ctx, baseURL, model, nil)
+	return newOllamaClient(ctx, baseURL, model, 0, nil)
+}
+
+// NewOllamaClientWithDims constructs an OllamaClient that requests Ollama to
+// truncate embeddings to targetDims using Matryoshka Representation Learning.
+// Pass 0 for targetDims to use the model's native output dimension.
+func NewOllamaClientWithDims(ctx context.Context, baseURL, model string, targetDims int) (*OllamaClient, error) {
+	return newOllamaClient(ctx, baseURL, model, targetDims, nil)
 }
 
 // newOllamaClient is the internal constructor. When customTransport is non-nil
 // it is used as-is (test seam only — bypasses SSRF guard). When nil, the
 // production DNS-rebinding-safe transport is constructed.
-func newOllamaClient(ctx context.Context, baseURL, model string, customTransport http.RoundTripper) (*OllamaClient, error) {
+func newOllamaClient(ctx context.Context, baseURL, model string, targetDims int, customTransport http.RoundTripper) (*OllamaClient, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	var transport http.RoundTripper
@@ -107,7 +115,7 @@ func newOllamaClient(ctx context.Context, baseURL, model string, customTransport
 	// and are bounded only by the per-request context.
 	pullHTTP := &http.Client{Transport: transport}
 
-	c := &OllamaClient{baseURL: baseURL, model: model, http: hc, pullHTTP: pullHTTP}
+	c := &OllamaClient{baseURL: baseURL, model: model, targetDims: targetDims, http: hc, pullHTTP: pullHTTP}
 
 	if err := c.ensureModel(ctx); err != nil {
 		return nil, fmt.Errorf("ollama startup check failed: %w", err)
@@ -127,8 +135,13 @@ func (c *OllamaClient) Name() string    { return c.model }
 func (c *OllamaClient) Dimensions() int { return c.dims }
 
 // Embed calls POST /api/embed and returns the first embedding vector.
+// When targetDims > 0, passes "dimensions" to Ollama for MRL truncation.
 func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
-	body, err := json.Marshal(map[string]string{"model": c.model, "input": text})
+	reqBody := map[string]any{"model": c.model, "input": text}
+	if c.targetDims > 0 {
+		reqBody["dimensions"] = c.targetDims
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed: marshal request: %w", err)
 	}

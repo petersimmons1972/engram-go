@@ -32,6 +32,7 @@ services:
   postgres:
     container_name: engram-postgres
     image: engram-postgres-cg:latest
+    shm_size: '2gb'
     volumes:
       - pgdata:/var/lib/postgresql/data
     command: >-
