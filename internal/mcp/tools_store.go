@@ -3,10 +3,19 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/types"
 )
+
+// storeTimeout is the maximum time allowed for a single MCP store operation.
+// The store path is a pure DB write (Ollama was decoupled in commit 946fea2),
+// so it should complete in milliseconds; 10s gives headroom while ensuring
+// fast failure when Postgres is unavailable.
+//
+// Declared as a var (not const) so tests can substitute a shorter duration.
+var storeTimeout = 10 * time.Second
 
 func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
@@ -54,7 +63,9 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		StorageMode: "focused",
 		EpisodeID:   episodeID,
 	}
-	if err := h.Engine.Store(ctx, m); err != nil {
+	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
+	defer storeCancel()
+	if err := h.Engine.Store(storeCtx, m); err != nil {
 		return nil, err
 	}
 	return toolResult(map[string]any{"id": m.ID, "status": "stored"})
@@ -113,7 +124,9 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		engine:  engineStorerAdapter{store: engine.StoreWithRawBody},
 		backend: backendDocumentAdapter{b: engine.Backend()},
 	}
-	out, err := execStoreDocument(ctx, deps, m, content, maxDoc, rawMax)
+	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
+	defer storeCancel()
+	out, err := execStoreDocument(storeCtx, deps, m, content, maxDoc, rawMax)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +219,9 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		})
 	}
 
-	if err := h.Engine.StoreBatch(ctx, memories); err != nil {
+	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
+	defer storeCancel()
+	if err := h.Engine.StoreBatch(storeCtx, memories); err != nil {
 		return nil, err
 	}
 
@@ -249,7 +264,9 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}
-	updated, err := h.Engine.Correct(ctx, id, content, correctTags, importance)
+	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
+	defer storeCancel()
+	updated, err := h.Engine.Correct(storeCtx, id, content, correctTags, importance)
 	if err != nil {
 		return nil, err
 	}
