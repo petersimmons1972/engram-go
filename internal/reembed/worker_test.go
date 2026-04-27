@@ -2,6 +2,9 @@ package reembed_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,3 +251,114 @@ func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db
 	return nil, nil
 }
 func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
+
+// concurrentEmbedder records the peak number of Embed calls in-flight simultaneously.
+// Each call increments active, records the peak, then waits on the ready channel
+// to synchronise with the test. When active reaches totalChunks, it closes the
+// release channel so every waiting goroutine unblocks at once.
+type concurrentEmbedder struct {
+	dims        int
+	totalChunks int32
+	active      atomic.Int32 // goroutines currently inside Embed
+	peak        atomic.Int32 // highest observed value of active
+	release     chan struct{} // closed by the last goroutine to enter Embed
+	releaseOnce sync.Once
+}
+
+func (c *concurrentEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	cur := c.active.Add(1)
+	defer c.active.Add(-1)
+	// Update peak.
+	for {
+		old := c.peak.Load()
+		if cur <= old {
+			break
+		}
+		if c.peak.CompareAndSwap(old, cur) {
+			break
+		}
+	}
+	// When all expected goroutines are in-flight, release the latch so they all
+	// return simultaneously.  This lets us observe the maximum concurrency.
+	if cur >= c.totalChunks {
+		c.releaseOnce.Do(func() { close(c.release) })
+	}
+	// Block until released.
+	<-c.release
+	return make([]float32, c.dims), nil
+}
+func (c *concurrentEmbedder) Name() string    { return "concurrent-fake" }
+func (c *concurrentEmbedder) Dimensions() int { return c.dims }
+
+// concurrentUpdateBackend records which chunk IDs were updated, thread-safely.
+type concurrentUpdateBackend struct {
+	noopBackend
+	pendingChunks []*types.Chunk
+	mu            sync.Mutex
+	updated       []string
+}
+
+func (b *concurrentUpdateBackend) GetChunksPendingEmbedding(_ context.Context, _ string, _ int) ([]*types.Chunk, error) {
+	return b.pendingChunks, nil
+}
+
+func (b *concurrentUpdateBackend) UpdateChunkEmbedding(_ context.Context, id string, _ []float32) (int, error) {
+	b.mu.Lock()
+	b.updated = append(b.updated, id)
+	b.mu.Unlock()
+	return 1, nil
+}
+
+// TestRunBatch_ConcurrentEmbedding verifies that runBatch dispatches multiple Embed
+// calls in parallel rather than one at a time. With 8 chunks and a concurrency limit
+// of 8, all 8 goroutines should be in-flight simultaneously before any one returns.
+// The concurrentEmbedder acts as a latch: it closes its release channel only when
+// all numChunks goroutines have entered Embed, which is impossible if they are
+// dispatched sequentially.
+func TestRunBatch_ConcurrentEmbedding(t *testing.T) {
+	const numChunks = 8
+
+	// Build chunk list.
+	chunks := make([]*types.Chunk, numChunks)
+	for i := range chunks {
+		chunks[i] = &types.Chunk{ID: fmt.Sprintf("chunk-%d", i), ChunkText: "text"}
+	}
+
+	embedder := &concurrentEmbedder{
+		dims:        768,
+		totalChunks: numChunks,
+		release:     make(chan struct{}),
+	}
+	backend := &concurrentUpdateBackend{pendingChunks: chunks}
+
+	w := reembed.NewWorker(backend, embedder, "proj", true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	w.StartWithContext(ctx)
+
+	// The release channel is closed by the last goroutine to enter Embed.
+	// If Embed calls are sequential, the release channel never closes and the
+	// embedder blocks forever — the context timeout fires and the test fails.
+	// We wait for the release to observe that peak == numChunks before Stop.
+	select {
+	case <-embedder.release:
+		// All goroutines were in-flight simultaneously — concurrent path verified.
+	case <-ctx.Done():
+		t.Fatal("timed out: embed calls were never all in-flight simultaneously (sequential behavior detected)")
+	}
+
+	w.Stop()
+
+	peak := embedder.peak.Load()
+	if peak < 2 {
+		t.Errorf("expected concurrent Embed calls (peak >= 2), got peak=%d", peak)
+	}
+
+	backend.mu.Lock()
+	updatedCount := len(backend.updated)
+	backend.mu.Unlock()
+	if updatedCount != numChunks {
+		t.Errorf("expected %d chunk updates, got %d", numChunks, updatedCount)
+	}
+}

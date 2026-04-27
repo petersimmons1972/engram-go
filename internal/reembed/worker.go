@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/metrics"
@@ -201,18 +203,33 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 	if len(chunks) == 0 {
 		return true
 	}
+	// Process chunks concurrently with a limit of 8 goroutines so we can
+	// saturate Ollama's available threads without overwhelming the embedder.
+	// Embed errors are non-fatal: we log and skip rather than propagating so
+	// one bad chunk does not abort the remaining work in the batch.
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(8)
 	for _, c := range chunks {
+		c := c // capture loop variable for the closure
 		if ctx.Err() != nil {
-			return false
+			break
 		}
-		vec, err := w.embedder.Embed(ctx, c.ChunkText)
-		if err != nil {
-			slog.Warn("reembed embed failed", "chunk", c.ID, "err", err)
-			continue
-		}
-		if n, err := w.backend.UpdateChunkEmbedding(ctx, c.ID, vec); err != nil || n == 0 {
-			slog.Warn("reembed update failed or chunk deleted", "chunk", c.ID)
-		}
+		eg.Go(func() error {
+			vec, err := w.embedder.Embed(egCtx, c.ChunkText)
+			if err != nil {
+				slog.Warn("reembed embed failed", "chunk", c.ID, "err", err)
+				return nil // non-fatal: let other goroutines continue
+			}
+			if n, err := w.backend.UpdateChunkEmbedding(egCtx, c.ID, vec); err != nil || n == 0 {
+				slog.Warn("reembed update failed or chunk deleted", "chunk", c.ID)
+			}
+			return nil
+		})
+	}
+	// eg.Wait() always returns nil because goroutines never return non-nil errors.
+	_ = eg.Wait()
+	if ctx.Err() != nil {
+		return false
 	}
 	return len(chunks) < batchSize
 }
