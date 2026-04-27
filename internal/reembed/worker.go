@@ -215,7 +215,11 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 			break
 		}
 		eg.Go(func() error {
-			vec, err := w.embedder.Embed(egCtx, c.ChunkText)
+			// Independent 15s deadline (E5): isolates each embed call from the
+			// worker context so a slow Ollama cannot stall the entire batch.
+			embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer embedCancel()
+			vec, err := w.embedder.Embed(embedCtx, c.ChunkText)
 			if err != nil {
 				slog.Warn("reembed embed failed", "chunk", c.ID, "err", err)
 				return nil // non-fatal: let other goroutines continue

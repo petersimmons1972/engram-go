@@ -29,9 +29,9 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	if err != nil {
 		return nil, err
 	}
-	newModel := getString(args, "new_model", "")
-	if newModel == "" {
-		return nil, fmt.Errorf("new_model is required")
+	errResult, newModel := requireString(args, "new_model")
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	// Resolve the Ollama URL for this operation: caller may supply ollama_url to
@@ -260,7 +260,11 @@ func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.Cal
 	embedAll := func(c *embed.OllamaClient) ([]embedResult, error) {
 		results := make([]embedResult, 0, len(evalProbeSentences))
 		for _, s := range evalProbeSentences {
-			vec, err := c.Embed(ctx, s)
+			// Independent 15s deadline (E5): isolates each embed call from the
+			// request context so a slow Ollama cannot consume the server WriteTimeout.
+			embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			vec, err := c.Embed(embedCtx, s)
+			embedCancel()
 			if err != nil {
 				return nil, fmt.Errorf("embed %q: %w", s, err)
 			}

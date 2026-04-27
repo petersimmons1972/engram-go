@@ -309,6 +309,74 @@ func (b *concurrentUpdateBackend) UpdateChunkEmbedding(_ context.Context, id str
 	return 1, nil
 }
 
+// deadlineInspectEmbedder records the deadline of the context passed to each Embed
+// call.  It does not block — it returns immediately so the test stays fast.
+type deadlineInspectEmbedder struct {
+	dims      int
+	mu        sync.Mutex
+	deadlines []time.Time // one per Embed invocation
+}
+
+func (d *deadlineInspectEmbedder) Embed(ctx context.Context, _ string) ([]float32, error) {
+	dl, ok := ctx.Deadline()
+	d.mu.Lock()
+	if ok {
+		d.deadlines = append(d.deadlines, dl)
+	} else {
+		d.deadlines = append(d.deadlines, time.Time{}) // zero = no deadline set
+	}
+	d.mu.Unlock()
+	return make([]float32, d.dims), nil
+}
+func (d *deadlineInspectEmbedder) Name() string    { return "inspect-fake" }
+func (d *deadlineInspectEmbedder) Dimensions() int { return d.dims }
+
+// TestRunBatch_EmbedContextHasIndependentDeadline verifies the E5 fix: each Embed
+// call receives a context with a deadline ≤ 15s from now, regardless of what
+// deadline the parent worker context carries.  We use a 60-second parent so any
+// deadline we observe that is ≤ 20s from now must have come from context.Background(),
+// not from the parent.
+func TestRunBatch_EmbedContextHasIndependentDeadline(t *testing.T) {
+	chunk := &types.Chunk{ID: "chunk-dl-check", ChunkText: "deadline check"}
+	backend := &concurrentUpdateBackend{
+		pendingChunks: []*types.Chunk{chunk},
+	}
+	embedder := &deadlineInspectEmbedder{dims: 768}
+
+	w := reembed.NewWorker(backend, embedder, "proj", true)
+
+	// Parent context with a 60-second deadline — far beyond the expected 15s embed deadline.
+	start := time.Now()
+	parentCtx, parentCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer parentCancel()
+
+	w.StartWithContext(parentCtx)
+
+	// Give the worker enough time to call runBatch and process the chunk.
+	time.Sleep(200 * time.Millisecond)
+	w.Stop()
+
+	embedder.mu.Lock()
+	deadlines := append([]time.Time(nil), embedder.deadlines...)
+	embedder.mu.Unlock()
+
+	if len(deadlines) == 0 {
+		t.Fatal("Embed was never called — worker did not process the chunk")
+	}
+	for i, dl := range deadlines {
+		if dl.IsZero() {
+			t.Errorf("Embed call %d: context had no deadline — expected independent 15s deadline", i)
+			continue
+		}
+		// The deadline must be ≤ 16s from start (15s + 1s scheduling slop).
+		// If it inherits the 60s parent, it would be ~60s from start.
+		elapsed := dl.Sub(start)
+		if elapsed > 16*time.Second {
+			t.Errorf("Embed call %d: deadline is %v from start, want ≤ 16s — embed is inheriting the parent context deadline", i, elapsed)
+		}
+	}
+}
+
 // TestRunBatch_ConcurrentEmbedding verifies that runBatch dispatches multiple Embed
 // calls in parallel rather than one at a time. With 8 chunks and a concurrency limit
 // of 8, all 8 goroutines should be in-flight simultaneously before any one returns.
