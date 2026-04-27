@@ -56,26 +56,17 @@ func runIngest(cfg *Config) {
 
 func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmemeval.IngestEntry) {
 	ctx := context.Background()
-	mcpClient, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
-	if err != nil {
-		log.Printf("WARN ingest worker: connect failed: %v", err)
-		for item := range work {
-			out <- longmemeval.IngestEntry{QuestionID: item.QuestionID, Status: "error", Error: err.Error()}
-		}
-		return
-	}
-
+	restClient := longmemeval.NewRestClient(cfg.ServerURL, cfg.APIKey)
 	for item := range work {
-		entry := ingestOne(ctx, cfg, mcpClient, item)
+		entry := ingestOne(ctx, cfg, restClient, item)
 		out <- entry
 		log.Printf("ingest [%s] project=%s sessions=%d status=%s",
 			item.QuestionID, entry.Project, entry.SessionCount, entry.Status)
 	}
 }
 
-const ingestBatchSize = 100
 
-func ingestOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, item longmemeval.Item) (entry longmemeval.IngestEntry) {
+func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestClient, item longmemeval.Item) (entry longmemeval.IngestEntry) {
 	defer func() {
 		if r := recover(); r != nil {
 			entry = longmemeval.IngestEntry{
@@ -103,35 +94,30 @@ func ingestOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, 
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
+		// Prepend session date so the model can anchor relative-time questions.
+		tags := []string{"lme", "sid:" + sessionID}
+		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
+			content = "Session date: " + item.HaystackDates[i] + "\n" + content
+			tags = append(tags, "date:"+item.HaystackDates[i])
+		}
 		sessions = append(sessions, sessionEntry{
 			sessionID: sessionID,
-			item:      longmemeval.BatchItem{Content: content, Tags: []string{"lme", "sid:" + sessionID}},
+			item:      longmemeval.BatchItem{Content: content, Tags: tags},
 		})
 	}
 
 	memoryMap := make(map[string]string, len(sessions))
-	for start := 0; start < len(sessions); start += ingestBatchSize {
-		end := start + ingestBatchSize
-		if end > len(sessions) {
-			end = len(sessions)
-		}
-		batch := sessions[start:end]
-		batchItems := make([]longmemeval.BatchItem, len(batch))
-		for i, s := range batch {
-			batchItems[i] = s.item
-		}
-		ids, err := mcpClient.StoreBatch(ctx, project, batchItems)
+	for i, s := range sessions {
+		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags)
 		if err != nil {
 			return longmemeval.IngestEntry{
 				QuestionID: item.QuestionID,
 				Project:    project,
 				Status:     "error",
-				Error:      fmt.Sprintf("store_batch offset %d: %v", start, err),
+				Error:      fmt.Sprintf("quick-store offset %d: %v", i, err),
 			}
 		}
-		for i, id := range ids {
-			memoryMap[id] = batch[i].sessionID
-		}
+		memoryMap[id] = s.sessionID
 	}
 
 	return longmemeval.IngestEntry{

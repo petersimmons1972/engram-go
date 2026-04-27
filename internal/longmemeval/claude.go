@@ -10,7 +10,7 @@ import (
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
-const generateTimeout = 90 * time.Second
+const generateTimeout = 180 * time.Second
 
 // Generate calls `claude --print prompt` and returns trimmed stdout.
 // retries is the number of additional attempts on failure (0 = try once).
@@ -78,12 +78,14 @@ func GenerationPrompt(question, questionDate string, contextBlocks []string) str
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
 	return fmt.Sprintf(`You are answering questions about a person's conversation history.
 
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. Use these dates for any relative-time calculations (e.g. "how many days/weeks ago"). The question was asked on %s — subtract the session date from this to compute elapsed time.
+
 Relevant memory context:
 %s
 
 Question (asked on %s): %s
 
-Answer the question based only on the provided context. If the answer cannot be determined from the context, respond with exactly: I don't know.`, ctx, questionDate, question)
+Answer the question based only on the provided context. Be specific and concise. If the answer cannot be determined from the context, respond with exactly: I don't know.`, questionDate, ctx, questionDate, question)
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.

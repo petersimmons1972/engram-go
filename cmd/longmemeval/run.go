@@ -5,13 +5,23 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"sync"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
-const recallTopK = 50
-const contextTopK = 10
+// temporalInterrogativeRe strips leading relative-time interrogatives so the
+// recall query matches event noun-phrases rather than the question scaffolding.
+var temporalInterrogativeRe = regexp.MustCompile(
+	`(?i)^(how many (days?|weeks?|months?|years?) (ago |before |after )?(did|have|has|was|were|do|does|is|are) ` +
+		`|when did |which (event|thing|one) happened (first|last|earlier|later|more recently) ` +
+		`|what (was|is|were|are) the (date|time|day|week|month|year) ` +
+		`|on what (date|day) )`,
+)
+
+const recallTopK = 100
+const contextTopK = 20
 
 func runRun(cfg *Config) {
 	items := loadItems(cfg.DataFile)
@@ -109,7 +119,16 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}()
 
-	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, item.Question, recallTopK)
+	// Strip leading interrogative phrases for temporal questions so the recall
+	// query matches event noun-phrases rather than "how many weeks ago did...".
+	recallQuery := item.Question
+	if item.QuestionType == "temporal-reasoning" {
+		recallQuery = temporalInterrogativeRe.ReplaceAllString(recallQuery, "")
+		if recallQuery == "" {
+			recallQuery = item.Question
+		}
+	}
+	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, recallTopK)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID: item.QuestionID,

@@ -5,10 +5,12 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 )
 
 // Config holds flags shared across all subcommands.
@@ -35,8 +37,9 @@ func main() {
 	fs.StringVar(&cfg.DataFile, "data", "", "Path to longmemeval_m_cleaned.json (required)")
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
-	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", "http://localhost:8788"), "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", os.Getenv("ENGRAM_API_KEY"), "Engram API key")
+	defaultURL, defaultKey := mcpDefaults()
+	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
+	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
 	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Skip Engram project deletion after run stage")
 	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for claude --print and Engram calls")
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
@@ -79,6 +82,47 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// mcpDefaults reads the engram URL and Bearer token from ~/.claude/mcp_servers.json,
+// which is kept current by the session-start hook. Falls back to localhost defaults.
+func mcpDefaults() (url, token string) {
+	url = "http://localhost:8788"
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return url, ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "mcp_servers.json"))
+	if err != nil {
+		return url, ""
+	}
+	var cfg struct {
+		McpServers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return url, ""
+	}
+	for name, srv := range cfg.McpServers {
+		if name != "engram" {
+			continue
+		}
+		// Strip /sse suffix — the benchmark appends it in Connect().
+		srvURL := srv.URL
+		if len(srvURL) > 4 && srvURL[len(srvURL)-4:] == "/sse" {
+			srvURL = srvURL[:len(srvURL)-4]
+		}
+		if srvURL != "" {
+			url = srvURL
+		}
+		if auth := srv.Headers["Authorization"]; len(auth) > 7 {
+			token = auth[7:] // strip "Bearer "
+		}
+		return url, token
+	}
+	return url, token
 }
 
 func projectName(runID, questionID string) string {

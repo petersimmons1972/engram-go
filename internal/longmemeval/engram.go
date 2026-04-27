@@ -1,9 +1,11 @@
 package longmemeval
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -343,6 +345,111 @@ func (c *Client) DeleteProject(ctx context.Context, project string) error {
 // Close shuts down the underlying MCP SSE connection.
 func (c *Client) Close() error {
 	return c.mcp.Close()
+}
+
+// RestClient calls engram's sessionless REST endpoints (/quick-store,
+// /quick-recall) directly over plain HTTP — no MCP SSE session, no 60s
+// transport timeout. Used by the ingest stage for large haystack items.
+type RestClient struct {
+	baseURL string
+	token   string
+	http    *http.Client
+}
+
+// NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
+func NewRestClient(baseURL, token string) *RestClient {
+	return &RestClient{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		http:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// QuickStore stores a single memory via POST /quick-store and returns its ID.
+// Retries once on 5xx (server-side pool init can transiently time out when
+// many projects are created concurrently; a brief pause and retry succeeds
+// because the pool entry is warm on the second attempt).
+func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string) (string, error) {
+	body := map[string]any{
+		"content": content,
+		"project": project,
+		"tags":    tags,
+	}
+	data, _ := json.Marshal(body)
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/quick-store", bytes.NewReader(data))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+r.token)
+
+		resp, err := r.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var result struct {
+			OK    bool   `json:"ok"`
+			ID    string `json:"id"`
+			Error string `json:"error"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if decodeErr != nil {
+			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("quick-store server error (status %d): %s", resp.StatusCode, result.Error)
+			continue
+		}
+		if !result.OK || result.ID == "" {
+			return "", fmt.Errorf("quick-store failed: %s (status %d)", result.Error, resp.StatusCode)
+		}
+		return result.ID, nil
+	}
+	return "", lastErr
+}
+
+// QuickRecall calls POST /quick-recall and returns memory IDs ranked by score.
+func (r *RestClient) QuickRecall(ctx context.Context, project, query string, limit int) ([]string, error) {
+	body := map[string]any{
+		"query":   query,
+		"project": project,
+		"limit":   limit,
+	}
+	data, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/quick-recall", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+r.token)
+
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("quick-recall decode: %w", err)
+	}
+	return result.IDs, nil
 }
 
 // SessionContent concatenates all turns of a session into a single string,
