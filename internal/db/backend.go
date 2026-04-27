@@ -260,6 +260,11 @@ type Backend interface {
 	// ordered by created_at ascending (chronological).
 	RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error)
 
+	// CloseStaleEpisodes closes all open episodes (ended_at IS NULL) whose
+	// started_at is older than olderThan. Returns the number of rows updated.
+	// Intended for use by a background reaper to handle crash-orphaned episodes.
+	CloseStaleEpisodes(ctx context.Context, olderThan time.Duration) (int64, error)
+
 	// ── Raw document storage (Tier-2 ingestion, A4) ─────────────────────────
 
 	// StoreDocument stores raw document content and returns the new document ID.

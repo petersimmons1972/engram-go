@@ -370,6 +370,10 @@ func (s *stubBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memor
 	return nil, nil
 }
 
+func (s *stubBackend) CloseStaleEpisodes(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
+
 func (s *stubBackend) Begin(_ context.Context) (db.Tx, error) { return nil, nil }
 
 func (s *stubBackend) ExistsWithContentHash(_ context.Context, _ string, _ string) (bool, error) {

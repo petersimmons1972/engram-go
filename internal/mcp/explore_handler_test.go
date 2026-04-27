@@ -187,6 +187,9 @@ func (noopBackend) ListEpisodes(_ context.Context, _ string, _ int) ([]*types.Ep
 func (noopBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memory, error) {
 	return nil, nil
 }
+func (noopBackend) CloseStaleEpisodes(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
 func (noopBackend) Begin(_ context.Context) (db.Tx, error) { return nil, nil }
 func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ string, _ int) ([]*types.Chunk, error) {
 	return nil, nil

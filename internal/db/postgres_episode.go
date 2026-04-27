@@ -63,6 +63,23 @@ func (b *PostgresBackend) ListEpisodes(ctx context.Context, project string, limi
 	return eps, rows.Err()
 }
 
+// CloseStaleEpisodes closes all open episodes whose started_at is older than
+// olderThan. Returns the number of rows updated. Designed for use by a
+// background reaper that handles crash-orphaned sessions.
+func (b *PostgresBackend) CloseStaleEpisodes(ctx context.Context, olderThan time.Duration) (int64, error) {
+	tag, err := b.pool.Exec(ctx, `
+		UPDATE episodes
+		   SET ended_at = NOW(),
+		       summary  = COALESCE(NULLIF(summary, ''), 'auto-closed: stale')
+		 WHERE ended_at IS NULL
+		   AND started_at < NOW() - $1::interval`,
+		fmt.Sprintf("%d seconds", int(olderThan.Seconds())))
+	if err != nil {
+		return 0, fmt.Errorf("CloseStaleEpisodes: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (b *PostgresBackend) RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error) {
 	rows, err := b.pool.Query(ctx, `
 		SELECT * FROM memories
