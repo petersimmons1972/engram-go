@@ -224,12 +224,16 @@ func run() error {
 	// A recaller adapter is wired after the pool is constructed below.
 	sharedPool := retentionBackend.Pool()
 
-	factory := func(ctx context.Context, project string) (*internalmcp.EngineHandle, error) {
-		backend, err := db.NewPostgresBackend(ctx, project, dsn)
+	// serverCtx is the outer lifecycle context; captured here so engine background
+	// workers (reembed, decay, summarize) use a long-lived context, not the
+	// 10s-bounded initCtx that Pool.Get passes to the factory.
+	serverCtx := ctx
+	factory := func(initCtx context.Context, project string) (*internalmcp.EngineHandle, error) {
+		backend, err := db.NewPostgresBackend(initCtx, project, dsn)
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(ctx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine := search.New(serverCtx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 
