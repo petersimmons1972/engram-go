@@ -264,6 +264,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
+	// Inject current session episode for same-session score boosting (Phase 3).
+	if id, ok := episodeIDFromContext(ctx); ok {
+		opts.CurrentEpisodeID = id
+	}
 
 	// Use RecallWithEvent to log the retrieval; on the rerank path we call
 	// RecallWithOpts (which supports a custom Reranker) and then manually
@@ -297,6 +301,38 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				eventID = event.ID
 				if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, rerankIDs); incErr != nil {
 					slog.Warn("auto-increment times_retrieved (rerank path) failed", "project", project, "err", incErr)
+				}
+			}
+		}
+	} else if opts.CurrentEpisodeID != "" {
+		// Episode context present: use RecallWithOpts so the 1.15× episode
+		// boost applies, then record the retrieval event manually (mirrors
+		// RecallWithEvent internals so the feedback loop and precision signal
+		// continue to work on this path).
+		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
+		if err != nil {
+			return nil, err
+		}
+		resultIDs := make([]string, 0, len(results))
+		for _, r := range results {
+			if r.Memory != nil {
+				resultIDs = append(resultIDs, r.Memory.ID)
+			}
+		}
+		if len(resultIDs) > 0 {
+			event := &types.RetrievalEvent{
+				ID:        types.NewMemoryID(),
+				Project:   project,
+				Query:     query,
+				ResultIDs: resultIDs,
+				CreatedAt: time.Now().UTC(),
+			}
+			if storeErr := h.Engine.Backend().StoreRetrievalEvent(ctx, event); storeErr != nil {
+				slog.Warn("store retrieval event (episode path) failed", "project", project, "err", storeErr)
+			} else {
+				eventID = event.ID
+				if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, resultIDs); incErr != nil {
+					slog.Warn("auto-increment times_retrieved (episode path) failed", "project", project, "err", incErr)
 				}
 			}
 		}

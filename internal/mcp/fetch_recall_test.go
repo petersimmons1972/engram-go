@@ -172,3 +172,43 @@ func TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey(t *testing.T) {
 	_, hasHandles := out["handles"]
 	require.False(t, hasHandles, "default mode must NOT return 'handles' key")
 }
+
+// TestHandleMemoryRecall_EpisodeContextInjected verifies that
+// episodeIDFromContext correctly extracts an episode ID placed by withEpisodeID,
+// which is the mechanism handleMemoryRecall relies on for the Phase 3 episode
+// boost. This is a unit-level test of the context plumbing; integration
+// coverage lives in auto_episode_test.go.
+func TestHandleMemoryRecall_EpisodeContextInjected(t *testing.T) {
+	// Inject episode ID into context.
+	ctx := withEpisodeID(context.Background(), "ep-recall-phase3")
+
+	// Verify extraction succeeds and returns the correct ID.
+	id, ok := episodeIDFromContext(ctx)
+	if !ok || id != "ep-recall-phase3" {
+		t.Fatalf("episodeIDFromContext failed: ok=%v id=%q", ok, id)
+	}
+
+	// Verify that a context without an episode ID returns ok=false.
+	_, okEmpty := episodeIDFromContext(context.Background())
+	if okEmpty {
+		t.Fatal("episodeIDFromContext must return ok=false on a plain context")
+	}
+
+	// Verify that handleMemoryRecall runs without error when episode context is
+	// present — the noopBackend returns empty results, so the episode path
+	// exits cleanly without event recording.
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "episode boost smoke test",
+	}
+	cfg := Config{} // full results mode
+	res, err := handleMemoryRecall(ctx, pool, req, cfg)
+	if err != nil {
+		t.Fatalf("handleMemoryRecall returned unexpected error: %v", err)
+	}
+	if res == nil {
+		t.Fatal("handleMemoryRecall returned nil result")
+	}
+}
