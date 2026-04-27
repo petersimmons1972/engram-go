@@ -385,3 +385,149 @@ func TestMemoryStore_NoEpisodeContext_EpisodeIDEmpty(t *testing.T) {
 		t.Fatalf("EpisodeID = %q; want empty when no episode context", m.EpisodeID)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 3: episode context propagation to memory_correct, memory_connect,
+// and memory_store_batch
+// ---------------------------------------------------------------------------
+
+// episodeCorrectBackend embeds noopBackend, overrides UpdateMemory to return a
+// real memory (so handleMemoryCorrect does not short-circuit), and records
+// whether it was called with an episode-carrying context.
+type episodeCorrectBackend struct {
+	noopBackend
+	called bool
+}
+
+func (b *episodeCorrectBackend) UpdateMemory(_ context.Context, id string, _ *string, _ []string, _ *int) (*types.Memory, error) {
+	b.called = true
+	return &types.Memory{ID: id, Content: "corrected", Project: "global"}, nil
+}
+
+func (b *episodeCorrectBackend) Begin(_ context.Context) (db.Tx, error) { return noopTx{}, nil }
+
+// newEpisodeCorrectServer builds a *Server backed by episodeCorrectBackend.
+func newEpisodeCorrectServer(t *testing.T, backend *episodeCorrectBackend) *Server {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	pool := NewEnginePool(factory)
+	return &Server{pool: pool}
+}
+
+// TestMemoryCorrect_EpisodeIDFromContext verifies that handleMemoryCorrect
+// accepts an episode-carrying context and succeeds without error.
+// (Correct updates an existing memory; its EpisodeID was set at store time and
+// is not overwritten by correct — propagation here means the call is accepted.)
+func TestMemoryCorrect_EpisodeIDFromContext(t *testing.T) {
+	backend := &episodeCorrectBackend{}
+	s := newEpisodeCorrectServer(t, backend)
+
+	ctx := withEpisodeID(context.Background(), "ep-for-correct-001")
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"memory_id": "mem-abc-123",
+		"content":   "updated content",
+		"project":   "global",
+	}
+
+	_, err := handleMemoryCorrect(ctx, s.pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryCorrect returned error when episode context present: %v", err)
+	}
+	if !backend.called {
+		t.Fatal("expected UpdateMemory to be called; got 0 calls")
+	}
+}
+
+// episodeConnectBackend embeds noopBackend and records StoreRelationship calls
+// so tests can verify handleMemoryConnect completes successfully with an
+// episode-carrying context.
+type episodeConnectBackend struct {
+	noopBackend
+	connected bool
+}
+
+func (b *episodeConnectBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error {
+	b.connected = true
+	return nil
+}
+
+func (b *episodeConnectBackend) Begin(_ context.Context) (db.Tx, error) { return noopTx{}, nil }
+
+// newEpisodeConnectServer builds a *Server backed by episodeConnectBackend.
+func newEpisodeConnectServer(t *testing.T, backend *episodeConnectBackend) *Server {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	pool := NewEnginePool(factory)
+	return &Server{pool: pool}
+}
+
+// TestMemoryConnect_EpisodeIDFromContext verifies that handleMemoryConnect
+// accepts an episode-carrying context and completes without error.
+// (Relationships do not carry EpisodeID; propagation means the call is
+// accepted and the connection is still made.)
+func TestMemoryConnect_EpisodeIDFromContext(t *testing.T) {
+	backend := &episodeConnectBackend{}
+	s := newEpisodeConnectServer(t, backend)
+
+	ctx := withEpisodeID(context.Background(), "ep-for-connect-001")
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"source_id": "mem-src-001",
+		"target_id": "mem-dst-001",
+		"project":   "global",
+	}
+
+	_, err := handleMemoryConnect(ctx, s.pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryConnect returned error when episode context present: %v", err)
+	}
+	if !backend.connected {
+		t.Fatal("expected StoreRelationship to be called; got 0 calls")
+	}
+}
+
+// TestMemoryStoreBatch_EpisodeIDFromContext verifies that when a handler context
+// carries an episode ID, memory_store_batch attaches that ID to every stored
+// memory even when episode_id is not present in the batch item args.
+func TestMemoryStoreBatch_EpisodeIDFromContext(t *testing.T) {
+	backend := &episodeStoreBackend{}
+	s := newEpisodeStoreServer(t, backend)
+
+	ctx := withEpisodeID(context.Background(), "ep-batch-ctx-001")
+
+	var req mcpgo.CallToolRequest
+	req.Params.Arguments = map[string]any{
+		"project": "global",
+		"memories": []any{
+			map[string]any{"content": "batch item one"},
+			map[string]any{"content": "batch item two"},
+		},
+	}
+
+	_, err := handleMemoryStoreBatch(ctx, s.pool, req)
+	if err != nil {
+		t.Fatalf("handleMemoryStoreBatch returned error: %v", err)
+	}
+
+	if len(backend.stored) == 0 {
+		t.Fatal("expected memories to be stored; got none")
+	}
+	for i, m := range backend.stored {
+		if m.EpisodeID != "ep-batch-ctx-001" {
+			t.Fatalf("memory[%d].EpisodeID = %q; want %q", i, m.EpisodeID, "ep-batch-ctx-001")
+		}
+	}
+}

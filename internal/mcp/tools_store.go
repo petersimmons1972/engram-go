@@ -142,6 +142,11 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		return nil, fmt.Errorf("memory_store_batch: too many items (%d > max %d)", len(items), maxBatchItems)
 	}
 
+	// Resolve the batch-level episode ID: explicit batch arg wins; fall back to
+	// context injection from the auto-episode session hook (#356). Per-item
+	// episode_id overrides this default for that item.
+	batchEpisodeID := episodeIDFromContextOrArgs(ctx, args)
+
 	// Validate all items before touching the database.
 	var validErrs []string
 	var memories []*types.Memory
@@ -179,6 +184,8 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			validErrs = append(validErrs, fmt.Sprintf("item %d: tags: %v", idx, tagErr))
 			continue
 		}
+		// Per-item episode_id wins over the batch-level default.
+		itemEpisodeID := getString(mmap, "episode_id", batchEpisodeID)
 		memories = append(memories, &types.Memory{
 			ID:          types.NewMemoryID(),
 			Content:     content,
@@ -187,6 +194,7 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Importance:  importance,
 			Tags:        itemTags,
 			StorageMode: "focused",
+			EpisodeID:   itemEpisodeID,
 		})
 	}
 
