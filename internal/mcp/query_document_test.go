@@ -187,21 +187,25 @@ func TestHandleMemoryQueryDocument_MissingProject(t *testing.T) {
 func TestHandleMemoryQueryDocument_MissingMemoryID(t *testing.T) {
 	c, srv := newQDStubClaude(t, "ok")
 	defer srv.Close()
-	_, err := handleMemoryQueryDocument(context.Background(), nil,
+	result, err := handleMemoryQueryDocument(context.Background(), nil,
 		qdReq(map[string]any{"project": "p", "question": "q"}),
 		Config{claudeClient: c})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "memory_id")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "memory_id")
 }
 
 func TestHandleMemoryQueryDocument_MissingQuestion(t *testing.T) {
 	c, srv := newQDStubClaude(t, "ok")
 	defer srv.Close()
-	_, err := handleMemoryQueryDocument(context.Background(), nil,
+	result, err := handleMemoryQueryDocument(context.Background(), nil,
 		qdReq(map[string]any{"project": "p", "memory_id": "m1"}),
 		Config{claudeClient: c})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "question")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "question")
 }
 
 // Exercises the filter-object parsing branch. Missing memory_id trips the
@@ -210,7 +214,7 @@ func TestHandleMemoryQueryDocument_MissingQuestion(t *testing.T) {
 func TestHandleMemoryQueryDocument_FilterParsed(t *testing.T) {
 	c, srv := newQDStubClaude(t, "ok")
 	defer srv.Close()
-	_, err := handleMemoryQueryDocument(context.Background(), nil,
+	result, err := handleMemoryQueryDocument(context.Background(), nil,
 		qdReq(map[string]any{
 			"project":  "p",
 			"question": "q",
@@ -222,6 +226,8 @@ func TestHandleMemoryQueryDocument_FilterParsed(t *testing.T) {
 			},
 		}),
 		Config{claudeClient: c})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "memory_id")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "memory_id")
 }

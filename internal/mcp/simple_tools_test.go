@@ -94,9 +94,11 @@ func TestMemoryQuickStore_MissingContent(t *testing.T) {
 		// content intentionally absent
 	}
 
-	_, err := handleMemoryQuickStore(context.Background(), pool, req)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "content is required")
+	result, err := handleMemoryQuickStore(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "content is required")
 }
 
 // TestMemoryQuickStore_DoesNotMutateOriginal: merged args must not bleed back
@@ -219,9 +221,11 @@ func TestMemoryExpand_MissingMemoryID(t *testing.T) {
 		// memory_id intentionally absent
 	}
 
-	_, err := handleMemoryExpand(context.Background(), pool, req)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "memory_id is required")
+	result, err := handleMemoryExpand(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "memory_id is required")
 }
 
 // TestMemoryExpand_EmptyConnected: noopBackend.GetConnected returns nil → handler

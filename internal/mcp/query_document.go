@@ -147,13 +147,13 @@ func handleMemoryQueryDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 
 	// Early validation so we don't even hit the engine pool for obviously-bad input.
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
+		return mcpgo.NewToolResultError("project is required"), nil
 	}
 	if memoryID == "" {
-		return nil, fmt.Errorf("memory_id is required")
+		return mcpgo.NewToolResultError("memory_id is required"), nil
 	}
 	if question == "" {
-		return nil, fmt.Errorf("question is required")
+		return mcpgo.NewToolResultError("question is required"), nil
 	}
 
 	h, err := pool.Get(ctx, project)

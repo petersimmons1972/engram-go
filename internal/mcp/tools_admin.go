@@ -60,13 +60,13 @@ func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	srcID := getString(args, "source_id", "")
-	dstID := getString(args, "target_id", "")
-	if srcID == "" {
-		return nil, fmt.Errorf("source_id is required")
+	errResult, srcID := requireString(args, "source_id")
+	if errResult != nil {
+		return errResult, nil
 	}
-	if dstID == "" {
-		return nil, fmt.Errorf("target_id is required")
+	errResult, dstID := requireString(args, "target_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
 	strength := 1.0
@@ -95,13 +95,13 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if err != nil {
 		return nil, err
 	}
-	src := getString(args, "source_id", "")
-	dst := getString(args, "target_id", "")
-	if src == "" {
-		return nil, fmt.Errorf("source_id is required")
+	errResult, src := requireString(args, "source_id")
+	if errResult != nil {
+		return errResult, nil
 	}
-	if dst == "" {
-		return nil, fmt.Errorf("target_id is required")
+	errResult, dst := requireString(args, "target_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
 	strength := 1.0

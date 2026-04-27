@@ -29,7 +29,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	}
 	content, _ := args["content"].(string)
 	if content == "" {
-		return nil, fmt.Errorf("content is required")
+		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if len(content) > types.MaxContentLength {
 		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
@@ -93,7 +93,7 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	}
 	content, _ := args["content"].(string)
 	if content == "" {
-		return nil, fmt.Errorf("content is required")
+		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if err := validateContent(content); err != nil {
 		return nil, fmt.Errorf("content: %w", err)
@@ -247,9 +247,9 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if err != nil {
 		return nil, err
 	}
-	id := getString(args, "memory_id", "")
-	if id == "" {
-		return nil, fmt.Errorf("memory_id is required")
+	errResult, id := requireString(args, "memory_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	var content *string
 	if c := getString(args, "content", ""); c != "" {
@@ -287,9 +287,9 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
-	id := getString(args, "memory_id", "")
-	if id == "" {
-		return nil, fmt.Errorf("memory_id is required")
+	errResult, id := requireString(args, "memory_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	reason := getString(args, "reason", "")
 	deleted, err := h.Engine.Forget(ctx, id, reason)

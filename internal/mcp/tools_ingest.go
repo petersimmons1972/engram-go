@@ -52,9 +52,9 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 	if err != nil {
 		return nil, err
 	}
-	rawPath := getString(args, "path", "")
-	if rawPath == "" {
-		return nil, fmt.Errorf("path is required")
+	errResult, rawPath := requireString(args, "path")
+	if errResult != nil {
+		return errResult, nil
 	}
 	safePath, err := SafePath(cfg.DataDir, rawPath)
 	if err != nil {
@@ -94,9 +94,9 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
-	rawPath := getString(args, "path", "")
-	if rawPath == "" {
-		return nil, fmt.Errorf("path is required")
+	errResult, rawPath := requireString(args, "path")
+	if errResult != nil {
+		return errResult, nil
 	}
 	safePath, err := SafePath(cfg.DataDir, rawPath)
 	if err != nil {

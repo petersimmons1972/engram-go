@@ -60,11 +60,11 @@ func handleMemoryAuditAddQuery(ctx context.Context, pool *EnginePool, req mcpgo.
 		return nil, err
 	}
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
+		return mcpgo.NewToolResultError("project is required"), nil
 	}
-	query := getString(args, "query", "")
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	errResult, query := requireString(args, "query")
+	if errResult != nil {
+		return errResult, nil
 	}
 	description := getString(args, "description", "")
 
@@ -95,7 +95,7 @@ func handleMemoryAuditListQueries(ctx context.Context, pool *EnginePool, req mcp
 		return nil, err
 	}
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
+		return mcpgo.NewToolResultError("project is required"), nil
 	}
 
 	worker := newAuditWorker(pool, cfg)
@@ -130,9 +130,9 @@ func handleMemoryAuditDeactivateQuery(ctx context.Context, pool *EnginePool, req
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
-	queryID := getString(args, "query_id", "")
-	if queryID == "" {
-		return nil, fmt.Errorf("query_id is required")
+	errResult, queryID := requireString(args, "query_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	worker := newAuditWorker(pool, cfg)
@@ -158,7 +158,7 @@ func handleMemoryAuditRun(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, err
 	}
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
+		return mcpgo.NewToolResultError("project is required"), nil
 	}
 
 	worker := newAuditWorker(pool, cfg)
@@ -186,9 +186,9 @@ func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.C
 		return nil, fmt.Errorf("audit tools require a database connection (PgPool not configured)")
 	}
 	args, _ := req.Params.Arguments.(map[string]any)
-	queryID := getString(args, "query_id", "")
-	if queryID == "" {
-		return nil, fmt.Errorf("query_id is required")
+	errResult, queryID := requireString(args, "query_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	limit := 10
 	if v, ok := args["limit"]; ok {
@@ -249,7 +249,7 @@ func handleMemoryWeightHistory(ctx context.Context, pool *EnginePool, req mcpgo.
 		return nil, err
 	}
 	if project == "" {
-		return nil, fmt.Errorf("project is required")
+		return mcpgo.NewToolResultError("project is required"), nil
 	}
 
 	var tuner *weight.TunerWorker

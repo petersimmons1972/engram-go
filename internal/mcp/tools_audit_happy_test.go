@@ -225,10 +225,13 @@ func TestHandleAuditAddQuery_MissingProject(t *testing.T) {
 func TestHandleAuditAddQuery_MissingQuery(t *testing.T) {
 	cfg := makeTestConfig(&happyTestQuerier{})
 	pool := makeNilEnginePool()
-	_, err := handleMemoryAuditAddQuery(context.Background(), pool,
+	result, err := handleMemoryAuditAddQuery(context.Background(), pool,
 		auditHandlerRequest(map[string]any{"project": "proj1"}), cfg)
-	if err == nil {
-		t.Error("expected error for missing query")
+	if err != nil {
+		t.Errorf("expected nil error (MCP tool error), got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Error("expected MCP tool-error result for missing query")
 	}
 }
 

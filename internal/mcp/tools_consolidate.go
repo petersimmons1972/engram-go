@@ -20,9 +20,9 @@ func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.Call
 	if err != nil {
 		return nil, err
 	}
-	id := getString(args, "memory_id", "")
-	if id == "" {
-		return nil, fmt.Errorf("memory_id is required")
+	errResult, id := requireString(args, "memory_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	if err := summarize.SummarizeOne(ctx, h.Engine.Backend(), id, cfg.OllamaURL, cfg.SummarizeModel); err != nil {
 		return nil, fmt.Errorf("%w (project=%q — did you mean a different project?)", err, project)

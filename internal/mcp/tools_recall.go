@@ -88,9 +88,9 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	id := getString(args, "id", "")
-	if id == "" {
-		return nil, fmt.Errorf("id is required")
+	errResult, id := requireString(args, "id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	detail := getString(args, "detail", "summary")
 	chunkIDs, err := toStringSlice(args["chunk_ids"])
@@ -407,9 +407,9 @@ func handleMemoryHistory(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if err != nil {
 		return nil, err
 	}
-	id := getString(args, "memory_id", "")
-	if id == "" {
-		return nil, fmt.Errorf("memory_id is required")
+	errResult, id := requireString(args, "memory_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	history, err := h.Engine.MemoryHistory(ctx, id)
 	if err != nil {
@@ -429,9 +429,9 @@ func handleMemoryTimeline(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	if err != nil {
 		return nil, err
 	}
-	asOfStr := getString(args, "as_of", "")
-	if asOfStr == "" {
-		return nil, fmt.Errorf("as_of is required (RFC3339 timestamp)")
+	errResult, asOfStr := requireString(args, "as_of")
+	if errResult != nil {
+		return errResult, nil
 	}
 	asOf, err := time.Parse(time.RFC3339, asOfStr)
 	if err != nil {
@@ -481,9 +481,9 @@ func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
-	memoryID := getString(args, "memory_id", "")
-	if memoryID == "" {
-		return nil, fmt.Errorf("memory_id is required")
+	errResult, memoryID := requireString(args, "memory_id")
+	if errResult != nil {
+		return errResult, nil
 	}
 	requestedDepth := getInt(args, "depth", 2)
 	depth := requestedDepth

@@ -105,9 +105,11 @@ func TestHandleMemoryMigrateEmbedder_EmptyNewModel(t *testing.T) {
 	req := makeMigrateRequest("proj", "")
 	cfg := Config{OllamaURL: "http://ollama-test:11434"}
 
-	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "new_model is required")
+	result, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError)
+	require.Contains(t, result.Content[0].(mcpgo.TextContent).Text, "new_model is required")
 }
 
 // TestHandleMemoryMigrateEmbedder_ProbeError verifies that when the Ollama
