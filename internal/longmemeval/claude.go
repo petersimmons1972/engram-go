@@ -44,7 +44,7 @@ func runClaude(ctx context.Context, prompt string) (string, error) {
 	// Pass the prompt via stdin rather than argv so we don't blow past
 	// the OS argv limit (E2BIG / "argument list too long") on large
 	// retrieved contexts (~10 sessions × ~7 KB = ~70 KB prompts).
-	cmd := exec.CommandContext(tctx, "claude", "--print")
+	cmd := exec.CommandContext(tctx, "claude", "--print", "--model", "opus")
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
