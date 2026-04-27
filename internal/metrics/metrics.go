@@ -35,6 +35,25 @@ var (
 		Name: "engram_chunks_pending_reembed",
 		Help: "Chunks with NULL embedding_vec awaiting reembedding",
 	})
+
+	// EpisodesStartedTotal counts auto-episodes started on SSE session connect.
+	EpisodesStartedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_episodes_started_total",
+		Help: "Total auto-episodes started on SSE session connect",
+	})
+
+	// EpisodesEndedCleanTotal counts episodes closed cleanly on session disconnect.
+	EpisodesEndedCleanTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_episodes_ended_clean_total",
+		Help: "Total auto-episodes closed cleanly on session disconnect",
+	})
+
+	// EpisodesEndedByReaperTotal counts episodes closed by the TTL reaper.
+	// A ratio of reaper >> clean indicates a disconnect-handler bug or crash loop.
+	EpisodesEndedByReaperTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_episodes_ended_by_reaper_total",
+		Help: "Total auto-episodes closed by the TTL reaper (high reaper:clean ratio indicates disconnect-handler bugs)",
+	})
 )
 
 func init() {
@@ -44,5 +63,8 @@ func init() {
 		WorkerTicks,
 		WorkerErrors,
 		ChunksPendingReembed,
+		EpisodesStartedTotal,
+		EpisodesEndedCleanTotal,
+		EpisodesEndedByReaperTotal,
 	)
 }

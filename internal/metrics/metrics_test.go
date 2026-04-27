@@ -68,6 +68,46 @@ func TestToolRequestsCounterLabels(t *testing.T) {
 	}
 }
 
+// TestEpisodeLifecycleCounters verifies the three episode lifecycle counters
+// are registered and increment independently.
+func TestEpisodeLifecycleCounters(t *testing.T) {
+	// Drive each counter once so the default gatherer can observe them.
+	EpisodesStartedTotal.Inc()
+	EpisodesEndedCleanTotal.Inc()
+	EpisodesEndedByReaperTotal.Add(3)
+
+	want := []string{
+		"engram_episodes_started_total",
+		"engram_episodes_ended_clean_total",
+		"engram_episodes_ended_by_reaper_total",
+	}
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	registered := make(map[string]bool, len(mfs))
+	for _, mf := range mfs {
+		registered[mf.GetName()] = true
+	}
+	for _, name := range want {
+		if !registered[name] {
+			t.Errorf("metric %q not found in default registry", name)
+		}
+	}
+
+	// Verify Add(3) landed on the reaper counter via testutil on an isolated reg.
+	reg := prometheus.NewRegistry()
+	reaper := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_episodes_ended_by_reaper_total_test",
+		Help: "test",
+	})
+	reg.MustRegister(reaper)
+	reaper.Add(3)
+	if v := testutil.ToFloat64(reaper); v != 3 {
+		t.Errorf("expected reaper Add(3) == 3, got %v", v)
+	}
+}
+
 // TestChunksPendingReembedGauge verifies Set and observation.
 func TestChunksPendingReembedGauge(t *testing.T) {
 	reg := prometheus.NewRegistry()

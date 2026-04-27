@@ -209,6 +209,7 @@ func (s *Server) registerSessionHooks(apiKey string) {
 			return
 		}
 		s.sessionEpisodes.Store(sessionID, ep.ID)
+		metrics.EpisodesStartedTotal.Inc()
 		slog.Info("auto-episode: started", "session_id", sessionID, "episode_id", ep.ID)
 	})
 
@@ -237,6 +238,7 @@ func (s *Server) registerSessionHooks(apiKey string) {
 			slog.Warn("auto-episode: EndEpisode failed", "session_id", sessionID, "episode_id", epID, "err", err)
 			return
 		}
+		metrics.EpisodesEndedCleanTotal.Inc()
 		slog.Info("auto-episode: closed", "session_id", sessionID, "episode_id", epID)
 	})
 }
@@ -277,6 +279,7 @@ func (s *Server) runEpisodeSweep(ctx context.Context) {
 		return
 	}
 	if n > 0 {
+		metrics.EpisodesEndedByReaperTotal.Add(float64(n))
 		slog.Info("episode-sweep: closed stale episodes", "count", n, "ttl", s.cfg.EpisodeTTL)
 	}
 }
