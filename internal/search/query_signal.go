@@ -5,11 +5,15 @@ import (
 	"unicode"
 )
 
-// preferenceSignals are words that indicate preference-related text.
-// All lowercase; matched as whole words to avoid false positives from
-// substrings (e.g. "like" in "likely", "want" in "unwanted").
-var preferenceSignals = []string{"prefer", "prefers", "preferred", "like", "likes", "liked",
-	"favorite", "favourite", "enjoy", "enjoys", "enjoyed", "want", "wants", "love", "loves"}
+// preferenceSignals are high-signal words indicating stored user preferences.
+// "like", "want", "love" removed — they appear too frequently in engineering
+// prose ("I'd like to", "we want to", "would love feedback") and cause false
+// positives in auto-tagging and query boosting (#369).
+var preferenceSignals = []string{
+	"prefer", "prefers", "preferred",
+	"favorite", "favourite",
+	"enjoy", "enjoys", "enjoyed",
+}
 
 // preferenceSignalSet is the same list in a map for O(1) lookup after tokenisation.
 var preferenceSignalSet = func() map[string]struct{} {

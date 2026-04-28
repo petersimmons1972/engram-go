@@ -205,6 +205,9 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 		}
 		defer func() { _ = tx.Rollback(ctx) }() // read-only — rollback == commit here
 		efSearch := limit * 2
+		if efSearch > 1000 {
+			efSearch = 1000
+		}
 		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", efSearch)); err != nil {
 			return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
 		}
