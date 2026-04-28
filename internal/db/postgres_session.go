@@ -23,6 +23,9 @@ var _ SessionRegistry = (*PostgresBackend)(nil)
 // replayed after a server restart. sessionID is the transport-layer session ID
 // issued by mcp-go; apiKeyHash is SHA-256 hex of the API key (never plaintext).
 func (b *PostgresBackend) RegisterSession(ctx context.Context, sessionID, apiKeyHash string) error {
+	if b.pool == nil {
+		return fmt.Errorf("backend has no pool")
+	}
 	if sessionID == "" {
 		return fmt.Errorf("session_id must not be empty")
 	}
@@ -40,6 +43,9 @@ func (b *PostgresBackend) RegisterSession(ctx context.Context, sessionID, apiKey
 // UnregisterSession removes a session from the registry when the client
 // disconnects. Missing sessions are silently ignored (idempotent).
 func (b *PostgresBackend) UnregisterSession(ctx context.Context, sessionID string) error {
+	if b.pool == nil {
+		return fmt.Errorf("backend has no pool")
+	}
 	if sessionID == "" {
 		return fmt.Errorf("session_id must not be empty")
 	}
@@ -54,14 +60,21 @@ func (b *PostgresBackend) UnregisterSession(ctx context.Context, sessionID strin
 // duration from now. Used at startup to rehydrate sessions from before a restart.
 // since must be positive.
 func (b *PostgresBackend) ListActiveSessions(ctx context.Context, since time.Duration) ([]string, error) {
+	if b.pool == nil {
+		return nil, fmt.Errorf("backend has no pool")
+	}
 	if since <= 0 {
 		return nil, fmt.Errorf("since must be a positive duration")
 	}
+	// Pass seconds as an integer and construct the interval server-side via
+	// make_interval so the query does not depend on Go's Duration.String() format
+	// (e.g. "2h0m0s" or "1µs"), which is not a documented PostgreSQL interval
+	// literal syntax.
 	rows, err := b.pool.Query(ctx, `
 		SELECT session_id FROM mcp_sessions
-		WHERE last_seen_at > now() - $1::interval
+		WHERE last_seen_at > now() - make_interval(secs => $1)
 		ORDER BY last_seen_at DESC`,
-		since.String(),
+		int64(since.Seconds()),
 	)
 	if err != nil {
 		return nil, err
@@ -81,8 +94,12 @@ func (b *PostgresBackend) ListActiveSessions(ctx context.Context, since time.Dur
 
 // TouchSession updates last_seen_at for an active session. Called on every
 // POST /message so sessions that are in active use are not reaped by the
-// stale-session cleanup.
+// stale-session cleanup even if the session remains open longer than the
+// rehydration window.
 func (b *PostgresBackend) TouchSession(ctx context.Context, sessionID string) error {
+	if b.pool == nil {
+		return fmt.Errorf("backend has no pool")
+	}
 	if sessionID == "" {
 		return fmt.Errorf("session_id must not be empty")
 	}

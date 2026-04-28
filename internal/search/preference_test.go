@@ -24,13 +24,19 @@ func TestIsPreferenceQueryDetectsSignals(t *testing.T) {
 }
 
 // TestIsPreferenceQueryIgnoresNeutralQueries verifies that neutral recall
-// queries are not classified as preference queries.
+// queries are not classified as preference queries, including common substrings
+// that would fire a simple strings.Contains check ("likely" contains "like",
+// "unlikely" also contains "like").
 func TestIsPreferenceQueryIgnoresNeutralQueries(t *testing.T) {
 	misses := []string{
 		"what is the project deadline?",
 		"when was the last meeting?",
 		"summarize the architecture decisions",
 		"find all error patterns",
+		"what is the deployment likely to fail on?", // "likely" must not match "like"
+		"it looks unlike the previous regression",   // "unlike" must not match "like"
+		"the build is unwanted overhead",            // "unwanted" must not match "want"
+		"it warrants further investigation",         // "warrants" must not match "want"
 	}
 	for _, q := range misses {
 		if isPreferenceQuery(q) {

@@ -172,18 +172,6 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 // setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
 const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 
-// registerSessionHooks wires the OnRegisterSession and OnUnregisterSession
-// hooks on the MCP server. Extracted from Start so tests can call it directly
-// without binding a port.
-//
-// OnRegisterSession: stores a session→bearer HMAC fingerprint so POST /message
-// can verify the session was opened by the same bearer that is now posting (#245).
-// Also auto-starts an episode when the session context carries the auto-episode
-// flag (injected by applyMiddleware when ?auto_episode=1 is in the SSE URL) (#356).
-//
-// OnUnregisterSession: removes the fingerprint when the session disconnects (#245).
-// Also closes any auto-started episode using context.Background() — the session
-// context is already cancelled at this point (#356).
 // hashAPIKey returns the SHA-256 hex digest of the API key. Stored in the
 // sessions table instead of the plaintext key so the DB does not become a
 // credential store.
@@ -202,7 +190,10 @@ type rehydratedSession struct {
 }
 
 func newRehydratedSession(id string) *rehydratedSession {
-	return &rehydratedSession{id: id, ch: make(chan mcpgo.JSONRPCNotification, 1)}
+	// Buffer 256 notifications — the real SSE consumer is gone, but the mcp-go
+	// transport may attempt sends. A buffer large enough to absorb any burst
+	// prevents the sender goroutine from blocking on a dead channel.
+	return &rehydratedSession{id: id, ch: make(chan mcpgo.JSONRPCNotification, 256)}
 }
 
 func (r *rehydratedSession) Initialize()                                        {}
@@ -236,6 +227,18 @@ func (s *Server) RehydrateSessions(ctx context.Context, apiKey string) error {
 	return nil
 }
 
+// registerSessionHooks wires the OnRegisterSession and OnUnregisterSession
+// hooks on the MCP server. Extracted from Start so tests can call it directly
+// without binding a port.
+//
+// OnRegisterSession: stores a session→bearer HMAC fingerprint so POST /message
+// can verify the session was opened by the same bearer that is now posting (#245).
+// Also auto-starts an episode when the session context carries the auto-episode
+// flag (injected by applyMiddleware when ?auto_episode=1 is in the SSE URL) (#356).
+//
+// OnUnregisterSession: removes the fingerprint when the session disconnects (#245).
+// Also closes any auto-started episode using context.Background() — the session
+// context is already cancelled at this point (#356).
 func (s *Server) registerSessionHooks(apiKey string) {
 	s.mcp.GetHooks().AddOnRegisterSession(func(ctx context.Context, sess server.ClientSession) {
 		sessionID := sess.SessionID()
@@ -564,6 +567,19 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// Update last_seen_at so the session remains within the rehydration window
+		// even for long-lived connections that exceed the registration timestamp (#362).
+		if s.cfg.SessionDB != nil {
+			go func() {
+				dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.cfg.SessionDB.TouchSession(dbCtx, sessionID); err != nil {
+					slog.Debug("session touch failed", "session_id", sessionID, "err", err)
+				}
+			}()
+		}
+
 		storedFP, _ := stored.([]byte)
 
 		// Compute the expected fingerprint for the current bearer.

@@ -93,17 +93,26 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 }
 
 func (g *GlobalReembedder) runBatch(ctx context.Context) error {
-	// Claim a batch of unembedded chunks across all projects. FOR UPDATE SKIP LOCKED
-	// ensures that concurrent GlobalReembedder instances on multiple server replicas
-	// each claim different chunks without blocking each other.
-	rows, err := g.pool.Query(ctx, fmt.Sprintf(`
+	// Claim a batch inside a short transaction so concurrent replicas do not
+	// pick the same chunks simultaneously. The transaction is committed as soon
+	// as the chunk list is read; subsequent UPDATEs are idempotent if two replicas
+	// race after the commit (re-embedding the same chunk produces the same vector).
+	// FOR UPDATE SKIP LOCKED is a parameterized query — batchSize is bound as $1
+	// to stay consistent with the rest of the codebase (no fmt.Sprintf SQL).
+	tx, err := g.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin claim tx: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, `
 		SELECT c.id, c.chunk_text
 		FROM chunks c
 		WHERE c.embedding IS NULL
 		ORDER BY c.id
-		LIMIT %d
-		FOR UPDATE SKIP LOCKED`, g.batchSize))
+		LIMIT $1
+		FOR UPDATE SKIP LOCKED`, g.batchSize)
 	if err != nil {
+		_ = tx.Rollback(ctx)
 		return fmt.Errorf("query pending chunks: %w", err)
 	}
 
@@ -112,13 +121,21 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 		var pc pendingChunk
 		if err := rows.Scan(&pc.id, &pc.chunkText); err != nil {
 			rows.Close()
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("scan pending chunk: %w", err)
 		}
 		chunks = append(chunks, pc)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		_ = tx.Rollback(ctx)
 		return fmt.Errorf("iterate pending chunks: %w", err)
+	}
+
+	// Commit the claim transaction immediately so the connection is returned to
+	// the pool before the (potentially slow) Ollama embed calls begin.
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit claim tx: %w", err)
 	}
 
 	if len(chunks) == 0 {
@@ -135,7 +152,10 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 			break
 		}
 		eg.Go(func() error {
-			embedCtx, embedCancel := context.WithTimeout(context.Background(), globalEmbedTimeout)
+			// Derive embedCtx from egCtx so cancellation (e.g. shutdown or batch
+			// timeout) propagates to in-flight Ollama calls rather than letting
+			// them run for the full globalEmbedTimeout after the parent is done.
+			embedCtx, embedCancel := context.WithTimeout(egCtx, globalEmbedTimeout)
 			defer embedCancel()
 			vec, err := g.embedder.Embed(embedCtx, c.chunkText)
 			if err != nil {

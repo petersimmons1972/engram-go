@@ -103,8 +103,10 @@ func NewSharedPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("cannot connect to PostgreSQL — check DATABASE_URL: %w", err)
 	}
 
-	// Run migrations once on the shared pool. The advisory lock in runMigrations
-	// ensures concurrent server replicas do not race.
+	// Run migrations once on the shared pool. A temporary backend is constructed
+	// with the reserved project slug "_shared" (never visible to callers) solely
+	// to satisfy the runMigrations receiver. Migrations issue no project-scoped
+	// DDL, so the slug does not appear in any DB row.
 	b := &PostgresBackend{pool: pool, project: "_shared"}
 	if err := b.runMigrations(ctx); err != nil {
 		pool.Close()

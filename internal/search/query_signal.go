@@ -1,15 +1,33 @@
 package search
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // preferenceSignals are words that indicate preference-related text.
-// All lowercase; matched case-insensitively.
-var preferenceSignals = []string{"prefer", "like", "favorite", "enjoy", "want", "love"}
+// All lowercase; matched as whole words to avoid false positives from
+// substrings (e.g. "like" in "likely", "want" in "unwanted").
+var preferenceSignals = []string{"prefer", "prefers", "preferred", "like", "likes", "liked",
+	"favorite", "favourite", "enjoy", "enjoys", "enjoyed", "want", "wants", "love", "loves"}
+
+// preferenceSignalSet is the same list in a map for O(1) lookup after tokenisation.
+var preferenceSignalSet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(preferenceSignals))
+	for _, s := range preferenceSignals {
+		m[s] = struct{}{}
+	}
+	return m
+}()
+
+// wordBoundary returns true for runes that delimit word tokens.
+func wordBoundary(r rune) bool {
+	return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+}
 
 func containsPreferenceSignal(text string) bool {
-	t := strings.ToLower(text)
-	for _, sig := range preferenceSignals {
-		if strings.Contains(t, sig) {
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), wordBoundary) {
+		if _, ok := preferenceSignalSet[word]; ok {
 			return true
 		}
 	}
