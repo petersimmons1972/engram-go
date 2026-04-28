@@ -80,22 +80,21 @@ func runRun(cfg *Config) {
 }
 
 func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry) {
-	ctx := context.Background()
-	mcpClient, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
-	if err != nil {
-		log.Printf("WARN run worker: connect failed: %v", err)
-		for e := range work {
-			out <- longmemeval.RunEntry{QuestionID: e.QuestionID, Status: "error", Error: err.Error()}
-		}
-		return
-	}
-
 	for ingestEntry := range work {
+		ctx := context.Background()
 		item, ok := itemMap[ingestEntry.QuestionID]
 		if !ok {
 			out <- longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: "item not found in data file"}
 			continue
 		}
+
+		// Fresh connection per item — SSE sessions expire under long runs.
+		mcpClient, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
+		if err != nil {
+			out <- longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: fmt.Sprintf("connect: %v", err)}
+			continue
+		}
+
 		entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
 		out <- entry
 		log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))

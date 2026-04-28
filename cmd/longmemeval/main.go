@@ -9,8 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds flags shared across all subcommands.
@@ -109,10 +111,13 @@ func mcpDefaults() (url, token string) {
 		if name != "engram" {
 			continue
 		}
-		// Strip /sse suffix — the benchmark appends it in Connect().
+		// Strip /sse path component — the benchmark appends it in Connect().
+		// Parse properly so query params don't break the suffix check.
 		srvURL := srv.URL
-		if len(srvURL) > 4 && srvURL[len(srvURL)-4:] == "/sse" {
-			srvURL = srvURL[:len(srvURL)-4]
+		if u, err := neturl.Parse(srvURL); err == nil {
+			u.Path = strings.TrimSuffix(u.Path, "/sse")
+			u.RawQuery = ""
+			srvURL = u.String()
 		}
 		if srvURL != "" {
 			url = srvURL

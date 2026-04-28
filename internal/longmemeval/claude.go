@@ -17,10 +17,20 @@ const generateTimeout = 180 * time.Second
 // On failure a backoff sleep (30s, 60s, 120s) is inserted between attempts
 // so transient API rate limits have a chance to clear before retrying.
 func Generate(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "opus", retries)
+}
+
+// GenerateSonnet is like Generate but uses Sonnet — cheaper and higher rate
+// limits, suitable for judge/scoring tasks that don't require Opus reasoning.
+func GenerateSonnet(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "sonnet", retries)
+}
+
+func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := runClaude(ctx, prompt)
+		out, err := runClaude(ctx, prompt, model)
 		if err == nil {
 			return out, nil
 		}
@@ -38,13 +48,13 @@ func Generate(ctx context.Context, prompt string, retries int) (string, error) {
 	return "", lastErr
 }
 
-func runClaude(ctx context.Context, prompt string) (string, error) {
+func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 	// Pass the prompt via stdin rather than argv so we don't blow past
 	// the OS argv limit (E2BIG / "argument list too long") on large
 	// retrieved contexts (~10 sessions × ~7 KB = ~70 KB prompts).
-	cmd := exec.CommandContext(tctx, "claude", "--print", "--model", "opus")
+	cmd := exec.CommandContext(tctx, "claude", "--print", "--model", model)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -113,9 +123,10 @@ type ScoreResult struct {
 }
 
 // Score calls claude --print with the judge prompt and parses the result.
+// Uses Sonnet — the judge task (classify correct/incorrect) doesn't need Opus.
 func Score(ctx context.Context, question, referenceAnswer, hypothesis string, retries int) (ScoreResult, error) {
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
-	out, err := Generate(ctx, prompt, retries)
+	out, err := GenerateSonnet(ctx, prompt, retries)
 	if err != nil {
 		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
 	}

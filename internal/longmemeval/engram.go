@@ -378,10 +378,13 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 	data, _ := json.Marshal(body)
 
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 8; attempt++ {
 		if attempt > 0 {
+			// Exponential backoff: 1s, 2s, 4s, 8s… capped at 16s.
+			// 429s resolve quickly once the token bucket refills.
+			backoff := time.Duration(1<<min(attempt-1, 4)) * time.Second
 			select {
-			case <-time.After(2 * time.Second):
+			case <-time.After(backoff):
 			case <-ctx.Done():
 				return "", ctx.Err()
 			}
@@ -408,6 +411,10 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 		resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
+			continue
+		}
+		if resp.StatusCode == 429 {
+			lastErr = fmt.Errorf("quick-store rate limited (status 429)")
 			continue
 		}
 		if resp.StatusCode >= 500 {
