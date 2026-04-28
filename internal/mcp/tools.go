@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/types"
 	"golang.org/x/text/unicode/norm"
 )
@@ -74,6 +75,9 @@ type Config struct {
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool
+	// SessionDB persists MCP session registrations across server restarts (#362).
+	// When nil, session persistence is disabled (sessions are lost on restart).
+	SessionDB db.SessionRegistry
 	// testHooks is nil in production; set only in tests to inject stubs.
 	testHooks    *testHooks
 	claudeClient *claude.Client // set via Server.SetClaudeClient

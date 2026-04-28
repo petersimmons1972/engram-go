@@ -91,18 +91,23 @@ func IsDuplicate(newText string, existingTexts []string, threshold float64) bool
 }
 
 // ChunkText splits text into overlapping sentence-window chunks.
-// Content shorter than LazyChunkThreshold is returned as a single chunk.
+// Content that fits within a single model context window (maxTokens * 4 chars)
+// is returned as a single chunk. Content exceeding the window is split into
+// overlapping sentence-window chunks so no chunk exceeds the model limit.
 // Uses ~4 chars/token approximation to avoid a tokenizer dependency.
 // Mirrors Python chunk_text().
 func ChunkText(text string, maxTokens, overlapTokens int) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	if len(text) <= LazyChunkThreshold {
+	const charsPerToken = 4
+	// A single chunk is only safe when the text fits in one model context window.
+	// The old LazyChunkThreshold (8000) was larger than most models' windows —
+	// using maxTokens*charsPerToken prevents sending oversized text to Ollama (#361).
+	if len(text) <= maxTokens*charsPerToken {
 		return []string{text}
 	}
 
-	const charsPerToken = 4
 	maxChars := maxTokens * charsPerToken
 	overlapChars := overlapTokens * charsPerToken
 

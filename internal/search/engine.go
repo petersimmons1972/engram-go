@@ -159,8 +159,14 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	sum := summarize.NewWorkerWithClaude(backend, project, ollamaURL, summarizeModel, summarizeEnabled, claudeClient)
 	sum.StartWithContext(ctx)
 
+	// The per-project reembedder is not started in the server process. A
+	// GlobalReembedder (cmd/engram/main.go) processes unembedded chunks across
+	// all projects from a single goroutine using FOR UPDATE SKIP LOCKED (#359).
+	// The Worker is kept so Notify() and Stop() calls remain valid no-ops, and
+	// so the model-migration path in ChangeEmbedder can still restart a worker
+	// temporarily when switching models for a specific project.
 	reb := reembed.NewWorkerFromMeta(ctx, backend, embedder, project)
-	reb.StartWithContext(ctx)
+	// Do not call StartWithContext here — GlobalReembedder owns this work.
 
 	dec := NewDecayWorker(backend, project, decayInterval)
 	dec.StartWithContext(ctx)
@@ -227,9 +233,9 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 	if m.StorageMode == "document" {
 		candidates = chunk.ChunkDocument(chunkSource, 0 /* use package default */)
 	} else {
-		// ChunkText(text, maxTokens, overlapTokens). Use same defaults as Python:
-		// 512 max tokens, 50 overlap.
-		for _, text := range chunk.ChunkText(chunkSource, 512, 50) {
+		// Chunk using the configured model's context window so no chunk
+		// exceeds what Ollama accepts for this embedding model (#361).
+		for _, text := range chunk.ChunkText(chunkSource, embed.ModelMaxTokens(e.getEmbedder().Name()), 50) {
 			candidates = append(candidates, chunk.ChunkCandidate{
 				Text:      text,
 				ChunkType: "sentence_window",
@@ -532,6 +538,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[r.Memory.ID] = r.Memory
 	}
 
+	// Detect preference-shaped queries once before the scoring loop (#364).
+	prefQuery := isPreferenceQuery(query)
+
 	// Composite scoring per memory.
 	var results []types.SearchResult
 	for id, m := range memories {
@@ -548,6 +557,8 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			DynamicImportance:  m.DynamicImportance,
 			RetrievalPrecision: m.RetrievalPrecision,
 			EpisodeMatch:       opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
+			MemoryType:         m.MemoryType,
+			IsPreferenceQuery:  prefQuery,
 		}
 		var score float64
 		if e.weightCache != nil {

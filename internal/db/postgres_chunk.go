@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -186,7 +187,44 @@ func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID stri
 	return int(tag.RowsAffected()), err
 }
 
+// hnswDefaultEfSearch is the HNSW index ef_construction value (build-time). The
+// query-time ef_search defaults to the same value. When callers request more
+// candidates than this threshold, we tune ef_search upward so the index can
+// actually return the requested number of rows rather than silently truncating.
+const hnswDefaultEfSearch = 64
+
 func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error) {
+	// When the requested limit exceeds the HNSW default ef_search, the index
+	// silently returns fewer rows than requested. Wrap in a transaction so that
+	// SET LOCAL hnsw.ef_search is scoped to this query only and does not bleed
+	// into other queries on the same pooled connection (#360).
+	if limit > hnswDefaultEfSearch {
+		tx, err := b.pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin vector search tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }() // read-only — rollback == commit here
+		efSearch := limit * 2
+		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", efSearch)); err != nil {
+			return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT c.id, c.memory_id,
+			       c.embedding <=> $1::vector AS distance,
+			       c.chunk_text, c.chunk_index, c.section_heading
+			FROM chunks c
+			WHERE c.project = $2 AND c.embedding IS NOT NULL
+			ORDER BY c.embedding <=> $1::vector
+			LIMIT $3`,
+			pgvector.NewVector(queryVec), project, limit,
+		)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanVectorHits(rows)
+	}
+
 	rows, err := b.pool.Query(ctx, `
 		SELECT c.id, c.memory_id,
 		       c.embedding <=> $1::vector AS distance,
@@ -201,7 +239,10 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 		return nil, err
 	}
 	defer rows.Close()
+	return scanVectorHits(rows)
+}
 
+func scanVectorHits(rows pgx.Rows) ([]VectorHit, error) {
 	var hits []VectorHit
 	for rows.Next() {
 		var h VectorHit

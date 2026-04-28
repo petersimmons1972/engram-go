@@ -6,6 +6,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -40,6 +41,13 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
 		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+	}
+	// Auto-tag: when memory_type was not explicitly provided by the caller,
+	// detect preference-expressing content and override to "preference" (#364).
+	if _, hasExplicitType := args["memory_type"]; !hasExplicitType {
+		if search.IsPreferenceContent(content) {
+			memType = types.MemoryTypePreference
+		}
 	}
 	importance := getInt(args, "importance", 2)
 	if importance < 0 || importance > 4 {

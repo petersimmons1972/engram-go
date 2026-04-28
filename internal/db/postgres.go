@@ -28,18 +28,20 @@ var projectSlugRE = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // PostgresBackend is the PostgreSQL implementation of Backend.
 // It is safe for concurrent use from multiple goroutines.
 type PostgresBackend struct {
-	pool    *pgxpool.Pool
-	project string // validated project slug
+	pool      *pgxpool.Pool
+	project   string // validated project slug
+	ownsPool  bool   // true only when NewPostgresBackend created the pool; false for shared-pool backends
 }
 
-// configurePool applies connection pool tuning to cfg. Extracted so that unit
-// tests can verify the settings without requiring a live PostgreSQL connection.
+// configurePool applies connection pool tuning for CLI tools that create a
+// single project-scoped pool (cmd/reembed-worker, cmd/engram-setup). The server
+// process uses configureSharedPool instead, which is tuned for a single pool
+// shared across all project backends.
 func configurePool(cfg *pgxpool.Config) {
 	cfg.MinConns = 5
 	cfg.MaxConns = 25
 	// Evict connections after 30 minutes so the pool recovers cleanly after a
-	// PostgreSQL restart or network flap. Without this, pgxpool holds connections
-	// indefinitely and stale ones are only detected at use time.
+	// PostgreSQL restart or network flap.
 	cfg.MaxConnLifetime = 30 * time.Minute
 	// Reap idle connections after 5 minutes to avoid holding DB slots
 	// unnecessarily during low-traffic periods.
@@ -49,14 +51,94 @@ func configurePool(cfg *pgxpool.Config) {
 	cfg.HealthCheckPeriod = 1 * time.Minute
 }
 
-// NewPostgresBackend creates a new backend, validates the connection, and
-// runs schema migrations. Returns an error if the database is unreachable.
-func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBackend, error) {
+// configureSharedPool applies connection pool tuning for the single pool shared
+// across all project backends in the server process. Higher MaxConns handles
+// concurrent projects; lower MinConns avoids wasting slots when the server is
+// idle. Tighter idle and health-check intervals keep the shared pool lean.
+func configureSharedPool(cfg *pgxpool.Config) {
+	cfg.MinConns = 2
+	cfg.MaxConns = 50
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnIdleTime = 3 * time.Minute
+	cfg.HealthCheckPeriod = 30 * time.Second
+}
+
+// registerTypesAfterConnect registers custom type codecs that every connection
+// in a pool needs. Extracted so both configurePool and configureSharedPool can
+// share it via AfterConnect without duplicating the registration logic.
+func registerTypesAfterConnect(ctx context.Context, conn *pgx.Conn) error {
+	// tsvector (OID 3614) has no binary codec in pgx — register it as text so
+	// SELECT * queries that include search_vector don't fail in binary mode.
+	conn.TypeMap().RegisterType(&pgtype.Type{
+		Name:  "tsvector",
+		OID:   3614,
+		Codec: pgtype.TextCodec{},
+	})
+	return nil
+}
+
+// NewSharedPool creates a single *pgxpool.Pool to be shared across all project
+// backends in the server process. It validates the DSN, runs schema migrations
+// (guarded by an advisory lock so concurrent startups are safe), and returns the
+// pool. Callers are responsible for calling pool.Close() on shutdown.
+//
+// Use NewPostgresBackendWithPool to create per-project backends from this pool.
+func NewSharedPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DSN: %w", err)
+	}
+	if err := rejectDefaultPassword(cfg); err != nil {
+		return nil, err
+	}
+	configureSharedPool(cfg)
+	cfg.AfterConnect = registerTypesAfterConnect
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create connection pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("cannot connect to PostgreSQL — check DATABASE_URL: %w", err)
+	}
+
+	// Run migrations once on the shared pool. The advisory lock in runMigrations
+	// ensures concurrent server replicas do not race.
+	b := &PostgresBackend{pool: pool, project: "_shared"}
+	if err := b.runMigrations(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("schema migration failed: %w", err)
+	}
+
+	return pool, nil
+}
+
+// NewPostgresBackendWithPool creates a project-scoped Backend that uses an
+// existing shared *pgxpool.Pool. It does not run migrations or ping the
+// database — callers must ensure the pool was created via NewSharedPool.
+func NewPostgresBackendWithPool(ctx context.Context, project string, pool *pgxpool.Pool) (*PostgresBackend, error) {
+	return newPostgresBackendFromPool(pool, project)
+}
+
+// newPostgresBackendFromPool is the internal constructor shared by
+// NewPostgresBackendWithPool and the test helpers. Accepts a nil pool so unit
+// tests can verify slug sanitisation without a live database.
+func newPostgresBackendFromPool(pool *pgxpool.Pool, project string) (*PostgresBackend, error) {
 	project = projectSlugRE.ReplaceAllString(project, "")
 	if project == "" {
 		project = "default"
 	}
+	return &PostgresBackend{pool: pool, project: project}, nil
+}
 
+// NewPostgresBackend creates a new backend with its own connection pool,
+// validates the connection, and runs schema migrations. Intended for CLI tools
+// (cmd/reembed-worker, cmd/engram-setup) that own a single project pool.
+//
+// The server process should use NewSharedPool + NewPostgresBackendWithPool
+// instead to avoid creating one pool per project.
+func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBackend, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("invalid DSN: %w", err)
@@ -65,29 +147,19 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 		return nil, err
 	}
 	configurePool(cfg)
-	// tsvector (OID 3614) has no binary codec in pgx — register it as text so
-	// SELECT * queries that include search_vector don't fail in binary mode.
-	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		conn.TypeMap().RegisterType(&pgtype.Type{
-			Name:  "tsvector",
-			OID:   3614,
-			Codec: pgtype.TextCodec{},
-		})
-		return nil
-	}
+	cfg.AfterConnect = registerTypesAfterConnect
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create connection pool: %w", err)
 	}
-
-	// Verify connectivity before running migrations.
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("cannot connect to PostgreSQL — check DATABASE_URL: %w", err)
 	}
 
-	b := &PostgresBackend{pool: pool, project: project}
+	b, _ := newPostgresBackendFromPool(pool, project)
+	b.ownsPool = true // CLI-created pool: this backend is responsible for closing it
 	if err := b.runMigrations(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("schema migration failed: %w", err)
@@ -106,9 +178,13 @@ func rejectDefaultPassword(cfg *pgxpool.Config) error {
 	return nil
 }
 
-// Close releases the connection pool.
+// Close releases the connection pool if this backend owns it. Backends created
+// via NewPostgresBackendWithPool share a pool they do not own — calling Close
+// on them is a no-op so callers cannot accidentally tear down the shared pool.
 func (b *PostgresBackend) Close() {
-	b.pool.Close()
+	if b.ownsPool {
+		b.pool.Close()
+	}
 }
 
 // Pool returns the underlying connection pool. Intended for integration test

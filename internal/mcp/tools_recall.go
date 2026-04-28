@@ -186,10 +186,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if query == "" {
 		return mcpgo.NewToolResultError("query: required"), nil
 	}
-	topK := getInt(args, "top_k", 10)
-	if topK < 1 || topK > 100 {
-		topK = 10
-	}
+	topK := clampTopK(getInt(args, "top_k", defaultTopK), recallMaxTopK())
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
 	mode := getString(args, "mode", cfg.RecallDefaultMode)

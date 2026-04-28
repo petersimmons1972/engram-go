@@ -142,14 +142,32 @@ func TestIsDuplicateEnvThreshold(t *testing.T) {
 }
 
 func TestChunkTextShort(t *testing.T) {
-	// Content under LazyChunkThreshold → single chunk
-	short := strings.Repeat("a", chunk.LazyChunkThreshold)
-	result := chunk.ChunkText(short, 500, 50)
+	// Content within the model window (maxTokens*4 chars) → single chunk.
+	const maxTokens = 500
+	short := strings.Repeat("a", maxTokens*4) // exactly at limit
+	result := chunk.ChunkText(short, maxTokens, 50)
 	if len(result) != 1 {
-		t.Errorf("short content should produce 1 chunk, got %d", len(result))
+		t.Errorf("content within model window should produce 1 chunk, got %d", len(result))
 	}
 	if result[0] != short {
-		t.Error("short content chunk should equal input")
+		t.Error("single chunk must equal input")
+	}
+}
+
+func TestChunkTextExceedsModelWindow(t *testing.T) {
+	// Content exceeding the model window (maxTokens*4 chars) must be split
+	// into multiple chunks, even if it is below the old LazyChunkThreshold
+	// of 8000 chars. The text must contain sentence boundaries for splitting.
+	const maxTokens = 500 // window = 2000 chars
+	// Build ~3000 chars of text with sentence boundaries — above 2000, below 8000.
+	var sb strings.Builder
+	for sb.Len() < 3000 {
+		sb.WriteString("This is a test sentence with enough words to fill space. ")
+	}
+	long := sb.String()
+	result := chunk.ChunkText(long, maxTokens, 50)
+	if len(result) <= 1 {
+		t.Errorf("content exceeding model window should produce >1 chunk, got %d (len=%d, window=%d)", len(result), len(long), maxTokens*4)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/entity"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/netutil"
+	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -209,27 +210,42 @@ func run() error {
 		}
 	}
 
-	// Start the retrieval_events retention worker on a shared backend.
-	// A dedicated backend is used so the worker lifecycle is independent of
-	// per-project factory calls. Project "default" is used for the connection;
-	// the DELETE query itself targets all projects via no project filter.
-	retentionBackend, err := db.NewPostgresBackend(ctx, "default", dsn)
+	// Create a single shared *pgxpool.Pool for the entire server process. All
+	// project backends, entity workers, audit/weight workers, and the retention
+	// worker share this pool rather than each owning a private 25-connection pool.
+	// This prevents connection exhaustion when many projects are active (#363).
+	pgxPool, err := db.NewSharedPool(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("shared pool: %w", err)
+	}
+	defer pgxPool.Close()
+
+	retentionBackend, err := db.NewPostgresBackendWithPool(ctx, "default", pgxPool)
 	if err != nil {
 		return fmt.Errorf("retention worker backend: %w", err)
 	}
-	defer retentionBackend.Close()
+	// retentionBackend does not own the pool — do not call Close() on it.
 	go retentionBackend.StartRetentionWorker(ctx)
 
-	// Audit and weight tuner workers use the shared retention backend pool.
-	// A recaller adapter is wired after the pool is constructed below.
-	sharedPool := retentionBackend.Pool()
+	// GlobalReembedder processes unembedded chunks across all projects from a
+	// single goroutine, lifecycle-independent of any EnginePool entry (#359).
+	// It uses FOR UPDATE SKIP LOCKED so multiple server replicas are safe.
+	reembedBatchSize := envInt("ENGRAM_REEMBED_BATCH_SIZE", 100)
+	reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
+	globalReembedder := reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
+	globalReembedder.Start(ctx)
+	defer globalReembedder.Wait()
+	slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
+
+	// Audit and weight tuner workers use the shared pool directly.
+	sharedPool := pgxPool
 
 	// serverCtx is the outer lifecycle context; captured here so engine background
-	// workers (reembed, decay, summarize) use a long-lived context, not the
-	// 10s-bounded initCtx that Pool.Get passes to the factory.
+	// workers (decay, summarize) use a long-lived context, not the 10s-bounded
+	// initCtx that Pool.Get passes to the factory.
 	serverCtx := ctx
 	factory := func(initCtx context.Context, project string) (*internalmcp.EngineHandle, error) {
-		backend, err := db.NewPostgresBackend(initCtx, project, dsn)
+		backend, err := db.NewPostgresBackendWithPool(initCtx, project, pgxPool)
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
@@ -261,6 +277,7 @@ func run() error {
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
 		OllamaDegraded:           ollamaDegraded,
+		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
@@ -299,22 +316,15 @@ func run() error {
 	}
 	entityProjects = filteredProjects
 
-	var entityBackends []db.Backend
-	defer func() {
-		for _, b := range entityBackends {
-			b.Close()
-		}
-	}()
 	if cc != nil && len(entityProjects) > 0 {
 		for _, proj := range entityProjects {
 			proj := proj // capture for goroutine
-			entityBackend, err := db.NewPostgresBackend(ctx, proj, dsn)
+			entityBackend, err := db.NewPostgresBackendWithPool(ctx, proj, pgxPool)
 			if err != nil {
 				slog.Warn("entity worker: could not open backend, skipping project",
 					"project", proj, "err", err)
 				continue
 			}
-			entityBackends = append(entityBackends, entityBackend)
 			adapter := &entityDBAdapter{backend: entityBackend}
 			extractor := entity.NewClaudeExtractor(cc)
 			w := entity.NewWorker(adapter, extractor, entity.WorkerConfig{
@@ -337,6 +347,12 @@ func run() error {
 				slog.Warn("pprof server stopped", "err", err)
 			}
 		}()
+	}
+
+	// Rehydrate sessions from DB so clients with pre-restart session IDs can
+	// continue making tool calls without reconnecting (#362).
+	if err := srv.RehydrateSessions(ctx, apiKey); err != nil {
+		slog.Warn("session rehydration failed — clients will need to reconnect", "err", err)
 	}
 
 	slog.Info("engram ready", "host", *host, "port", *port,
