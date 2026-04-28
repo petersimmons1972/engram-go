@@ -77,6 +77,18 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 	for {
 		metrics.WorkerTicks.WithLabelValues("global_reembed").Inc()
 		if g.pool != nil && g.embedder != nil {
+			// Update the pending-reembed gauge before each batch so dashboards and
+			// alerts remain live. The per-project Worker used to do this; GlobalReembedder
+			// now owns the reembed path and must carry the responsibility.
+			countCtx, countCancel := context.WithTimeout(ctx, 5*time.Second)
+			var pending int
+			if err := g.pool.QueryRow(countCtx,
+				"SELECT COUNT(*) FROM chunks WHERE embedding IS NULL",
+			).Scan(&pending); err == nil {
+				metrics.ChunksPendingReembed.Set(float64(pending))
+			}
+			countCancel()
+
 			iterCtx, cancel := context.WithTimeout(ctx, globalBatchTimeout)
 			if err := g.runBatch(iterCtx); err != nil && ctx.Err() == nil {
 				slog.Warn("global reembedder batch error", "err", err)
