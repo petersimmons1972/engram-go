@@ -2,20 +2,73 @@ package db
 
 import (
 	"context"
-	"os"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/petersimmons1972/engram/internal/testutil"
 )
 
 // TestSessionRegistryRoundtrip verifies the four session methods work correctly
 // against a real PostgreSQL database. Requires TEST_DATABASE_URL.
 func TestSessionRegistryRoundtrip(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set — skipping integration test")
+	dsn := testutil.DSN(t)
+	ctx := context.Background()
+
+	pool, err := NewSharedPool(ctx, dsn)
+	if err != nil {
+		t.Fatalf("NewSharedPool: %v", err)
 	}
-	// TODO: implement with real DB when integration env is available.
-	_ = dsn
+	defer pool.Close()
+
+	b, err := NewPostgresBackendWithPool(ctx, testutil.UniqueProject("sess"), pool)
+	if err != nil {
+		t.Fatalf("NewPostgresBackendWithPool: %v", err)
+	}
+
+	sessionID := fmt.Sprintf("test-session-%d", time.Now().UnixNano())
+	apiKeyHash := "deadbeef"
+
+	// Register
+	if err := b.RegisterSession(ctx, sessionID, apiKeyHash); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	// List — should appear
+	sessions, err := b.ListActiveSessions(ctx, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("ListActiveSessions: %v", err)
+	}
+	found := false
+	for _, s := range sessions {
+		if s == sessionID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("registered session %q not found in ListActiveSessions", sessionID)
+	}
+
+	// Touch — should not error
+	if err := b.TouchSession(ctx, sessionID); err != nil {
+		t.Errorf("TouchSession: %v", err)
+	}
+
+	// Unregister
+	if err := b.UnregisterSession(ctx, sessionID); err != nil {
+		t.Fatalf("UnregisterSession: %v", err)
+	}
+
+	// List again — should be gone
+	sessions, err = b.ListActiveSessions(ctx, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("ListActiveSessions after unregister: %v", err)
+	}
+	for _, s := range sessions {
+		if s == sessionID {
+			t.Errorf("unregistered session %q still appears in ListActiveSessions", sessionID)
+		}
+	}
 }
 
 // TestRegisterSessionRejectsNilPool verifies that calling RegisterSession on a

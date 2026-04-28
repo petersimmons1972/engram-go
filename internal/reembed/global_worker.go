@@ -160,6 +160,7 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 			vec, err := g.embedder.Embed(embedCtx, c.chunkText)
 			if err != nil {
 				slog.Warn("global reembedder: embed failed", "chunk", c.id, "err", err)
+				metrics.WorkerErrors.WithLabelValues("global_reembed").Inc()
 				return nil // non-fatal: skip chunk, retry on next tick
 			}
 			if _, err := g.pool.Exec(egCtx,
