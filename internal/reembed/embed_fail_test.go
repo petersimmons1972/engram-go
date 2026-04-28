@@ -12,6 +12,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/testutil"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // failEmbedder is a mock embed.Client that always returns an error.
@@ -39,22 +40,37 @@ func TestEmbedFailureCountedInMetrics(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// Insert a minimal chunk row with a NULL embedding so runBatch has something
-	// to pick up. We use a conflict-safe upsert to re-run the test idempotently.
-	chunkID := "reembed-test-embed-fail-chunk"
-	memID := "reembed-test-embed-fail-mem"
-	_, err = pool.Exec(ctx, `
-		INSERT INTO chunks (id, memory_id, project, chunk_text, chunk_index, embedding)
-		VALUES ($1, $2, 'reembed-test', 'test content', 0, NULL)
-		ON CONFLICT (id) DO UPDATE SET embedding = NULL`,
-		chunkID, memID,
-	)
+	project := testutil.UniqueProject("reembed-fail")
+	backend, err := db.NewPostgresBackendWithPool(ctx, project, pool)
 	if err != nil {
-		t.Skipf("cannot seed test chunk (schema constraint): %v", err)
+		t.Fatalf("NewPostgresBackendWithPool: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM chunks WHERE id = $1", chunkID)
-	})
+
+	// Seed a memory + chunk with NULL embedding so runBatch picks it up.
+	mem := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "test content for embed failure",
+		MemoryType:  "context",
+		Project:     project,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	if err := backend.StoreMemory(ctx, mem); err != nil {
+		t.Fatalf("StoreMemory: %v", err)
+	}
+
+	chunk := &types.Chunk{
+		ID:         types.NewMemoryID(),
+		MemoryID:   mem.ID,
+		Project:    project,
+		ChunkText:  mem.Content,
+		ChunkIndex: 0,
+		// Embedding left nil → stored as NULL → picked up by runBatch's
+		// "WHERE c.embedding IS NULL" query.
+	}
+	if err := backend.StoreChunks(ctx, []*types.Chunk{chunk}); err != nil {
+		t.Fatalf("StoreChunks: %v", err)
+	}
 
 	g := &GlobalReembedder{
 		pool:      pool,
