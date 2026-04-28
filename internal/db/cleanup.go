@@ -53,6 +53,9 @@ func (b *PostgresBackend) StartRetentionWorker(ctx context.Context) {
 // number of rows removed. Kept private; callers should use StartRetentionWorker
 // or CleanupRetentionEvents.
 func (b *PostgresBackend) deleteOldRetrievalEvents(ctx context.Context) (int64, error) {
+	if b.pool == nil {
+		return 0, nil
+	}
 	const q = `
 DELETE FROM retrieval_events
 WHERE created_at < NOW() - INTERVAL '90 days'`

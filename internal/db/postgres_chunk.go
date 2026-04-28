@@ -187,11 +187,22 @@ func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID stri
 	return int(tag.RowsAffected()), err
 }
 
-// hnswDefaultEfSearch is the HNSW index ef_construction value (build-time). The
-// query-time ef_search defaults to the same value. When callers request more
-// candidates than this threshold, we tune ef_search upward so the index can
-// actually return the requested number of rows rather than silently truncating.
+// hnswDefaultEfSearch is the HNSW index default ef_search (query-time candidate
+// set size). When callers request more candidates than this threshold, we tune
+// ef_search upward so the index can actually return the requested number of rows
+// rather than silently truncating.
 const hnswDefaultEfSearch = 64
+
+// efSearchForLimit returns the ef_search value to set for a given query limit.
+// It doubles the limit to overscan, capped at 1000 to prevent pathological
+// HNSW scans on very large limits (#370).
+func efSearchForLimit(limit int) int {
+	v := limit * 2
+	if v > 1000 {
+		v = 1000
+	}
+	return v
+}
 
 func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error) {
 	// When the requested limit exceeds the HNSW default ef_search, the index
@@ -204,10 +215,7 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 			return nil, fmt.Errorf("begin vector search tx: %w", err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }() // read-only — rollback == commit here
-		efSearch := limit * 2
-		if efSearch > 1000 {
-			efSearch = 1000
-		}
+		efSearch := efSearchForLimit(limit)
 		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", efSearch)); err != nil {
 			return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
 		}
