@@ -17,73 +17,71 @@
 - **Pre-validation:** ONE agent analyzes 2–3 samples first. Present findings. Only then dispatch remaining agents with the confirmed problem definition.
 - List which functions each agent will touch. Two agents on the same function → flag it, run full test suite after.
 - **Always include one zero-context reviewer** — receives only raw inputs, no prior findings.
-- **Review mode — judge against the reference, not the current file:** When dispatching generals for adversarial review, include: "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
+- **Pre-ship QA:** dispatch the 6-persona fault-finder sweep (`spawn-patterns.md` Pattern 6, or `/qa-personas <target>`) before claiming done on user-facing work. Two-round methodology: fix blockers, re-run.
+- **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
+- **Validator bash guard:** Before dispatching Spruance or Rickover-validator, run `touch ~/.claude/.validator-bash-guard`. After the validation session ends, run `rm ~/.claude/.validator-bash-guard`. This enables the read-only Bash enforcement hook.
 
 ## Pre-Flight Protocol — MANDATORY
 
 Each step has an explicit trigger. Execute the step when its trigger fires. Do not execute a step outside its trigger.
 
-1. **ENVIRONMENT CHECK**
-   - **Trigger:** Before the first write operation of a session (any `git add`, `git commit`, `Edit`, `Write`, or `Bash` command that mutates state).
-   - **Action:** Run `git status`, `git branch`, `pwd`. Halt and report if any output is unexpected (wrong branch, uncommitted changes you didn't make, wrong directory).
-   - **Frequency:** Once per session unless branch or directory changes.
+| # | Step | Trigger | Action | Notes |
+|---|------|---------|--------|-------|
+| 1 | ENVIRONMENT CHECK | Before the first write operation of a session (any `git add`, `git commit`, `Edit`, `Write`, or `Bash` command that mutates state) | Run `git status`, `git branch`, `pwd`. Halt and report if any output is unexpected (wrong branch, uncommitted changes you didn't make, wrong directory). | Once per session unless branch or directory changes |
+| 2 | REQUEST VERIFICATION | Before starting any task that requires 3+ distinct tool calls or 2+ files touched | Write a one-paragraph restatement of what you understand the request to be. If any element is ambiguous, stop and ask one focused question before proceeding. | Skip: single-file reads, single-command answers, informational questions |
+| 3 | BUG ACCOUNTABILITY | Immediately upon discovering any bug, before continuing other work | Either (a) fix it now and file a closed GitHub Issue documenting the fix, or (b) file an open GitHub Issue and note the deferral. Never leave a bug undocumented. | Every bug |
+| 4 | BRANCH VERIFICATION | After `git push` or after any `git commit` where commit landing is load-bearing for the next step | Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding. | After every qualifying event |
 
-2. **REQUEST VERIFICATION**
-   - **Trigger:** Before starting any task that requires 3+ distinct tool calls or 2+ files touched.
-   - **Action:** Write a one-paragraph restatement of what you understand the request to be. If any element is ambiguous, stop and ask one focused question before proceeding.
-   - **Skip:** Single-file reads, single-command answers, informational questions.
+## Advisory Protocol — Tiered Self-Escalation
 
-3. **BUG ACCOUNTABILITY**
-   - **Trigger:** Immediately upon discovering any bug, before continuing other work.
-   - **Action:** Either (a) fix it now and file a closed GitHub Issue documenting the fix, or (b) file an open GitHub Issue and note the deferral. Never leave a bug undocumented.
+Models escalate up the tier only when the task genuinely requires stronger **reasoning**. Capacity problems (rate limits, timeouts, connection exhaustion, tool unavailability) stay at the current tier or below — fix them in Haiku.
 
-4. **BRANCH VERIFICATION**
-   - **Trigger:** After `git push` or after any `git commit` where commit landing is load-bearing for the next step.
-   - **Action:** Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding.
+**Tier order:** Haiku → Sonnet → Opus
+
+- Haiku handles infrastructure fixes, retries, simple lookups, and mechanical tasks.
+- Sonnet handles implementation, debugging, and most engineering decisions.
+- Opus is reserved for architectural forks, irreversible high-stakes decisions, and problems where stronger reasoning changes the answer.
+
+When the primary model encounters any of the following, **spawn the `opus-advisor` agent** via the Agent tool before proceeding:
+
+| Trigger | Description |
+|---------|-------------|
+| **A1 — Architecture fork** | Choosing between 2+ implementation approaches with meaningfully different long-term consequences |
+| **A2 — Infrastructure change** | Any modification to K8s manifests, DNS, cert-manager, Cloudflare, or storage configuration |
+| **A3 — Large refactor** | Restructuring a module, class, or system boundary > 100 lines |
+| **A4 — Stuck after 2 attempts** | The same root cause has failed twice AND the failure is a reasoning/logic problem; before the third attempt, get Opus to reframe |
+| **A5 — Ambiguous high-stakes decision** | A decision that cannot be easily reversed and the right answer isn't clear |
+
+**Skip the advisor for:** read-only investigation, single-file fixes < 50 lines with obvious root cause, routine dependency updates, **any failure caused by capacity/rate limits/timeouts/infra rather than reasoning**.
+
+**Opus is for reasoning quality, not capacity problems.** Rate limits, timeouts, connection exhaustion, and tool unavailability are infrastructure problems — fix them in Haiku. Never upgrade tiers because something failed; only upgrade when the task genuinely requires stronger reasoning to decide correctly.
+
+### Briefing Format
+
+When spawning the advisor, include:
+
+1. **Decision**: One sentence — what must be decided
+2. **Options**: A, B, (C) — each with a one-sentence tradeoff
+3. **Lean**: Which option you're currently leaning toward and why you're uncertain
+4. **Context**: Relevant file paths or constraints
+
+Use `subagent_type: "opus-advisor"` in the Agent tool call. Wait for the RECOMMENDATION before proceeding.
 
 ## Engram Memory — MANDATORY
 
-Engram is at `http://localhost:8788/mcp`. Each rule below has an explicit trigger. Execute when the trigger fires; do not execute outside its trigger.
+Endpoint: `http://localhost:8788/mcp` · Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 
-Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`.
+Each rule has an explicit trigger. Execute when the trigger fires; do not execute outside its trigger.
 
-### Rule 1 — Session-start recall
-- **Trigger:** The first user message of a new conversation, before any other tool call.
-- **Action:** Call `memory_recall("current project status recent work", project="global")`, then `memory_recall("<topic of the request>", project="<relevant project>")`. If the relevant project is unclear, also recall from `global`.
-- **Frequency:** Once per conversation.
-
-### Rule 2 — Pre-decision recall
-- **Trigger:** Before one of these specific actions: (a) proposing an architecture or design, (b) choosing between 2+ implementation options, (c) modifying infrastructure (K8s, DNS, cert-manager, storage), (d) modifying a Clearwatch feature area.
-- **Action:** `memory_recall("<decision topic or feature area>", project="<relevant project>")`.
-- **Skip:** Read-only investigation, informational answers, trivial single-file edits.
-
-### Rule 3 — Retrieval feedback (every recall, no exceptions)
-- **Trigger:** Immediately after any `memory_recall` call returns.
-- **Action:**
-  - If results helped → call `memory_feedback` with the IDs that actually informed the answer.
-  - If results were absent or wrong for a query where context should exist → store a miss: `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`.
-- **Purpose:** Feeds retrieval-quality data to Peter's memory benchmarking. No exceptions.
-
-### Rule 4 — Post-work storage
-- **Trigger:** After completing one of these specific outcomes: (a) a bug fix committed, (b) an architectural decision made, (c) a pattern used 2+ times in this session, (d) end of a working session.
-- **Action:** `memory_store` with the appropriate `memory_type`:
-  - `decision` for architectural choices (include why)
-  - `error` for bug fixes (include root cause)
-  - `pattern` for patterns established
-  - `context` with `importance=1, project="global"` for session summary at end
-
-### Rule 5 — Never-store exclusion (check before every store)
-- **Trigger:** Before any `memory_store` call.
-- **Action:** If the content is transient operational state with expected lifespan < 4 hours (service status, DNS state, build status, migration progress, health output), do NOT store. File a GitHub Issue instead.
-
-### Rule 6 — Fallback to filesystem
-- **Trigger:** Engram unreachable after one retry within 30 seconds.
-- **Action:** Write the memory entry to `~/.claude/projects/-home-psimmons/memory/fallback.md` using the format defined in that file. On Engram reconnect, flush all pending entries via `memory_store` and clear them from the file.
-- **Note:** `fallback.md` is a staging file only — nothing should live there permanently.
-
-### Rule 7 — Dispute tracking (Eisenhower only)
-- **Trigger:** Before Eisenhower adjudicates a user-raised dispute.
-- **Action:** `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do NOT adjudicate — escalate to founder. Store each adjudication as: `content="DISPUTE: <description> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
+| Rule | Trigger | Action |
+|------|---------|--------|
+| **R1 — Session-start recall** | First user message of a new conversation, before any other tool call | `memory_recall("current project status recent work", project="global")`, then `memory_recall("<topic of the request>", project="<relevant project>")`. If the relevant project is unclear, also recall from `global`. Once per conversation. |
+| **R2 — Pre-decision recall** | Before: (a) proposing an architecture or design, (b) choosing between 2+ implementation options, (c) modifying infrastructure (K8s, DNS, cert-manager, storage), (d) modifying a Clearwatch feature area | `memory_recall("<decision topic or feature area>", project="<relevant project>")`. Skip: read-only investigation, informational answers, trivial single-file edits. |
+| **R3 — Retrieval feedback** | Immediately after any `memory_recall` call — no exceptions | If results helped → `memory_feedback` with the IDs that actually informed the answer. If results were absent or wrong for a query where context should exist → `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`. Feeds retrieval-quality data to Peter's memory benchmarking. |
+| **R4 — Post-work storage** | After: (a) a bug fix committed, (b) an architectural decision made, (c) a pattern used 2+ times in this session, (d) end of a working session | `memory_store` with the appropriate `memory_type`: `decision` (architectural choices — include why) · `error` (bug fixes — include root cause) · `pattern` (patterns established) · `context` (`importance=1, project="global"` for session summary at end) |
+| **R5 — Never-store exclusion** | Before any `memory_store` call | If content is transient operational state with expected lifespan < 4 hours (service status, DNS state, build status, migration progress, health output) → do NOT store. File a GitHub Issue instead. |
+| **R6 — Fallback to filesystem** | Engram unreachable after one retry within 30 seconds | Write the memory entry to `~/.claude/projects/-home-psimmons/memory/fallback.md` using the format defined in that file. On Engram reconnect, flush all pending entries via `memory_store` and clear them from the file. `fallback.md` is a staging file only — nothing should live there permanently. |
+| **R7 — Dispute tracking (Eisenhower only)** | Before Eisenhower adjudicates a user-raised dispute | `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do NOT adjudicate — escalate to founder. Store each adjudication: `content="DISPUTE: <description> \| VERDICT: <summary> \| COUNT: N \| LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`. |
 
 ## Test-After-Edit Protocol
 - After any code edit, run the relevant test suite before moving to the next task
@@ -98,9 +96,7 @@ Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 - **Stay in scope.** >15 min tangent → file GitHub Issue, keep moving. <15 min → fix and note it.
 - `superpowers:verification-before-completion` before claiming done.
 - **Graceful degradation:** For research-heavy dispatches (multi-tool, expected >8 turns), add to the dispatch brief: "If you reach turn 8 of 10 without a complete answer, stop tool calls and return a partial summary labeled `PARTIAL:` with what you have gathered. Do not wait for perfect information."
-- **Two escalation modes — use the right one:**
-  - **Partial-work escalation:** Agent made real progress, got stuck — preserve the partial output and hand off with context. Never discard useful work.
-  - **Hard-failure escalation:** Infrastructure or tooling broke before meaningful work happened — dead letter it, retry from scratch. Don't try to salvage.
+- **Two escalation modes — use the right one:** Partial-work (agent made real progress, got stuck) → preserve the partial output and hand off with context, never discard useful work. Hard-failure (infrastructure or tooling broke before meaningful work happened) → dead letter it, retry from scratch, don't try to salvage.
 
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
@@ -112,13 +108,8 @@ Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 GitHub Issues ARE the work. Defect not in the system = does not exist.
 - Found a bug → file it before continuing. Fixed inline → file it as closed. Deferred → file it.
 - **Continuity test:** Could the next session pick up every open defect from GitHub Issues alone?
-- File issues FIRST, then report status.
+- File issues FIRST, then report status. Use `gh issue create` with clear title, reproduction steps, and labels. Reference issue numbers in commit messages and PRs.
 - **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
-
-## Issue Tracking Compliance
-- ALWAYS file GitHub issues for every defect/bug discovered during smoketests, QA, or report generation BEFORE attempting fixes
-- Use `gh issue create` with clear title, reproduction steps, and labels
-- Reference issue numbers in commit messages and PRs
 
 ## CLI Tool Preferences
 - **HTTP requests:** use `xh` not `curl` — cleaner output, no flags needed for JSON
@@ -153,16 +144,11 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 
 ## Cost Guardrails & Wake-the-Founder Triggers
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
-- STOP and notify founder if:
-  - **>$5 compute** — cumulative estimated cost per request, estimated before execution
-  - **production deployment** — any kubectl/helm/terraform apply targeting prod namespaces or clusters
-  - **push to main/master** — any `git push` whose target ref is `main` or `master`
-  - **data loss risk** — any operation that deletes, truncates, or overwrites persistent data without a verified backup
-  - **agent stuck ≥45 min** — stuck = elapsed wall time ≥45 minutes since the last successful tool output (tool calls failing, loops repeating, or output unchanged)
-  - **same error 3+ times in this session** — same root cause measured by stack trace or explicit error message match; counter resets when the session ends or root cause changes
+- STOP and notify founder if: **>$5 compute** (cumulative estimated cost per request, estimated before execution) · **production deployment** (kubectl/helm/terraform apply targeting prod namespaces or clusters) · **push to main/master** (any `git push` whose target ref is `main` or `master`) · **data loss risk** (any operation that deletes, truncates, or overwrites persistent data without a verified backup) · **agent stuck ≥45 min** (stuck = elapsed wall time ≥45 min since last successful tool output; tool calls failing, loops repeating, or output unchanged) · **same error 3+ times in this session** (same root cause by stack trace or explicit error message match; counter resets when session ends or root cause changes)
 
 ## Reference
 **Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
 **Skills:** Debug → `superpowers:systematic-debugging` | Implement → `superpowers:brainstorming` | GitHub docs → `github-docs` (skill at `~/.claude/skills/github-docs/SKILL.md`)
+**Benched skills** (inactive, not auto-loaded): `~/.claude/skills/bench/INDEX.md` — reactivate with `mv ~/.claude/skills/bench/<name> ~/.claude/skills/`
 **Web Search:** ALWAYS use `search "query"` (`~/bin/search`) — hits local SearxNG (K8s deployment, `default/searxng`, 2 replicas, scales via `kubectl scale deploy/searxng -n default --replicas=N`). Aggregates Google + DuckDuckGo + Startpage. Use `--full` for snippets, `--limit N` for more results. NEVER use the WebSearch tool unless SearxNG is unreachable.
 **Learning:** Detail → topic file | one-liner → MEMORY.md | rule → CLAUDE.md | `~/.claude/projects/-home-psimmons/memory/`
