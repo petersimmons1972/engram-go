@@ -38,9 +38,15 @@ Models escalate up the tier only when the task genuinely requires stronger **rea
 
 **Tier order:** Haiku → Sonnet → Opus
 
-- Haiku handles infrastructure fixes, retries, simple lookups, and mechanical tasks.
-- Sonnet handles implementation, debugging, and most engineering decisions.
-- Opus is reserved for architectural forks, irreversible high-stakes decisions, and problems where stronger reasoning changes the answer.
+**Minimum tier rule:** Always use the lowest tier that can execute the task correctly. Before spawning any agent or choosing a model, ask: "Would a less capable model get this right?" If yes, use the lower tier.
+
+| Tier | Use for |
+|------|---------|
+| **Haiku** | Classification, formatting, retries, health checks, simple lookups, mechanical transforms, bulk judge/scoring tasks, any task where output quality is independent of reasoning depth |
+| **Sonnet** | Implementation, debugging, multi-file edits, code review, most engineering decisions |
+| **Opus** | Architectural forks with long-term consequences, irreversible high-stakes decisions, problems where stronger reasoning materially changes the answer |
+
+When dispatching parallel agents, set each agent's model independently — do not default all agents to Sonnet when some are doing Haiku-tier work.
 
 When the primary model encounters any of the following, **spawn the `opus-advisor` agent** via the Agent tool before proceeding:
 
