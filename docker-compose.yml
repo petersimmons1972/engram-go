@@ -104,7 +104,7 @@ services:
       - OLLAMA_FLASH_ATTENTION=1
       # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
       # reload penalty after idle gaps between prompts.
-      - OLLAMA_KEEP_ALIVE=1h
+      - OLLAMA_KEEP_ALIVE=-1
       # Allow 8 concurrent embedding requests — critical for LongMemEval
       # with 16 parallel ingest workers all queuing embeds simultaneously.
       - OLLAMA_NUM_PARALLEL=8
@@ -123,9 +123,9 @@ services:
       - path: .env.machine-identity
         required: true
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
       - OLLAMA_URL=http://ollama:11434
-      - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-nomic-embed-text}
+      - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-mxbai-embed-large}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # Advertise the host-visible URL so Claude Code forwards auth headers correctly.
       # Without this, SSE events say http://0.0.0.0:8788 but Claude Code's auth
