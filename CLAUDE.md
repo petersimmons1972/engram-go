@@ -46,7 +46,7 @@ Models escalate up the tier only when the task genuinely requires stronger **rea
 | **Sonnet** | Implementation, debugging, multi-file edits, code review, most engineering decisions |
 | **Opus** | Architectural forks with long-term consequences, irreversible high-stakes decisions, problems where stronger reasoning materially changes the answer |
 
-When dispatching parallel agents, set each agent's model independently — do not default all agents to Sonnet when some are doing Haiku-tier work.
+When dispatching parallel agents, set each agent's model independently — do not default all agents to Sonnet when some are doing Haiku-tier work. **Uneven agent teams are correct and preferred**: a campaign with one Sonnet coordinator, four Haiku workers, and an on-demand Opus advisor costs a fraction of an all-Sonnet team and produces the same result. Homogeneous model selection is a smell.
 
 **The advisor pattern makes over-provisioning indefensible.** Sonnet and Haiku have a direct escalation path to Opus reasoning via the opus-advisor agent whenever they genuinely need it. There is no justification for defaulting to a higher tier "just in case" — escalate on demand, not by default.
 
