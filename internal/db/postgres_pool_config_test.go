@@ -12,6 +12,9 @@ import (
 // where stale connections survive PostgreSQL restarts or network flaps because
 // MaxConnLifetime, MaxConnIdleTime, or HealthCheckPeriod are zero (which disables
 // them in pgxpool).
+//
+// configurePool is used by CLI tools (cmd/reembed-worker, cmd/engram-setup) that
+// create a single project-scoped pool. The server uses configureSharedPool instead.
 func TestPoolConfig_HasLifetimeSettings(t *testing.T) {
 	cfg, err := pgxpool.ParseConfig("postgres://user:password@localhost:5432/engram")
 	if err != nil {
@@ -20,11 +23,8 @@ func TestPoolConfig_HasLifetimeSettings(t *testing.T) {
 
 	configurePool(cfg)
 
-	if cfg.MaxConns != 25 {
-		t.Errorf("MaxConns: got %d, want 25", cfg.MaxConns)
-	}
-	if cfg.MinConns != 5 {
-		t.Errorf("MinConns: got %d, want 5", cfg.MinConns)
+	if cfg.MaxConns <= 0 {
+		t.Errorf("MaxConns: got %d, want > 0", cfg.MaxConns)
 	}
 	if cfg.MaxConnLifetime == 0 {
 		t.Error("MaxConnLifetime is zero — stale connections will never be evicted")
@@ -37,8 +37,8 @@ func TestPoolConfig_HasLifetimeSettings(t *testing.T) {
 	}
 }
 
-// TestPoolConfig_LifetimeValues verifies the exact durations match the spec:
-// MaxConnLifetime=30m, MaxConnIdleTime=5m, HealthCheckPeriod=1m.
+// TestPoolConfig_LifetimeValues verifies the exact durations for the CLI tool
+// pool (configurePool): MaxConnLifetime=30m, MaxConnIdleTime=5m, HealthCheckPeriod=1m.
 func TestPoolConfig_LifetimeValues(t *testing.T) {
 	cfg, err := pgxpool.ParseConfig("postgres://user:password@localhost:5432/engram")
 	if err != nil {

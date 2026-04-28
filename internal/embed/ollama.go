@@ -134,9 +134,16 @@ func newOllamaClient(ctx context.Context, baseURL, model string, targetDims int,
 func (c *OllamaClient) Name() string    { return c.model }
 func (c *OllamaClient) Dimensions() int { return c.dims }
 
+// MaxTokens returns the context window limit for the configured embedding model.
+// Used by the search engine to size chunks correctly and as a safety-net in Embed.
+func (c *OllamaClient) MaxTokens() int { return ModelMaxTokens(c.model) }
+
 // Embed calls POST /api/embed and returns the first embedding vector.
 // When targetDims > 0, passes "dimensions" to Ollama for MRL truncation.
+// Text is truncated to the model's context window before the call so Ollama
+// never receives text that would exceed the model's token limit (#361).
 func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	text = TruncateToModelWindow(text, c.MaxTokens())
 	reqBody := map[string]any{"model": c.model, "input": text}
 	if c.targetDims > 0 {
 		reqBody["dimensions"] = c.targetDims

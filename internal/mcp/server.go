@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -171,6 +172,61 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 // setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
 const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 
+// hashAPIKey returns the SHA-256 hex digest of the API key. Stored in the
+// sessions table instead of the plaintext key so the DB does not become a
+// credential store.
+func hashAPIKey(apiKey string) string {
+	sum := sha256.Sum256([]byte(apiKey))
+	return hex.EncodeToString(sum[:])
+}
+
+// rehydratedSession is a minimal ClientSession that satisfies the mcp-go
+// interface for the purpose of re-registering sessions after a server restart.
+// Notifications are sent to a buffered channel that silently drops overflow —
+// the real SSE connection is gone, but tool calls (POST /message) still work.
+type rehydratedSession struct {
+	id   string
+	ch   chan mcpgo.JSONRPCNotification
+}
+
+func newRehydratedSession(id string) *rehydratedSession {
+	// Buffer 256 notifications — the real SSE consumer is gone, but the mcp-go
+	// transport may attempt sends. A buffer large enough to absorb any burst
+	// prevents the sender goroutine from blocking on a dead channel.
+	return &rehydratedSession{id: id, ch: make(chan mcpgo.JSONRPCNotification, 256)}
+}
+
+func (r *rehydratedSession) Initialize()                                        {}
+func (r *rehydratedSession) Initialized() bool                                  { return true }
+func (r *rehydratedSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification { return r.ch }
+func (r *rehydratedSession) SessionID() string                                  { return r.id }
+
+// RehydrateSessions loads active sessions from the database and re-registers
+// them in the mcp-go transport so POST /message calls with pre-restart session
+// IDs succeed immediately after a restart (#362). Must be called before Start.
+func (s *Server) RehydrateSessions(ctx context.Context, apiKey string) error {
+	if s.cfg.SessionDB == nil {
+		return nil
+	}
+	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, 2*time.Hour)
+	if err != nil {
+		return fmt.Errorf("list active sessions for rehydration: %w", err)
+	}
+	for _, id := range ids {
+		sess := newRehydratedSession(id)
+		if err := s.mcp.RegisterSession(ctx, sess); err != nil {
+			slog.Warn("rehydrate sessions: failed to register", "session_id", id, "err", err)
+			continue
+		}
+		// Restore the HMAC fingerprint so withSessionFingerprint passes (#245).
+		mac := hmac.New(sha256.New, []byte(apiKey))
+		mac.Write([]byte(id))
+		s.sessionFingerprints.Store(id, mac.Sum(nil))
+	}
+	slog.Info("session rehydration complete", "count", len(ids))
+	return nil
+}
+
 // registerSessionHooks wires the OnRegisterSession and OnUnregisterSession
 // hooks on the MCP server. Extracted from Start so tests can call it directly
 // without binding a port.
@@ -191,6 +247,17 @@ func (s *Server) registerSessionHooks(apiKey string) {
 		mac := hmac.New(sha256.New, []byte(apiKey))
 		mac.Write([]byte(sessionID))
 		s.sessionFingerprints.Store(sessionID, mac.Sum(nil))
+
+		// Persist to DB so the session survives a server restart (#362).
+		if s.cfg.SessionDB != nil {
+			go func() {
+				dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.cfg.SessionDB.RegisterSession(dbCtx, sessionID, hashAPIKey(apiKey)); err != nil {
+					slog.Warn("session persist: RegisterSession failed", "session_id", sessionID, "err", err)
+				}
+			}()
+		}
 
 		// Auto-episode opt-in: start an episode only when ?auto_episode=1 was
 		// present in the SSE URL. The flag is injected into the context by
@@ -216,6 +283,17 @@ func (s *Server) registerSessionHooks(apiKey string) {
 	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
 		sessionID := sess.SessionID()
 		s.sessionFingerprints.Delete(sessionID)
+
+		// Remove from DB on clean disconnect (#362).
+		if s.cfg.SessionDB != nil {
+			go func() {
+				dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.cfg.SessionDB.UnregisterSession(dbCtx, sessionID); err != nil {
+					slog.Warn("session persist: UnregisterSession failed", "session_id", sessionID, "err", err)
+				}
+			}()
+		}
 
 		// Close any auto-started episode. Use context.Background() because the
 		// session context is already cancelled when this hook fires (#356).
@@ -489,6 +567,19 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// Update last_seen_at so the session remains within the rehydration window
+		// even for long-lived connections that exceed the registration timestamp (#362).
+		if s.cfg.SessionDB != nil {
+			go func() {
+				dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.cfg.SessionDB.TouchSession(dbCtx, sessionID); err != nil {
+					slog.Debug("session touch failed", "session_id", sessionID, "err", err)
+				}
+			}()
+		}
+
 		storedFP, _ := stored.([]byte)
 
 		// Compute the expected fingerprint for the current bearer.
