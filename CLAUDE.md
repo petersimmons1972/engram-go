@@ -48,6 +48,8 @@ Models escalate up the tier only when the task genuinely requires stronger **rea
 
 When dispatching parallel agents, set each agent's model independently — do not default all agents to Sonnet when some are doing Haiku-tier work.
 
+**The advisor pattern makes over-provisioning indefensible.** Sonnet and Haiku have a direct escalation path to Opus reasoning via the opus-advisor agent whenever they genuinely need it. There is no justification for defaulting to a higher tier "just in case" — escalate on demand, not by default.
+
 When the primary model encounters any of the following, **spawn the `opus-advisor` agent** via the Agent tool before proceeding:
 
 | Trigger | Description |
