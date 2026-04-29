@@ -187,11 +187,22 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 		return nil, nil
 	}
 
-	baseQ := `SELECT m.*, ts_rank(m.search_vector, plainto_tsquery('english', $1)) AS rank
-		  FROM memories m
-		  WHERE m.search_vector @@ plainto_tsquery('english', $2)
-		  AND m.project=$3 AND m.valid_to IS NULL`
-	args := []any{query, query, project}
+	// OR-semantics FTS: extract lexemes from the query and join with | so a
+	// session only needs to match *some* content terms, not all of them.
+	// plainto_tsquery AND semantics excluded sessions that lacked conversational
+	// framing words ("previous", "remind") even when they contained the key
+	// content terms ("plesiosaur", "dinosaur"). The CTE is NULL-safe: if all
+	// query words are stop words, q IS NULL and the WHERE clause matches nothing.
+	baseQ := `WITH orq AS (
+		  SELECT to_tsquery('english', string_agg(lexeme, ' | ')) AS q
+		  FROM unnest(to_tsvector('english', $1))
+		)
+		SELECT m.*, ts_rank(m.search_vector, orq.q) AS rank
+		FROM memories m, orq
+		WHERE orq.q IS NOT NULL
+		  AND m.search_vector @@ orq.q
+		  AND m.project=$2 AND m.valid_to IS NULL`
+	args := []any{query, project}
 
 	// Build optional time-range clauses using the same parameterized approach as ListMemories.
 	var timeWhere []string
