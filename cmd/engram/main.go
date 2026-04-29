@@ -133,6 +133,11 @@ func run() error {
 		return fmt.Errorf("ENGRAM_API_KEY environment variable is required (--api-key flag intentionally omitted — see issue #136)")
 	}
 
+	// Warn on inconsistent embed config before spending time connecting to Ollama. (#380)
+	if warn := validateEmbedConfig(*embedModel, *embedDims); warn != "" {
+		slog.Warn("embed config warning", "detail", warn)
+	}
+
 	// Unset secrets from the process environment after reading (#139, #141, #250).
 	// Reduces the exposure window for credentials in /proc/self/environ.
 	_ = os.Unsetenv("ENGRAM_API_KEY")
@@ -438,6 +443,30 @@ func (a *entityDBAdapter) UpsertEntity(ctx context.Context, e *entity.Entity) (s
 // auditRecallerAdapter adapts the engine pool to the audit.Recaller interface.
 type auditRecallerAdapter struct {
 	pool *internalmcp.EnginePool
+}
+
+// validateEmbedConfig checks that the embedding model and dimensions are
+// consistent. Returns a non-empty warning string when misconfigured. (#380)
+//
+// qwen3-embedding:8b natively outputs 1536 dims; set ENGRAM_EMBED_DIMENSIONS=1024
+// to enable MRL truncation so vectors fit in the existing vector(1024) column.
+// mxbai-embed-large does not support MRL; ENGRAM_EMBED_DIMENSIONS must be 0.
+func validateEmbedConfig(model string, dims int) string {
+	switch model {
+	case "qwen3-embedding:8b":
+		if dims == 1024 {
+			return ""
+		}
+		return "qwen3-embedding:8b requires ENGRAM_EMBED_DIMENSIONS=1024 for MRL truncation " +
+			"to fit the vector(1024) column; current value (" + fmt.Sprintf("%d", dims) + ") will cause dimension mismatch errors"
+	case "mxbai-embed-large", "mxbai-embed-large:latest":
+		if dims == 0 {
+			return ""
+		}
+		return "mxbai-embed-large does not support MRL truncation; set ENGRAM_EMBED_DIMENSIONS=0 " +
+			"(current value: " + fmt.Sprintf("%d", dims) + ")"
+	}
+	return ""
 }
 
 func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {

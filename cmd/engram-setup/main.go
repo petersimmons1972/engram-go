@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -109,6 +110,15 @@ func run() error {
 
 	if len(updated) == 0 {
 		return fmt.Errorf("failed to update any config file")
+	}
+
+	// Also write the key to a durable backup outside the repo. (#377)
+	// If .env is deleted and make init is re-run, the backup is consulted first
+	// so the same key is restored rather than generating a new random one.
+	if keyPath, err := defaultKeyBackupPath(); err == nil {
+		if writeErr := writeKeyBackup(setup.Token, keyPath); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "engram-setup: warning: could not write key backup to %s: %v\n", keyPath, writeErr)
+		}
 	}
 
 	fmt.Printf("engram configured.\n")
@@ -202,6 +212,37 @@ type setupResponse struct {
 	Token    string `json:"token"`
 	Endpoint string `json:"endpoint"`
 	Name     string `json:"name"`
+}
+
+// defaultKeyBackupPath returns the path where the API key is durably stored
+// outside the repository. Survives .env deletion and container rebuilds. (#377)
+func defaultKeyBackupPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "engram", "api_key"), nil
+}
+
+// writeKeyBackup writes token to path with mode 0600, creating parent dirs.
+// This backs up the ENGRAM_API_KEY outside the repo so it survives .env deletion.
+func writeKeyBackup(token, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create backup dir: %w", err)
+	}
+	return os.WriteFile(path, []byte(token+"\n"), 0600)
+}
+
+// readKeyBackup reads the backup key file. Returns ("", nil) if file is absent.
+func readKeyBackup(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 func healthCheck(base string) error {

@@ -377,3 +377,99 @@ func TestUpdateMCPConfig(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// writeKeyBackup / readKeyBackup — durable token outside .env (#377)
+// ---------------------------------------------------------------------------
+
+func TestWriteKeyBackup(t *testing.T) {
+	const token = "abcdef1234567890abcdef1234567890"
+
+	t.Run("creates file with token and newline", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "api_key")
+
+		if err := writeKeyBackup(token, path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("file not created: %v", err)
+		}
+		got := strings.TrimSpace(string(raw))
+		if got != token {
+			t.Errorf("key: got %q, want %q", got, token)
+		}
+	})
+
+	t.Run("file permissions are 0600", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "api_key")
+
+		if err := writeKeyBackup(token, path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat failed: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Errorf("permissions: got %o, want 0600", perm)
+		}
+	})
+
+	t.Run("creates parent directories", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "engram", "nested", "api_key")
+
+		if err := writeKeyBackup(token, path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("file should exist after creating parent dirs: %v", err)
+		}
+	})
+}
+
+func TestReadKeyBackup(t *testing.T) {
+	const token = "abcdef1234567890abcdef1234567890"
+
+	t.Run("returns token from existing file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "api_key")
+		os.WriteFile(path, []byte(token+"\n"), 0600)
+
+		got, err := readKeyBackup(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != token {
+			t.Errorf("got %q, want %q", got, token)
+		}
+	})
+
+	t.Run("returns empty string when file absent", func(t *testing.T) {
+		got, err := readKeyBackup("/nonexistent/path/api_key")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
+		}
+	})
+
+	t.Run("strips whitespace", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "api_key")
+		os.WriteFile(path, []byte("  "+token+"  \n"), 0600)
+
+		got, err := readKeyBackup(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != token {
+			t.Errorf("got %q, want %q", got, token)
+		}
+	})
+}
