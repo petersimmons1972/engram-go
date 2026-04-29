@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/netutil"
@@ -33,6 +34,44 @@ func TestRecallDefaultModeDefault(t *testing.T) {
 // delegates correctly to netutil.IsPrivateIP. The comprehensive range coverage
 // is in internal/netutil/private_ip_test.go; this test covers the cases that
 // were exercised by the old inline isPrivateIP function (#55, #68, #242).
+// ---------------------------------------------------------------------------
+// validateEmbedConfig — embed config consistency guard (#380)
+// ---------------------------------------------------------------------------
+
+func TestValidateEmbedConfig(t *testing.T) {
+	cases := []struct {
+		model   string
+		dims    int
+		wantWarn bool
+		warnContains string
+	}{
+		// qwen3-embedding:8b requires dims=1024 for MRL truncation to fit vector(1024)
+		{"qwen3-embedding:8b", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"qwen3-embedding:8b", 1536, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"qwen3-embedding:8b", 1024, false, ""},
+		// mxbai-embed-large does not support MRL — dims must be 0
+		{"mxbai-embed-large", 1024, true, "ENGRAM_EMBED_DIMENSIONS=0"},
+		{"mxbai-embed-large", 512, true, "ENGRAM_EMBED_DIMENSIONS=0"},
+		{"mxbai-embed-large", 0, false, ""},
+		// unknown models: no opinion
+		{"nomic-embed-text", 0, false, ""},
+		{"nomic-embed-text", 768, false, ""},
+	}
+
+	for _, tc := range cases {
+		warn := validateEmbedConfig(tc.model, tc.dims)
+		if tc.wantWarn && warn == "" {
+			t.Errorf("validateEmbedConfig(%q, %d): want warning, got empty", tc.model, tc.dims)
+		}
+		if !tc.wantWarn && warn != "" {
+			t.Errorf("validateEmbedConfig(%q, %d): want no warning, got %q", tc.model, tc.dims, warn)
+		}
+		if tc.warnContains != "" && !strings.Contains(warn, tc.warnContains) {
+			t.Errorf("validateEmbedConfig(%q, %d): warning %q should contain %q", tc.model, tc.dims, warn, tc.warnContains)
+		}
+	}
+}
+
 func TestIsPrivateIP_ViaNetutil(t *testing.T) {
 	cases := []struct {
 		ip      string

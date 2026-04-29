@@ -64,9 +64,17 @@ init:
 	@if grep -qs '^ENGRAM_API_KEY=' .env 2>/dev/null; then \
 	    echo "ENGRAM_API_KEY already set in .env — skipping"; \
 	else \
-	    KEY=$$(openssl rand -hex 32); \
-	    echo "ENGRAM_API_KEY=$$KEY" >> .env; \
-	    echo "✓ Generated ENGRAM_API_KEY in .env"; \
+	    BACKUP=$$HOME/.config/engram/api_key; \
+	    if [ -f "$$BACKUP" ] && [ -s "$$BACKUP" ]; then \
+	        KEY=$$(cat "$$BACKUP" | tr -d '[:space:]'); \
+	        echo "ENGRAM_API_KEY=$$KEY" >> .env; \
+	        echo "✓ Restored ENGRAM_API_KEY from $$BACKUP (key unchanged)"; \
+	    else \
+	        KEY=$$(openssl rand -hex 32); \
+	        echo "ENGRAM_API_KEY=$$KEY" >> .env; \
+	        mkdir -p "$$HOME/.config/engram" && echo "$$KEY" > "$$BACKUP" && chmod 0600 "$$BACKUP"; \
+	        echo "✓ Generated ENGRAM_API_KEY in .env and backed up to $$BACKUP"; \
+	    fi; \
 	fi
 	@if [ ! -f .env.machine-identity ]; then \
 	    touch .env.machine-identity; \
