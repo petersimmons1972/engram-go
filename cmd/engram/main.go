@@ -22,6 +22,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/entity"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/netutil"
+	"github.com/petersimmons1972/engram/internal/ollama"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -79,6 +80,7 @@ func run() error {
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
+	ollamaRerankModel := fs.String("ollama-rerank-model", envOr("ENGRAM_OLLAMA_RERANK_MODEL", ""), "Ollama model for always-on recall re-ranking (empty = disabled)")
 	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
 	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
 	baseURL := fs.String("base-url", envOr("ENGRAM_BASE_URL", ""), "External URL advertised in SSE events (e.g. http://127.0.0.1:8788); defaults to http://<host>:<port>")
@@ -269,6 +271,13 @@ func run() error {
 		ClaudeEnabled:            cc != nil,
 		ClaudeConsolidateEnabled: *claudeConsolidate,
 		ClaudeRerankEnabled:      *claudeRerank,
+		OllamaReranker: func() search.ResultReranker {
+			if *ollamaRerankModel == "" {
+				return nil
+			}
+			slog.Info("ollama reranker enabled", "model", *ollamaRerankModel)
+			return ollama.NewReranker(ollama.NewClient(*ollamaURL), *ollamaRerankModel)
+		}(),
 		DataDir:                  *dataDir,
 		RecallDefaultMode:        *recallDefaultMode,
 		FetchMaxBytes:            *fetchMaxBytes,
