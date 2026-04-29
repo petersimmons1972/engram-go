@@ -614,10 +614,16 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 
 	sortResults(results)
 
-	// Optional re-ranking (unchanged).
+	// Optional re-ranking: cap at topK candidates so the reranker only sees the
+	// same set that will be returned, not the full pre-truncation pool (which can
+	// be 3× larger and blows reranker latency and context window budgets).
 	if opts.Reranker != nil && len(results) > 0 {
-		items := make([]RerankItem, len(results))
-		for i, r := range results {
+		rerankCandidates := results
+		if len(rerankCandidates) > topK {
+			rerankCandidates = rerankCandidates[:topK]
+		}
+		items := make([]RerankItem, len(rerankCandidates))
+		for i, r := range rerankCandidates {
 			summary := ""
 			if r.Memory.Summary != nil {
 				summary = *r.Memory.Summary

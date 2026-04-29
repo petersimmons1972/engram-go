@@ -82,7 +82,10 @@ func (r *Reranker) rerankBatch(ctx context.Context, query string, items []search
 		query, string(passagesJSON),
 	)
 
-	batchCtx, cancel := context.WithTimeout(ctx, rerankTimeout)
+	// Use Background context so the reranker isn't cancelled by the MCP request
+	// deadline — qwen3:8b can take 30-60s per batch, which exceeds typical write
+	// timeouts. Same pattern as embed.Client.Embed in engine.go.
+	batchCtx, cancel := context.WithTimeout(context.Background(), rerankTimeout)
 	defer cancel()
 
 	resp, err := r.client.Chat(batchCtx, ChatRequest{
