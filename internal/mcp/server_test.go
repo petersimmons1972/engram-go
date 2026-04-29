@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -499,5 +502,68 @@ func TestHealthProbe_IgnoresExpiredRequestContext(t *testing.T) {
 		// Probe reached the fake Ollama — correct.
 	default:
 		t.Fatal("fake Ollama was never contacted — probe may have short-circuited on the dead context")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch-layer timeout (#379)
+// ---------------------------------------------------------------------------
+
+// TestDispatchTimeout_RegisterToolAppliesDeadline verifies that registerTool
+// applies a context deadline so blocking handlers are cancelled within
+// defaultToolTimeout rather than running to the HTTP server WriteTimeout (90s).
+func TestDispatchTimeout_RegisterToolAppliesDeadline(t *testing.T) {
+	var handlerCtxCancelled atomic.Bool
+
+	// noopPoolForTimeout satisfies EnginePool minimally — registerTool only
+	// needs a pool reference; the handler controls its own behaviour.
+	pool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
+		return nil, nil
+	})
+
+	srv := &Server{
+		pool: pool,
+		mcp:  server.NewMCPServer("timeout-test", "1.0.0", server.WithToolCapabilities(true)),
+		cfg:  Config{},
+	}
+
+	blockingHandler := func(ctx context.Context, _ *EnginePool, _ mcpgo.CallToolRequest, _ Config) (*mcpgo.CallToolResult, error) {
+		<-ctx.Done()
+		handlerCtxCancelled.Store(true)
+		return &mcpgo.CallToolResult{IsError: true, Content: []mcpgo.Content{
+			mcpgo.TextContent{Type: "text", Text: "timed out"},
+		}}, nil
+	}
+
+	// Register with a short timeout so the test completes quickly.
+	srv.registerToolWithTimeout("block_test", "blocks until ctx cancelled", blockingHandler, 200*time.Millisecond)
+
+	c, err := mcpclient.NewInProcessClient(srv.mcp)
+	if err != nil {
+		t.Fatalf("NewInProcessClient: %v", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer c.Close()
+
+	initReq := mcpgo.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcpgo.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcpgo.Implementation{Name: "test", Version: "1.0.0"}
+	if _, err := c.Initialize(context.Background(), initReq); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	start := time.Now()
+	var callReq mcpgo.CallToolRequest
+	callReq.Params.Name = "block_test"
+	_, _ = c.CallTool(context.Background(), callReq)
+	elapsed := time.Since(start)
+
+	if !handlerCtxCancelled.Load() {
+		t.Error("handler ctx was not cancelled — registerTool did not apply dispatch timeout")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("call took %v — should complete within 2x the 200ms timeout", elapsed)
 	}
 }

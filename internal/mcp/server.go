@@ -705,15 +705,47 @@ func withWarnLog(name string, h toolHandler) toolHandler {
 	}
 }
 
-// registerTool adds a tool to the MCP server wrapped with Prometheus instrumentation.
-func (s *Server) registerTool(name, desc string, h toolHandler) {
+// defaultToolTimeout is the per-call deadline applied at the MCP dispatch layer.
+// Prevents silent hangs up to the HTTP server WriteTimeout (90s) when a handler
+// blocks on Ollama, a slow DB query, or an unguarded third-party call. (#379)
+//
+// All synchronous handlers return well under 10s in normal operation; 15s gives
+// headroom for transient slowness without ever approaching the 90s HTTP timeout.
+// Tools that trigger background work (migrate_embedder, consolidate) also return
+// quickly — the heavy lifting happens in background goroutines, not the handler.
+const defaultToolTimeout = 15 * time.Second
+
+// registerToolWithTimeout adds a tool to the MCP server with a per-call deadline
+// and Prometheus instrumentation. timeout=0 uses defaultToolTimeout.
+func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeout time.Duration) {
+	if timeout == 0 {
+		timeout = defaultToolTimeout
+	}
 	pool, cfg := s.pool, s.cfg
 	toolName := name
+	toolTimeout := timeout
 	s.mcp.AddTool(mcpgo.NewTool(name, mcpgo.WithDescription(desc)),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			ctx, cancel := context.WithTimeout(ctx, toolTimeout)
+			defer cancel()
+
 			timer := prometheus.NewTimer(metrics.ToolDuration.WithLabelValues(toolName))
 			defer timer.ObserveDuration()
+
 			result, err := h(ctx, pool, req, cfg)
+			if err != nil && ctx.Err() == context.DeadlineExceeded {
+				slog.Warn("mcp tool timed out", "tool", toolName, "timeout", toolTimeout)
+				metrics.ToolRequests.WithLabelValues(toolName, "timeout").Inc()
+				return &mcpgo.CallToolResult{
+					IsError: true,
+					Content: []mcpgo.Content{
+						mcpgo.TextContent{
+							Type: "text",
+							Text: toolName + " timed out after " + toolTimeout.String() + " — Ollama may be slow or unavailable",
+						},
+					},
+				}, nil
+			}
 			status := "ok"
 			if err != nil || (result != nil && result.IsError) {
 				status = "error"
@@ -721,6 +753,11 @@ func (s *Server) registerTool(name, desc string, h toolHandler) {
 			metrics.ToolRequests.WithLabelValues(toolName, status).Inc()
 			return result, err
 		})
+}
+
+// registerTool adds a tool with the default dispatch timeout.
+func (s *Server) registerTool(name, desc string, h toolHandler) {
+	s.registerToolWithTimeout(name, desc, h, 0)
 }
 
 func (s *Server) registerTools() {
