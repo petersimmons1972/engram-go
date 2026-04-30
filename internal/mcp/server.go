@@ -48,6 +48,7 @@ type rateLimiter struct {
 	mu           sync.Mutex
 	clients      map[string]*rateLimiterEntry
 	setupClients map[string]*rateLimiterEntry // separate budget for /setup-token (#285)
+	cfg          Config
 }
 
 type rateLimiterEntry struct {
@@ -57,24 +58,27 @@ type rateLimiterEntry struct {
 
 // newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
 // The eviction goroutine stops when ctx is cancelled.
-func newRateLimiter(ctx context.Context) *rateLimiter {
+// cfg.RateLimit controls the per-IP sustained rate limit in req/s. When <= 0,
+// rate limiting is disabled (unlimited). Burst is always 4× the sustained rate.
+func newRateLimiter(ctx context.Context, cfg Config) *rateLimiter {
 	rl := &rateLimiter{
 		clients:      make(map[string]*rateLimiterEntry),
 		setupClients: make(map[string]*rateLimiterEntry),
+		cfg:          cfg,
 	}
 	go rl.evictLoop(ctx)
 	return rl
 }
 
 // allow returns true if the request from ip should be allowed.
-// Limit: 50 req/s sustained, burst 200. Generous for local/LAN use; the server
-// only binds to 127.0.0.1 by default so external abuse is not a concern.
+// When cfg.RateLimit <= 0, rate limiting is disabled (unlimited).
+// Otherwise enforces cfg.RateLimit req/s sustained, with burst = 4× rate.
 func (rl *rateLimiter) allow(ip string) bool {
 	rl.mu.Lock()
 	e, ok := rl.clients[ip]
 	if !ok {
 		e = &rateLimiterEntry{
-			limiter: rate.NewLimiter(50, 200), // 50 req/s sustained, burst 200
+			limiter: rl.makeLimiter(),
 		}
 		rl.clients[ip] = e
 	}
@@ -82,6 +86,20 @@ func (rl *rateLimiter) allow(ip string) bool {
 	ok = e.limiter.Allow()
 	rl.mu.Unlock()
 	return ok
+}
+
+// makeLimiter creates a rate limiter based on cfg.RateLimit.
+// When RateLimit <= 0, returns unlimited (rate.Inf).
+// Otherwise returns RateLimit req/s with burst = 4× rate.
+func (rl *rateLimiter) makeLimiter() *rate.Limiter {
+	if rl.cfg.RateLimit <= 0 {
+		return rate.NewLimiter(rate.Inf, 0)
+	}
+	burst := int(rl.cfg.RateLimit * 4)
+	if burst < 1 {
+		burst = 1
+	}
+	return rate.NewLimiter(rate.Limit(rl.cfg.RateLimit), burst)
 }
 
 // evictLoop removes idle IP entries every 5 minutes until ctx is cancelled.
@@ -381,7 +399,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	s.registerSessionHooks(apiKey)
 
 	// setupTokenLimiter enforces 3 calls per 5-minute window per IP (#243).
-	setupLimiter := newRateLimiter(ctx) // eviction goroutine shares ctx lifetime
+	setupLimiter := newRateLimiter(ctx, s.cfg) // eviction goroutine shares ctx lifetime
 
 	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
 	mux := http.NewServeMux()
@@ -440,7 +458,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// All other routes require Bearer authentication and per-IP rate limiting (#140).
 	// The SSE and message endpoints are mounted separately so that the /message
 	// handler can be wrapped with session-fingerprint verification (#245).
-	rl := newRateLimiter(ctx)
+	rl := newRateLimiter(ctx, s.cfg)
 
 	// /message — wrap with session-fingerprint check before the auth middleware.
 	msgHandler := s.withSessionFingerprint(sse.MessageHandler(), apiKey)

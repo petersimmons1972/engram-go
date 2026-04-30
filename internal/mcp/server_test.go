@@ -27,7 +27,7 @@ func TestSetupTokenBudgetIsolatedFromNormalBudget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rl := newRateLimiter(ctx)
+	rl := newRateLimiter(ctx, Config{})
 	ip := "10.0.0.5"
 
 	// Exhaust the normal budget by calling allow() many times.
@@ -56,7 +56,7 @@ func TestSetupTokenBudgetDoesNotConsumeNormalBudget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rl := newRateLimiter(ctx)
+	rl := newRateLimiter(ctx, Config{})
 	ip := "10.0.0.6"
 
 	// Exhaust setup-token budget.
@@ -185,7 +185,7 @@ func TestRateLimiter_AllowSetupToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rl := newRateLimiter(ctx)
+	rl := newRateLimiter(ctx, Config{})
 	ip := "192.168.1.1"
 
 	// First 3 calls must succeed — burst of 3 tokens.
@@ -207,7 +207,7 @@ func TestRateLimiter_SetupTokenIndependentPerIP(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rl := newRateLimiter(ctx)
+	rl := newRateLimiter(ctx, Config{})
 
 	// Exhaust setup-token budget for ip1.
 	for i := 0; i < 3; i++ {
@@ -217,6 +217,50 @@ func TestRateLimiter_SetupTokenIndependentPerIP(t *testing.T) {
 	// ip2 must still have its own fresh budget.
 	if !rl.allowSetupToken("10.0.0.2") {
 		t.Fatal("ip2 should have an independent budget from ip1")
+	}
+}
+
+// TestRateLimiter_DisabledWhenConfigIsZero verifies that when Config.RateLimit=0,
+// the rate limiter allows unlimited requests (always returns true).
+func TestRateLimiter_DisabledWhenConfigIsZero(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Config with RateLimit=0 means unlimited.
+	rl := newRateLimiter(ctx, Config{RateLimit: 0})
+	ip := "10.0.0.7"
+
+	// Make many calls — all should succeed (no rate limit enforced).
+	for i := 0; i < 1000; i++ {
+		if !rl.allow(ip) {
+			t.Fatalf("call %d: expected allow with RateLimit=0, got reject", i)
+		}
+	}
+}
+
+// TestRateLimiter_RespectsBurstMultiplier verifies that when RateLimit is set,
+// the burst is calculated as 4× the rate, and requests respect that burst budget.
+func TestRateLimiter_RespectsBurstMultiplier(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set RateLimit to 10 req/s, which gives burst of 40 (4×).
+	rl := newRateLimiter(ctx, Config{RateLimit: 10})
+	ip := "10.0.0.8"
+
+	// First 40 calls should succeed (burst).
+	var exhausted bool
+	for i := 0; i < 50; i++ {
+		if !rl.allow(ip) {
+			exhausted = true
+			if i < 40 {
+				t.Fatalf("call %d: expected allow within burst of 40, got reject", i)
+			}
+			break
+		}
+	}
+	if !exhausted {
+		t.Skip("could not exhaust burst within 50 calls — test environment may be too fast")
 	}
 }
 

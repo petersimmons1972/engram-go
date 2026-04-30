@@ -68,6 +68,9 @@ type Config struct {
 	// container restart prevented OnUnregisterSession from firing.
 	// Default: 24h. Set to 0 to disable the sweeper entirely.
 	EpisodeTTL time.Duration
+	// RateLimit is the per-IP sustained rate limit in req/s. Burst is 4× this value.
+	// Zero disables rate limiting (recommended for loopback/single-user deployments).
+	RateLimit float64
 	// OllamaDegraded is set when the startup embedding probe failed but the
 	// server continued anyway. /health returns 200 with "ollama":"degraded"
 	// rather than 503, because the server itself is operational.
