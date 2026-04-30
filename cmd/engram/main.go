@@ -105,6 +105,11 @@ func run() error {
 	rateLimit := fs.Float64("rate-limit", envFloat("ENGRAM_RATE_LIMIT", 0), "per-IP HTTP rate limit in req/s (0 = unlimited, recommended for local use)")
 	entityProjectsFlag := fs.String("entity-projects", envOr("ENGRAM_ENTITY_PROJECTS", ""), "Comma-separated list of projects to run entity extraction on")
 
+	// Rate limiter knobs (#387): configurable per-IP rate limit and loopback auto-disable.
+	rateLimitRPS := fs.Int("rate-limit-rps", envInt("ENGRAM_RATE_LIMIT_RPS", 0), "Per-IP sustained request rate limit in req/s (0 = default 50)")
+	rateLimitBurst := fs.Int("rate-limit-burst", envInt("ENGRAM_RATE_LIMIT_BURST", 0), "Per-IP token-bucket burst size (0 = default 200)")
+	rateLimitDisable := fs.Bool("rate-limit-disable", envBool("ENGRAM_RATE_LIMIT_DISABLE", false), "Disable HTTP rate limiting entirely (single-user local use)")
+
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -307,6 +312,9 @@ func run() error {
 		OllamaDegraded:           ollamaDegraded,
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:              ingestQ,
+		RateLimitRPS:             *rateLimitRPS,
+		RateLimitBurst:           *rateLimitBurst,
+		RateLimitDisable:         *rateLimitDisable,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {

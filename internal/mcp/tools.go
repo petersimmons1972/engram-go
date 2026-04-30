@@ -88,6 +88,34 @@ type Config struct {
 	// testHooks is nil in production; set only in tests to inject stubs.
 	testHooks    *testHooks
 	claudeClient *claude.Client // set via Server.SetClaudeClient
+
+	// RateLimitRPS is the sustained request rate allowed per remote IP.
+	// 0 means use the default (50 req/s). Set via ENGRAM_RATE_LIMIT_RPS env var.
+	RateLimitRPS int
+	// RateLimitBurst is the token-bucket burst size per remote IP.
+	// 0 means use the default (200). Set via ENGRAM_RATE_LIMIT_BURST env var.
+	RateLimitBurst int
+	// RateLimitDisable, when true, skips the per-IP rate limiter entirely for
+	// all authenticated endpoints. Intended for single-user local machines where
+	// bulk writes and setup-token hammering would otherwise cause 429s.
+	// Set via ENGRAM_RATE_LIMIT_DISABLE env var.
+	RateLimitDisable bool
+}
+
+// rateLimitRPS returns the configured RPS, or the default of 50 when unset.
+func (c Config) rateLimitRPS() int {
+	if c.RateLimitRPS > 0 {
+		return c.RateLimitRPS
+	}
+	return 50
+}
+
+// rateLimitBurst returns the configured burst size, or the default of 200 when unset.
+func (c Config) rateLimitBurst() int {
+	if c.RateLimitBurst > 0 {
+		return c.RateLimitBurst
+	}
+	return 200
 }
 
 // backendFetcher is the narrow interface required by execFetch.

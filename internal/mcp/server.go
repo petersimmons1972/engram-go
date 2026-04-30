@@ -46,9 +46,10 @@ func requestIDFromContext(ctx context.Context) string {
 // rateLimiter holds per-IP token-bucket state for HTTP rate limiting (#140).
 type rateLimiter struct {
 	mu           sync.Mutex
+	rps          int // sustained req/s per IP (set at construction; never mutated)
+	burst        int // token-bucket burst size per IP (set at construction; never mutated)
 	clients      map[string]*rateLimiterEntry
 	setupClients map[string]*rateLimiterEntry // separate budget for /setup-token (#285)
-	cfg          Config
 }
 
 type rateLimiterEntry struct {
@@ -56,29 +57,35 @@ type rateLimiterEntry struct {
 	lastSeen time.Time
 }
 
-// newRateLimiter creates a rate limiter that evicts idle IPs every 5 minutes.
+// newRateLimiter creates a rate limiter with default parameters (50 req/s,
+// burst 200) that evicts idle IPs every 5 minutes.
 // The eviction goroutine stops when ctx is cancelled.
-// cfg.RateLimit controls the per-IP sustained rate limit in req/s. When <= 0,
-// rate limiting is disabled (unlimited). Burst is always 4× the sustained rate.
-func newRateLimiter(ctx context.Context, cfg Config) *rateLimiter {
+func newRateLimiter(ctx context.Context) *rateLimiter {
+	return newRateLimiterWithConfig(ctx, 50, 200)
+}
+
+// newRateLimiterWithConfig creates a rate limiter with the given RPS and burst.
+// The eviction goroutine stops when ctx is cancelled.
+func newRateLimiterWithConfig(ctx context.Context, rps int, burst int) *rateLimiter {
 	rl := &rateLimiter{
+		rps:          rps,
+		burst:        burst,
 		clients:      make(map[string]*rateLimiterEntry),
 		setupClients: make(map[string]*rateLimiterEntry),
-		cfg:          cfg,
 	}
 	go rl.evictLoop(ctx)
 	return rl
 }
 
 // allow returns true if the request from ip should be allowed.
-// When cfg.RateLimit <= 0, rate limiting is disabled (unlimited).
-// Otherwise enforces cfg.RateLimit req/s sustained, with burst = 4× rate.
+// The configured RPS and burst are used per-IP; new entries are created on
+// first access and evicted after 5 minutes of inactivity.
 func (rl *rateLimiter) allow(ip string) bool {
 	rl.mu.Lock()
 	e, ok := rl.clients[ip]
 	if !ok {
 		e = &rateLimiterEntry{
-			limiter: rl.makeLimiter(),
+			limiter: rate.NewLimiter(rate.Limit(rl.rps), rl.burst),
 		}
 		rl.clients[ip] = e
 	}
@@ -86,20 +93,6 @@ func (rl *rateLimiter) allow(ip string) bool {
 	ok = e.limiter.Allow()
 	rl.mu.Unlock()
 	return ok
-}
-
-// makeLimiter creates a rate limiter based on cfg.RateLimit.
-// When RateLimit <= 0, returns unlimited (rate.Inf).
-// Otherwise returns RateLimit req/s with burst = 4× rate.
-func (rl *rateLimiter) makeLimiter() *rate.Limiter {
-	if rl.cfg.RateLimit <= 0 {
-		return rate.NewLimiter(rate.Inf, 0)
-	}
-	burst := int(rl.cfg.RateLimit * 4)
-	if burst < 1 {
-		burst = 1
-	}
-	return rate.NewLimiter(rate.Limit(rl.cfg.RateLimit), burst)
 }
 
 // evictLoop removes idle IP entries every 5 minutes until ctx is cancelled.
@@ -399,7 +392,8 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	s.registerSessionHooks(apiKey)
 
 	// setupTokenLimiter enforces 3 calls per 5-minute window per IP (#243).
-	setupLimiter := newRateLimiter(ctx, s.cfg) // eviction goroutine shares ctx lifetime
+	// Uses a fixed budget regardless of RateLimitDisable — /setup-token is security-sensitive.
+	setupLimiter := newRateLimiter(ctx) // eviction goroutine shares ctx lifetime
 
 	// Top-level mux routes unauthenticated utility endpoints before auth middleware.
 	mux := http.NewServeMux()
@@ -458,7 +452,13 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// All other routes require Bearer authentication and per-IP rate limiting (#140).
 	// The SSE and message endpoints are mounted separately so that the /message
 	// handler can be wrapped with session-fingerprint verification (#245).
-	rl := newRateLimiter(ctx, s.cfg)
+	// Use the configured RPS/burst from the server config (#387).
+	rl := newRateLimiterWithConfig(ctx, s.cfg.rateLimitRPS(), s.cfg.rateLimitBurst())
+	if s.cfg.RateLimitDisable {
+		slog.Info("HTTP rate limiter disabled via ENGRAM_RATE_LIMIT_DISABLE (#387)")
+	} else {
+		slog.Info("HTTP rate limiter active", "rps", s.cfg.rateLimitRPS(), "burst", s.cfg.rateLimitBurst())
+	}
 
 	// /message — wrap with session-fingerprint check before the auth middleware.
 	msgHandler := s.withSessionFingerprint(sse.MessageHandler(), apiKey)
@@ -520,7 +520,17 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 }
 
 // applyMiddleware chains per-IP rate limiting (#140) and Bearer auth onto next.
+// Rate limiting is skipped when cfg.RateLimitDisable is true, or when the
+// remote IP is a loopback address (127.0.0.1 / ::1) — a local machine is not
+// a DDoS threat and should never receive 429s from its own process (#387).
 func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimiter) http.Handler {
+	return s.applyMiddlewareWithRL(next, apiKey, rl)
+}
+
+// applyMiddlewareWithRL is the testable core of applyMiddleware. It accepts
+// an explicit *rateLimiter so unit tests can inject a pre-configured limiter
+// without starting a real HTTP server.
+func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rateLimiter) http.Handler {
 	// apiKey is always non-empty — enforced by main.go startup check.
 	// This guard is a defence-in-depth backstop; it must never be the primary gate.
 	if apiKey == "" {
@@ -540,14 +550,18 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		r = r.WithContext(ctx)
 
 		// Rate limit before auth check to prevent timing-based enumeration.
+		// Exempt loopback IPs (127.0.0.1, ::1) — a local process is not a threat.
+		// Also exempt entirely when RateLimitDisable=true (#387).
 		remoteHost := s.clientIP(r)
-		if !rl.allow(remoteHost) {
-			w.Header().Set("Retry-After", "1")
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{
-				"error": "rate_limited",
-				"hint":  "too many requests — back off and retry",
-			})
-			return
+		if !s.cfg.RateLimitDisable && !isLoopbackIP(remoteHost) {
+			if !rl.allow(remoteHost) {
+				w.Header().Set("Retry-After", "1")
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{
+					"error": "rate_limited",
+					"hint":  "too many requests — back off and retry",
+				})
+				return
+			}
 		}
 		// ConstantTimeCompare leaks length when len(got) != len(want).
 		// Use ConstantTimeEq on the HMAC of each side so the comparison is
@@ -565,6 +579,14 @@ func (s *Server) applyMiddleware(next http.Handler, apiKey string, rl *rateLimit
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isLoopbackIP returns true when ip is the IPv4 loopback address (127.0.0.1)
+// or the IPv6 loopback address (::1). These are auto-exempt from rate limiting
+// because they can only originate from the same host process (#387).
+func isLoopbackIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // withSessionFingerprint wraps next with a check that the sessionId query
