@@ -13,7 +13,6 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
-	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"golang.org/x/text/unicode/norm"
 )
@@ -82,11 +81,6 @@ type Config struct {
 	// testHooks is nil in production; set only in tests to inject stubs.
 	testHooks    *testHooks
 	claudeClient *claude.Client // set via Server.SetClaudeClient
-	// OllamaReranker, when non-nil, re-ranks all memory_recall results using a
-	// local Ollama generation model. Takes precedence over the opt-in Claude
-	// reranker and fires on every recall without requiring rerank=true in the
-	// tool call. Set via ENGRAM_OLLAMA_RERANK_MODEL env var.
-	OllamaReranker search.ResultReranker
 }
 
 // backendFetcher is the narrow interface required by execFetch.

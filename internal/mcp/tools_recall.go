@@ -258,12 +258,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	rerank := getBool(args, "rerank", false)
 	var opts search.RecallOpts
-	// Ollama reranker fires on every recall when configured (no opt-in required).
-	// Claude reranker is opt-in via rerank=true and only active when Ollama reranker
-	// is absent so the two don't double-rerank.
-	if cfg.OllamaReranker != nil {
-		opts.Reranker = cfg.OllamaReranker
-	} else if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
+	// Claude reranker is opt-in via rerank=true.
+	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
