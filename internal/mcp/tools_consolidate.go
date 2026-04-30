@@ -145,6 +145,35 @@ func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	return toolResult(result)
 }
 
+// handleMemoryDeleteProject hard-deletes all memories, chunks, relationships,
+// episodes, and metadata for a project. Irreversible. Used for eval isolation
+// project cleanup (#384).
+func handleMemoryDeleteProject(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	args := req.GetArguments()
+	project, err := getProject(args, "")
+	if err != nil {
+		return nil, err
+	}
+	if project == "" {
+		return nil, fmt.Errorf("project is required for memory_delete_project")
+	}
+
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := h.Engine.Backend().DeleteProject(ctx, project); err != nil {
+		return nil, fmt.Errorf("delete project %q: %w", project, err)
+	}
+
+	return toolResult(map[string]any{
+		"deleted": true,
+		"project": project,
+		"message": fmt.Sprintf("Permanently deleted all data for project %q", project),
+	})
+}
+
 // handleMemoryMigrateEmbedder re-embeds all chunks using a new Ollama model.
 // Performs a dimension pre-flight before nulling existing embeddings: if the
 // new model outputs a different vector width than the current stored dimension,

@@ -650,3 +650,74 @@ func (b *PostgresBackend) ClearSummaries(ctx context.Context, project string) (i
 	}
 	return int(result.RowsAffected()), nil
 }
+
+// DeleteProject hard-deletes all memories, chunks, relationships, episodes,
+// and metadata for a project. Irreversible. Used for eval isolation project cleanup.
+func (b *PostgresBackend) DeleteProject(ctx context.Context, project string) error {
+	if b.pool == nil {
+		return nil
+	}
+
+	// Delete in dependency order to avoid foreign key violations
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Delete retrieval events (references memory.id)
+	if _, err := tx.Exec(ctx, "DELETE FROM retrieval_events WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete retrieval_events: %w", err)
+	}
+
+	// Delete relationships
+	if _, err := tx.Exec(ctx, "DELETE FROM relationships WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete relationships: %w", err)
+	}
+
+	// Delete chunks
+	if _, err := tx.Exec(ctx, "DELETE FROM chunks WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete chunks: %w", err)
+	}
+
+	// Delete memory versions
+	if _, err := tx.Exec(ctx, "DELETE FROM memory_versions WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete memory_versions: %w", err)
+	}
+
+	// Delete memories
+	if _, err := tx.Exec(ctx, "DELETE FROM memories WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete memories: %w", err)
+	}
+
+	// Delete episodes
+	if _, err := tx.Exec(ctx, "DELETE FROM episodes WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete episodes: %w", err)
+	}
+
+	// Delete weight config
+	if _, err := tx.Exec(ctx, "DELETE FROM weight_config WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete weight_config: %w", err)
+	}
+
+	// Delete weight history
+	if _, err := tx.Exec(ctx, "DELETE FROM weight_history WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete weight_history: %w", err)
+	}
+
+	// Delete project metadata
+	if _, err := tx.Exec(ctx, "DELETE FROM project_metadata WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete project_metadata: %w", err)
+	}
+
+	// Delete decay audit snapshots
+	if _, err := tx.Exec(ctx, "DELETE FROM decay_audit_snapshots WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete decay_audit_snapshots: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return nil
+}

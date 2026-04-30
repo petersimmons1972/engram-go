@@ -207,6 +207,9 @@ type Backend interface {
 	PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error)
 	// PruneColdDocuments deletes document-mode memories whose chunks were never matched.
 	PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error)
+	// DeleteProject hard-deletes all memories, chunks, relationships, episodes,
+	// and metadata for a project. Irreversible. Used for eval isolation project cleanup.
+	DeleteProject(ctx context.Context, project string) error
 
 	// ── Full-text search ────────────────────────────────────────────────────
 

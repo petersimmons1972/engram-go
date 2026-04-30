@@ -147,6 +147,7 @@ func (noopBackend) PruneStaleMemories(_ context.Context, _ string, _ float64, _ 
 func (noopBackend) PruneColdDocuments(_ context.Context, _ string, _ float64, _ int) (int, error) {
 	return 0, nil
 }
+func (noopBackend) DeleteProject(_ context.Context, _ string) error { return nil }
 func (noopBackend) FTSSearch(_ context.Context, _, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
 	return nil, nil
 }
