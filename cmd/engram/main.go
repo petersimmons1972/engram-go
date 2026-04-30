@@ -100,6 +100,7 @@ func run() error {
 	maxDocumentBytes := fs.Int("max-document-bytes", envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024), "Maximum document size for ingest operations")
 	rawDocumentMaxBytes := fs.Int("raw-document-max-bytes", envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024), "Maximum raw document size before rejection")
 	ragMaxTokens := fs.Int("rag-max-tokens", envInt("ENGRAM_RAG_MAX_TOKENS", 4096), "Maximum tokens for RAG context assembly")
+	rateLimit := fs.Float64("rate-limit", envFloat("ENGRAM_RATE_LIMIT", 0), "per-IP HTTP rate limit in req/s (0 = unlimited, recommended for local use)")
 	entityProjectsFlag := fs.String("entity-projects", envOr("ENGRAM_ENTITY_PROJECTS", ""), "Comma-separated list of projects to run entity extraction on")
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
@@ -278,6 +279,7 @@ func run() error {
 		MaxDocumentBytes:         *maxDocumentBytes,
 		RawDocumentMaxBytes:      *rawDocumentMaxBytes,
 		RAGMaxTokens:             *ragMaxTokens,
+		RateLimit:                *rateLimit,
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
@@ -376,6 +378,16 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		var n float64
+		if _, err := fmt.Sscanf(v, "%f", &n); err == nil {
 			return n
 		}
 	}
