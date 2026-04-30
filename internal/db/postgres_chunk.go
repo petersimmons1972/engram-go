@@ -14,16 +14,26 @@ import (
 // 003_pgvector.sql drops the old BYTEA embedding and adds vector(768)).
 const chunkCols = "c.id, c.memory_id, c.project, c.chunk_text, c.chunk_index, c.chunk_hash, c.embedding, c.section_heading, c.chunk_type, c.last_matched"
 
+// chunkBatchThreshold is the minimum chunk count to use SendBatch instead of
+// per-row Exec. Below this, per-row loop has lower overhead.
+const chunkBatchThreshold = 3
+
 func (b *PostgresBackend) StoreChunks(ctx context.Context, chunks []*types.Chunk) error {
 	return b.storeChunksExec(ctx, b.pool, chunks)
 }
 
 func (b *PostgresBackend) StoreChunksTx(ctx context.Context, tx Tx, chunks []*types.Chunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
 	raw, err := unwrapTx(tx)
 	if err != nil {
 		return err
 	}
-	return b.storeChunksExec(ctx, raw, chunks)
+	if len(chunks) <= chunkBatchThreshold {
+		return b.storeChunksExec(ctx, raw, chunks)
+	}
+	return storeChunksBatch(ctx, raw, chunks)
 }
 
 func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks []*types.Chunk) error {
@@ -50,6 +60,36 @@ func (b *PostgresBackend) storeChunksExec(ctx context.Context, ex execer, chunks
 		}
 	}
 	return nil
+}
+
+// storeChunksBatch writes all chunks in a single network round-trip using pgx
+// pipeline mode. Preserves ON CONFLICT DO NOTHING without requiring a temp table.
+func storeChunksBatch(ctx context.Context, tx pgx.Tx, chunks []*types.Chunk) error {
+	const chunkSQL = `
+		INSERT INTO chunks (id, memory_id, project, chunk_text, chunk_index,
+		                    chunk_hash, embedding, section_heading, chunk_type)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (id) DO NOTHING`
+	batch := &pgx.Batch{}
+	for _, c := range chunks {
+		var embParam any
+		if len(c.Embedding) > 0 {
+			embParam = pgvector.NewVector(c.Embedding)
+		}
+		batch.Queue(chunkSQL,
+			c.ID, c.MemoryID, c.Project,
+			c.ChunkText, c.ChunkIndex, c.ChunkHash,
+			embParam, c.SectionHeading, c.ChunkType,
+		)
+	}
+	results := tx.SendBatch(ctx, batch)
+	defer results.Close()
+	for range chunks {
+		if _, err := results.Exec(); err != nil {
+			return err
+		}
+	}
+	return results.Close()
 }
 
 func (b *PostgresBackend) GetChunksForMemory(ctx context.Context, memoryID string) ([]*types.Chunk, error) {
