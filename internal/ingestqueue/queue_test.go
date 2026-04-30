@@ -38,16 +38,38 @@ func TestQueue_EnqueueAndDrain(t *testing.T) {
 func TestQueue_QueueFull(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	block := make(chan struct{})
 	q := ingestqueue.New(ctx, ingestqueue.Config{Depth: 2, Workers: 1})
-	for i := 0; i < 3; i++ {
-		_ = q.Enqueue(&ingestqueue.Job{
-			ID: fmt.Sprintf("j%d", i), Project: "test",
-			Work: func(ctx context.Context) error { <-block; return nil },
+
+	// Fill the 1 worker slot with a blocking job.
+	started := make(chan struct{}, 1)
+	_ = q.Enqueue(&ingestqueue.Job{
+		ID: "worker-holder", Project: "test",
+		Work: func(ctx context.Context) error {
+			started <- struct{}{} // signal worker is occupied
+			<-block
+			return nil
+		},
+	})
+	<-started // wait until worker is definitely busy
+
+	// Now fill the 2-slot channel.
+	for i := 0; i < 2; i++ {
+		err := q.Enqueue(&ingestqueue.Job{
+			ID: fmt.Sprintf("filler-%d", i), Project: "test",
+			Work: func(ctx context.Context) error { return nil },
 		})
+		if err != nil {
+			t.Fatalf("filler %d: unexpected error: %v", i, err)
+		}
 	}
-	err := q.Enqueue(&ingestqueue.Job{ID: "overflow", Project: "test",
-		Work: func(ctx context.Context) error { return nil }})
+
+	// Channel is full AND worker is busy — next enqueue must fail.
+	err := q.Enqueue(&ingestqueue.Job{
+		ID: "overflow", Project: "test",
+		Work: func(ctx context.Context) error { return nil },
+	})
 	if err != ingestqueue.ErrQueueFull {
 		t.Fatalf("want ErrQueueFull, got %v", err)
 	}

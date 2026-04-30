@@ -22,6 +22,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
+	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/netutil"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/search"
@@ -266,6 +267,21 @@ func run() error {
 
 	ingestQ := ingestqueue.New(serverCtx, ingestqueue.Config{Depth: 256, Workers: 4})
 	defer ingestQ.Wait()
+
+	// Update IngestQueueDepth gauge every 10 seconds so Prometheus has a
+	// meaningful reading. Without this the gauge always reads 0.
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-serverCtx.Done():
+				return
+			case <-ticker.C:
+				metrics.IngestQueueDepth.Set(float64(ingestQ.Depth()))
+			}
+		}
+	}()
 
 	cfg := internalmcp.Config{
 		OllamaURL:                *ollamaURL,
