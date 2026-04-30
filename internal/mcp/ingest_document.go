@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/ingest/router"
 	"github.com/petersimmons1972/engram/internal/types"
+	"golang.org/x/sync/errgroup"
 )
 
 // Tier classifies an incoming document by size so the caller can pick a
@@ -562,22 +564,56 @@ func runStreamIngestWithDeps(ctx context.Context, deps storeDocumentDeps, projec
 // runExportFanout stores each memory in a parsed export individually via
 // engine.StoreWithRawBody and returns a fanout summary response. Called by
 // both runStreamIngestWithDeps and directly by integration tests.
+// Uses a bounded errgroup of 8 concurrent workers to parallelize stores.
 func runExportFanout(ctx context.Context, deps storeDocumentDeps, project string, format router.Format, memories []*types.Memory) (*mcpgo.CallToolResult, error) {
-	ids := make([]string, 0, len(memories))
+	const fanoutWorkers = 8
+
+	// Stamp the project on every memory — the parsers don't know which
+	// project the user intends to store into.
 	for _, m := range memories {
-		// Stamp the project on every memory — the parsers don't know which
-		// project the user intends to store into.
 		m.Project = project
-		if err := deps.engine.StoreWithRawBody(ctx, m, ""); err != nil {
-			return nil, fmt.Errorf("runExportFanout: store memory %q: %w", m.ID, err)
-		}
-		ids = append(ids, string(m.ID))
 	}
-	return toolResult(map[string]any{
+
+	type storeResult struct {
+		id  string
+		err error
+	}
+	results := make([]storeResult, len(memories))
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(fanoutWorkers)
+
+	for i, m := range memories {
+		i, m := i, m
+		eg.Go(func() error {
+			err := deps.engine.StoreWithRawBody(egCtx, m, "")
+			results[i] = storeResult{id: string(m.ID), err: err}
+			return nil // continue-on-error — don't abort the whole fanout
+		})
+	}
+	_ = eg.Wait()
+
+	var ids []string
+	var errMsgs []string
+	for _, r := range results {
+		if r.err != nil {
+			slog.Warn("runExportFanout: store error", "project", project, "err", r.err)
+			errMsgs = append(errMsgs, r.err.Error())
+		} else if r.id != "" {
+			ids = append(ids, r.id)
+		}
+	}
+
+	out := map[string]any{
 		"status":          "ok",
 		"mode":            "export-fanout",
 		"format":          string(format),
 		"memories_stored": len(ids),
 		"memory_ids":      ids,
-	})
+	}
+	if len(errMsgs) > 0 {
+		out["warnings"] = errMsgs
+		out["failed_count"] = len(errMsgs)
+	}
+	return toolResult(out)
 }
