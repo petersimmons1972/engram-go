@@ -28,7 +28,7 @@ func newBatchTestBackend(t *testing.T) *db.PostgresBackend {
 	ctx := context.Background()
 	b, err := db.NewPostgresBackend(ctx, "batch-test", dsn)
 	if err != nil {
-		t.Skipf("cannot connect to PostgreSQL (%v) — skipping integration test", err)
+		t.Fatalf("cannot connect to PostgreSQL (%v) — TEST_DATABASE_URL is set but connection failed (CI misconfiguration)", err)
 	}
 	t.Cleanup(b.Close)
 	return b
@@ -51,7 +51,8 @@ func makeTestMemory(t *testing.T, b *db.PostgresBackend, project string) string 
 	err := b.StoreMemory(ctx, m)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_ = b.DeleteChunksForMemory(ctx, m.ID)
+		_ = b.DeleteChunksForMemory(ctx, m.ID) // chunks first due to FK
+		_, _ = b.DeleteMemory(ctx, m.ID)
 	})
 	return m.ID
 }

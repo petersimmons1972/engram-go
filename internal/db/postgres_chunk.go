@@ -30,7 +30,7 @@ func (b *PostgresBackend) StoreChunksTx(ctx context.Context, tx Tx, chunks []*ty
 	if err != nil {
 		return err
 	}
-	if len(chunks) <= chunkBatchThreshold {
+	if len(chunks) < chunkBatchThreshold {
 		return b.storeChunksExec(ctx, raw, chunks)
 	}
 	return storeChunksBatch(ctx, raw, chunks)
@@ -89,7 +89,7 @@ func storeChunksBatch(ctx context.Context, tx pgx.Tx, chunks []*types.Chunk) err
 			return err
 		}
 	}
-	return results.Close()
+	return results.Close() // explicit Close returns flush errors; deferred Close is a no-op on success
 }
 
 func (b *PostgresBackend) GetChunksForMemory(ctx context.Context, memoryID string) ([]*types.Chunk, error) {
