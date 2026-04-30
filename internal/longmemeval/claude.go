@@ -12,7 +12,12 @@ import (
 
 const generateTimeout = 180 * time.Second
 
-// Generate calls `claude --print prompt` and returns trimmed stdout.
+// GenerateForType generates an answer using Sonnet for all question types.
+func GenerateForType(ctx context.Context, prompt, questionType string, retries int) (string, error) {
+	return generate(ctx, prompt, "sonnet", retries)
+}
+
+// Generate calls `claude --print prompt` using Opus and returns trimmed stdout.
 // retries is the number of additional attempts on failure (0 = try once).
 // On failure a backoff sleep (30s, 60s, 120s) is inserted between attempts
 // so transient API rate limits have a chance to clear before retrying.
@@ -20,10 +25,15 @@ func Generate(ctx context.Context, prompt string, retries int) (string, error) {
 	return generate(ctx, prompt, "opus", retries)
 }
 
-// GenerateSonnet is like Generate but uses Sonnet — cheaper and higher rate
-// limits, suitable for judge/scoring tasks that don't require Opus reasoning.
+// GenerateSonnet is like Generate but uses Sonnet.
 func GenerateSonnet(ctx context.Context, prompt string, retries int) (string, error) {
 	return generate(ctx, prompt, "sonnet", retries)
+}
+
+// GenerateHaiku is like Generate but uses Haiku — suitable for simple
+// classification tasks like scoring where reasoning depth doesn't matter.
+func GenerateHaiku(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "haiku", retries)
 }
 
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
@@ -95,7 +105,7 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Answer the question based only on the provided context. Be specific and concise. If the answer cannot be determined from the context, respond with exactly: I don't know.`, questionDate, ctx, questionDate, question)
+Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. If the answer cannot be determined from the provided context, respond with exactly: I don't know.`, questionDate, ctx, questionDate, question)
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.
@@ -123,10 +133,10 @@ type ScoreResult struct {
 }
 
 // Score calls claude --print with the judge prompt and parses the result.
-// Uses Sonnet — the judge task (classify correct/incorrect) doesn't need Opus.
+// Uses Haiku — classifying CORRECT/INCORRECT is a simple comparison task.
 func Score(ctx context.Context, question, referenceAnswer, hypothesis string, retries int) (ScoreResult, error) {
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
-	out, err := GenerateSonnet(ctx, prompt, retries)
+	out, err := GenerateHaiku(ctx, prompt, retries)
 	if err != nil {
 		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
 	}
