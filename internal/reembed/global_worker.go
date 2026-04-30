@@ -30,6 +30,7 @@ type GlobalReembedder struct {
 	interval  time.Duration
 	startOnce sync.Once
 	done      chan struct{}
+	notify    chan struct{}
 }
 
 // pendingChunk holds the minimal fields needed to embed and update a chunk.
@@ -51,6 +52,7 @@ func NewGlobalReembedder(pool *pgxpool.Pool, embedder embed.Client, batchSize in
 		batchSize: batchSize,
 		interval:  interval,
 		done:      make(chan struct{}),
+		notify:    make(chan struct{}, 1),
 	}
 }
 
@@ -71,15 +73,28 @@ func (g *GlobalReembedder) Wait() {
 	<-g.done
 }
 
+// Notify wakes the reembedder immediately if it is sleeping between polls.
+// Safe to call from any goroutine; never blocks (buffered channel + select/default).
+func (g *GlobalReembedder) Notify() {
+	select {
+	case g.notify <- struct{}{}:
+	default:
+	}
+}
+
 func (g *GlobalReembedder) run(ctx context.Context) {
 	defer close(g.done)
 	slog.Info("global reembedder started", "batch_size", g.batchSize, "interval", g.interval)
+
+	backoff := g.interval
+	const maxBackoff = 5 * time.Minute
+
 	for {
 		metrics.WorkerTicks.WithLabelValues("global_reembed").Inc()
+
 		if g.pool != nil && g.embedder != nil {
-			// Update the pending-reembed gauge before each batch so dashboards and
-			// alerts remain live. The per-project Worker used to do this; GlobalReembedder
-			// now owns the reembed path and must carry the responsibility.
+			// Update the pending-reembed gauge before each drain pass so
+			// dashboards and alerts remain live.
 			countCtx, countCancel := context.WithTimeout(ctx, 5*time.Second)
 			var pending int
 			if err := g.pool.QueryRow(countCtx,
@@ -89,22 +104,48 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 			}
 			countCancel()
 
-			iterCtx, cancel := context.WithTimeout(ctx, globalBatchTimeout)
-			if err := g.runBatch(iterCtx); err != nil && ctx.Err() == nil {
-				slog.Warn("global reembedder batch error", "err", err)
-				metrics.WorkerErrors.WithLabelValues("global_reembed").Inc()
+			// Drain loop: keep processing batches without sleeping as long as
+			// each batch is full (more work is likely queued). Break on error,
+			// empty batch, or a partial batch (queue exhausted).
+			for {
+				iterCtx, cancel := context.WithTimeout(ctx, globalBatchTimeout)
+				n, err := g.runBatch(iterCtx)
+				cancel()
+				if ctx.Err() != nil {
+					return
+				}
+				if err != nil {
+					slog.Warn("global reembedder batch error", "err", err)
+					metrics.WorkerErrors.WithLabelValues("global_reembed").Inc()
+					break
+				}
+				if n == 0 {
+					// Queue is empty — back off exponentially.
+					backoff = min(backoff*2, maxBackoff)
+					break
+				}
+				// Full batch processed — reset backoff and keep draining.
+				backoff = g.interval
+				if n < g.batchSize {
+					// Partial batch means the queue is now empty.
+					break
+				}
+				metrics.WorkerTicks.WithLabelValues("global_reembed").Inc()
 			}
-			cancel()
 		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(g.interval):
+		case <-g.notify:
+			// Woken by StoreWithRawBody — reset backoff and drain immediately.
+			backoff = g.interval
+		case <-time.After(backoff):
 		}
 	}
 }
 
-func (g *GlobalReembedder) runBatch(ctx context.Context) error {
+func (g *GlobalReembedder) runBatch(ctx context.Context) (int, error) {
 	// Claim a batch inside a short transaction so concurrent replicas do not
 	// pick the same chunks simultaneously. The transaction is committed as soon
 	// as the chunk list is read; subsequent UPDATEs are idempotent if two replicas
@@ -113,7 +154,7 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 	// to stay consistent with the rest of the codebase (no fmt.Sprintf SQL).
 	tx, err := g.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin claim tx: %w", err)
+		return 0, fmt.Errorf("begin claim tx: %w", err)
 	}
 
 	rows, err := tx.Query(ctx, `
@@ -125,7 +166,7 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 		FOR UPDATE SKIP LOCKED`, g.batchSize)
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		return fmt.Errorf("query pending chunks: %w", err)
+		return 0, fmt.Errorf("query pending chunks: %w", err)
 	}
 
 	var chunks []pendingChunk
@@ -134,24 +175,24 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 		if err := rows.Scan(&pc.id, &pc.chunkText); err != nil {
 			rows.Close()
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("scan pending chunk: %w", err)
+			return 0, fmt.Errorf("scan pending chunk: %w", err)
 		}
 		chunks = append(chunks, pc)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		_ = tx.Rollback(ctx)
-		return fmt.Errorf("iterate pending chunks: %w", err)
+		return 0, fmt.Errorf("iterate pending chunks: %w", err)
 	}
 
 	// Commit the claim transaction immediately so the connection is returned to
 	// the pool before the (potentially slow) Ollama embed calls begin.
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit claim tx: %w", err)
+		return 0, fmt.Errorf("commit claim tx: %w", err)
 	}
 
 	if len(chunks) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	slog.Debug("global reembedder: processing batch", "count", len(chunks))
@@ -185,5 +226,5 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) error {
 		})
 	}
 	_ = eg.Wait()
-	return nil
+	return len(chunks), nil
 }

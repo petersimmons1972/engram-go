@@ -20,6 +20,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/entity"
+	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/netutil"
 	"github.com/petersimmons1972/engram/internal/reembed"
@@ -256,11 +257,15 @@ func run() error {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
 		engine := search.New(serverCtx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine.SetGlobalReembedder(globalReembedder)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 
 	pool := internalmcp.NewEnginePool(factory)
 	defer pool.Close()
+
+	ingestQ := ingestqueue.New(serverCtx, ingestqueue.Config{Depth: 256, Workers: 4})
+	defer ingestQ.Wait()
 
 	cfg := internalmcp.Config{
 		OllamaURL:                *ollamaURL,
@@ -285,6 +290,7 @@ func run() error {
 		PgPool:                   sharedPool,
 		OllamaDegraded:           ollamaDegraded,
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
+		IngestQueue:              ingestQ,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {

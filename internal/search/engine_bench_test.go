@@ -397,6 +397,7 @@ func (s *stubBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([
 	return nil, nil
 }
 func (s *stubBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
+func (s *stubBackend) DeleteProject(_ context.Context, _ string) error                  { return nil }
 
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)

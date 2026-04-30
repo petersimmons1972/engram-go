@@ -78,11 +78,12 @@ func TestEmbedFailureCountedInMetrics(t *testing.T) {
 		batchSize: 10,
 		interval:  1 * time.Hour,
 		done:      make(chan struct{}),
+		notify:    make(chan struct{}, 1),
 	}
 
 	before := promtest.ToFloat64(metrics.WorkerErrors.WithLabelValues("global_reembed"))
 
-	if err := g.runBatch(ctx); err != nil {
+	if _, err := g.runBatch(ctx); err != nil {
 		t.Fatalf("runBatch returned unexpected error: %v", err)
 	}
 

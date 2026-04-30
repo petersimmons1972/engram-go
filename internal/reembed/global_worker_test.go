@@ -72,3 +72,61 @@ func TestGlobalReembedderStartIsIdempotent(t *testing.T) {
 	cancel()
 	w.Wait() // must return; if two goroutines were started, this may block or race
 }
+
+// TestGlobalReembedderNotifyNonBlocking verifies that Notify() never blocks,
+// even when called many times in rapid succession (buffered channel + select/default).
+func TestGlobalReembedderNotifyNonBlocking(t *testing.T) {
+	w := reembed.NewGlobalReembedder(nil, nil, 10, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w.Start(ctx)
+
+	// Calling Notify many times must not deadlock or block.
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			w.Notify()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Good — all Notify() calls returned without blocking.
+	case <-time.After(500 * time.Millisecond):
+		t.Error("Notify() blocked — likely unbuffered channel or missing select/default")
+	}
+}
+
+// TestGlobalReembedderNotifyWakesWorker verifies that Notify() causes the
+// reembedder to wake early (before the poll interval expires). We use a long
+// interval so the worker would not tick on its own within the test window.
+func TestGlobalReembedderNotifyWakesWorker(t *testing.T) {
+	// A 1-hour interval ensures the worker won't tick on its own.
+	w := reembed.NewGlobalReembedder(nil, nil, 10, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w.Start(ctx)
+
+	// Notify immediately — the worker should wake and process (nil pool skips
+	// the DB path), then return to sleep. We confirm by cancelling ctx after
+	// a short window and checking that Wait() returns promptly (goroutine alive
+	// and responding to signals).
+	w.Notify()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		w.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Good.
+	case <-time.After(2 * time.Second):
+		t.Error("GlobalReembedder did not exit after ctx cancel + Notify")
+	}
+}

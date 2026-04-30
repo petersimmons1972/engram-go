@@ -19,6 +19,13 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// globalNotifier is satisfied by *reembed.GlobalReembedder. Declared here as an
+// unexported interface so the search package does not import the reembed package
+// (avoiding an import cycle) and tests can supply a stub.
+type globalNotifier interface {
+	Notify()
+}
+
 // MergeReviewer reviews candidate near-duplicate pairs and returns merge decisions.
 // Implemented by *claude.Client via an adapter in internal/mcp; declared here to avoid import cycle.
 type MergeReviewer interface {
@@ -122,17 +129,18 @@ type bestHit struct {
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend      db.Backend
-	embedMu      sync.RWMutex // protects embedder; use getEmbedder() for all reads
-	embedder     embed.Client
-	project      string
-	ollamaURL    string
-	targetDims   int          // MRL truncation target; 0 = model native output
-	ctx          context.Context // parent lifecycle context — passed to workers via StartWithContext
-	summarizer   *summarize.Worker
-	reembedder   *reembed.Worker
-	decayer      *DecayWorker
-	weightCache  *WeightCache // nil when no pgxpool available (pre-migration or test)
+	backend          db.Backend
+	embedMu          sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedder         embed.Client
+	project          string
+	ollamaURL        string
+	targetDims       int             // MRL truncation target; 0 = model native output
+	ctx              context.Context // parent lifecycle context — passed to workers via StartWithContext
+	summarizer       *summarize.Worker
+	reembedder       *reembed.Worker
+	decayer          *DecayWorker
+	weightCache      *WeightCache    // nil when no pgxpool available (pre-migration or test)
+	globalReembedder globalNotifier  // non-nil after SetGlobalReembedder; woken on chunk store
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -147,6 +155,13 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 // runner) that need the live embedder rather than a nil placeholder (#94).
 func (e *SearchEngine) Embedder() embed.Client {
 	return e.getEmbedder()
+}
+
+// SetGlobalReembedder wires the shared GlobalReembedder so StoreWithRawBody and
+// StoreBatch can wake it immediately after writing chunks. Call once after
+// constructing the engine in main; nil is safe (Notify is skipped).
+func (e *SearchEngine) SetGlobalReembedder(n globalNotifier) {
+	e.globalReembedder = n
 }
 
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
@@ -371,6 +386,9 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 	}
 	if len(chunks) > 0 {
 		e.reembedder.Notify()
+		if e.globalReembedder != nil {
+			e.globalReembedder.Notify()
+		}
 	}
 	return nil
 }
@@ -436,6 +454,9 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 	}
 	if hasChunks {
 		e.reembedder.Notify()
+		if e.globalReembedder != nil {
+			e.globalReembedder.Notify()
+		}
 	}
 	return nil
 }
