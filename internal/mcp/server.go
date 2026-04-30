@@ -836,6 +836,8 @@ func (s *Server) registerTools() {
 			handleMemoryConsolidate},
 		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
 			handleMemorySleep},
+		{"memory_delete_project", "Delete all memories and project data for an eval isolation project. Not for normal use.",
+			noConfig(handleMemoryDeleteProject)},
 		// Episodes
 		{"memory_episode_start", "Start a named episode to group memories from this session",
 			withWarnLog("memory_episode_start", noConfig(handleMemoryEpisodeStart))},
@@ -862,6 +864,34 @@ func (s *Server) registerTools() {
 		{"memory_ingest_export",
 			"Ingest a server-local AI conversation export file (Slack workspace .zip, Claude.ai conversations.json, or ChatGPT conversations.json). Parses the file, auto-detects format, and stores one memory per conversation or channel.",
 			handleMemoryIngestExport},
+		{"memory_ingest_status",
+			"Check the status of an async ingestion job queued by memory_ingest_export, memory_ingest, or memory_ingest_document_stream.",
+			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+				args := req.GetArguments()
+				jobID := getString(args, "job_id", "")
+				if jobID == "" {
+					return mcpgo.NewToolResultError("job_id is required"), nil
+				}
+				if cfg.IngestQueue == nil {
+					return toolResult(map[string]any{"status": "unavailable", "message": "async queue not enabled"})
+				}
+				r := cfg.IngestQueue.Status(jobID)
+				if r == nil {
+					return toolResult(map[string]any{"status": "unknown", "job_id": jobID})
+				}
+				out := map[string]any{"job_id": r.JobID, "status": string(r.Status)}
+				if r.Error != "" {
+					out["error"] = r.Error
+				}
+				if !r.StartedAt.IsZero() {
+					out["started_at"] = r.StartedAt.Format(time.RFC3339)
+				}
+				if !r.DoneAt.IsZero() {
+					out["done_at"] = r.DoneAt.Format(time.RFC3339)
+					out["duration_ms"] = r.DoneAt.Sub(r.StartedAt).Milliseconds()
+				}
+				return toolResult(out)
+			}},
 		// Cross-project federation
 		{"memory_projects", "List all projects with memory counts",
 			noConfig(handleMemoryProjects)},

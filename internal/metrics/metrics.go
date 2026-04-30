@@ -36,6 +36,12 @@ var (
 		Help: "Chunks with NULL embedding_vec awaiting reembedding",
 	})
 
+	// IngestQueueDepth is the current number of async ingestion jobs queued but not yet started.
+	IngestQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_ingest_queue_depth",
+		Help: "Async ingestion jobs queued but not yet started",
+	})
+
 	// EpisodesStartedTotal counts auto-episodes started on SSE session connect.
 	EpisodesStartedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "engram_episodes_started_total",
@@ -63,6 +69,7 @@ func init() {
 		WorkerTicks,
 		WorkerErrors,
 		ChunksPendingReembed,
+		IngestQueueDepth,
 		EpisodesStartedTotal,
 		EpisodesEndedCleanTotal,
 		EpisodesEndedByReaperTotal,

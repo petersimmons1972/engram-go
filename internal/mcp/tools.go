@@ -13,6 +13,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	"github.com/petersimmons1972/engram/internal/types"
 	"golang.org/x/text/unicode/norm"
 )
@@ -81,6 +82,9 @@ type Config struct {
 	// SessionDB persists MCP session registrations across server restarts (#362).
 	// When nil, session persistence is disabled (sessions are lost on restart).
 	SessionDB db.SessionRegistry
+	// IngestQueue routes bulk ingest operations through a bounded async worker pool,
+	// preventing MCP timeouts on large imports. nil = synchronous fallback.
+	IngestQueue *ingestqueue.Queue
 	// testHooks is nil in production; set only in tests to inject stubs.
 	testHooks    *testHooks
 	claudeClient *claude.Client // set via Server.SetClaudeClient

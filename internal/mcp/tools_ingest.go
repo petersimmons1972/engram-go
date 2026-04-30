@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	"github.com/petersimmons1972/engram/internal/markdown"
 )
 
@@ -106,6 +108,49 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
+
+	if cfg.IngestQueue != nil {
+		jobID := uuid.New().String()
+		memoriesCopy := memories
+		job := &ingestqueue.Job{
+			ID: jobID, Project: project,
+			Work: func(bgCtx context.Context) error {
+				for _, m := range memoriesCopy {
+					if isOperationalConfig(m.Content) {
+						continue
+					}
+					m.Project = project
+					contentHash := db.ContentHash(m.Content)
+					exists, err := h.Engine.Backend().ExistsWithContentHash(bgCtx, project, contentHash)
+					if err != nil {
+						return fmt.Errorf("dedup check: %w", err)
+					}
+					if exists {
+						slog.Debug("handleMemoryIngest: skipping duplicate", "hash", contentHash[:8], "project", project)
+						continue
+					}
+					if err := h.Engine.Store(bgCtx, m); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		}
+		if err := cfg.IngestQueue.Enqueue(job); err != nil {
+			return toolResult(map[string]any{
+				"status":      "queue_full",
+				"retry_after": "30s",
+				"message":     err.Error(),
+			})
+		}
+		return toolResult(map[string]any{
+			"status":          "queued",
+			"job_id":          jobID,
+			"memories_parsed": len(memories),
+			"message":         fmt.Sprintf("%d memories queued. Poll memory_ingest_status for completion.", len(memories)),
+		})
+	}
+
 	var ids []string
 	var ingested, skipped int
 	for _, m := range memories {

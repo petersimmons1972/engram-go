@@ -13,9 +13,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/ingest/router"
+	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	"github.com/petersimmons1972/engram/internal/types"
 	"golang.org/x/sync/errgroup"
 )
@@ -487,6 +489,32 @@ func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *Engi
 		body := string(sess.buf)
 		sess.mu.Unlock()
 		s.dropUpload(uploadID)
+
+		if cfg.IngestQueue != nil {
+			jobID := uuid.New().String()
+			bodyCopy := body
+			finishProject := sess.project
+			job := &ingestqueue.Job{
+				ID: jobID, Project: finishProject,
+				Work: func(bgCtx context.Context) error {
+					_, err := runStreamIngest(bgCtx, pool, finishProject, bodyCopy, cfg, maxDoc, rawMax)
+					return err
+				},
+			}
+			if err := cfg.IngestQueue.Enqueue(job); err != nil {
+				return toolResult(map[string]any{
+					"status":      "queue_full",
+					"retry_after": "30s",
+					"message":     err.Error(),
+				})
+			}
+			return toolResult(map[string]any{
+				"status":  "queued",
+				"job_id":  jobID,
+				"message": "document stream queued. Poll memory_ingest_status for completion.",
+			})
+		}
+
 		return runStreamIngest(ctx, pool, sess.project, body, cfg, maxDoc, rawMax)
 
 	default:
