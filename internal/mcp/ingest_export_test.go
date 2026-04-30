@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
+	"github.com/petersimmons1972/engram/internal/ingestqueue"
 )
 
 func buildMinimalSlackZip(t *testing.T) string {
@@ -82,6 +84,126 @@ func TestHandleMemoryIngestExport_PathOutsideDataDir(t *testing.T) {
 	_, err := internalmcp.CallHandleMemoryIngestExport(context.Background(), t, pool, "default", cfg, "/etc/passwd")
 	if err == nil {
 		t.Error("want path validation error, got nil")
+	}
+}
+
+// TestHandleMemoryIngestExport_Queued verifies that when an IngestQueue is
+// configured the handler returns status=queued with a non-empty job_id rather
+// than blocking on the store path.
+func TestHandleMemoryIngestExport_Queued(t *testing.T) {
+	zipPath := buildMinimalSlackZip(t)
+	pool := internalmcp.NewTestStorePool(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := ingestqueue.New(ctx, ingestqueue.Config{Depth: 16, Workers: 2})
+
+	cfg := internalmcp.Config{
+		DataDir:     filepath.Dir(zipPath),
+		IngestQueue: q,
+	}
+	out, err := internalmcp.CallHandleMemoryIngestExportRaw(context.Background(), t, pool, "default", cfg, zipPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := out["status"]; got != "queued" {
+		t.Errorf("want status=queued, got %v", got)
+	}
+	jobID, ok := out["job_id"].(string)
+	if !ok || jobID == "" {
+		t.Errorf("want non-empty job_id, got %v", out["job_id"])
+	}
+}
+
+// TestHandleMemoryIngestExport_QueueFull verifies that when the queue is at
+// capacity the handler returns status=queue_full without panicking.
+func TestHandleMemoryIngestExport_QueueFull(t *testing.T) {
+	zipPath := buildMinimalSlackZip(t)
+	pool := internalmcp.NewTestStorePool(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Use a 1-worker, 1-slot queue and a blocking job to guarantee fullness
+	// before the test call — avoids the timing race in a larger queue.
+	block := make(chan struct{})
+	q := ingestqueue.New(ctx, ingestqueue.Config{Depth: 1, Workers: 1})
+
+	started := make(chan struct{}, 1)
+	_ = q.Enqueue(&ingestqueue.Job{
+		ID: "worker-holder", Project: "test",
+		Work: func(ctx context.Context) error {
+			started <- struct{}{}
+			<-block
+			return nil
+		},
+	})
+	<-started // worker is definitely busy
+
+	// Fill the 1-slot channel.
+	_ = q.Enqueue(&ingestqueue.Job{
+		ID: "filler", Project: "test",
+		Work: func(ctx context.Context) error { return nil },
+	})
+
+	// Queue is now full (worker busy + channel slot taken).
+	cfg := internalmcp.Config{
+		DataDir:     filepath.Dir(zipPath),
+		IngestQueue: q,
+	}
+	out, err := internalmcp.CallHandleMemoryIngestExportRaw(context.Background(), t, pool, "default", cfg, zipPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := out["status"]; got != "queue_full" {
+		t.Errorf("want status=queue_full, got %v", got)
+	}
+	close(block)
+}
+
+// TestHandleMemoryIngestStatus_UnknownJob verifies that querying a job ID that
+// was never enqueued returns status=unknown.
+func TestHandleMemoryIngestStatus_UnknownJob(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := ingestqueue.New(ctx, ingestqueue.Config{Depth: 4, Workers: 1})
+	cfg := internalmcp.Config{IngestQueue: q}
+
+	out := internalmcp.CallHandleMemoryIngestStatus(ctx, t, cfg, "does-not-exist")
+	if got := out["status"]; got != "unknown" {
+		t.Errorf("want status=unknown, got %v", got)
+	}
+}
+
+// TestHandleMemoryIngestStatus_CompletedJob enqueues a fast no-op job, waits
+// for it to finish, then verifies the status handler reports status=done.
+func TestHandleMemoryIngestStatus_CompletedJob(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := ingestqueue.New(ctx, ingestqueue.Config{Depth: 4, Workers: 1})
+
+	done := make(chan struct{}, 1)
+	jobID := "fast-job"
+	_ = q.Enqueue(&ingestqueue.Job{
+		ID: jobID, Project: "test",
+		Work: func(ctx context.Context) error {
+			done <- struct{}{}
+			return nil
+		},
+	})
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for job to start")
+	}
+	// Give the worker goroutine a moment to update the result to StatusDone.
+	time.Sleep(20 * time.Millisecond)
+
+	cfg := internalmcp.Config{IngestQueue: q}
+	out := internalmcp.CallHandleMemoryIngestStatus(ctx, t, cfg, jobID)
+	if got := out["status"]; got != string(ingestqueue.StatusDone) {
+		t.Errorf("want status=done, got %v", got)
 	}
 }
 

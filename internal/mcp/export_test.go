@@ -485,3 +485,55 @@ func CallHandleMemoryAskExpectError(ctx context.Context, t *testing.T, pool *Eng
 	}
 	t.Fatal("expected an error from handleMemoryAsk, got nil")
 }
+
+// CallHandleMemoryIngestExportRaw invokes handleMemoryIngestExport and returns
+// the raw JSON response as a map. This is used by async-path tests that need
+// to inspect "status" and "job_id" fields rather than the typed IngestExportResult.
+func CallHandleMemoryIngestExportRaw(
+	ctx context.Context,
+	t *testing.T,
+	pool *EnginePool,
+	project string,
+	cfg Config,
+	path string,
+) (map[string]any, error) {
+	t.Helper()
+	req := newToolRequest(map[string]any{
+		"path":    path,
+		"project": project,
+	})
+	result, err := handleMemoryIngestExport(ctx, pool, req, cfg)
+	if err != nil {
+		return nil, err
+	}
+	text := extractTextContent(result)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CallHandleMemoryIngestStatus queries the ingest queue directly for a job's
+// status, matching the response shape of the memory_ingest_status tool handler.
+// Returns a map with at least "status" and "job_id" keys.
+func CallHandleMemoryIngestStatus(
+	_ context.Context,
+	t *testing.T,
+	cfg Config,
+	jobID string,
+) map[string]any {
+	t.Helper()
+	if cfg.IngestQueue == nil {
+		return map[string]any{"status": "unavailable"}
+	}
+	r := cfg.IngestQueue.Status(jobID)
+	if r == nil {
+		return map[string]any{"status": "unknown", "job_id": jobID}
+	}
+	return map[string]any{
+		"job_id": r.JobID,
+		"status": string(r.Status),
+		"error":  r.Error,
+	}
+}
