@@ -24,61 +24,94 @@ TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
 [[ -z "$TOKEN" ]] && { echo "⚠️  engram-flush-fallback: no token — skipping flush"; exit 0; }
 
-# Parse and flush entries — flock shared with engram-mcp-error-handler.sh (#394)
+# Parse, snapshot, flush entries — lock held minimally (#398)
+# Phase 1: snapshot under lock. Phase 2: HTTP flush (no lock). Phase 3: re-append failures under lock.
 FLUSHED=$(python3 - "$FALLBACK" "$BASE" "$TOKEN" <<'PYEOF'
 import json, re, sys, urllib.request, urllib.error, os, tempfile, fcntl
 from datetime import datetime, timezone, timedelta
 
 fallback_path, base_url, token = sys.argv[1], sys.argv[2], sys.argv[3]
 lock_path = fallback_path + ".lock"
-
-lock_fd = open(lock_path, "w")
-fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-with open(fallback_path) as f:
-    content = f.read()
-
-# Split on entry headers: ## [YYYY-MM-DD] title
 entry_re = re.compile(r'^## \[\d{4}-\d{2}-\d{2}\] .+', re.MULTILINE)
 
-pending_start = content.find("## Pending Entries")
-if pending_start == -1:
-    lock_fd.close()
-    sys.exit(0)
+template = '''
 
-header = content[:pending_start + len("## Pending Entries")]
-entries_block = content[pending_start + len("## Pending Entries"):]
+<!-- Add entries below when Engram is down. Format:
+## [YYYY-MM-DD] <title>
+**Project:** <project>
+**Type:** <decision|error|pattern|context>
+**Tags:** [tag1, tag2]
 
+<content>
+-->
+'''
+
+def parse_chunks(content):
+    """Return (header, chunks) from fallback.md content."""
+    pending_start = content.find("## Pending Entries")
+    if pending_start == -1:
+        return None, []
+    header = content[:pending_start + len("## Pending Entries")]
+    entries_block = content[pending_start + len("## Pending Entries"):]
+    entry_positions = [(m.start(), m.end()) for m in entry_re.finditer(entries_block)]
+    chunks = []
+    for i, (start, _) in enumerate(entry_positions):
+        end = entry_positions[i + 1][0] if i + 1 < len(entry_positions) else len(entries_block)
+        chunk = entries_block[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+    return header, chunks
+
+def write_atomic(path, content):
+    dir_ = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=dir_, prefix='.fallback_tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
+
+# --- Phase 1: snapshot under lock, clear the file ---
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    try:
+        with open(fallback_path) as f:
+            content = f.read()
+    except FileNotFoundError:
+        sys.exit(0)
+
+    header, chunks = parse_chunks(content)
+    if header is None or not chunks:
+        sys.exit(0)
+
+    # Clear fallback.md while holding lock so no new writer sees stale entries
+    write_atomic(fallback_path, header + template)
+    # Lock released when with block exits
+
+# --- Phase 2: HTTP flush (no lock held) ---
 flushed = 0
-kept_entries = []
+failed_chunks = []
 
-# Parse relative to entries_block
-entry_positions = [(m.start(), m.end()) for m in entry_re.finditer(entries_block)]
-
-if not entry_positions:
-    lock_fd.close()
-    sys.exit(0)
-
-for i, (start, _) in enumerate(entry_positions):
-    end = entry_positions[i + 1][0] if i + 1 < len(entry_positions) else len(entries_block)
-    chunk = entries_block[start:end].strip()
-
+for chunk in chunks:
     lines = chunk.splitlines()
     if not lines:
         continue
 
     title_match = re.match(r'^## \[(\d{4}-\d{2}-\d{2})\] (.+)$', lines[0])
     if not title_match:
-        kept_entries.append(chunk)
+        failed_chunks.append(chunk)
         continue
 
     date_str, title = title_match.group(1), title_match.group(2)
 
-    # Drop entries older than 7 days — stale fallback entries are not worth flushing (#401)
+    # Drop entries older than 7 days (#401)
     entry_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) - entry_date > timedelta(days=7):
         sys.stderr.write(f'[engram-flush] Dropping stale entry from {date_str} (>7 days old)\n')
-        flushed += 1  # count as "flushed" so it's removed from the file
+        flushed += 1  # count as flushed so it is not re-appended
         continue
 
     meta = {}
@@ -109,7 +142,7 @@ for i, (start, _) in enumerate(entry_positions):
 
     body = '\n'.join(body_lines).strip()
     if not body:
-        kept_entries.append(chunk)
+        failed_chunks.append(chunk)
         continue
 
     payload = json.dumps({
@@ -131,40 +164,27 @@ for i, (start, _) in enumerate(entry_positions):
             if resp.status < 300:
                 flushed += 1
             else:
-                kept_entries.append(chunk)
+                failed_chunks.append(chunk)
     except Exception as e:
         sys.stderr.write(f'flush error for "{title}": {e}\n')
-        kept_entries.append(chunk)
+        failed_chunks.append(chunk)
 
-# Rewrite fallback.md — keep header + comment template + any un-flushed entries
-template = '''
+# --- Phase 3: re-append failures under lock ---
+if failed_chunks:
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-<!-- Add entries below when Engram is down. Format:
-## [YYYY-MM-DD] <title>
-**Project:** <project>
-**Type:** <decision|error|pattern|context>
-**Tags:** [tag1, tag2]
+        try:
+            with open(fallback_path) as f:
+                current = f.read()
+        except FileNotFoundError:
+            current = header + template
 
-<content>
--->
-'''
-
-new_content = header + template
-if kept_entries:
-    new_content += '\n' + '\n\n'.join(kept_entries) + '\n'
-
-dir_ = os.path.dirname(fallback_path)
-fd, tmp = tempfile.mkstemp(dir=dir_, prefix='.fallback_flush_tmp')
-try:
-    with os.fdopen(fd, 'w') as f:
-        f.write(new_content)
-    os.replace(tmp, fallback_path)
-except Exception:
-    os.unlink(tmp)
-    raise
+        new_content = current.rstrip() + '\n\n' + '\n\n'.join(failed_chunks) + '\n'
+        write_atomic(fallback_path, new_content)
+        # Lock released when with block exits
 
 print(flushed)
-lock_fd.close()
 PYEOF
 )
 
