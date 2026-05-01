@@ -77,7 +77,7 @@ func makeMigrateRequest(project, newModel string) mcpgo.CallToolRequest {
 func TestHandleMemoryMigrateEmbedder_NoDimsStored(t *testing.T) {
 	pool := newDimPool(t, "", 384)
 	req := makeMigrateRequest("proj", "new-model")
-	cfg := Config{OllamaURL: "http://ollama-test:11434"}
+	cfg := Config{LiteLLMURL: "http://ollama-test:11434"}
 
 	// The noop backend's Begin() returns nil; MigrateEmbedder will panic.
 	// We use a deferred recover to catch it and assert the panic is NOT from
@@ -103,7 +103,7 @@ func TestHandleMemoryMigrateEmbedder_EmptyNewModel(t *testing.T) {
 	pool := newDimPool(t, "384", 384)
 
 	req := makeMigrateRequest("proj", "")
-	cfg := Config{OllamaURL: "http://ollama-test:11434"}
+	cfg := Config{LiteLLMURL: "http://ollama-test:11434"}
 
 	result, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestHandleMemoryMigrateEmbedder_ProbeError(t *testing.T) {
 	pool := newDimPool(t, "384", 384)
 	req := makeMigrateRequest("proj", "unreachable-model")
 	cfg := Config{
-		OllamaURL: "http://ollama-test:11434",
+		LiteLLMURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
 			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
 				return nil, fmt.Errorf("dial tcp: connect: connection refused")
@@ -142,7 +142,7 @@ func TestHandleMemoryMigrateEmbedder_DimensionMismatch(t *testing.T) {
 	pool := newDimPool(t, "384", 384) // stored: 384-dim
 	req := makeMigrateRequest("proj", "wide-model")
 	cfg := Config{
-		OllamaURL: "http://ollama-test:11434",
+		LiteLLMURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
 			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
 				return dimEmbedder{dims: 1024}, nil // new model: 1024-dim — mismatch
@@ -175,7 +175,7 @@ func TestHandleMemoryMigrateEmbedder_MigrateError(t *testing.T) {
 
 	var postMigrateFired bool
 	cfg := Config{
-		OllamaURL: "http://ollama-test:11434",
+		LiteLLMURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
 			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
 				return nil, fmt.Errorf("db unavailable")
@@ -202,7 +202,7 @@ func TestHandleMemoryMigrateEmbedder_HappyPath(t *testing.T) {
 
 	var postMigrateFired bool
 	cfg := Config{
-		OllamaURL: "http://ollama-test:11434",
+		LiteLLMURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
 			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
 				return dimEmbedder{dims: 384}, nil // pre-flight passes
@@ -239,7 +239,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_PrivateIPBlocked(t *testing.T) {
 		"new_model":  "some-model",
 		"ollama_url": "http://192.168.1.100:11434",
 	}
-	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+	cfg := Config{LiteLLMURL: "http://safe-ollama:11434"}
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.Error(t, err)
@@ -257,7 +257,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_LoopbackBlocked(t *testing.T) {
 		"new_model":  "some-model",
 		"ollama_url": "http://127.0.0.1:11434",
 	}
-	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+	cfg := Config{LiteLLMURL: "http://safe-ollama:11434"}
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.Error(t, err)
@@ -275,7 +275,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_InvalidURLBlocked(t *testing.T) {
 		"new_model":  "some-model",
 		"ollama_url": "not-a-url",
 	}
-	cfg := Config{OllamaURL: "http://safe-ollama:11434"}
+	cfg := Config{LiteLLMURL: "http://safe-ollama:11434"}
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.Error(t, err)
@@ -295,7 +295,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed(t *testing.T) {
 		"ollama_url": "http://custom-ollama:11434",
 	}
 	cfg := Config{
-		OllamaURL: "http://safe-ollama:11434",
+		LiteLLMURL: "http://safe-ollama:11434",
 		testHooks: &testHooks{
 			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
 				return map[string]any{"nulled": 0, "model": "some-model"}, nil
@@ -315,7 +315,7 @@ func TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate(t *testing.T) {
 	pool := newDimPool(t, "384", 384) // stored: 384-dim
 	req := makeMigrateRequest("proj", "same-dim-model")
 	cfg := Config{
-		OllamaURL: "http://ollama-test:11434",
+		LiteLLMURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
 			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
 				return dimEmbedder{dims: 384}, nil // same dim: pre-flight passes

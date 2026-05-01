@@ -397,8 +397,8 @@ func TestHealthProbe_OllamaDegraded_Returns200WithDegradedField(t *testing.T) {
 
 	s := &Server{
 		cfg: Config{
-			OllamaURL:      unreachableOllama,
-			OllamaDegraded: true, // set as if startup probe failed
+			LiteLLMURL:      unreachableOllama,
+			EmbedDegraded: true, // set as if startup probe failed
 		},
 	}
 
@@ -431,8 +431,8 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 
 	s := &Server{
 		cfg: Config{
-			OllamaURL:      fakeOllama.URL,
-			OllamaDegraded: true, // startup probe failed, but Ollama recovered
+			LiteLLMURL:      fakeOllama.URL,
+			EmbedDegraded: true, // startup probe failed, but Ollama recovered
 		},
 	}
 
@@ -519,7 +519,7 @@ func TestHealthProbe_IgnoresExpiredRequestContext(t *testing.T) {
 	// Build a minimal Server pointing at the fake Ollama. No PgPool, so the
 	// Postgres probe is skipped and only the Ollama probe exercises the context.
 	s := &Server{
-		cfg: Config{OllamaURL: fakeOllama.URL},
+		cfg: Config{LiteLLMURL: fakeOllama.URL},
 	}
 
 	// Create an already-cancelled request context — simulates an HTTP client

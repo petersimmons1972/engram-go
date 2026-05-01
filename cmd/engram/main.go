@@ -70,8 +70,9 @@ func run() error {
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
-	ollamaURL := fs.String("ollama-url", envOr("OLLAMA_URL", "http://ollama:11434"), "Ollama base URL")
-	embedModel := fs.String("model", envOr("ENGRAM_OLLAMA_MODEL", "nomic-embed-text"), "Embedding model")
+	litellmURL := fs.String("litellm-url", envOr("LITELLM_URL", "http://litellm:4000"), "LiteLLM base URL")
+	litellmAPIKey := envOr("LITELLM_API_KEY", "")
+	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "qwen3-embedding:8b")), "Embedding model")
 	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
@@ -155,58 +156,40 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// Validate and sanitize ollamaURL (#4 SSRF, #27 credential logging)
-	parsedOllamaURL, err := url.ParseRequestURI(*ollamaURL)
-	if err != nil || (parsedOllamaURL.Scheme != "http" && parsedOllamaURL.Scheme != "https") {
-		return fmt.Errorf("invalid --ollama-url %q: must be an http:// or https:// URL", *ollamaURL)
+	// Validate LiteLLM URL (SSRF protection — block literal private IPs).
+	parsedLiteLLMURL, err := url.ParseRequestURI(*litellmURL)
+	if err != nil || (parsedLiteLLMURL.Scheme != "http" && parsedLiteLLMURL.Scheme != "https") {
+		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *litellmURL)
 	}
-	// Block literal private-IP Ollama URLs to prevent SSRF (#55).
-	// Hostnames (e.g. "ollama" in Docker Compose) are intentionally excluded:
-	// they resolve to private container IPs by design and are not attacker-controlled.
-	if ollamaHost := parsedOllamaURL.Hostname(); net.ParseIP(ollamaHost) != nil && netutil.IsPrivateIP(ollamaHost) {
-		return fmt.Errorf("invalid --ollama-url: IP %q is in a private/reserved range (SSRF protection)", ollamaHost)
+	if h := parsedLiteLLMURL.Hostname(); net.ParseIP(h) != nil && netutil.IsPrivateIP(h) {
+		return fmt.Errorf("invalid --litellm-url: IP %q is in a private/reserved range (SSRF protection)", h)
 	}
+	safeLiteLLMURL := *parsedLiteLLMURL
+	safeLiteLLMURL.User = nil
+	slog.Info("connecting to LiteLLM", "url", safeLiteLLMURL.String(), "model", *embedModel)
 
-	safeOllamaURL := *parsedOllamaURL
-	safeOllamaURL.User = nil
-	slog.Info("connecting to Ollama", "url", safeOllamaURL.String(), "model", *embedModel)
-
-	embedder, err := embed.NewOllamaClientWithDims(ctx, *ollamaURL, *embedModel, *embedDims)
-	if err != nil {
-		return fmt.Errorf("ollama: %w", err)
-	}
-
-	// Dimensional guard: verify the embedding model returns a non-empty vector.
-	// Schema compatibility (pgvector column width) is enforced at insert time —
-	// a dimension mismatch produces a clear error on the first Store call.
-	//
-	// E6: the probe is bounded to 5 seconds and is non-fatal. If Ollama is
-	// unavailable at startup (slow pull, not yet ready, transient outage), the
-	// server starts in degraded mode: /health reports "ollama":"degraded" with
-	// HTTP 200 so the pod is considered live. Embedding calls will fail until
-	// Ollama recovers, which is preferable to refusing to start at all.
-	ollamaDegraded := false
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	testVec, embedErr := embedder.Embed(embedCtx, "startup probe")
-	embedCancel()
-	if embedErr != nil {
-		slog.Warn("Ollama unavailable at startup — embedding degraded; server will start anyway", "error", embedErr)
-		ollamaDegraded = true
-	} else if len(testVec) == 0 {
-		slog.Warn("Ollama startup probe returned empty vector — embedding degraded; server will start anyway")
-		ollamaDegraded = true
+	// E6: startup probe is non-fatal. Server starts in degraded mode when
+	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
+	// BM25+recency fallback keeps recall functional until LiteLLM recovers.
+	embedDegraded := false
+	embedClient := embed.Client(embed.NewLiteLLMClientNoProbe(*litellmURL, *embedModel, litellmAPIKey, *embedDims))
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	probeVec, probeErr := embedClient.Embed(probeCtx, "startup probe")
+	probeCancel()
+	if probeErr != nil {
+		slog.Warn("LiteLLM unavailable at startup — embedding degraded; server will start anyway", "error", probeErr)
+		embedDegraded = true
+	} else if len(probeVec) == 0 {
+		slog.Warn("LiteLLM startup probe returned empty vector — embedding degraded")
+		embedDegraded = true
 	} else {
-		slog.Info("Ollama embedding verified at startup", "dims", len(testVec))
+		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec))
 	}
 
 	dsn := *databaseURL
-	ollamaURLVal := *ollamaURL
+	litellmURLVal := *litellmURL
 	sumModel := *summarizeModel
 	sumEnabled := *summarizeEnabled
-
-	// embedder satisfies embed.Client; declare as interface so the factory
-	// closure captures the interface value, not the concrete pointer.
-	var embedClient embed.Client = embedder
 
 	// Construct Claude client if API key is provided. memory_reason is auto-enabled
 	// whenever the key is set; the other advisor features require their own flags.
@@ -262,7 +245,7 @@ func run() error {
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(serverCtx, backend, embedClient, project, ollamaURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine := search.New(serverCtx, backend, embedClient, project, litellmURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
 		engine.SetGlobalReembedder(globalReembedder)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
@@ -289,7 +272,7 @@ func run() error {
 	}()
 
 	cfg := internalmcp.Config{
-		OllamaURL:                *ollamaURL,
+		LiteLLMURL:                *litellmURL,
 		EmbedModel:               *embedModel,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
@@ -309,7 +292,7 @@ func run() error {
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
-		OllamaDegraded:           ollamaDegraded,
+		EmbedDegraded:           embedDegraded,
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:              ingestQ,
 		RateLimitRPS:             *rateLimitRPS,

@@ -1073,7 +1073,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	e.reembedder.Stop()
 
 	// ctx is used only for the startup probe; the returned client is context-independent.
-	newEmbedder, err := embed.NewOllamaClientWithDims(ctx, e.ollamaURL, newModel, e.targetDims)
+	newEmbedder, err := embed.NewLiteLLMClient(ctx, e.ollamaURL, newModel, "", e.targetDims)
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
 	}

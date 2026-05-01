@@ -1,27 +1,22 @@
 package summarize
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/llm"
 	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
-// ErrModelNotFound is returned by SummarizeContent when Ollama responds with
-// HTTP 404 — meaning the requested model has not been pulled yet. The worker
-// backs off for modelNotFoundBackoff before retrying so it does not spam logs
-// or burn connections every 30 seconds (#151).
-var ErrModelNotFound = errors.New("ollama model not found")
+// ErrModelNotFound is returned by SummarizeContent when the generation
+// endpoint responds with HTTP 404 (model not available).
+var ErrModelNotFound = errors.New("model not found")
 
 const modelNotFoundBackoff = 10 * time.Minute
 
@@ -39,16 +34,6 @@ const (
 
 var summarizePrompt = "Summarize the following memory in 1-2 concise sentences. Focus on the key fact or decision. No preamble.\n\n"
 
-// summarizeHTTPClient is shared across all SummarizeContent calls so that the
-// underlying connection pool is reused rather than rebuilt on every request.
-var summarizeHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		IdleConnTimeout:     30 * time.Second,
-		MaxIdleConnsPerHost: 2,
-	},
-}
-
 // truncateRunes trims content to at most n UTF-8 characters (#121).
 // Using byte slicing on a rune string can split multi-byte characters.
 func truncateRunes(s string, n int) string {
@@ -59,49 +44,17 @@ func truncateRunes(s string, n int) string {
 	return string(runes[:n])
 }
 
-// SummarizeContent calls Ollama /api/generate synchronously. Returns the trimmed response.
-func SummarizeContent(ctx context.Context, content, ollamaURL, model string) (string, error) {
+// SummarizeContent calls the LiteLLM /v1/chat/completions endpoint synchronously.
+// litellmURL is the base URL (e.g. "http://litellm:4000"). Returns the trimmed response.
+func SummarizeContent(ctx context.Context, content, litellmURL, model string) (string, error) {
 	if utf8.RuneCountInString(content) > maxContent {
 		content = truncateRunes(content, maxContent)
 	}
-	prompt := summarizePrompt + content
-	body, err := json.Marshal(map[string]any{
-		"model":  model,
-		"prompt": prompt,
-		"stream": false,
-	})
+	result, err := llm.Complete(ctx, litellmURL, "", model, summarizePrompt+content)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", fmt.Errorf("summarize: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(ollamaURL, "/")+"/api/generate", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := summarizeHTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ollama generate: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return "", fmt.Errorf("%w: %s (model=%q)", ErrModelNotFound, strings.TrimSpace(string(respBody)), model)
-		}
-		return "", fmt.Errorf("ollama generate: HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var result struct {
-		Response string `json:"response"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(result.Response), nil
+	return result, nil
 }
 
 // SummarizeOne immediately summarizes a single memory by ID and stores the result.

@@ -191,13 +191,13 @@ type RunOptions struct {
 	ContradictionDetectionLimit int
 
 	// LLM contradiction detection (opt-in).
-	// When LLMContradictionDetection is true and OllamaURL is non-empty,
+	// When LLMContradictionDetection is true and LiteLLMURL is non-empty,
 	// DetectContradictions runs a second pass using the local Ollama model to
 	// classify high-similarity pairs that the heuristic missed. This catches
 	// competing affirmative claims ("model is X" vs "model is Y") that carry no
 	// negation, version, or temporal markers.
 	LLMContradictionDetection bool
-	OllamaURL                 string
+	LiteLLMURL                 string
 	OllamaModel               string
 	// LLMMaxCalls caps how many Ollama calls are made per DetectContradictions
 	// cycle to bound latency. Zero or negative means use the default (10).
@@ -434,7 +434,7 @@ func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64
 			// Heuristic pass — pattern-based, no LLM.
 			if !isContradiction(chunk.ChunkText, hit.ChunkText) {
 				// Queue for LLM second pass if enabled.
-				if opts.LLMContradictionDetection && opts.OllamaURL != "" {
+				if opts.LLMContradictionDetection && opts.LiteLLMURL != "" {
 					uncaught = append(uncaught, uncaughtPair{
 						sourceID: memID,
 						targetID: hit.MemoryID,
@@ -466,7 +466,7 @@ func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64
 	// LLM second pass — classify pairs that the heuristic missed.
 	// Best-effort: errors from individual LLM calls are logged and skipped so
 	// a transient Ollama failure does not abort the entire consolidation run.
-	if opts.LLMContradictionDetection && opts.OllamaURL != "" && len(uncaught) > 0 {
+	if opts.LLMContradictionDetection && opts.LiteLLMURL != "" && len(uncaught) > 0 {
 		maxCalls := opts.LLMMaxCalls
 		if maxCalls <= 0 {
 			maxCalls = 10
@@ -476,7 +476,7 @@ func (r *Runner) detectContradictions(ctx context.Context, minSimilarity float64
 			if llmCalls >= maxCalls {
 				break
 			}
-			isContra, err := ClassifyContradictionLLM(ctx, pair.textA, pair.textB, opts.OllamaURL, opts.OllamaModel)
+			isContra, err := ClassifyContradictionLLM(ctx, pair.textA, pair.textB, opts.LiteLLMURL, opts.OllamaModel)
 			llmCalls++ // count every attempt — erroring calls still consume latency budget
 			if err != nil {
 				// Best-effort: skip this pair, keep going.

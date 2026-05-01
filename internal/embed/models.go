@@ -1,6 +1,6 @@
 package embed
 
-// ModelSpec describes a curated Ollama embedding model.
+// ModelSpec describes a known embedding model served via LiteLLM.
 type ModelSpec struct {
 	Name        string
 	Dimensions  int
@@ -10,8 +10,7 @@ type ModelSpec struct {
 	Recommended bool // exactly one entry should be true
 }
 
-// defaultModelMaxTokens is the safe fallback for unknown models. All currently
-// supported Ollama embedding models cap at 512 tokens.
+// defaultModelMaxTokens is the safe fallback for unknown models.
 const defaultModelMaxTokens = 512
 
 // ModelMaxTokens returns the context window limit for the named model.
@@ -27,18 +26,25 @@ func ModelMaxTokens(name string) int {
 	return defaultModelMaxTokens
 }
 
-// SuggestedModels is the curated list of Ollama embedding models recommended
-// for engram-go 3.x. Users can pull any of these via `ollama pull <Name>` and
-// then set ENGRAM_OLLAMA_MODEL to switch. Run memory_embedding_eval to compare
-// before migrating stored embeddings.
+// SuggestedModels is the curated list of embedding models available via LiteLLM.
+// Set ENGRAM_EMBED_MODEL to switch. Run memory_embedding_eval to compare before
+// migrating stored embeddings.
 var SuggestedModels = []ModelSpec{
+	{
+		Name:        "qwen3-embedding:8b",
+		Dimensions:  1536,
+		MaxTokens:   8192,
+		SizeMB:      5400,
+		Description: "Current default. Best MTEB retrieval score available locally; 8192-token context window.",
+		Recommended: true,
+	},
 	{
 		Name:        "mxbai-embed-large",
 		Dimensions:  1024,
 		MaxTokens:   512,
 		SizeMB:      669,
-		Description: "Best MTEB retrieval score of locally-available Ollama models. Recommended upgrade from nomic-embed-text.",
-		Recommended: true,
+		Description: "Strong general-purpose baseline with 1024 dims.",
+		Recommended: false,
 	},
 	{
 		Name:        "bge-m3",
@@ -53,7 +59,7 @@ var SuggestedModels = []ModelSpec{
 		Dimensions:  768,
 		MaxTokens:   512,
 		SizeMB:      274,
-		Description: "Current default. Solid general-purpose baseline; smallest footprint.",
+		Description: "Compact baseline; smallest footprint.",
 		Recommended: false,
 	},
 }

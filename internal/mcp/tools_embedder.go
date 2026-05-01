@@ -38,7 +38,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// override the server default; if present, apply the same SSRF guard used at
 	// startup (#291). Only literal private IPs are blocked — hostnames are allowed
 	// because they resolve to container IPs by design and are not attacker-controlled.
-	ollamaURL := cfg.OllamaURL
+	ollamaURL := cfg.LiteLLMURL
 	if raw := getString(args, "ollama_url", ""); raw != "" {
 		parsed, parseErr := url.ParseRequestURI(raw)
 		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -60,7 +60,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 		if probeFunc == nil {
 			targetDims := cfg.EmbedDimensions
 			probeFunc = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
-				return embed.NewOllamaClientWithDims(ctx, baseURL, model, targetDims)
+				return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
 			}
 		}
 		probeClient, probeErr := probeFunc(ctx, ollamaURL, newModel)
@@ -120,7 +120,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 // handleMemoryExportAll exports all memories to markdown files in output_path.
 
 func handleMemoryModels(ctx context.Context, _ *EnginePool, _ mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	installed, err := fetchInstalledOllamaModels(ctx, cfg.OllamaURL)
+	installed, err := fetchLiteLLMModels(ctx, cfg.LiteLLMURL)
 	if err != nil {
 		// Non-fatal: return registry with installed=false for all entries.
 		installed = map[string]bool{}
@@ -160,10 +160,9 @@ func handleMemoryModels(ctx context.Context, _ *EnginePool, _ mcpgo.CallToolRequ
 	})
 }
 
-// fetchInstalledOllamaModels calls GET /api/tags and returns a set of model
-// names (both bare and ":latest"-suffixed for easy lookup).
-func fetchInstalledOllamaModels(ctx context.Context, baseURL string) (map[string]bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/tags", nil)
+// fetchLiteLLMModels calls GET /v1/models and returns a set of model IDs.
+func fetchLiteLLMModels(ctx context.Context, baseURL string) (map[string]bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/models", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,19 +173,16 @@ func fetchInstalledOllamaModels(ctx context.Context, baseURL string) (map[string
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	names := make(map[string]bool, len(result.Models)*2)
-	for _, m := range result.Models {
-		names[m.Name] = true
-		if base, _, ok := strings.Cut(m.Name, ":"); ok {
-			names[base] = true
-		}
+	names := make(map[string]bool, len(result.Data))
+	for _, m := range result.Data {
+		names[m.ID] = true
 	}
 	return names, nil
 }
@@ -244,20 +240,14 @@ func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.Cal
 		return nil, fmt.Errorf("memory_embedding_eval: model_a and model_b must differ")
 	}
 
-	clientA, err := embed.NewOllamaClient(ctx, cfg.OllamaURL, modelA)
-	if err != nil {
-		return nil, fmt.Errorf("memory_embedding_eval: model_a %q: %w", modelA, err)
-	}
-	clientB, err := embed.NewOllamaClient(ctx, cfg.OllamaURL, modelB)
-	if err != nil {
-		return nil, fmt.Errorf("memory_embedding_eval: model_b %q: %w", modelB, err)
-	}
+	clientA := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, modelA, "", cfg.EmbedDimensions)
+	clientB := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, modelB, "", cfg.EmbedDimensions)
 
 	type embedResult struct {
 		sentence string
 		vec      []float32
 	}
-	embedAll := func(c *embed.OllamaClient) ([]embedResult, error) {
+	embedAll := func(c embed.Client) ([]embedResult, error) {
 		results := make([]embedResult, 0, len(evalProbeSentences))
 		for _, s := range evalProbeSentences {
 			// 2s deadline — Ollama must never block MCP calls.
