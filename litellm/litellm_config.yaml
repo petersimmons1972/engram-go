@@ -27,18 +27,9 @@ model_list:
     litellm_params:
       model: ollama/snowflake-arctic-embed2
       api_base: http://engram-ollama:11434
-      weight: 4
     model_info:
       mode: embedding
 
-  # --- Embedding: W6800 on precision (port 11434) ---
-  - model_name: snowflake-arctic-embed2
-    litellm_params:
-      model: ollama/snowflake-arctic-embed2
-      api_base: http://precision.petersimmons.com:11434
-      weight: 1
-    model_info:
-      mode: embedding
 
 router_settings:
   routing_strategy: least-busy
