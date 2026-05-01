@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,6 +29,13 @@ func newLiteLLMHTTPClient() *http.Client {
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     60 * time.Second,
+			// 500ms connect timeout: fail fast when the embed endpoint is
+			// unreachable so BM25 fallback fires before the MCP client's
+			// context expires. GPU inference timeout is governed by the
+			// per-call context (4s in RecallWithOpts), not this dialer.
+			DialContext: (&net.Dialer{
+				Timeout: 500 * time.Millisecond,
+			}).DialContext,
 		},
 	}
 }
@@ -79,15 +87,15 @@ func (c *LiteLLMClient) Dimensions() int {
 }
 
 // Embed encodes text using the LiteLLM /v1/embeddings endpoint.
+// MRL truncation is done client-side (truncate + L2-normalize) rather than
+// via the server-side "dimensions" parameter, which is not universally
+// supported (llama.cpp returns 400 for unknown params despite drop_params).
 func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
 	text = TruncateToModelWindow(text, ModelMaxTokens(c.model))
 
 	reqBody := map[string]any{
 		"model": c.model,
 		"input": text,
-	}
-	if c.targetDims > 0 {
-		reqBody["dimensions"] = c.targetDims
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -129,7 +137,9 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 
 	vec := result.Data[0].Embedding
 	if c.targetDims > 0 && len(vec) > c.targetDims {
-		vec = vec[:c.targetDims]
+		// MRL client-side truncation: take first N dims, then L2-normalize
+		// so cosine similarity remains meaningful at the reduced dimension.
+		vec = L2Normalize(vec[:c.targetDims])
 	}
 	if c.dims == 0 {
 		c.dims = len(vec)
