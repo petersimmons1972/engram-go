@@ -475,19 +475,24 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	// Independent 15s deadline (E5): isolates embed from the request context so
-	// a slow Ollama cannot consume the full server WriteTimeout.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 2s deadline — Ollama must never block MCP calls. On failure, degrade
+	// gracefully to BM25+recency only; the vector leg is skipped but recall
+	// still returns useful results.
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
-		return nil, fmt.Errorf("embed query: %w", err)
+		slog.Warn("embed query failed, degrading to BM25+recency only", "project", e.project, "err", err)
+		queryVec = nil
 	}
 
-	// ANN vector search via pgvector HNSW index.
-	vecHits, err := e.backend.VectorSearch(ctx, e.project, queryVec, topK*3)
-	if err != nil {
-		return nil, err
+	// ANN vector search via pgvector HNSW index — skipped when embed degraded.
+	var vecHits []db.VectorHit
+	if queryVec != nil {
+		vecHits, err = e.backend.VectorSearch(ctx, e.project, queryVec, topK*3)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Fan-out FTS search concurrently.
@@ -563,7 +568,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	prefQuery := isPreferenceQuery(query)
 
 	// Composite scoring per memory.
-	var results []types.SearchResult
+	results := make([]types.SearchResult, 0)
 	for id, m := range memories {
 		bm25 := 0.0
 		if maxBM25 > 0 {
@@ -752,9 +757,10 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
-	// Independent 15s deadline (E5): isolates embed from the request context so
-	// a slow Ollama cannot consume the full server WriteTimeout.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 2s deadline — Ollama must never block MCP calls. RecallWithinMemory has
+	// no BM25 fallback (document chunk search is vector-only), so it returns an
+	// error on embed failure — but fails fast rather than hanging.
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {

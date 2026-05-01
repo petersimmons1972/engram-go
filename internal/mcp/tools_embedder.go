@@ -260,9 +260,8 @@ func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.Cal
 	embedAll := func(c *embed.OllamaClient) ([]embedResult, error) {
 		results := make([]embedResult, 0, len(evalProbeSentences))
 		for _, s := range evalProbeSentences {
-			// Independent 15s deadline (E5): isolates each embed call from the
-			// request context so a slow Ollama cannot consume the server WriteTimeout.
-			embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			// 2s deadline — Ollama must never block MCP calls.
+			embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			vec, err := c.Embed(embedCtx, s)
 			embedCancel()
 			if err != nil {
