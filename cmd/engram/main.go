@@ -228,10 +228,16 @@ func run() error {
 	// It uses FOR UPDATE SKIP LOCKED so multiple server replicas are safe.
 	reembedBatchSize := envInt("ENGRAM_REEMBED_BATCH_SIZE", 100)
 	reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
+	// ENGRAM_REEMBED_BATCH_SIZE=0 disables the GlobalReembedder in this process.
+	// Use this when a dedicated engram-reembed container owns all embedding work.
 	globalReembedder := reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
-	globalReembedder.Start(ctx)
+	if reembedBatchSize > 0 {
+		globalReembedder.Start(ctx)
+		slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
+	} else {
+		slog.Info("global reembedder disabled (ENGRAM_REEMBED_BATCH_SIZE=0) — reembed container owns embedding")
+	}
 	defer globalReembedder.Wait()
-	slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
 
 	// Audit and weight tuner workers use the shared pool directly.
 	sharedPool := pgxPool

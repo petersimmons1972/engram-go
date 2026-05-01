@@ -59,7 +59,8 @@ services:
         required: true
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000}
+      # Use the litellm service name — resolves inside the shared litellm network.
+      - LITELLM_URL=http://litellm:4000
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
@@ -75,6 +76,9 @@ services:
       - ENGRAM_DATA_DIR=/data
     volumes:
       - engram-data:/data
+    networks:
+      - default
+      - litellm
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,13 +107,16 @@ services:
         required: false
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000}
+      - LITELLM_URL=http://litellm:4000
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
       - ENGRAM_REEMBED_CONCURRENCY=${ENGRAM_REEMBED_CONCURRENCY:-8}
+    networks:
+      - default
+      - litellm
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,3 +147,9 @@ volumes:
     external: true
     name: engram_pgdata            # claims existing data — all memories preserved
   engram-data:
+
+networks:
+  default: {}
+  litellm:
+    external: true
+    name: litellm_default          # shared with the LiteLLM proxy container
