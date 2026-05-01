@@ -1,0 +1,30 @@
+# ── Stage 1: Build ───────────────────────────────────────────────────────────
+FROM rust:alpine AS builder
+
+RUN apk add --no-cache musl-dev
+
+WORKDIR /build
+
+# Cache dependencies before copying source.
+COPY reembed-rs/Cargo.toml reembed-rs/Cargo.lock* ./
+RUN mkdir src && echo 'fn main(){}' > src/main.rs && \
+    cargo build --release && \
+    rm -rf src
+
+# Build the real binary.
+COPY reembed-rs/src ./src
+# Touch main.rs so cargo rebuilds it (not just deps).
+RUN touch src/main.rs && cargo build --release
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM alpine:3
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /build/target/release/engram-reembed /engram-reembed
+
+# Non-root user for least-privilege operation.
+RUN adduser -D -u 10001 engram
+USER engram
+
+ENTRYPOINT ["/engram-reembed"]

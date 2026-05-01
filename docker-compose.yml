@@ -92,11 +92,12 @@ services:
 
   engram-reembed:
     container_name: engram-reembed
-    image: engram-go:latest
-    # Runs only the background embedding worker — no MCP server, no HTTP port.
-    # This container is the ONLY one that sends high-throughput embedding requests
-    # to LiteLLM, keeping batch workloads isolated from MCP recall latency.
-    command: ["/engram", "--mode=reembed"]
+    build:
+      context: .
+      dockerfile: Dockerfile.reembed
+    image: engram-reembed:latest
+    # Rust binary — the ONLY container that sends high-throughput embedding
+    # requests to LiteLLM. Isolated so bulk re-embedding never starves MCP recall.
     env_file:
       - path: .env
         required: false
@@ -105,8 +106,10 @@ services:
       - LITELLM_URL=${LITELLM_URL:-http://litellm:4000}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
+      - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
+      - ENGRAM_REEMBED_CONCURRENCY=${ENGRAM_REEMBED_CONCURRENCY:-8}
     depends_on:
       postgres:
         condition: service_healthy
