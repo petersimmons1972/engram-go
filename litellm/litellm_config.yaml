@@ -1,5 +1,5 @@
 model_list:
-  # --- Generation: W6800 (Ollama Docker, port 11434) ---
+  # --- Generation: W6800 (Ollama, precision host port 11434) ---
   - model_name: llama3.3:70b
     litellm_params:
       model: ollama/llama3.3:70b-instruct-q3_K_M
@@ -10,6 +10,7 @@ model_list:
       model: ollama/qwen3:30b-a3b
       api_base: http://precision.petersimmons.com:11434
 
+  # --- Summarization: RX 7900 XT on leviathan ---
   - model_name: llama3.2:3b
     litellm_params:
       model: ollama/llama3.2:3b
@@ -22,14 +23,23 @@ model_list:
       api_base: http://precision.petersimmons.com:11435
       api_key: none
 
-  # --- Embedding: RX 7900 XT on leviathan (engram-ollama container) — 4× faster ---
+  # --- Embedding: RX 7900 XT on leviathan (weight 4) ---
   - model_name: snowflake-arctic-embed2
     litellm_params:
       model: ollama/snowflake-arctic-embed2
       api_base: http://engram-ollama:11434
+      weight: 4
     model_info:
       mode: embedding
 
+  # --- Embedding: W6800 on precision (weight 1) ---
+  - model_name: snowflake-arctic-embed2
+    litellm_params:
+      model: ollama/snowflake-arctic-embed2
+      api_base: http://precision.petersimmons.com:11434
+      weight: 1
+    model_info:
+      mode: embedding
 
 router_settings:
   routing_strategy: least-busy
