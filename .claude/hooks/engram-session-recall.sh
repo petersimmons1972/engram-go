@@ -28,6 +28,16 @@ except Exception:
 
 [[ -z "$TOKEN" ]] && exit 0
 
+# Infer engram project from git repo name (#402)
+INFERRED_PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo '')" 2>/dev/null || echo "")
+case "$INFERRED_PROJECT" in
+  clearwatch*) ENGRAM_PROJECT="clearwatch" ;;
+  engram*)     ENGRAM_PROJECT="engram" ;;
+  homelab*)    ENGRAM_PROJECT="homelab" ;;
+  instinct*)   ENGRAM_PROJECT="instinct" ;;
+  *)           ENGRAM_PROJECT="" ;;
+esac
+
 # Quick auth smoke-test — same endpoint used by all other hooks (#393)
 HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -41,8 +51,37 @@ RECALL_JSON=$(curl -sf --max-time 8 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -X POST "http://127.0.0.1:${PORT}/quick-recall" \
-  -d "{\"query\":\"current project status recent work decisions\",\"project\":\"global\",\"limit\":${MAX_RESULTS}}" \
+  -d "{\"query\":\"current project status recent work decisions\",\"project\":\"global\",\"limit\":3}" \
   2>/dev/null || true)
+
+# Second recall for inferred project, merged with global results (#402)
+if [[ -n "$ENGRAM_PROJECT" && "$ENGRAM_PROJECT" != "global" ]]; then
+  PROJECT_RECALL=$(curl -sf --max-time 8 \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+    -d "{\"query\":\"current project status recent work decisions\",\"project\":\"${ENGRAM_PROJECT}\",\"limit\":3}" \
+    2>/dev/null || true)
+  # Merge: combine both JSON result arrays, deduplicate by id, sort by score, cap at MAX_RESULTS
+  if [[ -n "$PROJECT_RECALL" && -n "$RECALL_JSON" ]]; then
+    RECALL_JSON=$(python3 -c "
+import json, sys
+a = json.loads(sys.argv[1]).get('results', [])
+b = json.loads(sys.argv[2]).get('results', [])
+seen = set()
+merged = []
+for r in a + b:
+    rid = r.get('id', '') or r.get('summary', '')[:40]
+    if rid not in seen:
+        seen.add(rid)
+        merged.append(r)
+merged.sort(key=lambda r: r.get('score', 0), reverse=True)
+print(json.dumps({'results': merged[:5]}))
+" "$RECALL_JSON" "$PROJECT_RECALL" 2>/dev/null || echo "$RECALL_JSON")
+  elif [[ -n "$PROJECT_RECALL" ]]; then
+    RECALL_JSON="$PROJECT_RECALL"
+  fi
+fi
 
 [[ -z "$RECALL_JSON" ]] && exit 0
 
