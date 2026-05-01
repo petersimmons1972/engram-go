@@ -46,12 +46,19 @@ func truncateRunes(s string, n int) string {
 
 // SummarizeContent calls the LiteLLM /v1/chat/completions endpoint synchronously.
 // litellmURL is the base URL (e.g. "http://litellm:4000"). Returns the trimmed response.
+//
+// LiteLLM returns HTTP 500 (not 404) when the upstream Ollama reports "model not found".
+// We detect that case by inspecting the error body and wrap it as ErrModelNotFound so
+// the 10-minute backoff in runOnce fires instead of spamming WARN on every 30s tick.
 func SummarizeContent(ctx context.Context, content, litellmURL, model string) (string, error) {
 	if utf8.RuneCountInString(content) > maxContent {
 		content = truncateRunes(content, maxContent)
 	}
 	result, err := llm.Complete(ctx, litellmURL, "", model, summarizePrompt+content)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return "", fmt.Errorf("%w: model=%q: %w", ErrModelNotFound, model, err)
+		}
 		return "", fmt.Errorf("summarize: %w", err)
 	}
 	return result, nil
