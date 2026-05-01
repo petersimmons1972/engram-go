@@ -8,6 +8,9 @@ set -euo pipefail
 
 FALLBACK="$HOME/.claude/projects/-home-psimmons/memory/fallback.md"
 
+# shellcheck source=lib/engram-state.sh
+source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
+
 # Read stdin — tool call JSON (same format as instinct-post-tool-use.sh)
 raw_input=$(cat)
 
@@ -133,6 +136,9 @@ with open(lock_path, "w") as lf:
         raise
 PYEOF
 fi
+
+# Track fallback count in state (#404)
+increment_state "fallback_entry_count" 2>/dev/null || true
 
 # Inject systemMessage so Claude knows what happened and does NOT retry
 printf '{"systemMessage":"⚠️  Engram MCP error auto-handled by hook.\nThe failed tool input was written to fallback.md and will be flushed to Engram at next session start.\nDo NOT retry the Engram call — continue without it."}'

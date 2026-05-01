@@ -6,9 +6,12 @@
 set -euo pipefail
 
 ENGRAM_DIR="$HOME/projects/engram-go"
-PORT=8788
+PORT="${ENGRAM_TEST_PORT:-8788}"
 
 [[ -d "$ENGRAM_DIR" ]] || exit 0
+
+# shellcheck source=lib/engram-state.sh
+source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 
 # ── 1. Ensure server is up ───────────────────────────────────────────────────
 if ! curl -sf --max-time 2 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
@@ -175,7 +178,38 @@ except Exception:
     fi
   fi
 
-  echo "✅ Engram: MCP authenticated and ready"
+  # Record session start and check for degraded state (#404)
+  _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  update_state "last_session_start" "\"${_now}\"" 2>/dev/null || true
+  increment_state "sessions_since_last_flush" 2>/dev/null || true
+
+  # Emit degraded-state systemMessage if thresholds exceeded
+  _degraded=$(python3 - "$STATE_FILE" 2>/dev/null <<'PYEOF'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+    msgs = []
+    fc = int(s.get("fallback_entry_count") or 0)
+    sf = int(s.get("sessions_since_last_flush") or 0)
+    af = int(s.get("consecutive_auth_failures") or 0)
+    if fc > 10:
+        msgs.append(f"{fc} entries queued in fallback.md")
+    if sf > 2:
+        msgs.append(f"no successful flush in {sf} sessions")
+    if af > 0:
+        msgs.append(f"{af} consecutive auth failure(s)")
+    if msgs:
+        detail = " | ".join(msgs)
+        print(f'{{"systemMessage":"⚠️  Engram memory is degraded: {detail}.\\nRun: engram-flush --force  or restart Engram to recover."}}')
+except Exception:
+    pass
+PYEOF
+  )
+  if [[ -n "$_degraded" ]]; then
+    printf '%s' "$_degraded"
+  else
+    echo "✅ Engram: MCP authenticated and ready"
+  fi
 else
   echo "❌ Engram: MCP auth failed — token written but Claude Code MCP connection is stale"
   echo ""

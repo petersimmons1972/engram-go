@@ -7,9 +7,12 @@
 
 set -euo pipefail
 
-PORT=8788
+PORT="${ENGRAM_TEST_PORT:-8788}"
 ENGRAM_DIR="$HOME/projects/engram-go"
 MCP_CONFIG="$HOME/.claude/mcp_servers.json"
+
+# shellcheck source=lib/engram-state.sh
+source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 
 # Skip if engram-go project not installed
 [[ -d "$ENGRAM_DIR" ]] || exit 0
@@ -48,8 +51,9 @@ HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
   -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
 
 if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
-  # Invalidate stale cache on auth failure
+  # Invalidate stale cache on auth failure; track in state (#404)
   rm -f "$CACHE"
+  increment_state "consecutive_auth_failures" 2>/dev/null || true
   # Auto-remediate: refresh the token by re-running setup.
   # Uses pre-built binary if available (fast), falls back to go run.
   if [[ -d "$ENGRAM_DIR" ]]; then
@@ -64,9 +68,11 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
 
   # Output systemMessage so Claude surfaces this to the user immediately
   printf '{"systemMessage":"⚠️  Engram auth was stale — token refreshed automatically.\\nRun /mcp in Claude Code to reconnect memory. Without this step, memory tools will fail."}'
-  # Exit 0 — don't block the session; Claude will display the systemMessage
+  exit 0  # must exit here — fall-through would overwrite failure state updates
 fi
 
-# Auth OK: update cache and silent exit
+# Auth OK: update cache, reset failure counter, silent exit (#404)
 touch "$CACHE"
+update_state "consecutive_auth_failures" "0" 2>/dev/null || true
+update_state "last_auth_ok_at" "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" 2>/dev/null || true
 exit 0

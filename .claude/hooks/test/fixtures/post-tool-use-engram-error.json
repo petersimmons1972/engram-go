@@ -1,0 +1,11 @@
+{
+  "tool_name": "mcp__engram__memory_store",
+  "tool_input": {
+    "content": "Test memory content for fallback",
+    "project": "global",
+    "memory_type": "context",
+    "tags": ["test"],
+    "importance": 1
+  },
+  "tool_response": "MCP error -32603: connection closed unexpectedly"
+}

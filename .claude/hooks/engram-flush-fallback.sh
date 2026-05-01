@@ -3,9 +3,12 @@
 # Runs after engram-token-refresh.sh so the server is confirmed up and token is fresh.
 set -euo pipefail
 
-FALLBACK="$HOME/.claude/projects/-home-psimmons/memory/fallback.md"
-PORT=8788
+FALLBACK="${ENGRAM_TEST_FALLBACK:-$HOME/.claude/projects/-home-psimmons/memory/fallback.md}"
+PORT="${ENGRAM_TEST_PORT:-8788}"
 BASE="http://127.0.0.1:${PORT}"
+
+# shellcheck source=lib/engram-state.sh
+source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 
 [[ -f "$FALLBACK" ]] || exit 0
 
@@ -153,6 +156,19 @@ for chunk in chunks:
         'importance': importance,
     }).encode()
 
+    MAX_RETRIES = 3
+    retry_match = re.search(r'<!-- retry:(\d+) -->', chunk)
+    retry_count = int(retry_match.group(1)) if retry_match else 0
+
+    def _requeue(c, rc):
+        # Drop after MAX_RETRIES total attempts (#397)
+        # retry_count is attempts-so-far; rc+1 would be the next attempt number
+        if rc + 1 >= MAX_RETRIES:
+            sys.stderr.write(f'[engram-flush] Dropping entry "{title}" after {MAX_RETRIES} retries\n')
+            return  # not re-appended — silently removed from fallback.md
+        clean = re.sub(r'\n<!-- retry:\d+ -->', '', c)
+        failed_chunks.append(clean + f'\n<!-- retry:{rc + 1} -->')
+
     req = urllib.request.Request(
         f'{base_url}/quick-store',
         data=payload,
@@ -164,10 +180,20 @@ for chunk in chunks:
             if resp.status < 300:
                 flushed += 1
             else:
-                failed_chunks.append(chunk)
+                # Unexpected 2xx+ non-success — requeue as transient
+                _requeue(chunk, retry_count)
+    except urllib.error.HTTPError as e:
+        if 400 <= e.code < 500:
+            # Permanent client error — log and drop, do not retry (#397)
+            sys.stderr.write(f'[engram-flush] Dropping entry "{title}" — permanent {e.code}\n')
+            flushed += 1
+        else:
+            # 5xx transient — requeue with incremented counter
+            _requeue(chunk, retry_count)
     except Exception as e:
-        sys.stderr.write(f'flush error for "{title}": {e}\n')
-        failed_chunks.append(chunk)
+        # Network error (timeout, reset, etc.) — requeue, may create duplicate
+        sys.stderr.write(f'[engram-flush] Network error for "{title}": {e}\n')
+        _requeue(chunk, retry_count)
 
 # --- Phase 3: re-append failures under lock ---
 if failed_chunks:
@@ -190,6 +216,11 @@ PYEOF
 
 if [[ -n "$FLUSHED" && "$FLUSHED" -gt 0 ]]; then
     echo "✅ engram-flush-fallback: flushed ${FLUSHED} pending entries to Engram"
+    # Reset state counters on successful flush (#404)
+    _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    update_state "last_flush_at" "\"${_now}\"" 2>/dev/null || true
+    update_state "sessions_since_last_flush" "0" 2>/dev/null || true
+    update_state "fallback_entry_count" "0" 2>/dev/null || true
 else
     echo "ℹ️  engram-flush-fallback: nothing to flush"
 fi
