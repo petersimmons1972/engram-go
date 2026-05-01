@@ -41,10 +41,10 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=engram
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "engram"]
+      test: ["CMD-SHELL", "pg_isready -U engram && psql -U engram -d engram -c 'SELECT 1' -q --no-psqlrc 2>/dev/null"]
       interval: 5s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   engram-go:
@@ -59,9 +59,10 @@ services:
         required: true
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      # Use the litellm service name — resolves inside the shared litellm network.
       - LITELLM_URL=http://litellm:4000
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      # ENGRAM_EMBED_URL bypasses LiteLLM for embeddings — calls the backend directly.
+      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # MCP server does NOT run the reembed worker — that lives in engram-reembed.
@@ -107,7 +108,7 @@ services:
         required: false
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=http://litellm:4000
+      - LITELLM_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
