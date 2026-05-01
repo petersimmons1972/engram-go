@@ -12,6 +12,8 @@
 *.env.local
 *.env.*.local
 .env*
+!.env.example
+!**/.env.example
 *_api_key
 *_secret
 *_password
