@@ -27,11 +27,18 @@ if isinstance(resp, dict):
 
 error_patterns = ["MCP error", "Connection closed", "connection closed", "ECONNRESET", "-32000", "-32603"]
 if any(p in resp for p in error_patterns):
+    # If -32603 but content suggests validation error, skip connection-failure handling (#403)
+    if "-32603" in resp and not any(p in resp for p in ["MCP error", "Connection closed", "ECONNRESET"]):
+        validation_signals = ["invalid", "validation", "required", "schema", "too long", "must be", "not found"]
+        if any(s in resp.lower() for s in validation_signals):
+            print("validation_error")
+            sys.exit(0)
     print("yes")
 else:
     print("no")
 ' 2>/dev/null || echo "no")
 
+[[ "$is_error" == "validation_error" ]] && exit 0
 [[ "$is_error" != "yes" ]] && exit 0
 
 # Extract useful context from tool_input to write to fallback.md
@@ -75,20 +82,30 @@ print(f"""## [{today}] Auto-captured from failed {tool_name}
 if [[ -n "$fallback_entry" ]]; then
     # flock + atomic write to avoid race with engram-flush-fallback.sh (#394)
     python3 - "$FALLBACK" "$fallback_entry" <<'PYEOF'
-import sys, os, tempfile, fcntl, re
+import sys, os, tempfile, fcntl, re, hashlib
 
 path = sys.argv[1]
 entry = sys.argv[2]
 lock_path = path + ".lock"
+
+# Deduplication: compute a hash of the entry content being written (#403)
+content_hash = hashlib.sha256(entry.encode()).hexdigest()[:16]
 
 with open(lock_path, "w") as lf:
     fcntl.flock(lf, fcntl.LOCK_EX)
 
     try:
         with open(path) as f:
-            content = f.read()
+            existing_content = f.read()
     except FileNotFoundError:
-        content = ""
+        existing_content = ""
+
+    # Skip if an identical entry hash already exists in the file (#403)
+    if content_hash in existing_content:
+        sys.stderr.write(f'[engram-error-handler] Duplicate entry detected — skipping\n')
+        sys.exit(0)
+
+    content = existing_content
 
     # Count existing entries — refuse to append if backlog is too large (#401)
     entry_count = len(re.findall(r'^## \[\d{4}-\d{2}-\d{2}\]', content, re.MULTILINE))
@@ -96,11 +113,14 @@ with open(lock_path, "w") as lf:
         sys.stderr.write(f'[engram-error-handler] fallback.md full ({entry_count} entries) — dropping new entry\n')
         sys.exit(0)
 
+    # Embed the hash in the entry so future dedup lookups can find it (#403)
+    tagged_entry = entry + f"\n<!-- dedup:{content_hash} -->"
+
     marker = "<!-- Add entries below"
     if marker in content:
-        content = content.replace(marker, entry + "\n\n" + marker, 1)
+        content = content.replace(marker, tagged_entry + "\n\n" + marker, 1)
     else:
-        content = content.rstrip() + "\n\n" + entry + "\n"
+        content = content.rstrip() + "\n\n" + tagged_entry + "\n"
 
     dir_ = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=dir_, prefix=".fallback_tmp")
