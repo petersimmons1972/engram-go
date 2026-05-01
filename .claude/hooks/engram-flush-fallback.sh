@@ -27,6 +27,7 @@ TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
 # Parse and flush entries — flock shared with engram-mcp-error-handler.sh (#394)
 FLUSHED=$(python3 - "$FALLBACK" "$BASE" "$TOKEN" <<'PYEOF'
 import json, re, sys, urllib.request, urllib.error, os, tempfile, fcntl
+from datetime import datetime, timezone, timedelta
 
 fallback_path, base_url, token = sys.argv[1], sys.argv[2], sys.argv[3]
 lock_path = fallback_path + ".lock"
@@ -72,6 +73,13 @@ for i, (start, _) in enumerate(entry_positions):
         continue
 
     date_str, title = title_match.group(1), title_match.group(2)
+
+    # Drop entries older than 7 days — stale fallback entries are not worth flushing (#401)
+    entry_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - entry_date > timedelta(days=7):
+        sys.stderr.write(f'[engram-flush] Dropping stale entry from {date_str} (>7 days old)\n')
+        flushed += 1  # count as "flushed" so it's removed from the file
+        continue
 
     meta = {}
     body_lines = []

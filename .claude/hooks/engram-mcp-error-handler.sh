@@ -75,7 +75,7 @@ print(f"""## [{today}] Auto-captured from failed {tool_name}
 if [[ -n "$fallback_entry" ]]; then
     # flock + atomic write to avoid race with engram-flush-fallback.sh (#394)
     python3 - "$FALLBACK" "$fallback_entry" <<'PYEOF'
-import sys, os, tempfile, fcntl
+import sys, os, tempfile, fcntl, re
 
 path = sys.argv[1]
 entry = sys.argv[2]
@@ -89,6 +89,12 @@ with open(lock_path, "w") as lf:
             content = f.read()
     except FileNotFoundError:
         content = ""
+
+    # Count existing entries — refuse to append if backlog is too large (#401)
+    entry_count = len(re.findall(r'^## \[\d{4}-\d{2}-\d{2}\]', content, re.MULTILINE))
+    if entry_count >= 50:
+        sys.stderr.write(f'[engram-error-handler] fallback.md full ({entry_count} entries) — dropping new entry\n')
+        sys.exit(0)
 
     marker = "<!-- Add entries below"
     if marker in content:
