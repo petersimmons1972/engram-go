@@ -475,10 +475,11 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	// 2s deadline — Ollama must never block MCP calls. On failure, degrade
+	// 4s deadline — enough headroom for GPU inference (~1.5s) plus Docker network
+	// overhead, while still refusing CPU inference (>10s). On failure, degrade
 	// gracefully to BM25+recency only; the vector leg is skipped but recall
 	// still returns useful results.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
@@ -757,10 +758,10 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
-	// 2s deadline — Ollama must never block MCP calls. RecallWithinMemory has
-	// no BM25 fallback (document chunk search is vector-only), so it returns an
-	// error on embed failure — but fails fast rather than hanging.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 4s deadline — matches RecallWithOpts; fails fast on CPU inference.
+	// RecallWithinMemory has no BM25 fallback (document chunk search is
+	// vector-only), so it returns an error on embed failure.
+	embedCtx, embedCancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {

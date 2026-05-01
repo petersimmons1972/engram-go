@@ -68,8 +68,8 @@ func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 
 	require.NoError(t, err, "RecallWithOpts must degrade to BM25+recency on embed failure, not return an error")
 	require.NotNil(t, results, "results slice must be non-nil even when degraded")
-	require.Less(t, elapsed, 3*time.Second,
-		"RecallWithOpts must return within 3s when embed times out (2s deadline); got %s", elapsed)
+	require.Less(t, elapsed, 5*time.Second,
+		"RecallWithOpts must return within 5s when embed times out (4s deadline); got %s", elapsed)
 }
 
 // TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory fails

@@ -66,8 +66,17 @@ func NewLiteLLMClientNoProbe(baseURL, model, apiKey string, targetDims int) *Lit
 	}
 }
 
-func (c *LiteLLMClient) Name() string    { return c.model }
-func (c *LiteLLMClient) Dimensions() int { return c.dims }
+func (c *LiteLLMClient) Name() string { return c.model }
+
+// Dimensions returns the known vector size. Before the first successful Embed
+// call, falls back to targetDims so the dimension guard in checkEmbedderMeta
+// does not falsely report a mismatch on startup.
+func (c *LiteLLMClient) Dimensions() int {
+	if c.dims > 0 {
+		return c.dims
+	}
+	return c.targetDims
+}
 
 // Embed encodes text using the LiteLLM /v1/embeddings endpoint.
 func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
