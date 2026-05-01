@@ -1,42 +1,42 @@
 model_list:
-  # --- Generation: W6800 (Ollama, precision host port 11434) ---
+  # --- Generation: W6800 ---
   - model_name: llama3.3:70b
     litellm_params:
       model: ollama/llama3.3:70b-instruct-q3_K_M
-      api_base: http://precision.petersimmons.com:11434
+      api_base: os.environ/PRECISION_OLLAMA_URL
 
   - model_name: qwen3:30b-a3b
     litellm_params:
       model: ollama/qwen3:30b-a3b
-      api_base: http://precision.petersimmons.com:11434
+      api_base: os.environ/PRECISION_OLLAMA_URL
 
-  # --- Summarization: RX 7900 XT on leviathan ---
+  # --- Summarization: RX 7900 XT ---
   - model_name: llama3.2:3b
     litellm_params:
       model: ollama/llama3.2:3b
-      api_base: http://engram-ollama:11434
+      api_base: os.environ/LEVIATHAN_OLLAMA_URL
 
-  # --- Scoring / fast gen: MI50 llama.cpp (port 11435) ---
+  # --- Scoring / fast gen: MI50 llama-server ---
   - model_name: qwen3:8b
     litellm_params:
       model: openai/qwen3:8b
-      api_base: http://precision.petersimmons.com:11435
+      api_base: os.environ/PRECISION_LLAMACPP_URL
       api_key: none
 
-  # --- Embedding: RX 7900 XT on leviathan (weight 4) ---
+  # --- Embedding: RX 7900 XT (weight 4) ---
   - model_name: snowflake-arctic-embed2
     litellm_params:
       model: ollama/snowflake-arctic-embed2
-      api_base: http://engram-ollama:11434
+      api_base: os.environ/LEVIATHAN_OLLAMA_URL
       weight: 4
     model_info:
       mode: embedding
 
-  # --- Embedding: W6800 on precision (weight 1) ---
+  # --- Embedding: W6800 (weight 1) ---
   - model_name: snowflake-arctic-embed2
     litellm_params:
       model: ollama/snowflake-arctic-embed2
-      api_base: http://precision.petersimmons.com:11434
+      api_base: os.environ/PRECISION_OLLAMA_URL
       weight: 1
     model_info:
       mode: embedding
