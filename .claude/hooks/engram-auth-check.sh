@@ -29,6 +29,15 @@ except Exception:
 
 [[ -z "$TOKEN" ]] && exit 0
 
+# File-based auth cache — 120s TTL to avoid per-message latency (#400)
+CACHE="$HOME/.claude/.engram-auth-ok"
+CACHE_TTL=120
+
+if [[ -f "$CACHE" ]]; then
+  age=$(( $(date +%s) - $(date -r "$CACHE" +%s 2>/dev/null || echo 0) ))
+  [[ "$age" -lt "$CACHE_TTL" ]] && exit 0
+fi
+
 # Fast auth probe — 3s hard limit
 # 200 or 500 = auth OK (500 = recall backend error, but token was accepted)
 # 401 or 000 = auth broken
@@ -39,6 +48,8 @@ HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
   -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
 
 if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
+  # Invalidate stale cache on auth failure
+  rm -f "$CACHE"
   # Auto-remediate: refresh the token by re-running setup.
   # Uses pre-built binary if available (fast), falls back to go run.
   if [[ -d "$ENGRAM_DIR" ]]; then
@@ -56,5 +67,6 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
   # Exit 0 — don't block the session; Claude will display the systemMessage
 fi
 
-# Auth OK: silent exit
+# Auth OK: update cache and silent exit
+touch "$CACHE"
 exit 0
