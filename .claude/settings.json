@@ -20,24 +20,11 @@
       "mcp__Ref__*",
       "mcp__claude_ai_Gmail__*",
       "mcp__claude_ai_Google_Calendar__*",
-      "mcp__engram__memory_status",
-      "mcp__engram__memory_store",
-      "mcp__engram__memory_connect",
-      "mcp__engram__memory_recall",
-      "mcp__engram__memory_list",
-      "mcp__engram__memory_correct",
-      "mcp__engram__memory_consolidate",
-      "mcp__engram__memory_forget",
-      "mcp__engram__memory_store_batch",
+      "mcp__engram__*",
+      "Agent",
       "Skill(schedule)",
       "Skill(linkedin-content)",
       "Skill(update-config)",
-      "mcp__engram__memory_feedback",
-      "mcp__engram__memory_diagnose",
-      "mcp__engram__memory_verify",
-      "mcp__engram__memory_summarize",
-      "mcp__engram__memory_sleep",
-      "mcp__engram__memory_projects",
       "Bash(cp /home/psimmons/.claude/agents/rickover-validator.md /home/psimmons/.worktrees/opus-47-migration/.claude/agents/rickover-validator.md)",
       "Bash(git add *)",
       "Bash(git commit -m 'chore: snapshot rickover-validator.md as migration baseline *)",
@@ -45,16 +32,12 @@
       "Bash(cp /home/psimmons/.claude/plugins/cache/superpowers-marketplace/superpowers/5.0.7/skills/dispatching-parallel-agents/SKILL.md /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents/SKILL.md)",
       "Bash(git checkout *)",
       "Bash(rm .claude/agents/rickover-validator.md)",
-      "mcp__engram__memory_fetch",
-      "mcp__engram__memory_store_document",
-      "mcp__engram__memory_quick_store",
       "mcp__security-program__scan",
       "mcp__security-program__list_plugins",
-      "mcp__engram__memory_episode_start",
-      "mcp__engram__memory_ingest",
       "Bash(rm /home/psimmons/.git/index.lock)",
       "Bash(git -C /home/psimmons add .claude/projects/-home-psimmons/memory-system-optimization-plan.md docs/superpowers/plans/2026-04-01-claude-md-engram-refactor.md docs/superpowers/plans/2026-04-03-longhorn-nfs-migration.md docs/superpowers/plans/2026-04-23-engram-primary-memory.md docs/superpowers/specs/2026-04-01-claude-md-engram-refactor-design.md docs/superpowers/specs/2026-04-03-longhorn-nfs-migration-design.md)",
-      "Bash(git -C /home/psimmons diff --staged --stat)"
+      "Bash(git -C /home/psimmons diff --staged --stat)",
+      "Bash(gh issue create *)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -83,6 +66,16 @@
   "hooks": {
     "PostToolUse": [
       {
+        "matcher": "mcp__engram__*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-mcp-error-handler.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -98,6 +91,7 @@
         ]
       },
       {
+        "matcher": "Edit|Write|Bash|Agent",
         "hooks": [
           {
             "type": "command",
@@ -122,6 +116,11 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/engram-session-end.sh",
+            "timeout": 8
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/telemetry-emit.sh",
             "timeout": 3
           }
@@ -133,6 +132,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/engram-auth-check.sh",
+            "timeout": 5,
+            "statusMessage": "Checking Engram auth"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/telemetry-emit.sh",
             "timeout": 3
           }
@@ -140,6 +145,16 @@
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "mcp__engram__*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-precheck.sh",
+            "timeout": 25
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -179,6 +194,18 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/engram-session-recall.sh",
+            "timeout": 15,
+            "statusMessage": "Injecting Engram session recall into context"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-flush-fallback.sh",
+            "timeout": 30,
+            "statusMessage": "Flushing fallback.md entries to Engram"
+          },
+          {
+            "type": "command",
             "command": "~/bin/generate-session-context.py",
             "timeout": 15,
             "statusMessage": "Generating session context"
@@ -211,12 +238,14 @@
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true,
     "frontend-design@claude-code-plugins": false,
-    "gopls-lsp@claude-plugins-official": true
+    "gopls-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "effortLevel": "medium",
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "verbose": false,
   "showTurnDuration": true,
-  "terminalProgressBarEnabled": true
+  "terminalProgressBarEnabled": true,
+  "skipAutoPermissionPrompt": true
 }
