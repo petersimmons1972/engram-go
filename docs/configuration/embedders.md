@@ -5,9 +5,9 @@ is selectable at startup via the `ENGRAM_OLLAMA_MODEL` environment variable.
 All stored memories must share a single embedding model at a given time — the
 migration tool is used to switch.
 
-> **Note:** Default model tuning is deferred pending LongMemEval baseline results.
-> The current default (`nomic-embed-text`) is preserved; evaluate alternatives
-> via `memory_embedding_eval` before migrating in production.
+> **Note:** The operational contract is dimension-first: the configured model
+> must produce 1024-dimensional vectors for the primary index. Use
+> `memory_embedding_eval` before migrating in production.
 
 ---
 
@@ -18,8 +18,8 @@ Pull any of the supported models with `ollama pull <name>` and set
 
 | Model | Dim | Size | Best for |
 |---|---:|---:|---|
-| `nomic-embed-text` | 768 | 274 MB | Current default — smallest footprint, solid English baseline |
-| `mxbai-embed-large` | 1024 | 669 MB | Best MTEB retrieval score of locally-available Ollama models (English) — recommended upgrade |
+| `nomic-embed-text` | 768 | 274 MB | Smallest footprint, solid English baseline |
+| `mxbai-embed-large` | 1024 | 669 MB | Strong English retrieval quality |
 | `bge-m3` | 1024 | 1200 MB | Multilingual corpora — 100+ languages |
 
 ---
@@ -29,9 +29,9 @@ Pull any of the supported models with `ollama pull <name>` and set
 Selects the embedder at server startup (`cmd/engram/main.go:46`).
 
 ```
-ENGRAM_OLLAMA_MODEL=bge-m3         # multilingual corpus
-ENGRAM_OLLAMA_MODEL=mxbai-embed-large   # English, higher recall
-ENGRAM_OLLAMA_MODEL=nomic-embed-text    # default
+ENGRAM_OLLAMA_MODEL=bge-m3               # multilingual corpus
+ENGRAM_OLLAMA_MODEL=mxbai-embed-large    # English, higher recall
+ENGRAM_OLLAMA_MODEL=nomic-embed-text     # legacy 768-dim option
 ```
 
 A new server reads this at startup; changing the value has no effect on an
@@ -84,13 +84,15 @@ committing to a migration.
 
 ## When to Consider Each Option
 
-- **Stay on `nomic-embed-text`**: English-only corpus, latency-sensitive workloads,
-  smallest deployment footprint.
-- **Move to `mxbai-embed-large`**: English-only corpus, recall quality matters
-  more than embedding latency, have the extra 400 MB to spare.
-- **Move to `bge-m3`**: Any non-English content in the corpus, or expect to mix
-  languages over time. Multilingual-E5-style models are structural, not tuning —
-  `nomic` cannot recall non-English content regardless of weight adjustment.
+- **Stay on a 768-dim model like `nomic-embed-text`**: English-only corpus,
+  latency-sensitive workloads, smallest deployment footprint.
+- **Move to a 1024-dim model like `mxbai-embed-large`**: English-only corpus,
+  recall quality matters more than embedding latency, have the extra 400 MB to
+  spare.
+- **Move to a multilingual 1024-dim model like `bge-m3`**: Any non-English
+  content in the corpus, or expect to mix languages over time. Multilingual
+  models are structural, not tuning — a 768-dim model cannot recover
+  multilingual recall regardless of prompt or weight adjustment.
 
 ---
 

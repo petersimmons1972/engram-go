@@ -34,6 +34,26 @@ func CosineSimilarity(a, b []float32) float64 {
 	return dot / (magA * magB)
 }
 
+// L2Normalize returns a copy of v scaled to unit length.
+// This is the correct post-processing step for Matryoshka (MRL) truncation:
+// take the first N dims, then L2-normalize so cosine similarity stays meaningful.
+// Returns v unchanged if the magnitude is zero.
+func L2Normalize(v []float32) []float32 {
+	var sum float64
+	for _, x := range v {
+		sum += float64(x) * float64(x)
+	}
+	if sum == 0 {
+		return v
+	}
+	mag := float32(math.Sqrt(sum))
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = x / mag
+	}
+	return out
+}
+
 // ToBlob serializes a float32 slice to a little-endian byte slice.
 // Must be byte-for-byte identical to Python:
 //

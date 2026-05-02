@@ -19,7 +19,11 @@ struct Config {
     litellm_api_key: String,
     embed_model: String,
     embed_dims: Option<u32>,
+    /// Maximum characters to send per chunk. Prevents context-window overflow.
+    /// Default 2048 chars (~512 tokens) — conservative for all supported models.
+    max_chunk_chars: usize,
     batch_size: usize,
+    embed_sub_batch: usize,
     interval: Duration,
     concurrency: usize,
     embed_timeout: Duration,
@@ -36,10 +40,12 @@ impl Config {
                 &env_or("ENGRAM_OLLAMA_MODEL", "qwen3-embedding:8b"),
             ),
             embed_dims: env_opt_u32("ENGRAM_EMBED_DIMENSIONS"),
+            max_chunk_chars: env_usize("ENGRAM_EMBED_MAX_CHARS", 2048),
             batch_size: env_usize("ENGRAM_REEMBED_BATCH_SIZE", 100),
+            embed_sub_batch: env_usize("ENGRAM_EMBED_SUB_BATCH", 8),
             interval: env_duration("ENGRAM_REEMBED_INTERVAL", Duration::from_secs(10)),
             concurrency: env_usize("ENGRAM_REEMBED_CONCURRENCY", 8),
-            embed_timeout: Duration::from_secs(30),
+            embed_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -53,20 +59,22 @@ struct EmbedResponse {
 
 #[derive(Deserialize)]
 struct EmbedData {
+    #[serde(default)]
+    index: usize,
     embedding: Vec<f32>,
 }
 
-async fn embed_text(
+async fn embed_batch(
     http: &HttpClient,
     litellm_url: &str,
     api_key: &str,
     model: &str,
     dims: Option<u32>,
-    text: &str,
-) -> anyhow::Result<Vec<f32>> {
+    texts: &[String],
+) -> anyhow::Result<Vec<Vec<f32>>> {
     let mut body = serde_json::json!({
         "model": model,
-        "input": text,
+        "input": texts,
     });
     if let Some(d) = dims {
         body["dimensions"] = serde_json::json!(d);
@@ -85,18 +93,15 @@ async fn embed_text(
         bail!("litellm embed HTTP {}: {}", status, body.trim());
     }
 
-    let parsed: EmbedResponse = resp.json().await.context("litellm decode")?;
-    parsed
-        .data
-        .into_iter()
-        .next()
-        .map(|d| d.embedding)
-        .ok_or_else(|| anyhow::anyhow!("litellm embed: empty response"))
+    let mut parsed: EmbedResponse = resp.json().await.context("litellm decode")?;
+    // Ollama returns results ordered by index; sort by index field if present.
+    parsed.data.sort_by_key(|d| d.index);
+    Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
 }
 
 // ── Pending chunk ─────────────────────────────────────────────────────────────
 
-#[derive(FromRow)]
+#[derive(FromRow, Clone)]
 struct PendingChunk {
     id: String,
     chunk_text: String,
@@ -133,9 +138,9 @@ async fn run_batch(pool: &PgPool, http: &HttpClient, cfg: &Config) -> anyhow::Re
     tracing::debug!(count = n, "processing batch");
 
     let sem = Arc::new(Semaphore::new(cfg.concurrency));
-    let mut handles = Vec::with_capacity(n);
+    let mut handles = Vec::new();
 
-    for chunk in rows {
+    for sub_batch in rows.chunks(cfg.embed_sub_batch) {
         let permit = sem.clone().acquire_owned().await?;
         let pool = pool.clone();
         let http = http.clone();
@@ -144,37 +149,53 @@ async fn run_batch(pool: &PgPool, http: &HttpClient, cfg: &Config) -> anyhow::Re
         let model = cfg.embed_model.clone();
         let dims = cfg.embed_dims;
         let timeout = cfg.embed_timeout;
+        let max_chars = cfg.max_chunk_chars;
+        let chunks: Vec<PendingChunk> = sub_batch.to_vec();
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
 
+            // Truncate each text to the model context window.
+            let texts: Vec<String> = chunks.iter().map(|c| {
+                if c.chunk_text.len() > max_chars {
+                    let end = (0..=max_chars).rev()
+                        .find(|&i| c.chunk_text.is_char_boundary(i))
+                        .unwrap_or(0);
+                    c.chunk_text[..end].to_string()
+                } else {
+                    c.chunk_text.clone()
+                }
+            }).collect();
+
             let embed_result = tokio::time::timeout(
                 timeout,
-                embed_text(&http, &litellm_url, &api_key, &model, dims, &chunk.chunk_text),
+                embed_batch(&http, &litellm_url, &api_key, &model, dims, &texts),
             )
             .await;
 
-            let vec = match embed_result {
+            let vecs = match embed_result {
                 Err(_) => {
-                    warn!(chunk_id = %chunk.id, "embed timeout");
+                    warn!(count = chunks.len(), "embed sub-batch timeout");
                     return;
                 }
                 Ok(Err(e)) => {
-                    warn!(chunk_id = %chunk.id, err = %e, "embed failed");
+                    warn!(count = chunks.len(), err = %e, "embed sub-batch failed");
                     return;
                 }
                 Ok(Ok(v)) => v,
             };
 
-            if let Err(e) = sqlx::query(
-                "UPDATE chunks SET embedding = $1::vector WHERE id = $2",
-            )
-            .bind(Vector::from(vec))
-            .bind(&chunk.id)
-            .execute(&pool)
-            .await
-            {
-                warn!(chunk_id = %chunk.id, err = %e, "update failed");
+            for (chunk, vec) in chunks.iter().zip(vecs.into_iter()) {
+                if let Err(e) = sqlx::query(
+                    "UPDATE chunks SET embedding = $1::vector WHERE id = $2",
+                )
+                .bind(Vector::from(vec))
+                .bind(&chunk.id)
+                .execute(&pool)
+                .await
+                {
+                    warn!(chunk_id = %chunk.id, err = %e, "update failed");
+                }
             }
         }));
     }
@@ -201,17 +222,17 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         .context("build http client")?;
 
     // Startup probe — log dims so we know the model is reachable.
-    match embed_text(
+    match embed_batch(
         &http,
         &cfg.litellm_url,
         &cfg.litellm_api_key,
         &cfg.embed_model,
         cfg.embed_dims,
-        "probe",
+        &[String::from("probe")],
     )
     .await
     {
-        Ok(v) => info!(dims = v.len(), model = %cfg.embed_model, "litellm probe ok"),
+        Ok(v) => info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, "litellm probe ok"),
         Err(e) => warn!(err = %e, "litellm probe failed — will retry on each batch"),
     }
 

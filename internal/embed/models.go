@@ -4,7 +4,7 @@ package embed
 type ModelSpec struct {
 	Name        string
 	Dimensions  int
-	MaxTokens   int    // context window limit; chunks must not exceed this
+	MaxTokens   int // context window limit; chunks must not exceed this
 	SizeMB      int
 	Description string
 	Recommended bool // exactly one entry should be true

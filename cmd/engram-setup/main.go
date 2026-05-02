@@ -77,7 +77,7 @@ func run() error {
 	// Claude Code reads MCP servers from both of these files — keep both in sync.
 	targets := []string{
 		filepath.Join(home, ".claude", "mcp_servers.json"), // primary: Claude Code live config
-		filepath.Join(home, ".claude.json"),                 // secondary: Claude Code user settings
+		filepath.Join(home, ".claude.json"),                // secondary: Claude Code user settings
 	}
 
 	newEntry := map[string]interface{}{
@@ -246,7 +246,10 @@ func readKeyBackup(path string) (string, error) {
 }
 
 func healthCheck(base string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return healthCheckWithClient(base, &http.Client{Timeout: 5 * time.Second})
+}
+
+func healthCheckWithClient(base string, client *http.Client) error {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/health", nil)
 	if err != nil {
 		return err
@@ -263,7 +266,10 @@ func healthCheck(base string) error {
 }
 
 func fetchSetupToken(base string) (*setupResponse, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return fetchSetupTokenWithClient(base, &http.Client{Timeout: 5 * time.Second})
+}
+
+func fetchSetupTokenWithClient(base string, client *http.Client) (*setupResponse, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/setup-token", nil)
 	if err != nil {
 		return nil, err

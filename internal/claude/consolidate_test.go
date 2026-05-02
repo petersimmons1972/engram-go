@@ -3,8 +3,9 @@ package claude_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/claude"
@@ -12,44 +13,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// makeClient builds a Client pointed at the given test server URL.
-func makeClient(t *testing.T, baseURL string) *claude.Client {
-	t.Helper()
-	c, err := claude.New("test-key")
-	require.NoError(t, err)
-	c.BaseURL = baseURL
-	return c
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func reviewClient(rt http.RoundTripper) *claude.Client {
+	return claude.NewWithTransport("test-key", rt)
 }
 
-// mergeServer builds an httptest.Server that returns the provided text as the
-// first content block of a Anthropic messages response.
-func mergeServer(text string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"content": []map[string]string{
-				{"type": "text", "text": text},
-			},
-		})
-	}))
+func reviewJSON(status int, body string) *http.Response {
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}
 }
 
 func TestReviewMergeCandidates_ParsesResponse(t *testing.T) {
 	responseText := `[{"memory_a_id":"a1","memory_b_id":"b1","should_merge":true,"reason":"same fact","merged_content":"merged"}]`
+	c := reviewClient(rtFunc(func(r *http.Request) (*http.Response, error) {
+		require.Equal(t, "/v1/messages", r.URL.Path)
+		payload, _ := json.Marshal(map[string]any{
+			"content": []map[string]string{{"type": "text", "text": responseText}},
+		})
+		return reviewJSON(http.StatusOK, string(payload)), nil
+	}))
 
-	srv := mergeServer(responseText)
-	defer srv.Close()
-
-	c := makeClient(t, srv.URL)
-
-	candidates := []claude.MergeCandidate{
-		{
-			MemoryA:    &types.Memory{ID: "a1", Content: "fact about X"},
-			MemoryB:    &types.Memory{ID: "b1", Content: "fact about X repeated"},
-			Similarity: 0.95,
-		},
-	}
-
+	candidates := []claude.MergeCandidate{{MemoryA: &types.Memory{ID: "a1", Content: "fact about X"}, MemoryB: &types.Memory{ID: "b1", Content: "fact about X repeated"}, Similarity: 0.95}}
 	decisions, err := c.ReviewMergeCandidates(context.Background(), candidates)
 	require.NoError(t, err)
 	require.Len(t, decisions, 1)
@@ -60,26 +46,14 @@ func TestReviewMergeCandidates_ParsesResponse(t *testing.T) {
 }
 
 func TestReviewMergeCandidates_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"content": []map[string]string{
-				{"type": "text", "text": "not valid json"},
-			},
+	c := reviewClient(rtFunc(func(*http.Request) (*http.Response, error) {
+		payload, _ := json.Marshal(map[string]any{
+			"content": []map[string]string{{"type": "text", "text": "not valid json"}},
 		})
+		return reviewJSON(http.StatusOK, string(payload)), nil
 	}))
-	defer srv.Close()
 
-	c := makeClient(t, srv.URL)
-
-	candidates := []claude.MergeCandidate{
-		{
-			MemoryA:    &types.Memory{ID: "a1", Content: "some content"},
-			MemoryB:    &types.Memory{ID: "b1", Content: "other content"},
-			Similarity: 0.80,
-		},
-	}
-
+	candidates := []claude.MergeCandidate{{MemoryA: &types.Memory{ID: "a1", Content: "some content"}, MemoryB: &types.Memory{ID: "b1", Content: "other content"}, Similarity: 0.80}}
 	_, err := c.ReviewMergeCandidates(context.Background(), candidates)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parse merge decisions")
@@ -87,18 +61,15 @@ func TestReviewMergeCandidates_MalformedJSON(t *testing.T) {
 
 func TestReviewMergeCandidates_EmptyCandidates(t *testing.T) {
 	handlerCalled := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := reviewClient(rtFunc(func(*http.Request) (*http.Response, error) {
 		handlerCalled = true
-		w.WriteHeader(http.StatusInternalServerError)
+		return reviewJSON(http.StatusInternalServerError, ""), nil
 	}))
-	defer srv.Close()
-
-	c := makeClient(t, srv.URL)
 
 	decisions, err := c.ReviewMergeCandidates(context.Background(), []claude.MergeCandidate{})
 	require.NoError(t, err)
 	require.Nil(t, decisions)
-	require.False(t, handlerCalled, "HTTP handler should never be called for empty candidate slice")
+	require.False(t, handlerCalled)
 }
 
 func TestReviewMergeCandidates_AdvisorToolDeclared(t *testing.T) {
@@ -107,28 +78,15 @@ func TestReviewMergeCandidates_AdvisorToolDeclared(t *testing.T) {
 			Type string `json:"type"`
 		} `json:"tools"`
 	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&capturedBody)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"content": []map[string]string{
-				{"type": "text", "text": `[{"memory_a_id":"a1","memory_b_id":"b1","should_merge":false,"reason":"different"}]`},
-			},
+	c := reviewClient(rtFunc(func(r *http.Request) (*http.Response, error) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&capturedBody))
+		payload, _ := json.Marshal(map[string]any{
+			"content": []map[string]string{{"type": "text", "text": `[{"memory_a_id":"a1","memory_b_id":"b1","should_merge":false,"reason":"different"}]`}},
 		})
+		return reviewJSON(http.StatusOK, string(payload)), nil
 	}))
-	defer srv.Close()
 
-	c := makeClient(t, srv.URL)
-
-	candidates := []claude.MergeCandidate{
-		{
-			MemoryA:    &types.Memory{ID: "a1", Content: "content a"},
-			MemoryB:    &types.Memory{ID: "b1", Content: "content b"},
-			Similarity: 0.60,
-		},
-	}
-
+	candidates := []claude.MergeCandidate{{MemoryA: &types.Memory{ID: "a1", Content: "content a"}, MemoryB: &types.Memory{ID: "b1", Content: "content b"}, Similarity: 0.60}}
 	_, err := c.ReviewMergeCandidates(context.Background(), candidates)
 	require.NoError(t, err)
 	require.Len(t, capturedBody.Tools, 1)

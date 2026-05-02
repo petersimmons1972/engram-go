@@ -223,17 +223,16 @@ var evalProbeSentences = []string{
 func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 
-	defaultModelA := cfg.EmbedModel
-	if defaultModelA == "" {
-		defaultModelA = "nomic-embed-text"
+	modelA := getString(args, "model_a", cfg.EmbedModel)
+	if modelA == "" {
+		return nil, fmt.Errorf("memory_embedding_eval: configured embed model is required")
 	}
-	modelA := getString(args, "model_a", defaultModelA)
 	modelB := getString(args, "model_b", "")
 	if modelB == "" {
 		if rec := embed.DefaultRecommendedModel(); rec != nil {
 			modelB = rec.Name
 		} else {
-			modelB = "mxbai-embed-large"
+			return nil, fmt.Errorf("memory_embedding_eval: no recommended model configured")
 		}
 	}
 	if modelA == modelB {

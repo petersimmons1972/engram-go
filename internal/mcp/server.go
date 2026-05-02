@@ -196,8 +196,8 @@ func hashAPIKey(apiKey string) string {
 // Notifications are sent to a buffered channel that silently drops overflow —
 // the real SSE connection is gone, but tool calls (POST /message) still work.
 type rehydratedSession struct {
-	id   string
-	ch   chan mcpgo.JSONRPCNotification
+	id string
+	ch chan mcpgo.JSONRPCNotification
 }
 
 func newRehydratedSession(id string) *rehydratedSession {
@@ -207,10 +207,10 @@ func newRehydratedSession(id string) *rehydratedSession {
 	return &rehydratedSession{id: id, ch: make(chan mcpgo.JSONRPCNotification, 256)}
 }
 
-func (r *rehydratedSession) Initialize()                                        {}
-func (r *rehydratedSession) Initialized() bool                                  { return true }
+func (r *rehydratedSession) Initialize()                                           {}
+func (r *rehydratedSession) Initialized() bool                                     { return true }
 func (r *rehydratedSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification { return r.ch }
-func (r *rehydratedSession) SessionID() string                                  { return r.id }
+func (r *rehydratedSession) SessionID() string                                     { return r.id }
 
 // RehydrateSessions loads active sessions from the database and re-registers
 // them in the mcp-go transport so POST /message calls with pre-restart session
@@ -874,7 +874,7 @@ func (s *Server) registerTools() {
 			handleMemoryMigrateEmbedder},
 		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
 			handleMemoryModels},
-		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
+		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to the configured embedding model; model_b defaults to the recommended registry entry. Use this to validate a 1024-dim compatible replacement before migrating. Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
 			handleMemoryEmbeddingEval},
 		// Import / export
 		{"memory_export_all", "Export all memories to markdown files",

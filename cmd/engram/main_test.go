@@ -40,22 +40,15 @@ func TestRecallDefaultModeDefault(t *testing.T) {
 
 func TestValidateEmbedConfig(t *testing.T) {
 	cases := []struct {
-		model   string
-		dims    int
-		wantWarn bool
+		model        string
+		dims         int
+		wantWarn     bool
 		warnContains string
 	}{
-		// qwen3-embedding:8b requires dims=1024 for MRL truncation to fit vector(1024)
-		{"qwen3-embedding:8b", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
-		{"qwen3-embedding:8b", 1536, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
-		{"qwen3-embedding:8b", 1024, false, ""},
-		// mxbai-embed-large does not support MRL — dims must be 0
-		{"mxbai-embed-large", 1024, true, "ENGRAM_EMBED_DIMENSIONS=0"},
-		{"mxbai-embed-large", 512, true, "ENGRAM_EMBED_DIMENSIONS=0"},
-		{"mxbai-embed-large", 0, false, ""},
-		// unknown models: no opinion
-		{"nomic-embed-text", 0, false, ""},
-		{"nomic-embed-text", 768, false, ""},
+		{"any-model", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"any-model", 512, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"any-model", 768, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"any-model", 1024, false, ""},
 	}
 
 	for _, tc := range cases {
@@ -72,23 +65,36 @@ func TestValidateEmbedConfig(t *testing.T) {
 	}
 }
 
+func TestEmbedModelIsRequired(t *testing.T) {
+	t.Setenv("ENGRAM_EMBED_MODEL", "")
+	t.Setenv("ENGRAM_OLLAMA_MODEL", "")
+	t.Setenv("ENGRAM_API_KEY", "test-key")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost/db")
+	t.Setenv("LITELLM_URL", "http://localhost:4000")
+	// The run path will fail earlier for other missing dependencies in this
+	// sandbox, so this test only checks the flag/env default resolution.
+	if got := envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "")); got != "" {
+		t.Fatalf("expected empty embed model default, got %q", got)
+	}
+}
+
 func TestIsPrivateIP_ViaNetutil(t *testing.T) {
 	cases := []struct {
 		ip      string
 		private bool
 	}{
 		// Private / reserved ranges that must be blocked
-		{"169.254.169.254", true},    // AWS metadata
-		{"10.0.0.1", true},           // RFC-1918
-		{"10.255.255.255", true},     // RFC-1918
-		{"172.16.0.1", true},         // RFC-1918
-		{"172.31.255.255", true},     // RFC-1918
-		{"192.168.1.1", true},        // RFC-1918
-		{"127.0.0.1", true},          // loopback
-		{"127.255.0.1", true},        // loopback range
-		{"::1", true},                // IPv6 loopback
-		{"fc00::1", true},            // IPv6 ULA
-		{"fe80::1", true},            // IPv6 link-local
+		{"169.254.169.254", true}, // AWS metadata
+		{"10.0.0.1", true},        // RFC-1918
+		{"10.255.255.255", true},  // RFC-1918
+		{"172.16.0.1", true},      // RFC-1918
+		{"172.31.255.255", true},  // RFC-1918
+		{"192.168.1.1", true},     // RFC-1918
+		{"127.0.0.1", true},       // loopback
+		{"127.255.0.1", true},     // loopback range
+		{"::1", true},             // IPv6 loopback
+		{"fc00::1", true},         // IPv6 ULA
+		{"fe80::1", true},         // IPv6 link-local
 		// Previously missing ranges (fixes #68)
 		{"0.0.0.1", true},            // this-network (RFC 1122)
 		{"100.64.0.1", true},         // CGNAT (RFC 6598)

@@ -70,9 +70,12 @@ func run() error {
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
-	litellmURL := fs.String("litellm-url", envOr("LITELLM_URL", "http://litellm:4000"), "LiteLLM base URL")
+	litellmURL := fs.String("litellm-url", envOr("LITELLM_URL", "http://litellm:4000"), "LiteLLM base URL (generation)")
 	litellmAPIKey := envOr("LITELLM_API_KEY", "")
-	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "qwen3-embedding:8b")), "Embedding model")
+	// ENGRAM_EMBED_URL overrides LITELLM_URL for embeddings only — use when the
+	// embed backend is different from the generation backend (e.g. direct llama.cpp).
+	embedURL := envOr("ENGRAM_EMBED_URL", envOr("LITELLM_URL", "http://litellm:4000"))
+	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "")), "Embedding model (required; set ENGRAM_EMBED_MODEL or --model)")
 	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
@@ -141,6 +144,9 @@ func run() error {
 	if apiKey == "" {
 		return fmt.Errorf("ENGRAM_API_KEY environment variable is required (--api-key flag intentionally omitted — see issue #136)")
 	}
+	if strings.TrimSpace(*embedModel) == "" {
+		return fmt.Errorf("ENGRAM_EMBED_MODEL or --model is required (no compile-time default)")
+	}
 
 	// Warn on inconsistent embed config before spending time connecting to Ollama. (#380)
 	if warn := validateEmbedConfig(*embedModel, *embedDims); warn != "" {
@@ -172,7 +178,7 @@ func run() error {
 	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
 	// BM25+recency fallback keeps recall functional until LiteLLM recovers.
 	embedDegraded := false
-	embedClient := embed.Client(embed.NewLiteLLMClientNoProbe(*litellmURL, *embedModel, litellmAPIKey, *embedDims))
+	embedClient := embed.Client(embed.NewLiteLLMClientNoProbe(embedURL, *embedModel, litellmAPIKey, *embedDims))
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	probeVec, probeErr := embedClient.Embed(probeCtx, "startup probe")
 	probeCancel()
@@ -278,7 +284,7 @@ func run() error {
 	}()
 
 	cfg := internalmcp.Config{
-		LiteLLMURL:                *litellmURL,
+		LiteLLMURL:               *litellmURL,
 		EmbedModel:               *embedModel,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
@@ -298,7 +304,7 @@ func run() error {
 		AllowRFC1918SetupToken:   envBool("ENGRAM_SETUP_TOKEN_ALLOW_RFC1918", false),
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
-		EmbedDegraded:           embedDegraded,
+		EmbedDegraded:            embedDegraded,
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:              ingestQ,
 		RateLimitRPS:             *rateLimitRPS,
@@ -476,28 +482,18 @@ type auditRecallerAdapter struct {
 	pool *internalmcp.EnginePool
 }
 
-// validateEmbedConfig checks that the embedding model and dimensions are
-// consistent. Returns a non-empty warning string when misconfigured. (#380)
+// validateEmbedConfig checks that the embedding dimensions match the vector
+// column contract. Returns a non-empty warning string when misconfigured. (#380)
 //
-// qwen3-embedding:8b natively outputs 1536 dims; set ENGRAM_EMBED_DIMENSIONS=1024
-// to enable MRL truncation so vectors fit in the existing vector(1024) column.
-// mxbai-embed-large does not support MRL; ENGRAM_EMBED_DIMENSIONS must be 0.
+// The deployment contract is 1024-dim embeddings, regardless of the specific
+// model name. Model upgrades are operational changes as long as they preserve
+// that dimension.
 func validateEmbedConfig(model string, dims int) string {
-	switch model {
-	case "qwen3-embedding:8b":
-		if dims == 1024 {
-			return ""
-		}
-		return "qwen3-embedding:8b requires ENGRAM_EMBED_DIMENSIONS=1024 for MRL truncation " +
-			"to fit the vector(1024) column; current value (" + fmt.Sprintf("%d", dims) + ") will cause dimension mismatch errors"
-	case "mxbai-embed-large", "mxbai-embed-large:latest":
-		if dims == 0 {
-			return ""
-		}
-		return "mxbai-embed-large does not support MRL truncation; set ENGRAM_EMBED_DIMENSIONS=0 " +
-			"(current value: " + fmt.Sprintf("%d", dims) + ")"
+	if dims == 1024 {
+		return ""
 	}
-	return ""
+	return "the embedding index expects ENGRAM_EMBED_DIMENSIONS=1024; current value (" +
+		fmt.Sprintf("%d", dims) + ") will cause dimension mismatch errors"
 }
 
 func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {

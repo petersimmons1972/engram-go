@@ -25,18 +25,20 @@ func New(apiKey string) (*Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("claude: apiKey must not be empty")
 	}
-
-	// DNS-safe transport: short idle timeout ensures DNS changes propagate within 30s.
-	transport := &http.Transport{
+	return NewWithTransport(apiKey, &http.Transport{
 		IdleConnTimeout:     30 * time.Second,
 		MaxIdleConnsPerHost: 2,
-	}
+	}), nil
+}
 
+// NewWithTransport constructs a Client using the supplied transport.
+// Intended for tests and for callers that need to override the HTTP layer.
+func NewWithTransport(apiKey string, transport http.RoundTripper) *Client {
 	return &Client{
 		apiKey:     apiKey,
 		BaseURL:    "https://api.anthropic.com",
 		httpClient: &http.Client{Transport: transport},
-	}, nil
+	}
 }
 
 // Complete sends a messages request with the advisor tool declared and returns
