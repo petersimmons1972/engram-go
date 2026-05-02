@@ -54,7 +54,7 @@ Engram runs four search signals on every recall and combines them into a single 
 
 **BM25 keyword search** is like a card catalog that has been taught that "authentication" and "auth" and "login" are the same family of words. Full-text search with Porter stemming, running in PostgreSQL's native `tsvector` index. Fast. No embedding required. Good for cases where you remember the exact terminology — tool names, variable names, specific error messages.
 
-**Vector semantic search** is like recognizing a song by its feel rather than its title. Each memory is embedded into a 768-dimensional space using `nomic-embed-text` running in Ollama, locally, on your machine. When you search "database lock contention," it finds your note about "WAL mode timeout under load" — no shared words, but the meaning occupies nearby coordinates in that space. This handles the cases where you remember roughly what the problem was but not what you called it. It requires Ollama running locally. If Ollama is unavailable, Engram detects this and falls back to BM25 plus recency. All tools continue to work; you lose the semantic layer.
+**Vector semantic search** is like recognizing a song by its feel rather than its title. Each memory is embedded into a 1024-dimensional space using the configured Ollama embedding model, locally, on your machine. When you search "database lock contention," it finds your note about "WAL mode timeout under load" — no shared words, but the meaning occupies nearby coordinates in that space. This handles the cases where you remember roughly what the problem was but not what you called it. It requires Ollama running locally. If Ollama is unavailable, Engram detects this and falls back to BM25 plus recency. All tools continue to work; you lose the semantic layer.
 
 **Recency decay** applies an exponential decay at 1% per hour to every memory's score. The decision you made yesterday scores materially higher than the same decision made six months ago, all else equal. This is not deletion — old memories remain fully searchable and will surface if you search specifically for them. Recency decay just means the current state of your project is what floats to the top by default. When you use `memory_correct` to supersede a wrong decision, both versions remain in the store. The correction wins on recency; the old version still exists for audit.
 
@@ -122,7 +122,7 @@ Each project is a separate filing cabinet. Global is the shared desk everyone ca
 
 **It is not magic.** The quality of what you get back depends on the quality of what you put in. A memory that says "fixed the auth bug" is nearly useless. A memory that says "the token expiry validation was comparing UTC `iat` against localtime — fixed by standardizing to UTC throughout the auth package" is searchable, specific, and useful six months later.
 
-**Semantic search requires Ollama.** The 768-dimensional embeddings run locally via Ollama. If you don't want to run Ollama, BM25 and recency still work. The system degrades gracefully. But the cases where semantic search matters most — vague queries, concept-not-keyword situations — will not be covered.
+**Semantic search requires Ollama.** The 1024-dimensional embeddings run locally via Ollama. If you don't want to run Ollama, BM25 and recency still work. The system degrades gracefully. But the cases where semantic search matters most — vague queries, concept-not-keyword situations — will not be covered.
 
 ---
 

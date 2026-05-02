@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -223,9 +224,27 @@ type engramAPI interface {
 	correct(ctx context.Context, memoryID string, confidence float64) error
 }
 
-type sseEngram struct {
-	c *client.Client
+type mcpClient interface {
+	Start(ctx context.Context) error
+	Close() error
+	Initialize(context.Context, mcp.InitializeRequest) (*mcp.InitializeResult, error)
+	CallTool(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
 }
+
+type sseEngram struct {
+	mu      sync.Mutex
+	c       mcpClient
+	baseURL string
+	token   string
+	factory func() (mcpClient, error)
+}
+
+const (
+	mcpConnectTimeout = 10 * time.Second
+	mcpCallTimeout    = 15 * time.Second
+	mcpRetryWindow    = 30 * time.Second
+	mcpRetryDelayBase = 200 * time.Millisecond
+)
 
 func newSSEEngram(baseURL, token string) (*sseEngram, error) {
 	var opts []transport.ClientOption
@@ -238,10 +257,27 @@ func newSSEEngram(baseURL, token string) (*sseEngram, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sseEngram{c: c}, nil
+	return &sseEngram{c: c, baseURL: baseURL, token: token}, nil
+}
+
+func (e *sseEngram) newClient() (mcpClient, error) {
+	if e.factory != nil {
+		return e.factory()
+	}
+	var opts []transport.ClientOption
+	if e.token != "" {
+		opts = append(opts, client.WithHeaders(map[string]string{
+			"Authorization": "Bearer " + e.token,
+		}))
+	}
+	return client.NewSSEMCPClient(e.baseURL+"/sse", opts...)
 }
 
 func (e *sseEngram) connect(ctx context.Context) error {
+	return e.connectOnce(ctx)
+}
+
+func (e *sseEngram) connectOnce(ctx context.Context) error {
 	if err := e.c.Start(ctx); err != nil {
 		return err
 	}
@@ -253,7 +289,64 @@ func (e *sseEngram) connect(ctx context.Context) error {
 }
 
 func (e *sseEngram) close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.c.Close()
+}
+
+func (e *sseEngram) reconnect(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.c != nil {
+		_ = e.c.Close()
+	}
+	c, err := e.newClient()
+	if err != nil {
+		return err
+	}
+	e.c = c
+	return e.connectOnce(ctx)
+}
+
+func (e *sseEngram) withClientRetry(ctx context.Context, op string, fn func(context.Context) error) error {
+	deadline := time.Now().Add(mcpRetryWindow)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		callCtx, cancel := context.WithTimeout(ctx, mcpConnectTimeout)
+		err := fn(callCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return fmt.Errorf("%s failed after retries: %w", op, lastErr)
+		}
+		if err := e.reconnect(ctx); err != nil {
+			return fmt.Errorf("%s reconnect failed: %w", op, err)
+		}
+		sleep := mcpRetryDelayBase * time.Duration(1<<attempt)
+		if sleep > 2*time.Second {
+			sleep = 2 * time.Second
+		}
+		timer := time.NewTimer(sleep)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%s canceled: %w", op, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (e *sseEngram) callToolWithRetry(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	var out map[string]any
+	err := e.withClientRetry(ctx, name, func(callCtx context.Context) error {
+		var callErr error
+		out, callErr = e.callTool(callCtx, name, args)
+		return callErr
+	})
+	return out, err
 }
 
 // callTool calls an MCP tool and returns the first text content as a parsed map.
@@ -284,7 +377,7 @@ func (e *sseEngram) callTool(ctx context.Context, name string, args map[string]a
 }
 
 func (e *sseEngram) episodeStart(ctx context.Context, sessionID, projectID string) (string, error) {
-	out, err := e.callTool(ctx, "memory_episode_start", map[string]any{
+	out, err := e.callToolWithRetry(ctx, "memory_episode_start", map[string]any{
 		"title":   "instinct-raw:" + sessionID,
 		"project": projectID,
 	})
@@ -301,7 +394,7 @@ func (e *sseEngram) episodeStart(ctx context.Context, sessionID, projectID strin
 
 func (e *sseEngram) ingest(ctx context.Context, ev Event, projectID, sessionID string) error {
 	raw, _ := json.Marshal(ev)
-	_, err := e.callTool(ctx, "memory_ingest", map[string]any{
+	_, err := e.callToolWithRetry(ctx, "memory_ingest", map[string]any{
 		"content":     string(raw),
 		"memory_type": "context",
 		"project":     projectID,
@@ -312,14 +405,14 @@ func (e *sseEngram) ingest(ctx context.Context, ev Event, projectID, sessionID s
 }
 
 func (e *sseEngram) episodeEnd(ctx context.Context, episodeID string) error {
-	_, err := e.callTool(ctx, "memory_episode_end", map[string]any{"episode_id": episodeID})
+	_, err := e.callToolWithRetry(ctx, "memory_episode_end", map[string]any{"episode_id": episodeID})
 	return err
 }
 
 func (e *sseEngram) store(ctx context.Context, p Pattern, confidence float64, projectID string) (string, error) {
 	content := fmt.Sprintf("%s | PROVENANCE: observed 1 time, first seen %s",
 		p.Description, time.Now().UTC().Format("2006-01-02"))
-	out, err := e.callTool(ctx, "memory_store", map[string]any{
+	out, err := e.callToolWithRetry(ctx, "memory_store", map[string]any{
 		"content":     content,
 		"memory_type": "pattern",
 		"project":     projectID,
@@ -336,7 +429,7 @@ func (e *sseEngram) store(ctx context.Context, p Pattern, confidence float64, pr
 }
 
 func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) (*recallResult, error) {
-	out, err := e.callTool(ctx, "memory_recall", map[string]any{
+	out, err := e.callToolWithRetry(ctx, "memory_recall", map[string]any{
 		"query":   "instinct pattern " + tagSignature,
 		"project": projectID,
 	})
@@ -362,7 +455,7 @@ func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) 
 }
 
 func (e *sseEngram) correct(ctx context.Context, memoryID string, confidence float64) error {
-	_, err := e.callTool(ctx, "memory_correct", map[string]any{
+	_, err := e.callToolWithRetry(ctx, "memory_correct", map[string]any{
 		"memory_id":  memoryID,
 		"importance": confidence,
 	})
@@ -622,7 +715,10 @@ func run(ctx context.Context, cfg config) error {
 
 	groups := groupBySession(events)
 	for key, group := range groups {
-		if err := writeEpisode(ctx, e, key.sessionID, key.projectID, group); err != nil {
+		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		err := writeEpisode(opCtx, e, key.sessionID, key.projectID, group)
+		cancel()
+		if err != nil {
 			slog.Error("instinct: writeEpisode failed", "session", key.sessionID, "err", err)
 		}
 	}
@@ -630,7 +726,9 @@ func run(ctx context.Context, cfg config) error {
 	patterns := callHaiku(ctx, cfg.anthropicKey, events, cfg.haikuEndpoint)
 	slog.Info("instinct: detected patterns", "count", len(patterns))
 	for _, p := range patterns {
-		upsertPattern(ctx, e, p, events)
+		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		upsertPattern(opCtx, e, p, events)
+		cancel()
 	}
 
 	slog.Info("instinct: done", "events", len(events), "patterns", len(patterns))
@@ -668,4 +766,3 @@ func requeue(bufferPath, processedPath string) {
 		}
 	}
 }
-

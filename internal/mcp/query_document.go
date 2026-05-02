@@ -6,6 +6,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/review"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -172,6 +173,7 @@ func handleMemoryQueryDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 
 	res, err := execQueryDocument(ctx, deps, q)
 	if err != nil {
+		review.RecordDBFailure(ctx, "memory_query_document failed after DB lookup", err.Error(), "memory_query_document")
 		return nil, err
 	}
 	return toolResult(res)

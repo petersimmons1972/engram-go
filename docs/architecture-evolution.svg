@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 760" width="100%">
+
+<!-- =================== CANVAS =================== -->
+<rect x="0" y="0" width="1800" height="760" fill="#0F172A" rx="0"/>
+
+<!-- =================== TITLE BAND =================== -->
+<text x="36" y="54" font-size="26" fill="#f8fafc" font-weight="bold" font-family="Kufam, 'Playfair Display', Georgia, serif" text-anchor="start">engram-go</text>
+<text x="172" y="54" font-size="22" fill="#94a3b8" font-weight="normal" font-family="Kufam, 'Playfair Display', Georgia, serif" text-anchor="start">Architecture Evolution</text>
+<text x="1770" y="44" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="end">Three-Phase Roadmap</text>
+<text x="1770" y="60" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="end">OSS Today  >  K8s Phase 1  >  AWS SaaS Phase 3</text>
+<line x1="30" y1="70" x2="1770" y2="70" stroke="#334155" stroke-width="1"/>
+
+<!-- =================== PANEL 1: TODAY =================== -->
+<rect x="30" y="80" width="500" height="668" fill="#1e293b" rx="8" stroke="#334155" stroke-width="1"/>
+<rect x="44" y="94" width="58" height="22" fill="#FFAF18" rx="4"/>
+<text x="73" y="109" font-size="11" fill="#0F172A" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="middle">TODAY</text>
+<text x="44" y="130" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">GitHub OSS  /  Docker Compose  /  Single User</text>
+<line x1="44" y1="148" x2="516" y2="148" stroke="#334155" stroke-width="1"/>
+<rect x="44" y="158" width="472" height="131" fill="#243B55" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="58" y="179" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Developer Client</text>
+<text x="58" y="195" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">MCP over SSE transport</text>
+<text x="58" y="210" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Bearer: ENGRAM_API_KEY</text>
+<line x1="280" y1="289" x2="280" y2="297" stroke="#334155" stroke-width="1"/>
+<rect x="44" y="297" width="472" height="131" fill="#1e3a5f" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="58" y="318" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">engram-go  :8788</text>
+<text x="58" y="334" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">43 MCP Tools  /  4-Signal Search</text>
+<text x="58" y="349" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">BM25 + Vector + Recency + Graph</text>
+<text x="58" y="364" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Workers: summarize, re-embed, audit, weights</text>
+<line x1="280" y1="428" x2="280" y2="436" stroke="#334155" stroke-width="1"/>
+<rect x="44" y="436" width="472" height="131" fill="#14332a" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="58" y="457" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">PostgreSQL + pgvector</text>
+<text x="58" y="473" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">1024-dim vectors  /  HNSW index</text>
+<text x="58" y="488" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Single tenant  /  No RLS</text>
+<line x1="280" y1="567" x2="280" y2="575" stroke="#334155" stroke-width="1"/>
+<rect x="44" y="575" width="472" height="131" fill="#2d2a14" rx="6" stroke="#334155" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="58" y="596" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Ollama (local)</text>
+<text x="58" y="612" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">configured model  /  localhost:11434</text>
+<text x="58" y="627" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Local inference  /  no network dep</text>
+<text x="44" y="738" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">v3.1   43 MB   200ms cold start</text>
+
+<!-- =================== ARROW 1 =================== -->
+<rect x="534" y="410" width="50" height="8" fill="#FFAF18" rx="0"/>
+<polygon points="584,406 584,422 596,414" fill="#FFAF18"/>
+<text x="565" y="403" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="middle">Multi-tenant + RLS</text>
+
+<!-- =================== PANEL 2: PHASE 1 =================== -->
+<rect x="600" y="80" width="500" height="668" fill="#1e293b" rx="8" stroke="#334155" stroke-width="1"/>
+<rect x="610" y="90" width="480" height="648" fill="#0d1f0d" rx="6" stroke="#334155" stroke-width="1" stroke-dasharray="5,4" fill-opacity="0.4"/>
+<rect x="614" y="94" width="74" height="22" fill="#FFAF18" rx="4"/>
+<text x="651" y="109" font-size="11" fill="#0F172A" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="middle">PHASE 1</text>
+<text x="1086" y="109" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="end">K8s Cluster</text>
+<text x="614" y="130" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Kubernetes  /  Multi-Tenant  /  Homelab</text>
+<line x1="614" y1="148" x2="1086" y2="148" stroke="#334155" stroke-width="1"/>
+<rect x="614" y="158" width="472" height="103" fill="#2a1a3a" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="628" y="179" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Ingress (Traefik)</text>
+<text x="628" y="195" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">TLS termination  /  IngressRoute</text>
+<text x="628" y="210" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Route by host or path</text>
+<line x1="850" y1="261" x2="850" y2="269" stroke="#334155" stroke-width="1"/>
+<rect x="614" y="269" width="472" height="103" fill="#1e3a5f" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="628" y="290" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">engram-gateway  (Go)</text>
+<text x="628" y="306" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Control Plane  /  REST API</text>
+<text x="628" y="321" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Tenant resolution  /  X-Tenant-ID inject</text>
+<line x1="850" y1="372" x2="850" y2="380" stroke="#334155" stroke-width="1"/>
+<rect x="614" y="380" width="472" height="103" fill="#1e3a5f" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="628" y="401" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">engram-go  x2 pods</text>
+<text x="628" y="417" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Data Plane  /  43 MCP Tools</text>
+<text x="628" y="432" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Stateless  /  HPA ready</text>
+<line x1="850" y1="483" x2="850" y2="491" stroke="#334155" stroke-width="1"/>
+<rect x="614" y="491" width="472" height="103" fill="#14332a" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="628" y="512" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">PostgreSQL StatefulSet</text>
+<text x="628" y="528" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Row-Level Security (RLS)</text>
+<text x="628" y="543" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Per-tenant isolation  /  pgvector HNSW</text>
+<line x1="850" y1="594" x2="850" y2="602" stroke="#334155" stroke-width="1"/>
+<rect x="614" y="602" width="472" height="103" fill="#2d2a14" rx="6" stroke="#334155" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="628" y="623" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Ollama (external)</text>
+<text x="628" y="639" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">leviathan.petersimmons.com:11434</text>
+<text x="628" y="654" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">configured model  /  1024-dim</text>
+<text x="614" y="738" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Migrations 014 + 015  /  Zero-downtime cutover</text>
+
+<!-- =================== ARROW 2 =================== -->
+<rect x="1104" y="410" width="50" height="8" fill="#FFAF18" rx="0"/>
+<polygon points="1154,406 1154,422 1166,414" fill="#FFAF18"/>
+<text x="1135" y="403" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="middle">AWS + SaaS Scale</text>
+
+<!-- =================== PANEL 3: PHASE 3 =================== -->
+<rect x="1170" y="80" width="600" height="668" fill="#1e293b" rx="8" stroke="#334155" stroke-width="1"/>
+<rect x="1180" y="90" width="580" height="648" fill="#0a1a2a" rx="6" stroke="#D4A574" stroke-width="1" stroke-dasharray="6,4" fill-opacity="0.5"/>
+<rect x="1184" y="94" width="74" height="22" fill="#FFAF18" rx="4"/>
+<text x="1221" y="109" font-size="11" fill="#0F172A" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="middle">PHASE 3</text>
+<text x="1756" y="109" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="end">AWS Cloud</text>
+<text x="1184" y="130" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">AWS SaaS  /  1000s of Tenants  /  Production</text>
+<line x1="1184" y1="148" x2="1756" y2="148" stroke="#334155" stroke-width="1"/>
+<rect x="1184" y="158" width="572" height="103" fill="#2a1a3a" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="1198" y="179" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Rust Auth Gateway</text>
+<text x="1198" y="195" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">OIDC / JWT validation</text>
+<text x="1198" y="210" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Infisical Cloud secrets  /  Rate limiting</text>
+<line x1="1470" y1="261" x2="1470" y2="269" stroke="#334155" stroke-width="1"/>
+<rect x="1184" y="269" width="572" height="103" fill="#1e3a5f" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="1198" y="290" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">ECS / Fargate</text>
+<text x="1198" y="306" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">engram-go fleet  /  Auto-scaling</text>
+<text x="1198" y="321" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">ECR images  /  Trivy scanned  /  Chainguard base</text>
+<line x1="1470" y1="372" x2="1470" y2="380" stroke="#334155" stroke-width="1"/>
+<rect x="1184" y="380" width="572" height="103" fill="#14332a" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="1198" y="401" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">RDS Aurora PostgreSQL</text>
+<text x="1198" y="417" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Serverless v2  /  ACU 0-32</text>
+<text x="1198" y="432" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">pgvector + RLS  /  RDS Proxy</text>
+<line x1="1470" y1="483" x2="1470" y2="491" stroke="#334155" stroke-width="1"/>
+<rect x="1184" y="491" width="572" height="103" fill="#243B55" rx="6" stroke="#334155" stroke-width="1"/>
+<text x="1198" y="512" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">S3 Object Lock  +  ECR</text>
+<text x="1198" y="528" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">WORM audit logs  /  Compliance</text>
+<text x="1198" y="543" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Container registry  /  Image scanning</text>
+<line x1="1470" y1="594" x2="1470" y2="602" stroke="#334155" stroke-width="1"/>
+<rect x="1184" y="602" width="572" height="103" fill="#2d2a14" rx="6" stroke="#334155" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="1198" y="623" font-size="13" fill="#f8fafc" font-weight="bold" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Ollama  /  OpenAI Embeddings</text>
+<text x="1198" y="639" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Pluggable embedder interface</text>
+<text x="1198" y="654" font-size="11" fill="#94a3b8" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">leviathan or cloud API fallback</text>
+<text x="1184" y="738" font-size="11" fill="#D4A574" font-weight="normal" font-family="Inter, 'Source Sans Pro', 'Segoe UI', sans-serif" text-anchor="start">Stage 0: $0-15/mo  /  Stage 2: $400-1200/mo  /  HIPAA-ready</text>
+
+</svg>

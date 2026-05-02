@@ -18,3 +18,4 @@ __pycache__/
 *.pyc
 *.pyo
 /instinct
+reembed-rs/target/

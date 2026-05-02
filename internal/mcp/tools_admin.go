@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/review"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -173,16 +174,19 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	}
 	if failureClass != "" {
 		if err := h.Engine.FeedbackWithEventAndClass(ctx, eventID, ids, failureClass); err != nil {
+			review.RecordDBFailure(ctx, "memory_feedback failed after DB lookup", err.Error(), "memory_feedback")
 			return nil, err
 		}
 		return toolResult(map[string]any{"status": "recorded", "count": len(ids)})
 	}
 	if eventID != "" {
 		if err := h.Engine.FeedbackWithEvent(ctx, eventID, ids); err != nil {
+			review.RecordDBFailure(ctx, "memory_feedback failed after DB lookup", err.Error(), "memory_feedback")
 			return nil, err
 		}
 	} else {
 		if err := h.Engine.Feedback(ctx, ids); err != nil {
+			review.RecordDBFailure(ctx, "memory_feedback failed after DB lookup", err.Error(), "memory_feedback")
 			return nil, err
 		}
 	}
@@ -212,6 +216,7 @@ func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.Call
 	}
 	rows, err := h.Engine.Aggregate(ctx, by, filter, limit)
 	if err != nil {
+		review.RecordDBFailure(ctx, "memory_aggregate failed after DB lookup", err.Error(), "memory_aggregate")
 		return nil, err
 	}
 	rowsAny := make([]any, len(rows))
@@ -252,6 +257,7 @@ func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	}
 	results, err := h.Engine.Recall(ctx, question, topK, detail)
 	if err != nil {
+		review.RecordDBFailure(ctx, "memory_diagnose failed after DB lookup", err.Error(), "memory_diagnose")
 		return nil, err
 	}
 	memories := make([]*types.Memory, 0, len(results))

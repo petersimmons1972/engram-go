@@ -29,7 +29,7 @@ type healthResponse struct {
 func newHealthServer(ollamaURL string) *Server {
 	return &Server{
 		cfg: Config{
-			OllamaURL: ollamaURL,
+			LiteLLMURL: ollamaURL,
 		},
 	}
 }

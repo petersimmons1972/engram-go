@@ -40,7 +40,7 @@ make init && make up && make setup
 
 ## What makes this different
 
-**Finds what you mean, not just what you typed.** BM25 keyword search and 768-dimensional semantic vectors run simultaneously. Searching "database lock timeout" finds your note about "WAL mode contention under load" — no shared words, close meaning. When Ollama is unavailable, search degrades gracefully to BM25+recency. Your results never disappear because an external service went down.
+**Finds what you mean, not just what you typed.** BM25 keyword search and 1024-dimensional semantic vectors run simultaneously. Searching "database lock timeout" finds your note about "WAL mode contention under load" — no shared words, close meaning. When Ollama is unavailable, search degrades gracefully to BM25+recency. Your results never disappear because an external service went down.
 
 **Weights by recency automatically.** Exponential decay at 1% per hour. Yesterday's decision outranks one from six months ago. Nothing is deleted; old memories step back. Six-month-old memories are still there if nothing more recent matches.
 
@@ -189,8 +189,8 @@ Compare any two Ollama embedding models against your actual stored memories befo
 # See what models are installed and recommended
 memory_models()
 
-# Compare nomic-embed-text against mxbai-embed-large on your real queries
-memory_embedding_eval(project="myapp", model_a="nomic-embed-text", model_b="mxbai-embed-large")
+# Compare two 1024-dim compatible models on your real queries
+memory_embedding_eval(project="myapp", model_a="mxbai-embed-large", model_b="bge-m3")
 # → {model_a_stats: {...}, model_b_stats: {...}, overlap_scores: [...], recommendation: "..."}
 ```
 

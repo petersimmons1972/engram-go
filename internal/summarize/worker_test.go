@@ -31,9 +31,19 @@ func (s *stubBackend) StoreSummary(_ context.Context, _, summary string) error {
 	return nil
 }
 
+// openAIResponse returns the /v1/chat/completions format that llm.Complete expects.
+// Tests that stub the LiteLLM endpoint must use this format.
+func openAIResponse(content string) map[string]any {
+	return map[string]any{
+		"choices": []map[string]any{
+			{"message": map[string]string{"content": content}},
+		},
+	}
+}
+
 func TestSummarizeContent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "a short summary"})
+		json.NewEncoder(w).Encode(openAIResponse("a short summary"))
 	}))
 	defer srv.Close()
 
@@ -44,7 +54,7 @@ func TestSummarizeContent(t *testing.T) {
 
 func TestWorker_StartsAndStops(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "summary"})
+		json.NewEncoder(w).Encode(openAIResponse("summary"))
 	}))
 	defer srv.Close()
 
@@ -66,6 +76,26 @@ func TestSummarizeContent_404_ReturnsErrModelNotFound(t *testing.T) {
 	require.ErrorIs(t, err, summarize.ErrModelNotFound, "expected ErrModelNotFound for HTTP 404")
 }
 
+// TestSummarizeContent_500_ModelNotFoundInBody covers the LiteLLM path where the
+// upstream Ollama reports "model not found" but LiteLLM returns HTTP 500 instead
+// of 404. The backoff in runOnce only fires on ErrModelNotFound, so this case
+// must be detected and wrapped correctly — otherwise the worker spams WARN logs
+// every 30s indefinitely with no backoff.
+func TestSummarizeContent_500_ModelNotFoundInBody_ReturnsErrModelNotFound(t *testing.T) {
+	// Reproduce the exact LiteLLM error body observed in production.
+	litellmBody := `{"error":{"message":"litellm.APIConnectionError: OllamaException - {\"error\":\"model 'llama3.2:3b' not found\"}. Received Model Group=llama3.2:3b\nAvailable Model Group Fallbacks=None","type":null,"param":null,"code":"500"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(litellmBody))
+	}))
+	defer srv.Close()
+
+	_, err := summarize.SummarizeContent(context.Background(), "content", srv.URL, "llama3.2:3b")
+	require.Error(t, err)
+	require.ErrorIs(t, err, summarize.ErrModelNotFound,
+		"HTTP 500 with 'not found' in body must wrap ErrModelNotFound so the 10-minute backoff fires")
+}
+
 // TestSummarizeOne_VerbatimCopy verifies that SummarizeOne re-summarizes a memory
 // whose summary was set to the verbatim content (the Ollama-down fallback path).
 func TestSummarizeOne_VerbatimCopy(t *testing.T) {
@@ -73,7 +103,7 @@ func TestSummarizeOne_VerbatimCopy(t *testing.T) {
 	verbatimSummary := content // summary = content — the bug state
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "short real summary"})
+		json.NewEncoder(w).Encode(openAIResponse("short real summary"))
 	}))
 	defer srv.Close()
 

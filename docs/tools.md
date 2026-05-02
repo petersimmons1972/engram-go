@@ -579,11 +579,11 @@ List available and suggested Ollama embedding models. Shows which models are ins
 memory_models()
 # Returns:
 # {
-#   current: "nomic-embed-text",
-#   installed: ["nomic-embed-text:latest"],
+#   current: "mxbai-embed-large",
+#   installed: ["mxbai-embed-large:latest"],
 #   suggested: [
-#     {name: "mxbai-embed-large", dimensions: 1024, size_mb: 669, recommended: true, installed: false},
-#     {name: "bge-m3", dimensions: 1024, size_mb: 1200, recommended: false, installed: false}
+#     {name: "bge-m3", dimensions: 1024, size_mb: 1200, recommended: true, installed: false},
+#     {name: "nomic-embed-text", dimensions: 768, size_mb: 274, recommended: false, installed: false}
 #   ]
 # }
 ```
@@ -597,8 +597,8 @@ Compare two Ollama embedding models against your actual stored memories. Pulls c
 ```python
 memory_embedding_eval(
     project="myapp",
-    model_a="nomic-embed-text",
-    model_b="mxbai-embed-large",  # optional — defaults to first recommended model
+    model_a="mxbai-embed-large",
+    model_b="bge-m3",  # optional — defaults to the first recommended model
     query_count=20
 )
 # Returns: {model_a_stats, model_b_stats, overlap_scores, recommendation}

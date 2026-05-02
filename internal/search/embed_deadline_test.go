@@ -2,9 +2,9 @@ package search_test
 
 // embed_deadline_test.go — E5 regression tests.
 //
-// Verifies that embed calls inside RecallWithOpts and RecallWithinMemory honour
-// an independent 15s deadline even when the surrounding request context has a
-// much longer (or no) deadline.  A blocking embedder simulates a slow Ollama.
+// RecallWithOpts: embed failure must degrade to BM25+recency, never return an
+// error and never hang. RecallWithinMemory has no BM25 fallback (vector-only),
+// so it must return an error — but within 3s, not 15s.
 
 import (
 	"context"
@@ -52,48 +52,42 @@ func newEngineWithEmbedder(t *testing.T, project string, embedder embed.Client) 
 	return eng
 }
 
-// TestEmbedDeadline_RecallWithOpts verifies that RecallWithOpts fails within
-// ~20 s even when the embedder would block for 60 s, and that the error is a
-// context deadline exceeded (not the caller's context cancellation).
+// TestEmbedDeadline_RecallWithOpts verifies that RecallWithOpts degrades to
+// BM25+recency when Ollama is unavailable — no error, returns within 3s.
 func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 	proj := uniqueProject("embed-deadline-recall")
-	// Embedder blocks for 60s — longer than the 15s embed deadline.
+	// Embedder blocks for 60s — far longer than the 2s embed deadline.
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
-	// Caller context has a generous 90s deadline to confirm the embed deadline
-	// fires independently — not because the caller cancelled.
-	callerCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", search.RecallOpts{})
+	results, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", search.RecallOpts{})
 	elapsed := time.Since(start)
 
-	require.Error(t, err, "expected embed deadline error")
-	require.ErrorContains(t, err, "embed query", "error should wrap embed failure")
-	require.Less(t, elapsed, 20*time.Second,
-		"RecallWithOpts should fail within 20s (embed deadline is 15s); got %s", elapsed)
-	require.Greater(t, elapsed, 10*time.Second,
-		"RecallWithOpts should not fail before 10s (sanity check); got %s", elapsed)
+	require.NoError(t, err, "RecallWithOpts must degrade to BM25+recency on embed failure, not return an error")
+	require.NotNil(t, results, "results slice must be non-nil even when degraded")
+	require.Less(t, elapsed, 5*time.Second,
+		"RecallWithOpts must return within 5s when embed times out (4s deadline); got %s", elapsed)
 }
 
-// TestEmbedDeadline_RecallWithinMemory verifies the same behaviour for
-// RecallWithinMemory, which has its own independent embed deadline.
+// TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory fails
+// fast (within 3s) when Ollama is unavailable. Document chunk search is
+// vector-only so an error is correct — but it must not hang.
 func TestEmbedDeadline_RecallWithinMemory(t *testing.T) {
 	proj := uniqueProject("embed-deadline-within")
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
-	callerCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
 	_, err := eng.RecallWithinMemory(callerCtx, "test query", "some-memory-id", 5, "summary")
 	elapsed := time.Since(start)
 
-	require.Error(t, err, "expected embed deadline error")
+	require.Error(t, err, "RecallWithinMemory must return error when embed fails (no BM25 fallback for document search)")
 	require.ErrorContains(t, err, "embed query", "error should wrap embed failure")
-	require.Less(t, elapsed, 20*time.Second,
-		"RecallWithinMemory should fail within 20s (embed deadline is 15s); got %s", elapsed)
-	require.Greater(t, elapsed, 10*time.Second,
-		"RecallWithinMemory should not fail before 10s (sanity check); got %s", elapsed)
+	require.Less(t, elapsed, 3*time.Second,
+		"RecallWithinMemory must fail within 3s (2s embed deadline); got %s", elapsed)
 }

@@ -1,31 +1,19 @@
 # engram — Docker Compose (v2.0, Go)
 #
-# Three services:
-#   postgres   — persistent storage (claims existing engram_pgdata volume)
-#   ollama     — local embedding inference (nomic-embed-text)
-#   engram-go  — MCP server (port 8788)
+# Services:
+#   postgres        — persistent storage
+#   engram-go       — MCP server (port 8788) — NO direct LiteLLM calls at recall time
+#   engram-reembed  — background embedding worker — the ONLY service that calls LiteLLM heavily
+#
+# Firewall design: engram-go uses LiteLLM only for query embedding (2s timeout +
+# BM25 fallback). The reembed worker runs in its own container with its own
+# LiteLLM concurrency budget, so bulk re-embedding never starves MCP recall.
+#
+# LiteLLM runs externally (already deployed). Set LITELLM_URL in .env.
 #
 # WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
 # volumes and permanently deletes all memory data. Use 'make down-safe' or
 # 'docker compose down' (no -v) to stop containers while preserving data.
-#
-# GPU SETUP — read before starting:
-#
-#   Default: CPU (ollama/ollama — works everywhere, no host drivers needed).
-#
-#   NVIDIA:  Uncomment the `deploy` block under the ollama service.
-#            Requires NVIDIA Container Toolkit on the host.
-#
-#   AMD:     Uncomment the `# image: ollama/ollama:rocm` line and the
-#            `devices` block under the ollama service; comment out the
-#            default image line.
-#            Requires /dev/kfd and /dev/dri access (user must be in
-#            render + video groups).
-#
-#   Mac (M-series):  Docker Desktop does not pass through Metal GPU.
-#            Run Ollama natively instead:  brew install ollama && ollama serve
-#            Then set OLLAMA_URL=http://host.docker.internal:11434 in your .env
-#            and comment out the ollama service below.
 
 services:
 
@@ -52,65 +40,12 @@ services:
       - POSTGRES_USER=engram
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=engram
-
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "engram"]
+      test: ["CMD-SHELL", "pg_isready -U engram && psql -U engram -d engram -c 'SELECT 1' -q --no-psqlrc 2>/dev/null"]
       interval: 5s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-
-  ollama:
-    container_name: engram-ollama
-    # image: ollama/ollama          # CPU default — works on any host, no GPU drivers needed
-    image: ollama/ollama:rocm   # AMD GPU — uncomment this and the devices block below
-    volumes:
-      - ollama-data:/root/.ollama           # model files persist across restarts
-    ports:
-      - "127.0.0.1:11434:11434"
-    healthcheck:
-      # Uses the ollama binary (already in the container) to verify the API is
-      # responsive AND that the embed model Engram depends on is present.
-      # start_period gives the server time to initialise before failures count.
-      test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text"]
-      interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 30s
+      retries: 10
     restart: unless-stopped
-    #
-    # ── NVIDIA GPU ───────────────────────────────────────────────────────────
-    # Uncomment the deploy block below. Requires NVIDIA Container Toolkit.
-    #
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-    #
-    # ── AMD GPU (ROCm) ───────────────────────────────────────────────────────
-    # Switch to the rocm image above, then uncomment the environment and
-    # devices blocks below.
-    # Requires /dev/kfd and /dev/dri access (user must be in render + video groups).
-    #
-    environment:
-      # Forces correct gfx1100 codepath; without this ROCm may use a slower
-      # fallback path on newer Navi cards.
-      - HSA_OVERRIDE_GFX_VERSION=11.0.0
-      # Enables flash attention — significant throughput improvement on
-      # modern GPUs including gfx1100.
-      - OLLAMA_FLASH_ATTENTION=1
-      # Keep models loaded for 1 hour (default: 5m). Eliminates the ~1.4s
-      # reload penalty after idle gaps between prompts.
-      - OLLAMA_KEEP_ALIVE=-1
-      # Allow 8 concurrent embedding requests — critical for LongMemEval
-      # with 16 parallel ingest workers all queuing embeds simultaneously.
-      - OLLAMA_NUM_PARALLEL=8
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
 
   engram-go:
     container_name: engram-go-app
@@ -124,25 +59,28 @@ services:
         required: true
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - OLLAMA_URL=http://ollama:11434
-      - ENGRAM_OLLAMA_MODEL=${ENGRAM_OLLAMA_MODEL:-mxbai-embed-large}
+      - LITELLM_URL=http://litellm:4000
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
-      # Advertise the host-visible URL so Claude Code forwards auth headers correctly.
-      # Without this, SSE events say http://0.0.0.0:8788 but Claude Code's auth
-      # headers are tied to 127.0.0.1 — causing 401s on every MCP message POST.
+      # MCP server does NOT run the reembed worker — that lives in engram-reembed.
+      # Setting batch_size=0 disables the GlobalReembedder in this container.
+      - ENGRAM_REEMBED_BATCH_SIZE=0
       - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
-      # ── Claude advisor strategy (v2.0) — all opt-in, default off ─────────
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}
       - ENGRAM_CLAUDE_CONSOLIDATE=${ENGRAM_CLAUDE_CONSOLIDATE:-false}
       - ENGRAM_CLAUDE_RERANK=${ENGRAM_CLAUDE_RERANK:-false}
-      # Allow /setup-token from Docker bridge IPs (RFC1918). Required because the
-      # host appears as a gateway IP (172.x, 10.x) rather than 127.0.0.1 via NAT.
       - ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1
+      - ENGRAM_DATA_DIR=/data
+    volumes:
+      - engram-data:/data
+    networks:
+      - default
+      - litellm
     depends_on:
       postgres:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     restart: unless-stopped
     mem_limit: 512m
@@ -150,15 +88,42 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      # Uses the starter binary itself (already in the distroless image) to probe
-      # /health. CMD-SHELL is not available in cgr.dev/chainguard/static images —
-      # there is no /bin/sh, wget, or curl. /starter health exits 0 on HTTP 200,
-      # 1 on any error or non-200 status.
       test: ["CMD", "/starter", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  engram-reembed:
+    container_name: engram-reembed
+    build:
+      context: .
+      dockerfile: Dockerfile.reembed
+    image: engram-reembed:latest
+    # Rust binary — the ONLY container that sends high-throughput embedding
+    # requests to LiteLLM. Isolated so bulk re-embedding never starves MCP recall.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - LITELLM_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
+      - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
+      - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
+      - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
+      - ENGRAM_REEMBED_CONCURRENCY=${ENGRAM_REEMBED_CONCURRENCY:-8}
+    networks:
+      - default
+      - litellm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
 
   # ── Test database (CI only) ───────────────────────────────────────────────
   test-postgres:
@@ -181,6 +146,10 @@ volumes:
   pgdata:
     external: true
     name: engram_pgdata            # claims existing data — all memories preserved
-  ollama-data:
+  engram-data:
+
+networks:
+  default: {}
+  litellm:
     external: true
-    name: ollama_ollama_storage    # reuse existing volume — models already downloaded
+    name: litellm_default          # shared with the LiteLLM proxy container

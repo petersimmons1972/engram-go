@@ -26,7 +26,7 @@ It does not understand meaning. "Database lock contention" and "WAL write blocke
 
 ### Vector Semantic Search
 
-Every memory is chunked at sentence boundaries — not word limits, because splitting mid-sentence destroys the meaning of both halves. Each chunk is embedded into a 768-dimensional vector using the `nomic-embed-text` model served by Ollama.
+Every memory is chunked at sentence boundaries — not word limits, because splitting mid-sentence destroys the meaning of both halves. Each chunk is embedded into a 1024-dimensional vector using the configured Ollama embedding model.
 
 At recall time your query is embedded by the same model and cosine distance finds the closest chunks. Two memories can share zero words and still be close neighbors in this space. Store "WAL mode timeout under concurrent writes," search "database lock contention" — different vocabulary, similar meaning, they surface together.
 
@@ -293,7 +293,7 @@ All Engram configuration is via environment variables (not CLI flags — secrets
 | `ENGRAM_API_KEY` | (required) | Bearer token for MCP endpoint authentication |
 | `ANTHROPIC_API_KEY` | — | Enables Claude-powered features (explore synthesis, re-ranking, consolidation) |
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama embedding server |
-| `ENGRAM_OLLAMA_MODEL` | `nomic-embed-text` | Embedding model (must produce 768-dim vectors) |
+| `ENGRAM_OLLAMA_MODEL` | *(none)* | Embedding model (must produce 1024-dim vectors) |
 | `ENGRAM_PORT` | `8788` | MCP SSE port |
 | `ENGRAM_HOST` | `0.0.0.0` | Bind address |
 | `ENGRAM_RECALL_DEFAULT_MODE` | `handle` | Default recall mode: `handle` (references) or `full` (complete objects) |

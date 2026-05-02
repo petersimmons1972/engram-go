@@ -24,7 +24,7 @@ func handleMemorySummarize(ctx context.Context, pool *EnginePool, req mcpgo.Call
 	if errResult != nil {
 		return errResult, nil
 	}
-	if err := summarize.SummarizeOne(ctx, h.Engine.Backend(), id, cfg.OllamaURL, cfg.SummarizeModel); err != nil {
+	if err := summarize.SummarizeOne(ctx, h.Engine.Backend(), id, cfg.LiteLLMURL, cfg.SummarizeModel); err != nil {
 		return nil, fmt.Errorf("%w (project=%q — did you mean a different project?)", err, project)
 	}
 	return toolResult(map[string]any{"status": "summarized", "memory_id": id})
@@ -81,7 +81,7 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 }
 
 // handleMemorySleep runs the full sleep-consolidation cycle (Feature 3).
-// cfg is passed so the handler can read OllamaURL for the LLM second pass.
+// cfg is passed so the handler can read LiteLLMURL for the LLM second pass.
 func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	// Cap wall-clock time so the handler cannot run past the HTTP server's ReadTimeout.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -102,7 +102,7 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return nil, err
 	}
 	// Optional LLM contradiction detection params (opt-in, default off).
-	// OllamaURL comes from server config; model and call cap are per-request.
+	// LiteLLMURL comes from server config; model and call cap are per-request.
 	llmDetect := getBool(args, "llm_contradiction_detection", false)
 	llmModel := getString(args, "llm_model", "llama3.2:3b")
 	llmMaxCalls := getInt(args, "llm_max_calls", 10)
@@ -116,7 +116,7 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		InferRelationshipsLimit:         limit,
 		ContradictionDetectionLimit:     contradictionLimit,
 		LLMContradictionDetection:       llmDetect,
-		OllamaURL:                       cfg.OllamaURL,
+		LiteLLMURL:                       cfg.LiteLLMURL,
 		OllamaModel:                     llmModel,
 		LLMMaxCalls:                     llmMaxCalls,
 		AutoSupersede:                   autoSupersede,

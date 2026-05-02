@@ -46,7 +46,7 @@ func TestDefaultRecommendedModel(t *testing.T) {
 	if rec == nil {
 		t.Fatal("DefaultRecommendedModel returned nil")
 	}
-	if rec.Name != "mxbai-embed-large" {
-		t.Errorf("expected mxbai-embed-large as recommended, got %q", rec.Name)
+	if rec.Name != "qwen3-embedding:8b" {
+		t.Errorf("expected qwen3-embedding:8b as recommended, got %q", rec.Name)
 	}
 }

@@ -166,19 +166,19 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 	// Two affirmative claims — no negation, no versions, no tense shift.
 	// The heuristic MUST miss these so the LLM pass is the only catch.
 	m1 := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "The current AI model is GPT-4",
-		MemoryType: types.MemoryTypeContext,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "The current AI model is GPT-4",
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "The current AI model is Claude",
-		MemoryType: types.MemoryTypeContext,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "The current AI model is Claude",
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
@@ -208,7 +208,7 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       true,
-		OllamaURL:                       srv.URL,
+		LiteLLMURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 		LLMMaxCalls:                     10,
 	})
@@ -253,19 +253,19 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
 
 	m1 := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "The current AI model is GPT-4",
-		MemoryType: types.MemoryTypeContext,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "The current AI model is GPT-4",
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "The current AI model is Claude",
-		MemoryType: types.MemoryTypeContext,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "The current AI model is Claude",
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
@@ -288,7 +288,7 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       false, // disabled
-		OllamaURL:                       srv.URL,
+		LiteLLMURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 	})
 	require.NoError(t, err)
@@ -325,19 +325,19 @@ func TestDetectContradictions_LLMMaxCalls(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		mA := &types.Memory{
-			ID:         types.NewMemoryID(),
-			Content:    "The current AI model is GPT-4",
-			MemoryType: types.MemoryTypeContext,
-			Project:    project,
-			Importance: 2,
+			ID:          types.NewMemoryID(),
+			Content:     "The current AI model is GPT-4",
+			MemoryType:  types.MemoryTypeContext,
+			Project:     project,
+			Importance:  2,
 			StorageMode: "focused",
 		}
 		mB := &types.Memory{
-			ID:         types.NewMemoryID(),
-			Content:    "The current AI model is Claude",
-			MemoryType: types.MemoryTypeContext,
-			Project:    project,
-			Importance: 2,
+			ID:          types.NewMemoryID(),
+			Content:     "The current AI model is Claude",
+			MemoryType:  types.MemoryTypeContext,
+			Project:     project,
+			Importance:  2,
 			StorageMode: "focused",
 		}
 		require.NoError(t, backend.StoreMemory(ctx, mA))
@@ -356,7 +356,7 @@ func TestDetectContradictions_LLMMaxCalls(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       true,
-		OllamaURL:                       srv.URL,
+		LiteLLMURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 		LLMMaxCalls:                     2, // cap at 2 regardless of pairs available
 	})

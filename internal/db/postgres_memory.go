@@ -706,13 +706,23 @@ func (b *PostgresBackend) DeleteProject(ctx context.Context, project string) err
 	}
 
 	// Delete project metadata
-	if _, err := tx.Exec(ctx, "DELETE FROM project_metadata WHERE project = $1", project); err != nil {
-		return fmt.Errorf("delete project_metadata: %w", err)
+	if _, err := tx.Exec(ctx, "DELETE FROM project_meta WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete project_meta: %w", err)
 	}
 
-	// Delete decay audit snapshots
-	if _, err := tx.Exec(ctx, "DELETE FROM decay_audit_snapshots WHERE project = $1", project); err != nil {
-		return fmt.Errorf("delete decay_audit_snapshots: %w", err)
+	// Delete audit snapshots
+	if _, err := tx.Exec(ctx, "DELETE FROM audit_snapshots WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete audit_snapshots: %w", err)
+	}
+
+	// Delete audit canonical queries
+	if _, err := tx.Exec(ctx, "DELETE FROM audit_canonical_queries WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete audit_canonical_queries: %w", err)
+	}
+
+	// Delete canonical entities
+	if _, err := tx.Exec(ctx, "DELETE FROM canonical_entities WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete canonical_entities: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

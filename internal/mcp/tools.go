@@ -20,7 +20,7 @@ import (
 
 // Config holds server-wide configuration passed to tool handlers.
 type Config struct {
-	OllamaURL                string
+	LiteLLMURL               string
 	EmbedModel               string
 	SummarizeModel           string
 	SummarizeEnabled         bool
@@ -61,8 +61,7 @@ type Config struct {
 	// Required for Docker setups where the host appears as a bridge IP.
 	// Set via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
 	AllowRFC1918SetupToken bool
-	// EmbedDimensions is the MRL truncation target passed to NewOllamaClientWithDims.
-	// 0 means use the model's native output dimension.
+	// EmbedDimensions is the MRL truncation target. 0 means native output dimension.
 	EmbedDimensions int
 	// EpisodeTTL is the maximum age of an open episode before the background
 	// sweeper closes it. Handles crash-orphaned episodes where SIGKILL or a
@@ -72,10 +71,10 @@ type Config struct {
 	// RateLimit is the per-IP sustained rate limit in req/s. Burst is 4× this value.
 	// Zero disables rate limiting (recommended for loopback/single-user deployments).
 	RateLimit float64
-	// OllamaDegraded is set when the startup embedding probe failed but the
+	// EmbedDegraded is set when the startup embedding probe failed but the
 	// server continued anyway. /health returns 200 with "ollama":"degraded"
 	// rather than 503, because the server itself is operational.
-	OllamaDegraded bool
+	EmbedDegraded bool
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool

@@ -35,7 +35,7 @@ type OllamaClient struct {
 	baseURL    string
 	model      string
 	dims       int
-	targetDims int         // MRL truncation target; 0 = use model native output
+	targetDims int          // MRL truncation target; 0 = use model native output
 	http       *http.Client // short-timeout client for embed/list requests
 	pullHTTP   *http.Client // no client-level timeout for long model pulls
 }
@@ -51,6 +51,12 @@ func NewOllamaClient(ctx context.Context, baseURL, model string) (*OllamaClient,
 // Pass 0 for targetDims to use the model's native output dimension.
 func NewOllamaClientWithDims(ctx context.Context, baseURL, model string, targetDims int) (*OllamaClient, error) {
 	return newOllamaClient(ctx, baseURL, model, targetDims, nil)
+}
+
+// NewOllamaClientWithTransport constructs an OllamaClient using a supplied
+// HTTP transport. Tests use this to avoid binding loopback listeners.
+func NewOllamaClientWithTransport(ctx context.Context, baseURL, model string, transport http.RoundTripper) (*OllamaClient, error) {
+	return newOllamaClient(ctx, baseURL, model, 0, transport)
 }
 
 // newOllamaClient is the internal constructor. When customTransport is non-nil

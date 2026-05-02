@@ -172,7 +172,7 @@ Implementations:
 Factory reads from environment:
 ```
 ENGRAM_EMBEDDER=ollama         # ollama | openai
-ENGRAM_EMBEDDER_MODEL=nomic-embed-text
+ENGRAM_EMBEDDER_MODEL=<configured-embedding-model>
 ENGRAM_EMBEDDER_URL=http://ollama:11434
 ENGRAM_EMBEDDER_API_KEY=""     # required for openai only
 ```

@@ -2,13 +2,23 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func newTestHTTPClient(fn func(*http.Request) (*http.Response, error)) *http.Client {
+	return &http.Client{Transport: roundTripFunc(fn)}
+}
 
 // ---------------------------------------------------------------------------
 // healthCheck
@@ -16,27 +26,22 @@ import (
 
 func TestHealthCheck(t *testing.T) {
 	t.Run("returns nil on 200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := newTestHTTPClient(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path != "/health" {
-				http.NotFound(w, r)
-				return
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
 			}
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		if err := healthCheck(srv.URL); err != nil {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+		})
+		if err := healthCheckWithClient("http://example", client); err != nil {
 			t.Errorf("expected nil, got %v", err)
 		}
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}))
-		defer srv.Close()
-
-		err := healthCheck(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(""))}, nil
+		})
+		err := healthCheckWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -46,10 +51,12 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("returns error when server unreachable", func(t *testing.T) {
-		// Port 1 is reserved and not listening.
-		err := healthCheck("http://127.0.0.1:1")
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return nil, http.ErrServerClosed
+		})
+		err := healthCheckWithClient("http://example", client)
 		if err == nil {
-			t.Fatal("expected connection-refused error, got nil")
+			t.Fatal("expected connection error, got nil")
 		}
 	})
 }
@@ -62,21 +69,19 @@ func TestFetchSetupToken(t *testing.T) {
 	validToken := "abcdefghijkl" // exactly 12 chars — minimum required length
 
 	t.Run("returns token and endpoint on 200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := newTestHTTPClient(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path != "/setup-token" {
-				http.NotFound(w, r)
-				return
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
 			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(setupResponse{
+			var buf strings.Builder
+			json.NewEncoder(&buf).Encode(setupResponse{
 				Token:    validToken,
 				Endpoint: "http://127.0.0.1:8788/mcp",
 				Name:     "engram",
 			})
-		}))
-		defer srv.Close()
-
-		resp, err := fetchSetupToken(srv.URL)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(buf.String()))}, nil
+		})
+		resp, err := fetchSetupTokenWithClient("http://example", client)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -89,12 +94,10 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on 403 Forbidden (non-localhost call)", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusForbidden)
-		}))
-		defer srv.Close()
-
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(""))}, nil
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error on 403, got nil")
 		}
@@ -104,12 +107,10 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on 404", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.NotFound(w, r)
-		}))
-		defer srv.Close()
-
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(""))}, nil
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error on 404, got nil")
 		}
@@ -119,49 +120,44 @@ func TestFetchSetupToken(t *testing.T) {
 	})
 
 	t.Run("returns error on empty token", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(setupResponse{Token: "", Endpoint: "http://x/mcp"})
-		}))
-		defer srv.Close()
-
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			var buf strings.Builder
+			json.NewEncoder(&buf).Encode(setupResponse{Token: "", Endpoint: "http://x/mcp"})
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(buf.String()))}, nil
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error for empty token, got nil")
 		}
 	})
 
 	t.Run("returns error on token shorter than 12 chars", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(setupResponse{Token: "short", Endpoint: "http://x/mcp"})
-		}))
-		defer srv.Close()
-
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			var buf strings.Builder
+			json.NewEncoder(&buf).Encode(setupResponse{Token: "short", Endpoint: "http://x/mcp"})
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(buf.String()))}, nil
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error for short token, got nil")
 		}
 	})
 
 	t.Run("returns error on malformed JSON", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{not valid json`))
-		}))
-		defer srv.Close()
-
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{not valid json`))}, nil
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected error on malformed JSON, got nil")
 		}
 	})
 
 	t.Run("returns error when server unreachable (timeout path)", func(t *testing.T) {
-		// Use a closed server so the connection is refused immediately.
-		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
-		srv.Close() // close before calling
-		_, err := fetchSetupToken(srv.URL)
+		client := newTestHTTPClient(func(*http.Request) (*http.Response, error) {
+			return nil, http.ErrHandlerTimeout
+		})
+		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected connection error, got nil")
 		}

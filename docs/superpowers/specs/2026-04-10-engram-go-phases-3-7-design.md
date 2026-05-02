@@ -87,7 +87,7 @@ type Client interface {
 | Env var | Default | Description |
 |---|---|---|
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama base URL |
-| `ENGRAM_OLLAMA_MODEL` | `nomic-embed-text` | Embedding model name |
+| `ENGRAM_OLLAMA_MODEL` | *(required)* | Embedding model name; must produce 1024-dim vectors |
 
 ---
 
@@ -226,7 +226,7 @@ engram server   — start the MCP SSE server (default subcommand)
 |---|---|---|
 | `--database-url` | `DATABASE_URL` | (required) |
 | `--ollama-url` | `OLLAMA_URL` | `http://ollama:11434` |
-| `--model` | `ENGRAM_OLLAMA_MODEL` | `nomic-embed-text` |
+| `--model` | `ENGRAM_OLLAMA_MODEL` | *(required)* |
 | `--port` | `ENGRAM_PORT` | `8788` |
 | `--host` | `ENGRAM_HOST` | `0.0.0.0` |
 | `--api-key` | `ENGRAM_API_KEY` | `""` (no auth) |

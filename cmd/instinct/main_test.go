@@ -360,15 +360,25 @@ type mockEngram struct {
 	recalled     *recallResult
 	corrected    []float64
 	globalStored []Pattern
+	episodes     int
+	ends         int
+	ingests      int
 }
 
 func (m *mockEngram) connect(ctx context.Context) error { return nil }
 func (m *mockEngram) close() error                      { return nil }
 func (m *mockEngram) episodeStart(ctx context.Context, s, p string) (string, error) {
+	m.episodes++
 	return "ep-mock", nil
 }
-func (m *mockEngram) ingest(ctx context.Context, e Event, p, s string) error { return nil }
-func (m *mockEngram) episodeEnd(ctx context.Context, id string) error         { return nil }
+func (m *mockEngram) ingest(ctx context.Context, e Event, p, s string) error {
+	m.ingests++
+	return nil
+}
+func (m *mockEngram) episodeEnd(ctx context.Context, id string) error {
+	m.ends++
+	return nil
+}
 func (m *mockEngram) store(ctx context.Context, p Pattern, conf float64, proj string) (string, error) {
 	if proj == "global" {
 		m.globalStored = append(m.globalStored, p)
@@ -415,6 +425,26 @@ func TestUpsertPattern_CorrectionStepsDown(t *testing.T) {
 	upsertPattern(context.Background(), e, p, events)
 	if len(e.corrected) != 1 || e.corrected[0] != 0.5 {
 		t.Errorf("want correct(0.5), got %v", e.corrected)
+	}
+}
+
+func TestWriteEpisodeDoesNotDuplicateIngests(t *testing.T) {
+	e := &mockEngram{}
+	events := []Event{
+		{SessionID: "sess1", ProjectID: "proj1", ToolName: "Bash"},
+		{SessionID: "sess1", ProjectID: "proj1", ToolName: "Edit"},
+	}
+	if err := writeEpisode(context.Background(), e, "sess1", "proj1", events); err != nil {
+		t.Fatalf("writeEpisode: %v", err)
+	}
+	if e.episodes != 1 {
+		t.Fatalf("episodeStart calls = %d, want 1", e.episodes)
+	}
+	if e.ingests != len(events) {
+		t.Fatalf("ingest calls = %d, want %d", e.ingests, len(events))
+	}
+	if e.ends != 1 {
+		t.Fatalf("episodeEnd calls = %d, want 1", e.ends)
 	}
 }
 

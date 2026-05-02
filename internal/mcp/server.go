@@ -196,8 +196,8 @@ func hashAPIKey(apiKey string) string {
 // Notifications are sent to a buffered channel that silently drops overflow —
 // the real SSE connection is gone, but tool calls (POST /message) still work.
 type rehydratedSession struct {
-	id   string
-	ch   chan mcpgo.JSONRPCNotification
+	id string
+	ch chan mcpgo.JSONRPCNotification
 }
 
 func newRehydratedSession(id string) *rehydratedSession {
@@ -207,10 +207,10 @@ func newRehydratedSession(id string) *rehydratedSession {
 	return &rehydratedSession{id: id, ch: make(chan mcpgo.JSONRPCNotification, 256)}
 }
 
-func (r *rehydratedSession) Initialize()                                        {}
-func (r *rehydratedSession) Initialized() bool                                  { return true }
+func (r *rehydratedSession) Initialize()                                           {}
+func (r *rehydratedSession) Initialized() bool                                     { return true }
 func (r *rehydratedSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification { return r.ch }
-func (r *rehydratedSession) SessionID() string                                  { return r.id }
+func (r *rehydratedSession) SessionID() string                                     { return r.id }
 
 // RehydrateSessions loads active sessions from the database and re-registers
 // them in the mcp-go transport so POST /message calls with pre-restart session
@@ -401,7 +401,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// GET /health — unauthenticated; returns dependency status for diagnostics and readiness checks.
 	// Probes PostgreSQL (SELECT 1) and Ollama (/api/tags) with 2-second deadlines each.
 	// Returns 200 {"status":"ok",...} when all probes pass; 200 {"status":"degraded","ollama":"degraded",...}
-	// when Ollama was unavailable at startup (OllamaDegraded=true); 503 {"status":"degraded",...} when
+	// when Ollama was unavailable at startup (EmbedDegraded=true); 503 {"status":"degraded",...} when
 	// a previously-healthy dependency is now unreachable.
 	mux.HandleFunc("/health", s.handleHealth)
 
@@ -874,7 +874,7 @@ func (s *Server) registerTools() {
 			handleMemoryMigrateEmbedder},
 		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
 			handleMemoryModels},
-		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to nomic-embed-text; model_b defaults to mxbai-embed-large (recommended). Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
+		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to the configured embedding model; model_b defaults to the recommended registry entry. Use this to validate a 1024-dim compatible replacement before migrating. Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
 			handleMemoryEmbeddingEval},
 		// Import / export
 		{"memory_export_all", "Export all memories to markdown files",
@@ -977,11 +977,11 @@ func (s *Server) registerTools() {
 //
 // Status semantics:
 //   - 200 {"status":"ok",...}      — all probes pass.
-//   - 200 {"status":"degraded",...} — Ollama failed at startup (OllamaDegraded=true)
+//   - 200 {"status":"degraded",...} — Ollama failed at startup (EmbedDegraded=true)
 //     and the live probe also fails. The server is operational; embeddings are
 //     unavailable until Ollama recovers.
 //   - 503 {"status":"degraded",...} — a probe that was healthy at startup is now
-//     unreachable (Postgres failure, or Ollama failure when OllamaDegraded=false).
+//     unreachable (Postgres failure, or Ollama failure when EmbedDegraded=false).
 //
 // Unauthenticated — suitable as a K8s readiness probe.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1009,40 +1009,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		pgStatus = "ok"
 	}
 
-	// Probe Ollama. Use context.Background() for the same reason as the Postgres
-	// probe: the request context deadline must not short-circuit a healthy probe.
-	ollamaLiveOK := false
-	if s.cfg.OllamaURL != "" {
-		ollamaCtx, ollamaCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer ollamaCancel()
-		ollamaTagsURL := strings.TrimRight(s.cfg.OllamaURL, "/") + "/api/tags"
-		req, err := http.NewRequestWithContext(ollamaCtx, http.MethodHead, ollamaTagsURL, nil)
+	// Probe LiteLLM via GET /v1/models (OpenAI-compatible, available on all deployments).
+	embedLiveOK := false
+	if s.cfg.LiteLLMURL != "" {
+		embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer embedCancel()
+		modelsURL := strings.TrimRight(s.cfg.LiteLLMURL, "/") + "/v1/models"
+		req, err := http.NewRequestWithContext(embedCtx, http.MethodGet, modelsURL, nil)
 		if err == nil {
 			resp, herr := http.DefaultClient.Do(req)
 			if herr != nil {
 				ollamaStatus = "error"
-				slog.Warn("health: ollama probe failed", "err", herr)
+				slog.Warn("health: litellm probe failed", "err", herr)
 			} else {
 				resp.Body.Close()
 				if resp.StatusCode >= 500 {
 					ollamaStatus = "error"
-					slog.Warn("health: ollama returned server error", "status", resp.StatusCode)
+					slog.Warn("health: litellm returned server error", "status", resp.StatusCode)
 				} else {
-					ollamaLiveOK = true
+					embedLiveOK = true
 				}
 			}
 		} else {
 			ollamaStatus = "error"
-			slog.Warn("health: could not build ollama probe request", "err", err)
+			slog.Warn("health: could not build litellm probe request", "err", err)
 		}
 	}
 
-	// When OllamaDegraded is set, Ollama was unavailable at startup but the server
-	// started anyway. If Ollama has since recovered, promote to "ok". If it is
-	// still unreachable, report "degraded" rather than "error" — the server itself
-	// is operational and the degraded state is expected/known.
-	if s.cfg.OllamaDegraded {
-		if ollamaLiveOK {
+	// When EmbedDegraded is set, LiteLLM was unavailable at startup but the server
+	// started anyway. If LiteLLM has since recovered, promote to "ok". If still
+	// unreachable, report "degraded" — the server is operational, BM25+recency active.
+	if s.cfg.EmbedDegraded {
+		if embedLiveOK {
 			ollamaStatus = "ok"
 		} else {
 			ollamaStatus = "degraded"
@@ -1055,8 +1053,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Ollama:   ollamaStatus,
 	}
 	statusCode := http.StatusOK
-	// Return 503 only for hard failures: Postgres down, or Ollama down when it was
-	// healthy at startup (not in degraded mode). A degraded Ollama (startup miss)
+	// Return 503 only for hard failures: Postgres down, or LiteLLM down when it was
+	// healthy at startup (not in degraded mode). A degraded LiteLLM (startup miss)
 	// keeps 200 so K8s readiness probes do not kill a running server.
 	if pgStatus != "ok" || (ollamaStatus == "error") {
 		res.Status = "degraded"

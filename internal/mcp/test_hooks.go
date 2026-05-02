@@ -15,7 +15,7 @@ type testHooks struct {
 	auditDB audit.AuditQuerier
 	// weightTuner replaces the real TunerWorker in handleMemoryWeightHistory.
 	weightTuner *weight.TunerWorker
-	// embedProbe replaces embed.NewOllamaClient in handleMemoryMigrateEmbedder.
+	// embedProbe replaces embed.NewLiteLLMClient in handleMemoryMigrateEmbedder.
 	embedProbe func(ctx context.Context, baseURL, model string) (embed.Client, error)
 	// onPostMigrate replaces the weight_config reset block after MigrateEmbedder.
 	onPostMigrate func(ctx context.Context, project string)
