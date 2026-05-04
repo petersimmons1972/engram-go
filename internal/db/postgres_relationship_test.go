@@ -175,3 +175,45 @@ func TestGetRelationshipsBatch_MatchesSingleLookup(t *testing.T) {
 			"batch result for %s must have same count as single-lookup", id)
 	}
 }
+
+// TestStoreRelationship_CrossProject verifies that StoreRelationship can link
+// memories from different projects without error. This is the central behavior
+// of issue #430 — enabling cross-project federated edges.
+func TestStoreRelationship_CrossProject(t *testing.T) {
+	projA := uniqueProject("cross-proj-a")
+	projB := uniqueProject("cross-proj-b")
+	bA := newTestBackend(t, projA)
+	bB := newTestBackend(t, projB)
+	ctx := context.Background()
+
+	// Store a memory in projA.
+	memA := storeMemory(t, bA, projA, "memory in project A")
+
+	// Store a memory in projB.
+	memB := storeMemory(t, bB, projB, "memory in project B")
+
+	// Create a relationship from memA (in projA) to memB (in projB) via bA backend.
+	// This should succeed with no error, even though the memories are in different projects.
+	rel := types.Relationship{
+		ID:       types.NewMemoryID(),
+		SourceID: memA.ID,
+		TargetID: memB.ID,
+		RelType:  types.RelTypeContradicts,
+		Strength: 0.5,
+		Project:  projA,
+	}
+	err := bA.StoreRelationship(ctx, &rel)
+	require.NoError(t, err, "StoreRelationship must allow cross-project relationships")
+
+	// Also try storing the same relationship via bB backend.
+	rel2 := types.Relationship{
+		ID:       types.NewMemoryID(),
+		SourceID: memA.ID,
+		TargetID: memB.ID,
+		RelType:  types.RelTypeContradicts,
+		Strength: 0.6,
+		Project:  projB,
+	}
+	err = bB.StoreRelationship(ctx, &rel2)
+	require.NoError(t, err, "StoreRelationship must allow cross-project relationships from either backend")
+}

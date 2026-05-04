@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,14 +12,14 @@ import (
 
 var errStub = errors.New("stub error")
 
-// TestHashAPIKey verifies the SHA-256 hex output is deterministic and non-empty.
+// TestHashAPIKey verifies the HMAC-SHA-256 hex output is deterministic and non-empty.
 func TestHashAPIKey(t *testing.T) {
 	key := "test-api-key"
 	got := hashAPIKey(key)
 	if got == "" {
 		t.Fatal("hashAPIKey returned empty string")
 	}
-	// SHA-256 produces 32 bytes → 64 hex chars.
+	// HMAC-SHA-256 produces 32 bytes → 64 hex chars.
 	if len(got) != 64 {
 		t.Errorf("hashAPIKey len = %d, want 64", len(got))
 	}
@@ -26,9 +27,10 @@ func TestHashAPIKey(t *testing.T) {
 	if hashAPIKey(key) != got {
 		t.Error("hashAPIKey is not deterministic")
 	}
-	// Verify correctness against stdlib.
-	sum := sha256.Sum256([]byte(key))
-	want := hex.EncodeToString(sum[:])
+	// Verify correctness against stdlib HMAC with the same pepper.
+	mac := hmac.New(sha256.New, []byte(sessionFingerprintPepper))
+	mac.Write([]byte(key))
+	want := hex.EncodeToString(mac.Sum(nil))
 	if got != want {
 		t.Errorf("hashAPIKey = %q, want %q", got, want)
 	}

@@ -172,6 +172,10 @@ func (s *stubBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory)
 
 func (s *stubBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
 
+func (s *stubBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int) (*types.Memory, error) {
 	return nil, nil
 }
