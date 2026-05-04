@@ -146,3 +146,15 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 	}
 	return vec, nil
 }
+
+// Probe checks if the LiteLLM endpoint is healthy and reachable. It makes a
+// single /v1/embeddings request with a minimal input and returns (true, "") on
+// success or (false, reason) on failure. The caller is responsible for context
+// timeout/cancellation.
+func (c *LiteLLMClient) Probe(ctx context.Context) (ok bool, reason string) {
+	_, err := c.Embed(ctx, "probe")
+	if err == nil {
+		return true, ""
+	}
+	return false, fmt.Sprintf("embed_probe: %v", err)
+}

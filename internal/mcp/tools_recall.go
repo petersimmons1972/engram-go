@@ -231,10 +231,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			return nil, err
 		}
 		if mode == "handle" {
+			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 			return toolResult(map[string]any{
 				"handles":    search.ToHandles(results),
 				"count":      len(results),
 				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+				"degraded":   map[string]any{"embed": !ok, "reason": reason},
 			})
 		}
 		out := map[string]any{"results": results, "count": len(results)}
@@ -248,6 +250,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			out["conflicting_results"] = conflicts
 			out["conflict_count"] = len(conflicts)
 		}
+		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+		out["degraded"] = map[string]any{"embed": !ok, "reason": reason}
 		return toolResult(out)
 	}
 
@@ -266,6 +270,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if id, ok := episodeIDFromContext(ctx); ok {
 		opts.CurrentEpisodeID = id
 	}
+
+	// Capture embedder degradation signal from RecallWithOpts.
+	var embedDegraded bool
+	opts.EmbedDegraded = &embedDegraded
 
 	// Use RecallWithEvent to log the retrieval; on the rerank path we call
 	// RecallWithOpts (which supports a custom Reranker) and then manually
@@ -346,6 +354,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"handles":    search.ToHandles(results),
 			"count":      len(results),
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+			"degraded":   map[string]any{"embed": embedDegraded, "reason": "embed_timeout"},
 		})
 	}
 	out := map[string]any{"results": results, "count": len(results)}
@@ -358,6 +367,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		out["conflicting_results"] = conflicts
 		out["conflict_count"] = len(conflicts)
 	}
+	// Add embedder health status to response.
+	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+	out["degraded"] = map[string]any{"embed": embedDegraded || !ok, "reason": reason}
 	return toolResult(out)
 }
 

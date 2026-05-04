@@ -24,6 +24,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
@@ -155,6 +156,11 @@ type Server struct {
 	sessionEpisodes     sync.Map // sessionID -> episodeID string for auto-episode sessions (#356)
 	trustProxy          bool     // honour X-Forwarded-For / X-Real-IP (#255)
 
+	// embedderHealth probes the configured LiteLLM embedder and caches the result
+	// for 5 seconds. Used by memory store/recall tools to surface a degraded field
+	// on tool responses when the embedder is unavailable.
+	embedderHealth *EmbedderHealth
+
 	// toolAnnotations records the MCP ToolAnnotation set on each registered tool.
 	// Populated as a side-effect of registerToolWithTimeout. Read by the startup
 	// banner (recommended permissions snippet) and by tests to verify that
@@ -218,12 +224,31 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		trustProxy = true
 		slog.Warn("ENGRAM_TRUST_PROXY_HEADERS is enabled — ensure a trusted reverse proxy terminates all inbound connections; direct clients can spoof X-Forwarded-For to bypass rate limiting")
 	}
+
+	// Create embedder health probe with a 5-second cached check.
+	// The check function probes the configured LiteLLM endpoint.
+	embedderHealth := NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		// Use context with a 5-second timeout for the health probe.
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		// Construct a minimal LiteLLMClient for the probe.
+		// We only use it once per TTL interval.
+		client := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, cfg.EmbedModel, "", cfg.EmbedDimensions)
+		ok, reason := client.Probe(probeCtx)
+		return ok, reason
+	}, 5*time.Second)
+
+	// Add embedder health to config so all tool handlers can access it.
+	cfg.EmbedderHealth = embedderHealth
+
 	s := &Server{
-		pool:            pool,
-		cfg:             cfg,
-		uploads:         make(map[string]*uploadSession),
-		trustProxy:      trustProxy,
-		toolAnnotations: make(map[string]mcpgo.ToolAnnotation),
+		pool:             pool,
+		cfg:              cfg,
+		uploads:          make(map[string]*uploadSession),
+		trustProxy:       trustProxy,
+		embedderHealth:   embedderHealth,
+		toolAnnotations:  make(map[string]mcpgo.ToolAnnotation),
 	}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
@@ -771,9 +796,9 @@ func noConfig(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpg
 }
 
 // withEntityEnqueue wraps handleMemoryStore to async-enqueue entity extraction on success.
-func withEntityEnqueue(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)) toolHandler {
-	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, _ Config) (*mcpgo.CallToolResult, error) {
-		result, err := h(ctx, pool, req)
+func withEntityEnqueue(h func(context.Context, *EnginePool, mcpgo.CallToolRequest, Config) (*mcpgo.CallToolResult, error)) toolHandler {
+	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
+		result, err := h(ctx, pool, req, cfg)
 		if err != nil {
 			slog.Warn("memory_store: store failed", "err", err, "request_id", requestIDFromContext(ctx))
 			return result, err
@@ -895,7 +920,7 @@ func (s *Server) registerTools() {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
 		{"memory_store_batch", "Store multiple memories in one call",
-			noConfig(handleMemoryStoreBatch)},
+			handleMemoryStoreBatch},
 		// Recall and retrieval
 		{"memory_recall", "Recall memories by semantic + full-text query",
 			withWarnLog("memory_recall", handleMemoryRecall)},
@@ -999,7 +1024,7 @@ func (s *Server) registerTools() {
 			noConfig(handleMemoryAdopt)},
 		// Simplified front-door tools
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
-			withWarnLog("memory_quick_store", noConfig(handleMemoryQuickStore))},
+			withWarnLog("memory_quick_store", withEntityEnqueue(handleMemoryQuickStore))},
 		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
 			handleMemoryQuery},
 		// Safety constraint verification
@@ -1230,7 +1255,7 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	var req mcpgo.CallToolRequest
 	req.Params.Arguments = args
 
-	result, err := handleMemoryQuickStore(r.Context(), s.pool, req)
+	result, err := handleMemoryQuickStore(r.Context(), s.pool, req, Config{EmbedderHealth: s.embedderHealth})
 	if err != nil {
 		slog.Error("quick-store failed", "err", err, "request_id", requestIDFromContext(r.Context()))
 		writeJSONError(w, http.StatusInternalServerError, "store failed")

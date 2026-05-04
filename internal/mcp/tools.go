@@ -78,6 +78,10 @@ type Config struct {
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool
+	// EmbedderHealth probes the configured LiteLLM embedder with a cached 5-second
+	// check. Used by memory store/recall tools to surface a degraded field on
+	// tool responses when the embedder is unavailable.
+	EmbedderHealth *EmbedderHealth
 	// SessionDB persists MCP session registrations across server restarts (#362).
 	// When nil, session persistence is disabled (sessions are lost on restart).
 	SessionDB db.SessionRegistry

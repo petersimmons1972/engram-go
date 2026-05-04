@@ -97,7 +97,7 @@ func TestHandleMemoryStore_PermanentError_FastFail(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := handleMemoryStore(context.Background(), pool, req)
+	result, err := handleMemoryStore(context.Background(), pool, req, testConfig())
 	elapsed := time.Since(start)
 
 	// No Go error should propagate.
@@ -139,7 +139,7 @@ func TestHandleMemoryQuickStore_PermanentError_FastFail(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := handleMemoryQuickStore(context.Background(), pool, req)
+	result, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	elapsed := time.Since(start)
 
 	require.NoError(t, err, "handleMemoryQuickStore must not return a Go error for PermanentError")
@@ -184,7 +184,7 @@ func TestHandleMemoryStoreBatch_PermanentError_FastFail(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := handleMemoryStoreBatch(context.Background(), pool, req)
+	result, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
 	elapsed := time.Since(start)
 
 	require.NoError(t, err, "handleMemoryStoreBatch must not return a Go error for PermanentError")

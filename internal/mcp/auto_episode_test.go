@@ -317,7 +317,10 @@ func TestMemoryStore_EpisodeIDFromContext_Attached(t *testing.T) {
 		"project": "global",
 	}
 
-	_, err := handleMemoryStore(ctx, s.pool, req)
+	cfg := Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
+	_, err := handleMemoryStore(ctx, s.pool, req, cfg)
 	if err != nil {
 		t.Fatalf("handleMemoryStore returned error: %v", err)
 	}
@@ -346,7 +349,10 @@ func TestMemoryStore_ExplicitEpisodeIDWinsOverContext(t *testing.T) {
 		"episode_id": "ep-explicit-001",
 	}
 
-	_, err := handleMemoryStore(ctx, s.pool, req)
+	cfg := Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
+	_, err := handleMemoryStore(ctx, s.pool, req, cfg)
 	if err != nil {
 		t.Fatalf("handleMemoryStore returned error: %v", err)
 	}
@@ -372,7 +378,7 @@ func TestMemoryStore_NoEpisodeContext_EpisodeIDEmpty(t *testing.T) {
 		"project": "global",
 	}
 
-	_, err := handleMemoryStore(context.Background(), s.pool, req)
+	_, err := handleMemoryStore(context.Background(), s.pool, req, testConfig())
 	if err != nil {
 		t.Fatalf("handleMemoryStore returned error: %v", err)
 	}
@@ -517,7 +523,10 @@ func TestMemoryStoreBatch_EpisodeIDFromContext(t *testing.T) {
 		},
 	}
 
-	_, err := handleMemoryStoreBatch(ctx, s.pool, req)
+	cfg := Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
+	_, err := handleMemoryStoreBatch(ctx, s.pool, req, cfg)
 	if err != nil {
 		t.Fatalf("handleMemoryStoreBatch returned error: %v", err)
 	}

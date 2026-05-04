@@ -59,6 +59,10 @@ type RecallOpts struct {
 	// CurrentEpisodeID is the session episode; memories with a matching episode_id
 	// score 1.15× higher via EpisodeMatch in ScoreInput. Empty string = no boost.
 	CurrentEpisodeID string
+	// EmbedDegraded receives the embedder health status if the caller provides a
+	// non-nil pointer. It is set to true if the embed operation timed out or
+	// returned an error, causing fallback to BM25+recency. Nil = do not populate.
+	EmbedDegraded *bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -500,9 +504,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	embedCtx, embedCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
+	embedDegraded := false
 	if err != nil {
 		slog.Warn("embed query failed, degrading to BM25+recency only", "project", e.project, "err", err)
 		queryVec = nil
+		embedDegraded = true
+	}
+	// Populate the caller's embed degradation signal if they provided a pointer.
+	if opts.EmbedDegraded != nil {
+		*opts.EmbedDegraded = embedDegraded
 	}
 
 	// ANN vector search via pgvector HNSW index — skipped when embed degraded.

@@ -71,7 +71,10 @@ func TestHandleMemoryStore_WritesRowAndEnqueuesLeaseWhenEmbedDown(t *testing.T) 
 		"importance":  2,
 	}
 
-	result, err := handleMemoryStore(ctx, pool, req)
+	cfg := Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
+	result, err := handleMemoryStore(ctx, pool, req, cfg)
 	require.NoError(t, err, "handleMemoryStore should not return a Go error")
 	require.NotNil(t, result, "handleMemoryStore must return a CallToolResult")
 	require.False(t, result.IsError, "CallToolResult.IsError should be false for success")

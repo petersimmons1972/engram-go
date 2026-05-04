@@ -241,6 +241,13 @@ func newTestNoopPool(t *testing.T) *EnginePool {
 	return NewEnginePool(factory)
 }
 
+// testConfig returns a Config with a working embedder health probe for testing.
+func testConfig() Config {
+	return Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
+}
+
 // ── TestHandleMemoryExplore_EmptyQuestion ────────────────────────────────────
 
 // TestHandleMemoryExplore_EmptyQuestion verifies that the handler returns a
