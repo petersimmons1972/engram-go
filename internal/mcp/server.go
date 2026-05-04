@@ -154,6 +154,61 @@ type Server struct {
 	sessionFingerprints sync.Map // sessionID -> []byte HMAC fingerprint (#245)
 	sessionEpisodes     sync.Map // sessionID -> episodeID string for auto-episode sessions (#356)
 	trustProxy          bool     // honour X-Forwarded-For / X-Real-IP (#255)
+
+	// toolAnnotations records the MCP ToolAnnotation set on each registered tool.
+	// Populated as a side-effect of registerToolWithTimeout. Read by the startup
+	// banner (recommended permissions snippet) and by tests to verify that
+	// read-only tools carry ReadOnlyHint=true so client-side gating (e.g. Claude
+	// Code's plan mode) does not block them.
+	toolAnnotations map[string]mcpgo.ToolAnnotation
+}
+
+// readOnlyToolNames returns the canonical set of MCP tool names that perform
+// no mutations to memory state. These tools get ReadOnlyHint=true on their
+// MCP annotation so clients (notably Claude Code's plan mode) treat them as
+// safe to invoke without a permission prompt.
+//
+// Single source of truth — used by both registerTools (to set the annotation)
+// and the startup banner (to print a recommended permissions.allow snippet).
+func readOnlyToolNames() map[string]bool {
+	return map[string]bool{
+		"memory_recall":             true,
+		"memory_query":              true,
+		"memory_fetch":              true,
+		"memory_list":               true,
+		"memory_history":            true,
+		"memory_timeline":           true,
+		"memory_status":             true,
+		"memory_projects":           true,
+		"memory_aggregate":          true,
+		"memory_diagnose":           true,
+		"memory_episode_list":       true,
+		"memory_episode_recall":     true,
+		"memory_models":             true,
+		"memory_embedding_eval":     true,
+		"memory_export_all":         true,
+		"memory_audit_list_queries": true,
+		"memory_audit_compare":      true,
+		"memory_audit_run":          true,
+		"memory_weight_history":     true,
+		"memory_ingest_status":      true,
+		"memory_expand":             true,
+		"memory_verify":             true,
+		"get_constraints":           true,
+		"check_constraints":         true,
+		"verify_before_acting":      true,
+	}
+}
+
+// RegisteredToolAnnotations returns a copy of the ToolAnnotation that was
+// applied to each registered tool. Intended for tests and for the startup
+// banner. The returned map is safe to mutate.
+func (s *Server) RegisteredToolAnnotations() map[string]mcpgo.ToolAnnotation {
+	out := make(map[string]mcpgo.ToolAnnotation, len(s.toolAnnotations))
+	for k, v := range s.toolAnnotations {
+		out[k] = v
+	}
+	return out
 }
 
 // NewServer constructs a Server with all MCP tools registered.
@@ -163,7 +218,13 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		trustProxy = true
 		slog.Warn("ENGRAM_TRUST_PROXY_HEADERS is enabled — ensure a trusted reverse proxy terminates all inbound connections; direct clients can spoof X-Forwarded-For to bypass rate limiting")
 	}
-	s := &Server{pool: pool, cfg: cfg, uploads: make(map[string]*uploadSession), trustProxy: trustProxy}
+	s := &Server{
+		pool:            pool,
+		cfg:             cfg,
+		uploads:         make(map[string]*uploadSession),
+		trustProxy:      trustProxy,
+		toolAnnotations: make(map[string]mcpgo.ToolAnnotation),
+	}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithHooks(&server.Hooks{}),
@@ -756,15 +817,28 @@ func withWarnLog(name string, h toolHandler) toolHandler {
 const defaultToolTimeout = 15 * time.Second
 
 // registerToolWithTimeout adds a tool to the MCP server with a per-call deadline
-// and Prometheus instrumentation. timeout=0 uses defaultToolTimeout.
-func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeout time.Duration) {
+// and Prometheus instrumentation. timeout=0 uses defaultToolTimeout. readOnly
+// sets the MCP ReadOnlyHint annotation: clients (notably Claude Code's plan
+// mode) use that hint to decide whether to invoke a tool without prompting.
+func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeout time.Duration, readOnly bool) {
 	if timeout == 0 {
 		timeout = defaultToolTimeout
 	}
 	pool, cfg := s.pool, s.cfg
 	toolName := name
 	toolTimeout := timeout
-	s.mcp.AddTool(mcpgo.NewTool(name, mcpgo.WithDescription(desc)),
+	roCopy := readOnly
+	annotation := mcpgo.ToolAnnotation{
+		Title:        name,
+		ReadOnlyHint: &roCopy,
+	}
+	if s.toolAnnotations == nil {
+		s.toolAnnotations = make(map[string]mcpgo.ToolAnnotation)
+	}
+	s.toolAnnotations[name] = annotation
+	s.mcp.AddTool(mcpgo.NewTool(name,
+		mcpgo.WithDescription(desc),
+		mcpgo.WithToolAnnotation(annotation)),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			ctx, cancel := context.WithTimeout(ctx, toolTimeout)
 			defer cancel()
@@ -781,7 +855,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 					Content: []mcpgo.Content{
 						mcpgo.TextContent{
 							Type: "text",
-							Text: toolName + " timed out after " + toolTimeout.String() + " — Ollama may be slow or unavailable",
+							Text: toolName + " timed out after " + toolTimeout.String() +
+								" — backend (Ollama/LiteLLM) may be slow or unavailable. " +
+								"If you did not see a permission prompt either, the call may have been blocked client-side " +
+								"(e.g. Claude Code plan mode or a deny rule) before reaching engram; check ~/.claude/settings.json permissions and current mode.",
 						},
 					},
 				}, nil
@@ -795,9 +872,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 		})
 }
 
-// registerTool adds a tool with the default dispatch timeout.
+// registerTool adds a tool with the default dispatch timeout. The readOnly hint
+// is sourced from readOnlyToolNames() — single source of truth.
 func (s *Server) registerTool(name, desc string, h toolHandler) {
-	s.registerToolWithTimeout(name, desc, h, 0)
+	s.registerToolWithTimeout(name, desc, h, 0, readOnlyToolNames()[name])
 }
 
 func (s *Server) registerTools() {
