@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/db"
@@ -305,4 +306,152 @@ func TestRecallOpts_CurrentEpisodeID_EpisodeMatchBoost(t *testing.T) {
 	if inputNoMatch.EpisodeMatch {
 		t.Fatal("expected EpisodeMatch=false when episode IDs differ")
 	}
+}
+
+// fakeClientWithName allows tests to customize the embedder name.
+type fakeClientWithName struct {
+	name string
+	dims int
+}
+
+func (f *fakeClientWithName) Embed(_ context.Context, text string) ([]float32, error) {
+	vec := make([]float32, f.dims)
+	for i := range vec {
+		vec[i] = float32(i) / float32(f.dims)
+	}
+	return vec, nil
+}
+func (f *fakeClientWithName) Name() string    { return f.name }
+func (f *fakeClientWithName) Dimensions() int { return f.dims }
+
+// compile-time check that fakeClientWithName satisfies embed.Client.
+var _ embed.Client = (*fakeClientWithName)(nil)
+
+func TestSearchEngine_EmbedderMismatchReturnsPermanentError(t *testing.T) {
+	// DSN() will skip the test if TEST_DATABASE_URL is not set.
+	ctx := context.Background()
+	project := uniqueProject("test-embedder-mismatch")
+
+	// Create an engine with embedder name "fake" and store metadata.
+	backend1, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend1.Close() })
+
+	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 768}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+	t.Cleanup(func() { engine1.Close() })
+
+	// Store a memory to trigger checkEmbedderMeta and initialize metadata.
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "test memory",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	err = engine1.Store(ctx, m)
+	require.NoError(t, err, "first store should succeed")
+
+	// Now create a second engine with a different embedder name ("fake-v2")
+	// using the same backend/project, simulating an embedder change.
+	backend2, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend2.Close() })
+
+	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake-v2", dims: 768}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+	t.Cleanup(func() { engine2.Close() })
+
+	// Try to store a memory with the mismatched embedder.
+	m2 := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "another memory",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	err = engine2.Store(ctx, m2)
+
+	// Assert: errors.Is(err, embed.ErrPermanent) should be true.
+	require.Error(t, err, "store should fail with embedder mismatch")
+	require.True(t, errors.Is(err, embed.ErrPermanent),
+		"error should wrap embed.ErrPermanent, got %v", err)
+
+	// Assert: errors.As(err, &pe) should extract PermanentError with correct fields.
+	var pe *embed.PermanentError
+	require.True(t, errors.As(err, &pe),
+		"error should be or wrap *embed.PermanentError, got %v", err)
+	require.NotNil(t, pe, "PermanentError must not be nil")
+	require.Equal(t, "embedder_mismatch", pe.Code,
+		"Code should be 'embedder_mismatch'")
+	require.Equal(t, "fake", pe.Stored,
+		"Stored should contain the original embedder name")
+	require.Equal(t, "fake-v2", pe.Current,
+		"Current should contain the new embedder name")
+	require.Contains(t, pe.Remediation, "memory_migrate_embedder",
+		"Remediation should mention memory_migrate_embedder")
+}
+
+func TestSearchEngine_EmbedderDimensionsMismatchReturnsPermanentError(t *testing.T) {
+	// DSN() will skip the test if TEST_DATABASE_URL is not set.
+	ctx := context.Background()
+	project := uniqueProject("test-embedder-dims-mismatch")
+
+	// Create an engine with 768-dim embedder and store metadata.
+	backend1, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend1.Close() })
+
+	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 768}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+	t.Cleanup(func() { engine1.Close() })
+
+	// Store a memory to initialize embedder metadata with 768 dims.
+	m := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "test memory",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	err = engine1.Store(ctx, m)
+	require.NoError(t, err, "first store should succeed")
+
+	// Now create a second engine with same name but different dimensions (1024).
+	backend2, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend2.Close() })
+
+	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake", dims: 1024}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+	t.Cleanup(func() { engine2.Close() })
+
+	// Try to store a memory with the mismatched dimensions.
+	m2 := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "another memory",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	err = engine2.Store(ctx, m2)
+
+	// Assert: errors.Is(err, embed.ErrPermanent) should be true.
+	require.Error(t, err, "store should fail with embedder dimensions mismatch")
+	require.True(t, errors.Is(err, embed.ErrPermanent),
+		"error should wrap embed.ErrPermanent, got %v", err)
+
+	// Assert: errors.As(err, &pe) should extract PermanentError with correct fields.
+	var pe *embed.PermanentError
+	require.True(t, errors.As(err, &pe),
+		"error should be or wrap *embed.PermanentError, got %v", err)
+	require.NotNil(t, pe, "PermanentError must not be nil")
+	require.Equal(t, "embedder_mismatch", pe.Code,
+		"Code should be 'embedder_mismatch'")
+	require.Equal(t, "768-dim", pe.Stored,
+		"Stored should contain the original dimensions")
+	require.Equal(t, "1024-dim", pe.Current,
+		"Current should contain the new dimensions")
+	require.Contains(t, pe.Remediation, "memory_migrate_embedder",
+		"Remediation should mention memory_migrate_embedder")
 }

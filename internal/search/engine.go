@@ -799,8 +799,12 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 			fmt.Sprintf("%d", emb.Dimensions()))
 	}
 	if storedName != emb.Name() {
-		return fmt.Errorf("embedder mismatch: stored=%q current=%q — run memory_migrate_embedder first",
-			storedName, emb.Name())
+		return &embed.PermanentError{
+			Code:        "embedder_mismatch",
+			Stored:      storedName,
+			Current:     emb.Name(),
+			Remediation: "run memory_migrate_embedder",
+		}
 	}
 	// Skip dimension check if migration is in progress — the new model may have
 	// different dimensions, and embedder_dimensions will be reset once re-embedding
@@ -819,8 +823,12 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 			return fmt.Errorf("embedder_dimensions metadata is corrupt: %w", err)
 		}
 		if storedDims != emb.Dimensions() {
-			return fmt.Errorf("embedder dimensions mismatch: stored %d, current %d — use memory_migrate_embedder to switch models",
-				storedDims, emb.Dimensions())
+			return &embed.PermanentError{
+				Code:        "embedder_mismatch",
+				Stored:      fmt.Sprintf("%d-dim", storedDims),
+				Current:     fmt.Sprintf("%d-dim", emb.Dimensions()),
+				Remediation: "run memory_migrate_embedder",
+			}
 		}
 	}
 	return nil
