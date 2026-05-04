@@ -192,11 +192,11 @@ func TestDetectContradictions_OpposingClaims(t *testing.T) {
 	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PostgreSQL uses MVCC for concurrency",
+		ID: types.NewMemoryID(), Content: "PostgreSQL architecture uses MVCC for concurrent transaction handling",
 		MemoryType: types.MemoryTypeArchitecture, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PostgreSQL does not use MVCC",
+		ID: types.NewMemoryID(), Content: "PostgreSQL architecture does not use MVCC for concurrent transaction handling",
 		MemoryType: types.MemoryTypeArchitecture, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
@@ -244,12 +244,12 @@ func TestDetectContradictions_VersionConflict(t *testing.T) {
 	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PlanCrux handbook version is v1.2",
-		MemoryType: types.MemoryTypeContext, Project: project, Importance: 2, StorageMode: "focused",
+		ID: types.NewMemoryID(), Content: "PlanCrux handbook specification version is v1.2",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PlanCrux handbook version is v1.4",
-		MemoryType: types.MemoryTypeContext, Project: project, Importance: 2, StorageMode: "focused",
+		ID: types.NewMemoryID(), Content: "PlanCrux handbook specification version is v1.4",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
 	require.NoError(t, backend.StoreMemory(ctx, m2))

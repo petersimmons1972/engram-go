@@ -183,16 +183,16 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 	// The heuristic MUST miss these so the LLM pass is the only catch.
 	m1 := &types.Memory{
 		ID:          types.NewMemoryID(),
-		Content:     "The current AI model is GPT-4",
-		MemoryType:  types.MemoryTypeContext,
+		Content:     "The current default AI model is GPT-4",
+		MemoryType:  types.MemoryTypeDecision,
 		Project:     project,
 		Importance:  2,
 		StorageMode: "focused",
 	}
 	m2 := &types.Memory{
 		ID:          types.NewMemoryID(),
-		Content:     "The current AI model is Claude",
-		MemoryType:  types.MemoryTypeContext,
+		Content:     "The current default AI model is Claude",
+		MemoryType:  types.MemoryTypeDecision,
 		Project:     project,
 		Importance:  2,
 		StorageMode: "focused",
