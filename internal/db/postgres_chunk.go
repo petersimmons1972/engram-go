@@ -370,4 +370,17 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 	return count, err
 }
 
+// EnqueueChunkLeases sets initial leases on chunks with NULL embeddings.
+// Idempotent — calling it multiple times on the same chunks is safe.
+func (b *PostgresBackend) EnqueueChunkLeases(ctx context.Context, chunkIDs []string) error {
+	if len(chunkIDs) == 0 {
+		return nil
+	}
+	_, err := b.pool.Exec(ctx, `
+		UPDATE chunks SET embed_lease_until = NOW() + INTERVAL '5 minutes'
+		WHERE id = ANY($1) AND embedding IS NULL
+	`, chunkIDs)
+	return err
+}
+
 

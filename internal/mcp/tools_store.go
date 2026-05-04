@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -18,7 +21,7 @@ import (
 // Declared as a var (not const) so tests can substitute a shorter duration.
 var storeTimeout = 10 * time.Second
 
-func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
 	if err != nil {
@@ -74,9 +77,24 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
 	if err := h.Engine.Store(storeCtx, m); err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
-	return toolResult(map[string]any{"id": m.ID, "status": "stored"})
+
+	// Probe embedder health and add degraded field to response.
+	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+	degraded := map[string]any{"embed": !ok, "reason": reason}
+
+	return toolResult(map[string]any{
+		"id":        m.ID,
+		"status":    "stored",
+		"degraded":  degraded,
+	})
 }
 
 // handleMemoryStoreDocument stores a document-mode memory, auto-selecting a
@@ -136,15 +154,27 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	defer storeCancel()
 	out, err := execStoreDocument(storeCtx, deps, m, content, maxDoc, rawMax)
 	if err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
+
+	// Probe embedder health and add degraded field to response.
+	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+	degraded := map[string]any{"embed": !ok, "reason": reason}
+	out["degraded"] = degraded
+
 	return toolResult(out)
 }
 
 // handleMemoryStoreBatch stores multiple memories in a single atomic call (#115).
 // All items are validated first; then embeddings are computed; then all writes
 // are committed in one transaction — either all succeed or none do.
-func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
 	if err != nil {
@@ -230,6 +260,12 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
 	if err := h.Engine.StoreBatch(storeCtx, memories); err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
 
@@ -237,7 +273,16 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	for i, m := range memories {
 		ids[i] = m.ID
 	}
-	return toolResult(map[string]any{"ids": ids, "count": len(ids)})
+
+	// Probe embedder health and add degraded field to response.
+	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+	degraded := map[string]any{"embed": !ok, "reason": reason}
+
+	return toolResult(map[string]any{
+		"ids":       ids,
+		"count":     len(ids),
+		"degraded":  degraded,
+	})
 }
 
 // handleMemoryRecall performs semantic recall against one or more project engines.
@@ -309,7 +354,7 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 
 // handleMemoryHistory returns the version chain for a memory.
 
-func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 
 	// Build a merged copy so we never mutate the caller's map.
@@ -328,7 +373,7 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 
 	req2 := req
 	req2.Params.Arguments = merged
-	return handleMemoryStore(ctx, pool, req2)
+	return handleMemoryStore(ctx, pool, req2, cfg)
 }
 
 // handleMemoryQuery is a simplified front door for handleMemoryRecall.

@@ -35,7 +35,8 @@ func newQuickStoreServer(t *testing.T) *Server {
 		return &EngineHandle{Engine: engine}, nil
 	}
 	pool := NewEnginePool(factory)
-	return &Server{pool: pool}
+	cfg := testConfig()
+	return &Server{pool: pool, cfg: cfg, embedderHealth: cfg.EmbedderHealth}
 }
 
 // TestQuickStoreHandler_HappyPath verifies that a POST with valid content

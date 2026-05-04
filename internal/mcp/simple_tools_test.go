@@ -47,7 +47,7 @@ func TestMemoryQuickStore_HappyPath(t *testing.T) {
 		"project": "test",
 	}
 
-	res, err := handleMemoryQuickStore(context.Background(), pool, req)
+	res, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	out := parseSimpleResult(t, res)
 	require.NotEmpty(t, out["id"], "id must be present")
@@ -65,7 +65,7 @@ func TestMemoryQuickStore_DefaultMemoryType(t *testing.T) {
 		"project": "test",
 	}
 
-	res, err := handleMemoryQuickStore(context.Background(), pool, req)
+	res, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err, "default memory_type must not cause a validation error")
 	out := parseSimpleResult(t, res)
 	require.Equal(t, "stored", out["status"])
@@ -81,7 +81,7 @@ func TestMemoryQuickStore_DefaultImportance(t *testing.T) {
 		"project": "test",
 	}
 
-	_, err := handleMemoryQuickStore(context.Background(), pool, req)
+	_, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err, "default importance=2 must be accepted by handleMemoryStore")
 }
 
@@ -94,7 +94,7 @@ func TestMemoryQuickStore_MissingContent(t *testing.T) {
 		// content intentionally absent
 	}
 
-	result, err := handleMemoryQuickStore(context.Background(), pool, req)
+	result, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.IsError)
@@ -112,7 +112,7 @@ func TestMemoryQuickStore_DoesNotMutateOriginal(t *testing.T) {
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = original
 
-	_, _ = handleMemoryQuickStore(context.Background(), pool, req)
+	_, _ = handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 
 	// Original map must not have acquired new keys injected by the handler.
 	_, hasMemoryType := original["memory_type"]
@@ -133,7 +133,7 @@ func TestMemoryQuery_HappyPath(t *testing.T) {
 		"project": "test",
 	}
 
-	res, err := handleMemoryQuery(context.Background(), pool, req, Config{})
+	res, err := handleMemoryQuery(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.False(t, res.IsError)
@@ -152,7 +152,7 @@ func TestMemoryQuery_LimitMapsToTopK(t *testing.T) {
 		"limit":   3,
 	}
 
-	res, err := handleMemoryQuery(context.Background(), pool, req, Config{})
+	res, err := handleMemoryQuery(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.False(t, res.IsError)
@@ -169,7 +169,7 @@ func TestMemoryQuery_DefaultLimit(t *testing.T) {
 		// neither limit nor top_k
 	}
 
-	res, err := handleMemoryQuery(context.Background(), pool, req, Config{})
+	res, err := handleMemoryQuery(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.False(t, res.IsError)
@@ -186,7 +186,7 @@ func TestMemoryQuery_MissingQuery(t *testing.T) {
 		// query intentionally absent
 	}
 
-	res, err := handleMemoryQuery(context.Background(), pool, req, Config{})
+	res, err := handleMemoryQuery(context.Background(), pool, req, testConfig())
 	require.NoError(t, err, "missing query must not return a Go error (would produce WARN log)")
 	require.NotNil(t, res)
 	require.True(t, res.IsError, "missing query must return an MCP tool error result")
@@ -203,7 +203,7 @@ func TestMemoryQuery_DoesNotMutateOriginal(t *testing.T) {
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = original
 
-	_, _ = handleMemoryQuery(context.Background(), pool, req, Config{})
+	_, _ = handleMemoryQuery(context.Background(), pool, req, testConfig())
 
 	// limit must still be in original (handler must work on a copy).
 	_, hasLimit := original["limit"]
@@ -348,7 +348,7 @@ func TestMemoryQuickStore_DefaultMemoryType_Injected(t *testing.T) {
 		"project": "test",
 	}
 
-	_, err := handleMemoryQuickStore(context.Background(), pool, req)
+	_, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.Len(t, cap.stored, 1)
 	require.Equal(t, "context", cap.stored[0].MemoryType)
@@ -364,7 +364,7 @@ func TestMemoryQuickStore_DefaultImportance_Injected(t *testing.T) {
 		"project": "test",
 	}
 
-	_, err := handleMemoryQuickStore(context.Background(), pool, req)
+	_, err := handleMemoryQuickStore(context.Background(), pool, req, testConfig())
 	require.NoError(t, err)
 	require.Len(t, cap.stored, 1)
 	require.Equal(t, 2, cap.stored[0].Importance)

@@ -87,7 +87,8 @@ func TestStoreDeadline_MemoryStore(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := handleMemoryStore(context.Background(), pool, req)
+	cfg := testConfig()
+	_, err := handleMemoryStore(context.Background(), pool, req, cfg)
 	elapsed := time.Since(start)
 
 	require.Error(t, err, "handleMemoryStore must return an error when the engine stalls past the deadline")
@@ -115,7 +116,8 @@ func TestStoreDeadline_MemoryStoreBatch(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := handleMemoryStoreBatch(context.Background(), pool, req)
+	cfg := testConfig()
+	_, err := handleMemoryStoreBatch(context.Background(), pool, req, cfg)
 	elapsed := time.Since(start)
 
 	require.Error(t, err, "handleMemoryStoreBatch must return an error when the engine stalls past the deadline")
@@ -139,7 +141,7 @@ func TestStoreDeadline_MemoryStoreDocument(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := handleMemoryStoreDocument(context.Background(), pool, req, Config{})
+	_, err := handleMemoryStoreDocument(context.Background(), pool, req, testConfig())
 	elapsed := time.Since(start)
 
 	require.Error(t, err, "handleMemoryStoreDocument must return an error when the engine stalls past the deadline")

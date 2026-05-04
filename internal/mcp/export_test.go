@@ -79,7 +79,7 @@ func CallHandleMemoryRecallFull(
 	}
 	req.Params.Arguments = merged
 
-	result, err := handleMemoryRecall(ctx, pool, req, Config{})
+	result, err := handleMemoryRecall(ctx, pool, req, testConfig())
 	if err != nil {
 		t.Fatalf("handleMemoryRecall: %v", err)
 	}
@@ -122,7 +122,7 @@ func CallHandleMemoryRecall(
 		"include_conflicts": includeConflicts,
 	}
 
-	result, err := handleMemoryRecall(ctx, pool, req, Config{})
+	result, err := handleMemoryRecall(ctx, pool, req, testConfig())
 	if err != nil {
 		t.Fatalf("handleMemoryRecall: %v", err)
 	}
@@ -176,7 +176,7 @@ func CallHandleMemoryRecallFederated(
 		"include_conflicts": includeConflicts,
 	}
 
-	result, err := handleMemoryRecall(ctx, pool, req, Config{})
+	result, err := handleMemoryRecall(ctx, pool, req, testConfig())
 	if err != nil {
 		t.Fatalf("handleMemoryRecall (federated): %v", err)
 	}

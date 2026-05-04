@@ -20,7 +20,8 @@ import (
 func newQuickRecallServer(t *testing.T) *Server {
 	t.Helper()
 	pool := newTestNoopPool(t)
-	return &Server{pool: pool}
+	cfg := testConfig()
+	return &Server{pool: pool, cfg: cfg, embedderHealth: cfg.EmbedderHealth}
 }
 
 // TestHandleQuickRecall_HappyPath verifies that a POST with a valid project
