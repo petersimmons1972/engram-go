@@ -121,7 +121,6 @@ func TestRetrievalTracking_FeedbackRecordsOutcome(t *testing.T) {
 // TestRetrievalTracking_PrecisionUpdated verifies that after enough feedback
 // cycles, retrieval_precision on a memory reflects the useful/retrieved ratio.
 func TestRetrievalTracking_PrecisionUpdated(t *testing.T) {
-	t.Skip("pre-existing failure — always-useful precision yields 0.5 not ~1.0; algorithm review needed (#429)")
 	engine := newTestEngine(t, uniqueProject("test-rt-precision"))
 	t.Cleanup(func() { engine.Close() })
 	ctx := context.Background()

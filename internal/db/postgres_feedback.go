@@ -100,15 +100,10 @@ func (b *PostgresBackend) RecordFeedback(ctx context.Context, eventID string, us
 		return fmt.Errorf("update retrieval event: %w", err)
 	}
 
-	// Increment times_retrieved on all result memories.
-	if len(event.ResultIDs) > 0 {
-		if _, err := tx.Exec(ctx, `
-			UPDATE memories SET times_retrieved = COALESCE(times_retrieved, 0) + 1 WHERE id = ANY($1)`,
-			event.ResultIDs,
-		); err != nil {
-			return fmt.Errorf("increment times_retrieved: %w", err)
-		}
-	}
+	// times_retrieved is incremented by SearchEngine.RecallWithEvent at recall
+	// time (so the precision denominator warms up even without feedback). We
+	// must NOT bump it again here or every feedback call double-counts the
+	// denominator and pins precision at half its true value.
 
 	// Increment times_useful on useful memories.
 	if len(usefulIDs) > 0 {
@@ -173,15 +168,8 @@ func (b *PostgresBackend) RecordFeedbackWithClass(ctx context.Context, eventID s
 		return fmt.Errorf("update retrieval event: %w", err)
 	}
 
-	// Increment times_retrieved on all result memories.
-	if len(event.ResultIDs) > 0 {
-		if _, err := tx.Exec(ctx, `
-			UPDATE memories SET times_retrieved = COALESCE(times_retrieved, 0) + 1 WHERE id = ANY($1)`,
-			event.ResultIDs,
-		); err != nil {
-			return fmt.Errorf("increment times_retrieved: %w", err)
-		}
-	}
+	// times_retrieved is incremented by SearchEngine.RecallWithEvent at recall
+	// time. Do NOT bump again here — see RecordFeedback for the full rationale.
 
 	// Increment times_useful on useful memories.
 	if len(usefulIDs) > 0 {

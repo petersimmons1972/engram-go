@@ -5,23 +5,115 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// FlushPendingEmbeddings backfills NULL embeddings on chunks for the given
+// project, mirroring what the reembed worker does in production. Tests use
+// this after Store to make recall deterministic without standing up the
+// reembed worker. The dim must match fakeTestEmbedClient (1024) and the live
+// chunks.embedding column (vector(1024) per migration 018).
+func FlushPendingEmbeddings(t *testing.T, ctx context.Context, dsn, project string) {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("FlushPendingEmbeddings: parse dsn: %v", err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("FlushPendingEmbeddings: connect: %v", err)
+	}
+	defer pool.Close()
+
+	rows, err := pool.Query(ctx, `
+		SELECT c.id, c.chunk_text
+		FROM chunks c
+		WHERE c.embedding IS NULL AND c.project = $1`, project)
+	if err != nil {
+		t.Fatalf("FlushPendingEmbeddings: query pending: %v", err)
+	}
+	type row struct{ id, text string }
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.text); err != nil {
+			rows.Close()
+			t.Fatalf("FlushPendingEmbeddings: scan: %v", err)
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+
+	embedder := &fakeTestEmbedClient{dims: 1024}
+	for _, p := range pending {
+		vec, err := embedder.Embed(ctx, p.text)
+		if err != nil {
+			t.Fatalf("FlushPendingEmbeddings: embed: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`UPDATE chunks SET embedding = $1 WHERE id = $2`,
+			pgvector.NewVector(vec), p.id,
+		); err != nil {
+			t.Fatalf("FlushPendingEmbeddings: update: %v", err)
+		}
+	}
+}
+
 // fakeTestEmbedClient is a zero-dependency embedder for tests. It returns a
-// deterministic constant vector so vector-search ranking is predictable.
+// deterministic content-derived vector — strings sharing tokens land in
+// overlapping slots and produce high cosine similarity, while disjoint
+// strings concentrate weight in different slots. This is enough to give
+// integration tests realistic-looking vector ranking without standing up
+// Ollama or LiteLLM, and is the difference between conflicts-enrichment
+// tests being able to distinguish a query from a non-matching memory and
+// returning the same vector for everything (which makes vector search
+// useless and leaves the tests unable to prove anything — see #429).
 type fakeTestEmbedClient struct{ dims int }
 
-func (f *fakeTestEmbedClient) Embed(_ context.Context, _ string) ([]float32, error) {
+func (f *fakeTestEmbedClient) Embed(_ context.Context, text string) ([]float32, error) {
 	vec := make([]float32, f.dims)
-	for i := range vec {
-		vec[i] = float32(i) / float32(f.dims)
+	tokens := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	span := f.dims / 16 // each token activates 1/16 of the vector
+	if span < 1 {
+		span = 1
+	}
+	for _, tok := range tokens {
+		if len(tok) < 3 {
+			continue
+		}
+		// FNV-1a hash → bucket within [0, dims).
+		h := uint32(2166136261)
+		for i := 0; i < len(tok); i++ {
+			h ^= uint32(tok[i])
+			h *= 16777619
+		}
+		base := int(h % uint32(f.dims))
+		for k := 0; k < span; k++ {
+			vec[(base+k)%f.dims] += 1.0
+		}
+	}
+	// L2 normalize so cosine similarity ranges naturally in [0, 1].
+	var sum float32
+	for _, v := range vec {
+		sum += v * v
+	}
+	if sum > 0 {
+		inv := float32(1.0 / math.Sqrt(float64(sum)))
+		for i := range vec {
+			vec[i] *= inv
+		}
 	}
 	return vec, nil
 }
@@ -95,6 +187,15 @@ func CallHandleMemoryRecallFull(
 	var out map[string]any
 	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
 		t.Fatalf("decode tool result JSON: %v", err)
+	}
+	// Re-hydrate conflicting_results to []types.ConflictingResult if present,
+	// so callers can do typed assertions (mirrors CallHandleMemoryRecall).
+	if raw, ok := out["conflicting_results"]; ok && raw != nil {
+		b, _ := json.Marshal(raw)
+		var cr []types.ConflictingResult
+		if err := json.Unmarshal(b, &cr); err == nil {
+			out["conflicting_results"] = cr
+		}
 	}
 	return out
 }
