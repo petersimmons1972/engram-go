@@ -83,7 +83,7 @@ type fakeTestEmbedClient struct{ dims int }
 func (f *fakeTestEmbedClient) Embed(_ context.Context, text string) ([]float32, error) {
 	vec := make([]float32, f.dims)
 	tokens := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	span := f.dims / 16 // each token activates 1/16 of the vector
 	if span < 1 {
