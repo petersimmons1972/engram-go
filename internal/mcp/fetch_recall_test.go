@@ -159,7 +159,7 @@ func TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey(t *testing.T) {
 		"project": "test",
 		"query":   "what is the meaning of life",
 	}
-	cfg := Config{} // RecallDefaultMode="" → full results path
+	cfg := testConfig() // RecallDefaultMode="" → full results path
 
 	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestHandleMemoryRecall_EpisodeContextInjected(t *testing.T) {
 		"project": "test",
 		"query":   "episode boost smoke test",
 	}
-	cfg := Config{} // full results mode
+	cfg := testConfig() // full results mode
 	res, err := handleMemoryRecall(ctx, pool, req, cfg)
 	if err != nil {
 		t.Fatalf("handleMemoryRecall returned unexpected error: %v", err)

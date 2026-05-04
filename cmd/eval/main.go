@@ -19,7 +19,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/eval"
 )
 
-// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
 
 type goldenEntry struct {

@@ -26,19 +26,6 @@ func exploreClient(rt http.RoundTripper) *claude.Client {
 	return claude.NewWithTransport("test-key", rt)
 }
 
-type mockFetcher struct {
-	fetched []string
-	upgrade map[string]*types.Memory
-}
-
-func (f *mockFetcher) FetchMemory(_ context.Context, _ string, id string) (*types.Memory, error) {
-	f.fetched = append(f.fetched, id)
-	if m, ok := f.upgrade[id]; ok {
-		return m, nil
-	}
-	return nil, nil
-}
-
 type mockRecaller struct {
 	calls [][]types.SearchResult
 	idx   int

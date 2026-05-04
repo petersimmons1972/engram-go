@@ -1,12 +1,17 @@
 package vram
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// probeTimeout caps each VRAM probe subprocess (nvidia-smi/rocm-smi/sysctl).
+const probeTimeout = 5 * time.Second
 
 type Info struct {
 	GB     float64
@@ -35,7 +40,9 @@ func Detect() Info {
 }
 
 func probeNvidia() (Info, bool) {
-	out, err := exec.Command("nvidia-smi",
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "nvidia-smi",
 		"--query-gpu=name,memory.total",
 		"--format=csv,noheader,nounits").Output()
 	if err != nil {
@@ -71,7 +78,9 @@ func ParseNvidiaMiB(s string) (float64, bool) {
 }
 
 func probeAMD() (Info, bool) {
-	out, err := exec.Command("rocm-smi", "--showmeminfo", "vram", "--json").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "rocm-smi", "--showmeminfo", "vram", "--json").Output()
 	if err != nil {
 		return Info{}, false
 	}
@@ -94,7 +103,9 @@ func probeAMD() (Info, bool) {
 
 func probeApple() (Info, bool) {
 	// Unified memory: use 50% of total RAM as safe VRAM estimate.
-	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sysctl", "-n", "hw.memsize").Output()
 	if err != nil {
 		return Info{}, false
 	}

@@ -132,7 +132,7 @@ func ParseFile(path string) ([]*types.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("chatgpt.ParseFile: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Parse(f)
 }
 
@@ -231,7 +231,7 @@ func buildContent(title string, path []mapNode, convCreateTime time.Time) (strin
 		}
 
 		label := roleLabel(msg.Author.Role)
-		sb.WriteString(fmt.Sprintf("**%s** (%s):\n", label, ts.UTC().Format(time.RFC3339)))
+		fmt.Fprintf(&sb, "**%s** (%s):\n", label, ts.UTC().Format(time.RFC3339))
 
 		body := assembleBody(msg.Content)
 		sb.WriteString(body)

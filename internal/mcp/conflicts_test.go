@@ -327,8 +327,17 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	}
 	require.NoError(t, h.Engine.Backend().StoreRelationship(ctx, rel))
 
-	// Recall with include_conflicts=true.
-	out := internalmcp.CallHandleMemoryRecall(ctx, t, pool, proj, "deploy Friday", true)
+	// Production stores chunks with NULL embedding and lets the reembed worker
+	// backfill them asynchronously (#414). Tests don't run that worker, so
+	// flush pending chunks synchronously before recall.
+	internalmcp.FlushPendingEmbeddings(t, ctx, dsn, proj)
+
+	// Recall with top_k=1 so only the strongest BM25/vector match enters the
+	// primary results, leaving the contradicting memory available to the
+	// conflicts-enrichment path. The query uses m1's unique tokens
+	// ("afternoons"/"iteration") to make the disambiguation deterministic.
+	out := internalmcp.CallHandleMemoryRecallFull(ctx, t, pool, proj, "afternoons iteration",
+		map[string]any{"top_k": float64(1), "include_conflicts": true})
 
 	conflicts, ok := out["conflicting_results"]
 	require.True(t, ok, "conflicting_results key must be present when include_conflicts=true")

@@ -83,7 +83,7 @@ func storeChunksBatch(ctx context.Context, tx pgx.Tx, chunks []*types.Chunk) err
 		)
 	}
 	results := tx.SendBatch(ctx, batch)
-	defer results.Close()
+	defer func() { _ = results.Close() }()
 	for range chunks {
 		if _, err := results.Exec(); err != nil {
 			return err
@@ -368,6 +368,19 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 		WHERE m.project=$1 AND m.valid_to IS NULL AND c.embedding IS NULL`, project,
 	).Scan(&count)
 	return count, err
+}
+
+// EnqueueChunkLeases sets initial leases on chunks with NULL embeddings.
+// Idempotent — calling it multiple times on the same chunks is safe.
+func (b *PostgresBackend) EnqueueChunkLeases(ctx context.Context, chunkIDs []string) error {
+	if len(chunkIDs) == 0 {
+		return nil
+	}
+	_, err := b.pool.Exec(ctx, `
+		UPDATE chunks SET embed_lease_until = NOW() + INTERVAL '5 minutes'
+		WHERE id = ANY($1) AND embedding IS NULL
+	`, chunkIDs)
+	return err
 }
 
 

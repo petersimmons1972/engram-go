@@ -615,7 +615,7 @@ func runExportFanout(ctx context.Context, deps storeDocumentDeps, project string
 		i, m := i, m
 		eg.Go(func() error {
 			err := deps.engine.StoreWithRawBody(egCtx, m, "")
-			results[i] = storeResult{id: string(m.ID), err: err}
+			results[i] = storeResult{id: m.ID, err: err}
 			return nil // continue-on-error — don't abort the whole fanout
 		})
 	}

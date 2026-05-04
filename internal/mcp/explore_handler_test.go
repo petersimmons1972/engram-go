@@ -92,6 +92,7 @@ func (noopBackend) UpdateChunkLastMatched(_ context.Context, _ string) error  { 
 func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
 func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
 func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
@@ -239,6 +240,13 @@ func newTestNoopPool(t *testing.T) *EnginePool {
 		return &EngineHandle{Engine: engine}, nil
 	}
 	return NewEnginePool(factory)
+}
+
+// testConfig returns a Config with a working embedder health probe for testing.
+func testConfig() Config {
+	return Config{EmbedderHealth: NewEmbedderHealth(func(ctx context.Context) (bool, string) {
+		return true, ""
+	}, 0)}
 }
 
 // ── TestHandleMemoryExplore_EmptyQuestion ────────────────────────────────────

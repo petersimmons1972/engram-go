@@ -123,9 +123,9 @@ func buildContent(conv conversation) (string, error) {
 		label := senderLabel(msg.Sender)
 
 		if ts != "" {
-			sb.WriteString(fmt.Sprintf("**%s** (%s):\n", label, ts))
+			fmt.Fprintf(&sb, "**%s** (%s):\n", label, ts)
 		} else {
-			sb.WriteString(fmt.Sprintf("**%s**:\n", label))
+			fmt.Fprintf(&sb, "**%s**:\n", label)
 		}
 
 		text := strings.TrimSpace(msg.Text)
@@ -158,6 +158,6 @@ func ParseFile(path string) ([]*types.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claudeai.ParseFile: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Parse(f)
 }

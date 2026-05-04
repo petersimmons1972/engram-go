@@ -54,7 +54,7 @@ func TestInferRelationships_CreatesEdges(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	// Store two closely related memories and manually set their chunks with known embeddings.
 	m1 := &types.Memory{
@@ -69,11 +69,11 @@ func TestInferRelationships_CreatesEdges(t *testing.T) {
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
 	// Store chunks with very similar embeddings (nearly identical vectors → should be detected as related).
-	vec1 := make([]float32, 768)
-	vec2 := make([]float32, 768)
+	vec1 := make([]float32, 1024)
+	vec2 := make([]float32, 1024)
 	for i := range vec1 {
 		vec1[i] = 0.5
-		vec2[i] = 0.5 + float32(i)/float32(768*1000) // nearly identical
+		vec2[i] = 0.5 + float32(i)/float32(1024*1000) // nearly identical
 	}
 	require.NoError(t, backend.StoreChunks(ctx, []*types.Chunk{
 		{ID: types.NewMemoryID(), MemoryID: m1.ID, ChunkText: m1.Content, ChunkIndex: 0,
@@ -104,7 +104,7 @@ func TestInferRelationships_SkipsExistingEdges(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
 		ID: types.NewMemoryID(), Content: "Go channels enable safe goroutine communication",
@@ -123,7 +123,7 @@ func TestInferRelationships_SkipsExistingEdges(t *testing.T) {
 		RelType: types.RelTypeRelatesTo, Strength: 0.9, Project: project,
 	}))
 
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -157,7 +157,7 @@ func TestRunAll_ReturnsStats(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m := &types.Memory{
 		Content: "Sleep consolidation: infer relationships between related memories",
@@ -189,21 +189,21 @@ func TestDetectContradictions_OpposingClaims(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PostgreSQL uses MVCC for concurrency",
+		ID: types.NewMemoryID(), Content: "PostgreSQL architecture uses MVCC for concurrent transaction handling",
 		MemoryType: types.MemoryTypeArchitecture, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PostgreSQL does not use MVCC",
+		ID: types.NewMemoryID(), Content: "PostgreSQL architecture does not use MVCC for concurrent transaction handling",
 		MemoryType: types.MemoryTypeArchitecture, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
 	// Identical embeddings → cosine similarity = 1.0, guaranteeing the pair is examined.
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -241,20 +241,20 @@ func TestDetectContradictions_VersionConflict(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PlanCrux handbook version is v1.2",
-		MemoryType: types.MemoryTypeContext, Project: project, Importance: 2, StorageMode: "focused",
+		ID: types.NewMemoryID(), Content: "PlanCrux handbook specification version is v1.2",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	m2 := &types.Memory{
-		ID: types.NewMemoryID(), Content: "PlanCrux handbook version is v1.4",
-		MemoryType: types.MemoryTypeContext, Project: project, Importance: 2, StorageMode: "focused",
+		ID: types.NewMemoryID(), Content: "PlanCrux handbook specification version is v1.4",
+		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m1))
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -282,7 +282,7 @@ func TestDetectContradictions_SimilarButNotContradicting(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
 		ID: types.NewMemoryID(), Content: "Go uses goroutines for concurrency",
@@ -295,7 +295,7 @@ func TestDetectContradictions_SimilarButNotContradicting(t *testing.T) {
 	require.NoError(t, backend.StoreMemory(ctx, m1))
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -323,7 +323,7 @@ func TestDetectContradictions_SkipsExistingEdges(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
 		ID: types.NewMemoryID(), Content: "PostgreSQL uses MVCC for concurrency",
@@ -342,7 +342,7 @@ func TestDetectContradictions_SkipsExistingEdges(t *testing.T) {
 		RelType: types.RelTypeContradicts, Strength: 0.95, Project: project,
 	}))
 
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -540,7 +540,7 @@ func storeContradictingPair(t *testing.T, ctx context.Context, backend db.Backen
 	require.NoError(t, backend.StoreMemory(ctx, mNew))
 
 	// Identical embeddings so vector search returns this pair.
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -579,7 +579,7 @@ func TestAutoSupersede_NewerSupersedes(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	mNew, mOld := storeContradictingPair(t, ctx, backend, project, 48*time.Hour)
 
@@ -615,7 +615,7 @@ func TestAutoSupersede_WithinThreshold_NoAction(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	_, mOld := storeContradictingPair(t, ctx, backend, project, 12*time.Hour)
 
@@ -639,7 +639,7 @@ func TestAutoSupersede_SkipsNonContradicts(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	// Two memories with only a relates_to edge (no contradicts).
 	m1 := &types.Memory{
@@ -672,7 +672,7 @@ func TestAutoSupersede_AlreadySuperseded(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	mNew, mOld := storeContradictingPair(t, ctx, backend, project, 48*time.Hour)
 
