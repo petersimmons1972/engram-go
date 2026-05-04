@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -74,6 +77,12 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
 	if err := h.Engine.Store(storeCtx, m); err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
 	return toolResult(map[string]any{"id": m.ID, "status": "stored"})
@@ -136,6 +145,12 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	defer storeCancel()
 	out, err := execStoreDocument(storeCtx, deps, m, content, maxDoc, rawMax)
 	if err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
 	return toolResult(out)
@@ -230,6 +245,12 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
 	if err := h.Engine.StoreBatch(storeCtx, memories); err != nil {
+		// Fast-fail on permanent embedder mismatch without propagating as Go error.
+		var pe *embed.PermanentError
+		if errors.As(err, &pe) {
+			body, _ := json.Marshal(pe)
+			return mcpgo.NewToolResultError(string(body)), nil
+		}
 		return nil, err
 	}
 
