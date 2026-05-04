@@ -177,7 +177,7 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	// Two affirmative claims — no negation, no versions, no tense shift.
 	// The heuristic MUST miss these so the LLM pass is the only catch.
@@ -201,7 +201,7 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
 	// Identical embeddings → similarity = 1.0, pair is always examined.
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -266,7 +266,7 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m1 := &types.Memory{
 		ID:          types.NewMemoryID(),
@@ -287,7 +287,7 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 	require.NoError(t, backend.StoreMemory(ctx, m1))
 	require.NoError(t, backend.StoreMemory(ctx, m2))
 
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
@@ -331,10 +331,10 @@ func TestDetectContradictions_LLMMaxCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 768})
+	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	// Store 5 memory pairs (10 memories total) that the heuristic won't catch.
-	vec := make([]float32, 768)
+	vec := make([]float32, 1024)
 	for i := range vec {
 		vec[i] = 0.5
 	}
