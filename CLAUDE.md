@@ -39,3 +39,7 @@ memory_aggregate(by="failure_class")
 Valid `failure_class` values: `vocabulary_mismatch`, `aggregation_failure`, `stale_ranking`, `missing_content`, `scope_mismatch`, `other`.
 
 Use `memory_aggregate(by="failure_class")` periodically to see where recall is failing most. This data feeds retrieval quality benchmarking.
+
+## MCP Read-Only Hint Annotations
+
+Read-side tools (recall, fetch, query, list, status, history, timeline, projects, episode/audit listings, constraint checks, diagnose) carry `ReadOnlyHint: true` on their MCP annotation. The canonical set lives in `readOnlyToolNames()` in `internal/mcp/server.go` — add new read-only tools there, not by editing `registerTools` directly. The annotation is what lets Claude Code's plan mode invoke these tools without prompting; without it, calls are silently rejected client-side. `TestReadOnlyToolAnnotations` (`internal/mcp/readonly_hints_test.go`) is the regression guard.

@@ -65,6 +65,24 @@ The server starts on port 8788. If you prefer to author `.env` by hand rather th
 
 Run `/mcp` in Claude Code after setup to connect. All 38 core tools are available immediately. Five optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) activate when `ANTHROPIC_API_KEY` is set.
 
+### Claude Code permissions
+
+Engram's read-side tools (`memory_recall`, `memory_fetch`, `memory_query`, `memory_list`, `memory_status`, `memory_history`, `memory_timeline`, `memory_projects`, audit/episode listings, constraint checks, `memory_diagnose`) ship with the MCP `ReadOnlyHint: true` annotation. Claude Code's plan mode treats them as safe to invoke without a permission prompt — recall just works, even from inside plan mode.
+
+Mutating tools (`memory_store`, `memory_correct`, `memory_forget`, `memory_consolidate`, `memory_delete_project`, etc.) intentionally prompt for permission on first use. To skip prompts on the read-only tools in normal mode, add the recommended snippet to `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__engram__*"]
+  }
+}
+```
+
+The engram server logs a paste-ready `permissions.allow` snippet at startup containing the exact list of read-only tool names — copy from the log if you want a narrower allowlist than the wildcard.
+
+If a recall tool ever vanishes silently (no result, no prompt, no error), the call was almost certainly blocked client-side. Check that you're running an engram build that includes the `ReadOnlyHint` annotation (engram-go ≥ this PR) and that no `permissions.deny` rule shadows the engram tool name.
+
 ---
 
 ## Architecture
