@@ -35,7 +35,7 @@ var _ embed.Client = (*fakeTestEmbedClient)(nil)
 // require a live Ollama instance.
 func NewTestPoolWithDSN(t *testing.T, ctx context.Context, dsn, project string) *EnginePool {
 	t.Helper()
-	embedder := &fakeTestEmbedClient{dims: 768}
+	embedder := &fakeTestEmbedClient{dims: 1024}
 	factory := func(factoryCtx context.Context, proj string) (*EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(factoryCtx, proj, dsn)
 		if err != nil {

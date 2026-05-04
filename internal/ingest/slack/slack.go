@@ -133,7 +133,7 @@ func ParseFile(path string) ([]*types.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("slack.ParseFile: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -152,7 +152,7 @@ func readZipFile(f *zip.File) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	return io.ReadAll(rc)
 }
 
@@ -329,7 +329,7 @@ func buildMemory(channelName string, msgs []parsedMessage) *types.Memory {
 
 	for _, msg := range msgs {
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf("**%s** (%s):\n", msg.user, msg.ts.Format(time.RFC3339)))
+		fmt.Fprintf(&sb, "**%s** (%s):\n", msg.user, msg.ts.Format(time.RFC3339))
 
 		body := msg.text
 		if msg.isReply {

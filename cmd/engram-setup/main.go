@@ -30,7 +30,7 @@ import (
 	"time"
 )
 
-// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
 
 func main() {
@@ -215,7 +215,7 @@ type setupResponse struct {
 }
 
 // defaultKeyBackupPath returns the path where the API key is durably stored
-// outside the repository. Survives .env deletion and container rebuilds. (#377)
+// outside the repository. Survives .env deletion and container rebuilds (#377).
 func defaultKeyBackupPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

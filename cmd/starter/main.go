@@ -33,7 +33,7 @@ exec-replaces itself with /engram.
 `
 
 func printUsage() {
-	fmt.Fprint(os.Stdout, usageText)
+	_, _ = fmt.Fprint(os.Stdout, usageText)
 }
 
 // patchDatabaseURLPassword replaces the password in a PostgreSQL DSN with
@@ -168,7 +168,14 @@ func main() {
 func runHealth() {
 	port := "8788"
 	client := &http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:" + port + "/health")
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/health", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "health: %v\n", err)
+		os.Exit(1)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "health: %v\n", err)
 		os.Exit(1)

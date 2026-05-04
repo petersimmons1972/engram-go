@@ -34,7 +34,7 @@ import (
 	_ "net/http/pprof"
 )
 
-// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
 
 func main() {
@@ -130,11 +130,17 @@ func run() error {
 	// /health endpoint and exit with the appropriate code. See issue #341.
 	if *healthcheckFlag {
 		probePort := envInt("ENGRAM_PORT", 8788)
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", probePort))
+		hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", probePort), nil)
+		if err != nil {
+			os.Exit(1)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != http.StatusOK {
 			os.Exit(1)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		os.Exit(0)
 	}
 

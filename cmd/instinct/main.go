@@ -534,7 +534,7 @@ func callHaiku(ctx context.Context, apiKey string, events []Event, endpoint stri
 		slog.Error("instinct: haiku HTTP", "err", err)
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("instinct: haiku non-200", "status", resp.StatusCode)
@@ -711,7 +711,7 @@ func run(ctx context.Context, cfg config) error {
 		requeue(cfg.bufferPath, processedPath)
 		return fmt.Errorf("connect: %w", err)
 	}
-	defer e.close()
+	defer func() { _ = e.close() }()
 
 	groups := groupBySession(events)
 	for key, group := range groups {

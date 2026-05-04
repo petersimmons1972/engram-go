@@ -42,16 +42,6 @@ func withCaptureLogger(t *testing.T) *captureHandler {
 	return h
 }
 
-// makeAlertWorker creates an AuditWorker whose stubQuerier will:
-//  1. Return one active query (loadQueriesByProject).
-//  2. Return a previous snapshot (latestSnapshot).
-//  3. Accept the insertSnapshot call.
-func makeAlertWorker(alertThreshold *float64, recalledIDs, prevIDs []string) (*AuditWorker, *captureHandler, *testing.T) {
-	// This helper is intentionally unexported; callers wire it via the public
-	// TestAlertThreshold_* tests below.
-	panic("use TestAlertThreshold_FiresWhenBelow and TestAlertThreshold_SilentWhenAbove instead")
-}
-
 // buildAlertScenario constructs the worker and DB stub for alert-threshold tests.
 func buildAlertScenario(t *testing.T, threshold, rboResult float64, prevIDs, newIDs []string) (*AuditWorker, *captureHandler) {
 	t.Helper()

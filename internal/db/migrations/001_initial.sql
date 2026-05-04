@@ -20,14 +20,18 @@ CREATE TABLE IF NOT EXISTS memories (
     last_accessed TIMESTAMPTZ NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL,
+    -- search_vector sits between updated_at and immutable to match the
+    -- production schema column order. The Go row-mappers in postgres.go
+    -- (rowToMemory, rowToFTSResult) scan SELECT * results positionally and
+    -- expect this exact ordering — see #112 for the schema-drift contract.
+    search_vector TSVECTOR GENERATED ALWAYS AS (
+        to_tsvector('english', content)
+    ) STORED,
     immutable     BOOLEAN     NOT NULL DEFAULT FALSE,
     expires_at    TIMESTAMPTZ,
     summary       TEXT,
     content_hash  TEXT,
-    storage_mode  TEXT        NOT NULL DEFAULT 'focused',
-    search_vector TSVECTOR GENERATED ALWAYS AS (
-        to_tsvector('english', content)
-    ) STORED
+    storage_mode  TEXT        NOT NULL DEFAULT 'focused'
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_search       ON memories USING GIN (search_vector);

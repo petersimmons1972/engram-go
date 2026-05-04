@@ -83,7 +83,7 @@ func storeChunksBatch(ctx context.Context, tx pgx.Tx, chunks []*types.Chunk) err
 		)
 	}
 	results := tx.SendBatch(ctx, batch)
-	defer results.Close()
+	defer func() { _ = results.Close() }()
 	for range chunks {
 		if _, err := results.Exec(); err != nil {
 			return err

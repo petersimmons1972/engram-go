@@ -79,6 +79,9 @@ func handleMemoryImportClaudeMD(ctx context.Context, pool *EnginePool, req mcpgo
 		}
 		ids = append(ids, m.ID)
 	}
+	if ids == nil {
+		ids = []string{}
+	}
 	return toolResult(map[string]any{"imported": len(ids), "skipped": skipped, "ids": ids})
 }
 
@@ -151,7 +154,7 @@ func handleMemoryIngest(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		})
 	}
 
-	var ids []string
+	ids := []string{}
 	var ingested, skipped int
 	for _, m := range memories {
 		if isOperationalConfig(m.Content) {

@@ -40,7 +40,7 @@ func loadEvents(fixturePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("opening fixture %s: %w", fixturePath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	skipped := 0

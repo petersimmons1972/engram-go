@@ -79,7 +79,8 @@ func (q *Queue) Status(jobID string) *JobResult {
 	if !ok {
 		return nil
 	}
-	return v.(*JobResult)
+	jr, _ := v.(*JobResult)
+	return jr
 }
 
 func (q *Queue) Depth() int    { return len(q.ch) }

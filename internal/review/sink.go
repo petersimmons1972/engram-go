@@ -41,7 +41,7 @@ func (s *localSink) Record(_ context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	return enc.Encode(e)
 }
@@ -71,7 +71,7 @@ func (s *githubSink) Record(ctx context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("github issues create: %s", resp.Status)
 	}
