@@ -167,7 +167,7 @@ func TestApplyMiddleware_SetsRequestID(t *testing.T) {
 	defer cancel()
 
 	s := &Server{}
-	rl := newRateLimiter(ctx, Config{})
+	rl := newRateLimiter(ctx)
 	apiKey := "test-key"
 
 	var capturedID string

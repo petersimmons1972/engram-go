@@ -387,6 +387,8 @@ func run() error {
 		slog.Warn("session rehydration failed — clients will need to reconnect", "err", err)
 	}
 
+	logRecommendedClientPermissions(srv)
+
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 	return srv.Start(ctx, *host, *port, apiKey, *baseURL)
