@@ -37,6 +37,7 @@ func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) er
 	return nil
 }
 func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
+func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }

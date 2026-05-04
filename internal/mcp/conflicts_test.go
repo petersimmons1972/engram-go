@@ -68,6 +68,14 @@ func (s *conflictStubBackend) GetMemory(_ context.Context, id string) (*types.Me
 	return m, nil
 }
 
+func (s *conflictStubBackend) GetMemoryByID(_ context.Context, id string) (*types.Memory, error) {
+	m, ok := s.memories[id]
+	if !ok {
+		return nil, nil
+	}
+	return m, nil
+}
+
 // conflictStubBackend satisfies internalmcp.ConflictReader via Go structural
 // typing — no explicit declaration needed.
 
@@ -259,6 +267,10 @@ func (e *errorStubBackend) GetRelationshipsBatch(_ context.Context, _ string, _ 
 }
 
 func (e *errorStubBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error) {
+	return nil, fmt.Errorf("simulated backend failure")
+}
+
+func (e *errorStubBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
 	return nil, fmt.Errorf("simulated backend failure")
 }
 
