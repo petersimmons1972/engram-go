@@ -448,7 +448,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		advertised = fmt.Sprintf("http://%s", addr)
 	}
 	slog.Info("SSE base URL", "url", advertised)
-	sse := server.NewSSEServer(s.mcp, server.WithBaseURL(advertised))
+	sse := buildSSEServer(s.mcp, advertised)
 
 	s.registerSessionHooks(apiKey)
 
