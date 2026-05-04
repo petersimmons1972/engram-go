@@ -91,6 +91,7 @@ func (noopBackend) UpdateChunkLastMatched(_ context.Context, _ string) error  { 
 func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
 func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
 func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil

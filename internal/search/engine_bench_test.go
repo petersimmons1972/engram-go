@@ -242,6 +242,8 @@ func (s *stubBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int
 	return 0, nil
 }
 
+func (s *stubBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
+
 func (s *stubBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
 
 func (s *stubBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
