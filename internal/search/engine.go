@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -139,8 +138,8 @@ type SearchEngine struct {
 	summarizer       *summarize.Worker
 	reembedder       *reembed.Worker
 	decayer          *DecayWorker
-	weightCache      *WeightCache    // nil when no pgxpool available (pre-migration or test)
-	globalReembedder globalNotifier  // non-nil after SetGlobalReembedder; woken on chunk store
+	weightCache      *WeightCache   // nil when no pgxpool available (pre-migration or test)
+	globalReembedder globalNotifier // non-nil after SetGlobalReembedder; woken on chunk store
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -339,7 +338,6 @@ func (e *SearchEngine) Store(ctx context.Context, m *types.Memory) error {
 //     synopsis/body split across corrections must re-issue StoreWithRawBody
 //     with the full body themselves — there is no persisted raw body to
 //     recover from once a memory is stored with only a synopsis in Content.
-//
 func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, rawBody string) error {
 	if m.ID == "" {
 		m.ID = types.NewMemoryID()
@@ -385,6 +383,15 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 		return err
 	}
 	if len(chunks) > 0 {
+		// Enqueue chunks for async re-embedding by setting initial leases.
+		chunkIDs := make([]string, len(chunks))
+		for i, c := range chunks {
+			chunkIDs[i] = c.ID
+		}
+		if err := e.backend.EnqueueChunkLeases(ctx, chunkIDs); err != nil {
+			// Log but do not fail — reembed worker will find chunks via NULL embedding.
+			slog.Warn("failed to enqueue chunk leases", "count", len(chunkIDs), "err", err)
+		}
 		e.reembedder.Notify()
 		if e.globalReembedder != nil {
 			e.globalReembedder.Notify()
@@ -438,6 +445,7 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	hasChunks := false
+	var allChunkIDs []string
 	for _, p := range prepared {
 		if err := e.backend.StoreMemoryTx(ctx, tx, p.mem); err != nil {
 			return err
@@ -446,6 +454,9 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 			if err := e.backend.StoreChunksTx(ctx, tx, p.chunks); err != nil {
 				return err
 			}
+			for _, c := range p.chunks {
+				allChunkIDs = append(allChunkIDs, c.ID)
+			}
 			hasChunks = true
 		}
 	}
@@ -453,6 +464,11 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 		return err
 	}
 	if hasChunks {
+		// Enqueue all chunks for async re-embedding by setting initial leases.
+		if err := e.backend.EnqueueChunkLeases(ctx, allChunkIDs); err != nil {
+			// Log but do not fail — reembed worker will find chunks via NULL embedding.
+			slog.Warn("failed to enqueue batch chunk leases", "count", len(allChunkIDs), "err", err)
+		}
 		e.reembedder.Notify()
 		if e.globalReembedder != nil {
 			e.globalReembedder.Notify()
@@ -475,11 +491,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	// 4s deadline — enough headroom for GPU inference (~1.5s) plus Docker network
-	// overhead, while still refusing CPU inference (>10s). On failure, degrade
-	// gracefully to BM25+recency only; the vector leg is skipped but recall
-	// still returns useful results.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 4*time.Second)
+	// Embed call with a short 500ms timeout. On embed timeout or error, degrade
+	// gracefully to BM25+recency only; the vector leg is skipped but recall still
+	// returns useful results. The timeout is enforce on the embed call ONLY —
+	// the parent ctx's deadline is still respected for the overall operation
+	// (VectorSearch, FTS, etc.). This prevents a hanging embedder from causing
+	// a parent ctx cancellation to propagate as "context canceled" errors to callers.
+	embedCtx, embedCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
@@ -758,10 +776,10 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
-	// 4s deadline — matches RecallWithOpts; fails fast on CPU inference.
+	// Embed call with a short 500ms timeout, consistent with RecallWithOpts.
 	// RecallWithinMemory has no BM25 fallback (document chunk search is
 	// vector-only), so it returns an error on embed failure.
-	embedCtx, embedCancel := context.WithTimeout(context.Background(), 4*time.Second)
+	embedCtx, embedCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
@@ -775,9 +793,9 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	out := make([]*types.Memory, 0, len(chunks))
 	for _, c := range chunks {
 		out = append(out, &types.Memory{
-			ID:       c.MemoryID,
-			Content:  c.ChunkText,
-			Project:  c.Project,
+			ID:      c.MemoryID,
+			Content: c.ChunkText,
+			Project: c.Project,
 		})
 	}
 	return out, nil
