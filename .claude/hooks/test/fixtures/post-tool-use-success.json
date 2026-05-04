@@ -1,0 +1,9 @@
+{
+  "tool_name": "mcp__engram__memory_store",
+  "tool_input": {
+    "content": "Test memory content",
+    "project": "global",
+    "memory_type": "context"
+  },
+  "tool_response": "{\"id\": \"abc123\"}"
+}

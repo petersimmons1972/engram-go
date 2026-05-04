@@ -50,6 +50,24 @@ When dispatching parallel agents, set each agent's model independently — do no
 
 **The advisor pattern makes over-provisioning indefensible.** Sonnet and Haiku have a direct escalation path to Opus reasoning via the opus-advisor agent whenever they genuinely need it. There is no justification for defaulting to a higher tier "just in case" — escalate on demand, not by default.
 
+### Sonnet Advisor — Primary Fix Agent
+
+Spawn a Sonnet advisor for **any fix work** — debugging, code changes, prompt tuning, log analysis, or operational troubleshooting. Sonnet's job is to diagnose and implement fixes; you orchestrate.
+
+**When to spawn Sonnet:**
+- Binary error, crash, or unexpected output — diagnose and fix
+- Test failure with non-obvious root cause — debug and repair
+- Checkpoint corruption or worker failure — inspect logs and fix
+- Rate limits, Engram slow, or infrastructure error — fix in place
+- GPU/OOM/network error — resolve directly
+- Scoring prompt producing wrong judgments — inspect and adjust
+
+Brief: share the error message, relevant log excerpt, and file paths. Sonnet implements the fix. Use `subagent_type: "general-purpose"` with `model: "sonnet"`.
+
+### Opus Advisor — Reasoning Failures Only
+
+Spawn Opus only for **reasoning or strategy problems** — problems not fixable by implementation alone.
+
 When the primary model encounters any of the following, **spawn the `opus-advisor` agent** via the Agent tool before proceeding:
 
 | Trigger | Description |
@@ -64,9 +82,9 @@ When the primary model encounters any of the following, **spawn the `opus-adviso
 
 **Opus is for reasoning quality, not capacity problems.** Rate limits, timeouts, connection exhaustion, and tool unavailability are infrastructure problems — fix them in Haiku. Never upgrade tiers because something failed; only upgrade when the task genuinely requires stronger reasoning to decide correctly.
 
-### Briefing Format
+### Opus Advisor Briefing Format
 
-When spawning the advisor, include:
+When spawning the Opus advisor for a reasoning problem, include:
 
 1. **Decision**: One sentence — what must be decided
 2. **Options**: A, B, (C) — each with a one-sentence tradeoff
