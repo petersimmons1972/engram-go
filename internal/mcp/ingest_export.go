@@ -48,7 +48,7 @@ func handleMemoryIngestExport(ctx context.Context, pool *EnginePool, req mcpgo.C
 		if openErr != nil {
 			return nil, fmt.Errorf("memory_ingest_export: open: %w", openErr)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		_, memories, err = router.ParseAuto(f)
 		if err != nil {
 			return nil, fmt.Errorf("memory_ingest_export: parse: %w", err)

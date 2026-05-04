@@ -139,7 +139,7 @@ func DetectFromPath(path string) Format {
 	if err != nil {
 		return FormatUnknown
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, peekSize)
 	n, _ := f.Read(buf)
 	if n < 4 {

@@ -33,12 +33,6 @@ func (failingAggregateBackend) AggregateFailureClasses(_ context.Context, _ stri
 	return nil, errors.New("aggregate db stalled")
 }
 
-type failingQueryDocBackend struct{ noopBackend }
-
-func (failingQueryDocBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error) {
-	return nil, errors.New("document db stalled")
-}
-
 func newFailingPool(t *testing.T, backend db.Backend) *EnginePool {
 	t.Helper()
 	return NewEnginePool(func(ctx context.Context, project string) (*EngineHandle, error) {

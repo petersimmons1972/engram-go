@@ -21,7 +21,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 
-// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)"
+// Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
 
 // vramHeadroom reserves 20% of detected VRAM for the OS, display, and other processes.

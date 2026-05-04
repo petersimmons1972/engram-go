@@ -300,7 +300,7 @@ func TestRecallOpts_CurrentEpisodeID_EpisodeMatchBoost(t *testing.T) {
 
 	inputNoMatch := search.ScoreInput{
 		Cosine: 0.7, BM25: 0.5, HoursSince: 1, Importance: 2,
-		EpisodeMatch: opts.CurrentEpisodeID != "" && "other-ep" == opts.CurrentEpisodeID,
+		EpisodeMatch: opts.CurrentEpisodeID != "" && opts.CurrentEpisodeID == "other-ep",
 	}
 	if inputNoMatch.EpisodeMatch {
 		t.Fatal("expected EpisodeMatch=false when episode IDs differ")

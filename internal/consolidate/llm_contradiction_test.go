@@ -26,7 +26,7 @@ import (
 // returning "YES" causes classifyContradictionLLM to return true.
 func TestClassifyContradictionLLM_YesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "YES"})
+		_ = json.NewEncoder(w).Encode(litellmReply("YES"))
 	}))
 	defer srv.Close()
 
@@ -45,7 +45,7 @@ func TestClassifyContradictionLLM_YesResponse(t *testing.T) {
 // compatible" causes classifyContradictionLLM to return false.
 func TestClassifyContradictionLLM_NoResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "No, these are compatible statements."})
+		_ = json.NewEncoder(w).Encode(litellmReply("No, these are compatible statements."))
 	}))
 	defer srv.Close()
 
@@ -64,7 +64,7 @@ func TestClassifyContradictionLLM_NoResponse(t *testing.T) {
 // case) is treated the same as "YES".
 func TestClassifyContradictionLLM_YesCaseInsensitive(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "yes, they contradict"})
+		_ = json.NewEncoder(w).Encode(litellmReply("yes, they contradict"))
 	}))
 	defer srv.Close()
 
@@ -111,22 +111,25 @@ func TestClassifyContradictionLLM_Timeout(t *testing.T) {
 	assert.Error(t, err, "a timed-out request must return an error")
 }
 
-// TestClassifyContradictionLLM_RequestBody verifies the request sent to Ollama
-// contains the correct model, prompt structure, stream=false, and low temperature.
+// TestClassifyContradictionLLM_RequestBody verifies the request sent to LiteLLM
+// contains the correct model, chat messages, and stream=false.
 func TestClassifyContradictionLLM_RequestBody(t *testing.T) {
 	var captured struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-		Stream bool   `json:"stream"`
+		Model    string `json:"model"`
+		Stream   bool   `json:"stream"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&captured)
-		json.NewEncoder(w).Encode(map[string]string{"response": "YES"})
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		_ = json.NewEncoder(w).Encode(litellmReply("YES"))
 	}))
 	defer srv.Close()
 
-	consolidate.ClassifyContradictionLLM( //nolint:errcheck — testing request shape, not result
+	_, _ = consolidate.ClassifyContradictionLLM(
 		context.Background(),
 		"A is true",
 		"A is false",
@@ -136,8 +139,21 @@ func TestClassifyContradictionLLM_RequestBody(t *testing.T) {
 
 	assert.Equal(t, "llama3.2:3b", captured.Model)
 	assert.False(t, captured.Stream, "stream must be false for synchronous response")
-	assert.Contains(t, captured.Prompt, "A is true", "prompt must include statement A")
-	assert.Contains(t, captured.Prompt, "A is false", "prompt must include statement B")
+	require.NotEmpty(t, captured.Messages, "request must include chat messages")
+	prompt := captured.Messages[0].Content
+	assert.Contains(t, prompt, "A is true", "prompt must include statement A")
+	assert.Contains(t, prompt, "A is false", "prompt must include statement B")
+}
+
+// litellmReply builds an OpenAI/LiteLLM-shaped chat completion response with
+// the given assistant content. Test handlers use this so that llm.Complete's
+// JSON decode path matches what the consolidate package consumes.
+func litellmReply(content string) map[string]any {
+	return map[string]any{
+		"choices": []map[string]any{
+			{"message": map[string]string{"role": "assistant", "content": content}},
+		},
+	}
 }
 
 // ── LLM second-pass integration test ────────────────────────────────────────
@@ -157,7 +173,7 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 
 	// Mock Ollama: always says YES (contradicts).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"response": "YES"})
+		_ = json.NewEncoder(w).Encode(litellmReply("YES"))
 	}))
 	defer srv.Close()
 
@@ -246,7 +262,7 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		json.NewEncoder(w).Encode(map[string]string{"response": "YES"})
+		_ = json.NewEncoder(w).Encode(litellmReply("YES"))
 	}))
 	defer srv.Close()
 
@@ -311,7 +327,7 @@ func TestDetectContradictions_LLMMaxCalls(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(map[string]string{"response": "YES"})
+		_ = json.NewEncoder(w).Encode(litellmReply("YES"))
 	}))
 	defer srv.Close()
 

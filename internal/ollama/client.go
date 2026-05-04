@@ -37,7 +37,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("GET %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
@@ -59,7 +59,7 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("POST %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
@@ -105,7 +105,7 @@ func (c *Client) Pull(ctx context.Context, model string, w io.Writer) (string, e
 	if err != nil {
 		return "", fmt.Errorf("pull request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("pull %s: %d %s", model, resp.StatusCode, strings.TrimSpace(string(body)))
@@ -125,10 +125,10 @@ func (c *Client) Pull(ctx context.Context, model string, w io.Writer) (string, e
 		}
 		if status, ok := m["status"].(string); ok {
 			lastStatus = status
-			fmt.Fprintf(w, "\r  pulling %s: %s        ", model, status)
+			_, _ = fmt.Fprintf(w, "\r  pulling %s: %s        ", model, status)
 		}
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if sc.Err() != nil {
 		return "", sc.Err()
 	}

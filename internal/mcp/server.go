@@ -1100,7 +1100,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				ollamaStatus = "error"
 				slog.Warn("health: litellm probe failed", "err", herr)
 			} else {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode >= 500 {
 					ollamaStatus = "error"
 					slog.Warn("health: litellm returned server error", "status", resp.StatusCode)
