@@ -62,7 +62,6 @@
     ],
     "defaultMode": "plan"
   },
-  "model": "sonnet",
   "hooks": {
     "PostToolUse": [
       {
@@ -148,6 +147,12 @@
       {
         "matcher": "mcp__engram__*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-health-check.sh",
+            "timeout": 8,
+            "statusMessage": "Checking Engram connectivity"
+          },
           {
             "type": "command",
             "command": "~/.claude/hooks/engram-precheck.sh",
@@ -241,7 +246,7 @@
     "gopls-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "effortLevel": "medium",
+  "effortLevel": "low",
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "verbose": false,
