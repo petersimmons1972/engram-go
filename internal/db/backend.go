@@ -40,6 +40,10 @@ type Backend interface {
 	StoreMemoryTx(ctx context.Context, tx Tx, m *types.Memory) error
 	// GetMemory retrieves a memory by ID. Returns nil, nil if not found.
 	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByID retrieves a memory by ID without project filtering.
+	// Used by EnrichWithConflicts to fetch cross-project contradicting memories.
+	// Returns nil, nil if not found.
+	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
 	// GetMemoriesByIDs retrieves multiple memories by ID in a single query.
 	// Only memories belonging to project are returned. Missing IDs are silently omitted.
 	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)

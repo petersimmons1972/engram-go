@@ -24,6 +24,7 @@ const maxConflictResults = 50
 type ConflictReader interface {
 	GetRelationships(ctx context.Context, project, memoryID string) ([]types.Relationship, error)
 	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
 }
 
 // EnrichWithConflicts walks the "contradicts" edges for each recalled memory
@@ -98,9 +99,9 @@ func EnrichWithConflicts(
 			}
 			seen[otherID] = true
 
-			otherMem, err := backend.GetMemory(ctx, otherID)
+			otherMem, err := backend.GetMemoryByID(ctx, otherID)
 			if err != nil {
-				slog.Warn("EnrichWithConflicts: GetMemory failed",
+				slog.Warn("EnrichWithConflicts: GetMemoryByID failed",
 					"memory_id", otherID, "err", err)
 				continue
 			}

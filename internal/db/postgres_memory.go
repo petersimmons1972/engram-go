@@ -116,6 +116,36 @@ func (b *PostgresBackend) GetMemory(ctx context.Context, id string) (*types.Memo
 	return m, nil
 }
 
+// GetMemoryByID retrieves a memory by ID without project filtering.
+// Used by EnrichWithConflicts to fetch cross-project contradicting memories.
+// Returns nil, nil if not found.
+func (b *PostgresBackend) GetMemoryByID(ctx context.Context, id string) (*types.Memory, error) {
+	row, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND valid_to IS NULL", id)
+	if err != nil {
+		return nil, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Integrity check
+	if m.ContentHash != nil {
+		expected := ContentHash(m.Content)
+		if *m.ContentHash != expected {
+			slog.Warn("INTEGRITY: content_hash mismatch",
+				"id", m.ID,
+				"stored", (*m.ContentHash)[:8],
+				"expected", expected[:8],
+			)
+		}
+	}
+	return m, nil
+}
+
 func (b *PostgresBackend) GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error) {
 	if len(ids) == 0 {
 		return nil, nil
