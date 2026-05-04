@@ -76,7 +76,6 @@ func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 // fast (within 3s) when Ollama is unavailable. Document chunk search is
 // vector-only so an error is correct — but it must not hang.
 func TestEmbedDeadline_RecallWithinMemory(t *testing.T) {
-	t.Skip("pre-existing failure — production deadline is 4s, test expects 2s (#429)")
 	proj := uniqueProject("embed-deadline-within")
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
