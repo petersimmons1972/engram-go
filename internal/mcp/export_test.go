@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -35,7 +36,7 @@ var _ embed.Client = (*fakeTestEmbedClient)(nil)
 // require a live Ollama instance.
 func NewTestPoolWithDSN(t *testing.T, ctx context.Context, dsn, project string) *EnginePool {
 	t.Helper()
-	embedder := &fakeTestEmbedClient{dims: 1024}
+	embedder := &fakeTestEmbedClient{dims: 1536}
 	factory := func(factoryCtx context.Context, proj string) (*EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(factoryCtx, proj, dsn)
 		if err != nil {
@@ -535,5 +536,53 @@ func CallHandleMemoryIngestStatus(
 		"job_id": r.JobID,
 		"status": string(r.Status),
 		"error":  r.Error,
+	}
+}
+
+// EnsureEmbeddingsProcessed synchronously processes any chunks with NULL embeddings
+// for a given project. This is necessary in tests where recall must immediately
+// find memories that were just stored, since the async reembedder is not running
+// in test mode. Call this after Store and before Recall in integration tests.
+func EnsureEmbeddingsProcessed(ctx context.Context, t *testing.T, engine *search.SearchEngine) {
+	t.Helper()
+
+	backend := engine.Backend()
+	if backend == nil {
+		t.Fatal("SearchEngine has no backend")
+	}
+
+	// Poll for pending chunks with a simple deadline.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("EnsureEmbeddingsProcessed: timeout waiting for embeddings")
+		}
+
+		pending, err := backend.GetChunksPendingEmbedding(ctx, engine.Project(), 100)
+		if err != nil {
+			t.Fatalf("EnsureEmbeddingsProcessed: GetChunksPendingEmbedding: %v", err)
+		}
+
+		if len(pending) == 0 {
+			// All chunks are embedded or there are none.
+			return
+		}
+
+		// Embed each chunk using the engine's embedder.
+		embedder := engine.Embedder()
+		for _, chunk := range pending {
+			embedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			vec, err := embedder.Embed(embedCtx, chunk.ChunkText)
+			cancel()
+			if err != nil {
+				t.Logf("EnsureEmbeddingsProcessed: embed chunk %q: %v (skipping)", chunk.ID, err)
+				continue
+			}
+
+			_, err = backend.UpdateChunkEmbedding(ctx, chunk.ID, vec)
+			if err != nil {
+				t.Fatalf("EnsureEmbeddingsProcessed: UpdateChunkEmbedding: %v", err)
+			}
+		}
 	}
 }

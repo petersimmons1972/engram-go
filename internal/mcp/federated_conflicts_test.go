@@ -68,6 +68,10 @@ func TestFederatedRecall_IncludeConflicts_NotSilentlyDropped(t *testing.T) {
 	require.NoError(t, h1.Engine.Store(ctx, memA))
 	require.NoError(t, h2.Engine.Store(ctx, memB))
 
+	// Synchronously process embeddings so chunks can be found by recall.
+	internalmcp.EnsureEmbeddingsProcessed(ctx, t, h1.Engine)
+	internalmcp.EnsureEmbeddingsProcessed(ctx, t, h2.Engine)
+
 	// Wire the contradiction via the backend of proj1 (shared Postgres instance).
 	rel := &types.Relationship{
 		ID:       types.NewMemoryID(),

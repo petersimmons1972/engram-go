@@ -304,6 +304,9 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	require.NoError(t, h.Engine.Store(ctx, m1))
 	require.NoError(t, h.Engine.Store(ctx, m2))
 
+	// Synchronously process embeddings so chunks can be found by recall.
+	internalmcp.EnsureEmbeddingsProcessed(ctx, t, h.Engine)
+
 	// Create the contradicts edge directly on the backend.
 	rel := &types.Relationship{
 		ID:       types.NewMemoryID(),

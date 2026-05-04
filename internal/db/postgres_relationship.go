@@ -24,8 +24,8 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 
 	var dummy int
 	if err := tx.QueryRow(ctx,
-		"SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
-		rel.SourceID, b.project,
+		"SELECT 1 FROM memories WHERE id=$1 AND valid_to IS NULL FOR UPDATE",
+		rel.SourceID,
 	).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("source memory %q does not exist or is invalidated", rel.SourceID)
@@ -33,8 +33,8 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 		return fmt.Errorf("check source memory: %w", err)
 	}
 	if err := tx.QueryRow(ctx,
-		"SELECT 1 FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
-		rel.TargetID, b.project,
+		"SELECT 1 FROM memories WHERE id=$1 AND valid_to IS NULL FOR UPDATE",
+		rel.TargetID,
 	).Scan(&dummy); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("target memory %q does not exist or is invalidated", rel.TargetID)
