@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -158,8 +159,8 @@ func TestEnqueueChunkLeases_Batch(t *testing.T) {
 		chunk := &types.Chunk{
 			ID:        chunkID,
 			MemoryID:  memID,
-			ChunkText: "test chunk " + string(rune(i)),
-			ChunkHash: "hash" + string(rune(i)),
+			ChunkText: fmt.Sprintf("test chunk %d", i),
+			ChunkHash: fmt.Sprintf("hash-%d", i),
 			ChunkType: "sentence_window",
 			Project:   "test-lease-batch",
 			Embedding: nil,
