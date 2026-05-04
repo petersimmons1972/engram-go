@@ -252,6 +252,7 @@ func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db
 }
 func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
 func (noopBackend) DeleteProject(_ context.Context, _ string) error                  { return nil }
+func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error              { return nil }
 
 // concurrentEmbedder records the peak number of Embed calls in-flight simultaneously.
 // Each call increments active, records the peak, then waits on the ready channel
