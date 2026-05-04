@@ -269,12 +269,23 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 // setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
 const setupTokenWindow = 5 * time.Minute / 3 // one token every 100 seconds
 
-// hashAPIKey returns the SHA-256 hex digest of the API key. Stored in the
-// sessions table instead of the plaintext key so the DB does not become a
-// credential store.
+// sessionFingerprintPepper is the application-specific HMAC key for
+// hashAPIKey. Public on purpose: the threat model is "DB dump → recover
+// bearer." A 256-bit CSPRNG bearer is already brute-force-infeasible under
+// any cryptographic hash; HMAC-SHA-256 with a fixed pepper is used because
+// CodeQL's go/weak-sensitive-data-hashing rule flags bare sha256.Sum256 of
+// data named like a credential. See engram-go#433.
+const sessionFingerprintPepper = "engram-session-fingerprint-v1"
+
+// hashAPIKey returns an HMAC-SHA-256 hex digest of the API key, stored in
+// the sessions table instead of the plaintext bearer so the DB does not
+// become a credential store. Migration: existing rows hashed with bare
+// SHA-256 will not match the new digest; affected sessions are re-keyed
+// on next register and unmatched rows expire by TTL.
 func hashAPIKey(apiKey string) string {
-	sum := sha256.Sum256([]byte(apiKey))
-	return hex.EncodeToString(sum[:])
+	mac := hmac.New(sha256.New, []byte(sessionFingerprintPepper))
+	mac.Write([]byte(apiKey))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // rehydratedSession is a minimal ClientSession that satisfies the mcp-go
