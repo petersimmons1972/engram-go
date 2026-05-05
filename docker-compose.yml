@@ -65,11 +65,11 @@ services:
         required: true
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      # LiteLLM endpoint (external). Required. Example: http://your-host:4000
-      - LITELLM_URL=http://litellm:4000
+      # OpenAI-compatible upstream (olla load balancer; LiteLLM container retired 2026-05-05)
+      - LITELLM_URL=${LITELLM_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
-      # Embedding service (usually LiteLLM, but can be any OpenAI-compatible endpoint)
-      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
+      # Embedding service — same olla endpoint by default
+      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # IMPORTANT: MCP server does NOT run the reembed worker — that lives in the
@@ -117,7 +117,7 @@ services:
         required: false
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=${ENGRAM_EMBED_URL:-http://litellm:4000}
+      - LITELLM_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-qwen3-embedding:8b}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
