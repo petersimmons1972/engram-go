@@ -256,6 +256,7 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 		}
 		defer func() { _ = tx.Rollback(ctx) }() // read-only — rollback == commit here
 		efSearch := efSearchForLimit(limit)
+		// integer-only — DO NOT change to %s; SET LOCAL cannot use parameter binding
 		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", efSearch)); err != nil {
 			return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
 		}
