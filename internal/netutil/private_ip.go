@@ -2,9 +2,11 @@
 package netutil
 
 import (
+	"context"
 	"fmt"
 	"net"
-	"net/url" // used by ValidateUpstreamURL
+	"net/url"
+	"time"
 )
 
 // privateRanges lists IP ranges that must not be dialed by user-supplied URLs.
@@ -64,7 +66,7 @@ func IsPrivateIP(ipStr string) bool {
 // 1. Parse the URL and check scheme is http or https
 // 2. Extract hostname and check if it's a literal IP (reject if private)
 // 3. If hostname, resolve via net.LookupIP and check all resolved IPs
-// 4. Return error if any resolved IP is private/reserved
+// 4. Return error if any resolved IP is private/reserved.
 func ValidateUpstreamURL(urlStr string) error {
 	u, err := url.Parse(urlStr)
 	if err != nil {
@@ -88,7 +90,9 @@ func ValidateUpstreamURL(urlStr string) error {
 	}
 
 	// Otherwise, resolve the hostname and check all resolved IPs.
-	ips, err := net.LookupIP(hostname)
+	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(resolveCtx, hostname)
 	if err != nil {
 		return fmt.Errorf("failed to resolve hostname %q: %w", hostname, err)
 	}
@@ -97,8 +101,8 @@ func ValidateUpstreamURL(urlStr string) error {
 	}
 
 	for _, ip := range ips {
-		if IsPrivateIP(ip.String()) {
-			return fmt.Errorf("upstream URL hostname %q resolves to private IP %q (#549)", hostname, ip)
+		if IsPrivateIP(ip.IP.String()) {
+			return fmt.Errorf("upstream URL hostname %q resolves to private IP %q (#549)", hostname, ip.IP)
 		}
 	}
 

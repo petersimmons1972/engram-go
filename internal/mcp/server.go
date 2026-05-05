@@ -743,38 +743,6 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 	})
 }
 
-// isLocalAddress reports whether ipStr is a loopback address.
-// When allowRFC1918 is true, private RFC1918 ranges are also accepted — required
-// for Docker setups where the host appears as a bridge IP (172.x, 10.x, 192.168.x)
-// rather than 127.0.0.1 due to NAT. Enable via ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1.
-func isLocalAddress(ipStr string, allowRFC1918 bool) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
-	}
-	local := []string{
-		"127.0.0.0/8", // loopback
-		"::1/128",     // IPv6 loopback
-	}
-	if allowRFC1918 {
-		local = append(local,
-			"10.0.0.0/8",     // RFC1918 — Docker bridge networks
-			"172.16.0.0/12",  // RFC1918 — Docker default bridge
-			"192.168.0.0/16", // RFC1918 — Docker custom networks
-		)
-	}
-	for _, cidr := range local {
-		_, n, _ := net.ParseCIDR(cidr)
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // clientIP extracts the real client IP from the request.
 // When s.trustProxy is true, it checks X-Real-IP and the first entry in
 // X-Forwarded-For before falling back to RemoteAddr. This handles the case
