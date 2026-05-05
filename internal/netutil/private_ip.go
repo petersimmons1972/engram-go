@@ -2,7 +2,9 @@
 package netutil
 
 import (
+	"fmt"
 	"net"
+	"net/url" // used by ValidateUpstreamURL
 )
 
 // privateRanges lists IP ranges that must not be dialed by user-supplied URLs.
@@ -52,4 +54,53 @@ func IsPrivateIP(ipStr string) bool {
 		}
 	}
 	return false
+}
+
+// ValidateUpstreamURL checks that urlStr is a valid HTTP(S) URL whose hostname
+// does not resolve to a private/reserved IP address. This prevents SSRF attacks
+// where environment variables point to internal services (e.g. 127.0.0.1:9200) (#549).
+//
+// Validation steps:
+// 1. Parse the URL and check scheme is http or https
+// 2. Extract hostname and check if it's a literal IP (reject if private)
+// 3. If hostname, resolve via net.LookupIP and check all resolved IPs
+// 4. Return error if any resolved IP is private/reserved
+func ValidateUpstreamURL(urlStr string) error {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("invalid scheme %q — only http and https allowed", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("URL has no hostname")
+	}
+
+	hostname := u.Hostname()
+
+	// If hostname is a literal IP, check it immediately.
+	if ip := net.ParseIP(hostname); ip != nil {
+		if IsPrivateIP(hostname) {
+			return fmt.Errorf("upstream URL resolves to private IP %q (#549)", hostname)
+		}
+		return nil
+	}
+
+	// Otherwise, resolve the hostname and check all resolved IPs.
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve hostname %q: %w", hostname, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("hostname %q resolved to no IP addresses", hostname)
+	}
+
+	for _, ip := range ips {
+		if IsPrivateIP(ip.String()) {
+			return fmt.Errorf("upstream URL hostname %q resolves to private IP %q (#549)", hostname, ip)
+		}
+	}
+
+	return nil
 }

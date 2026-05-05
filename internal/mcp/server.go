@@ -312,11 +312,14 @@ func (r *rehydratedSession) SessionID() string                                  
 // RehydrateSessions loads active sessions from the database and re-registers
 // them in the mcp-go transport so POST /message calls with pre-restart session
 // IDs succeed immediately after a restart (#362). Must be called before Start.
+//
+// Only sessions bound to the current API key (by api_key_hash) are rehydrated,
+// preventing cross-key session access when the API key rotates (#548).
 func (s *Server) RehydrateSessions(ctx context.Context, apiKey string) error {
 	if s.cfg.SessionDB == nil {
 		return nil
 	}
-	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, 2*time.Hour)
+	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, 2*time.Hour, hashAPIKey(apiKey))
 	if err != nil {
 		return fmt.Errorf("list active sessions for rehydration: %w", err)
 	}
@@ -477,6 +480,9 @@ func (s *Server) runEpisodeSweep(ctx context.Context) {
 // so MCP clients forward auth headers to the correct host.
 func (s *Server) Start(ctx context.Context, host string, port int, apiKey string, baseURL string) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
+	if host == "0.0.0.0" {
+		slog.Warn("engram MCP server binding to 0.0.0.0 — ensure firewall restricts access (#550)")
+	}
 	slog.Info("engram MCP server starting", "addr", addr)
 
 	advertised := baseURL
@@ -502,39 +508,41 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// a previously-healthy dependency is now unreachable.
 	mux.HandleFunc("/health", s.handleHealth)
 
-	// GET /metrics — unauthenticated Prometheus metrics endpoint.
-	mux.Handle("/metrics", promhttp.Handler())
+	// GET /metrics — requires Bearer authentication (#552).
+	mux.Handle("/metrics", s.applyMiddlewareWithRL(
+		promhttp.Handler(),
+		apiKey,
+		newRateLimiterWithConfig(ctx, s.cfg.rateLimitRPS(), s.cfg.rateLimitBurst()),
+	))
 
-	// GET /setup-token — local-network only; returns the current bearer token so MCP
-	// clients can self-configure without manual copy-paste.
+	// GET /setup-token — requires Bearer authentication (#540).
+	// Returns the current bearer token so MCP clients can self-configure without manual copy-paste.
 	//
-	// Security rationale: the Docker port mapping `127.0.0.1:8788->8788/tcp` already
-	// restricts external access at the host-network level. Inside the container, requests
-	// arriving from the host appear as Docker gateway IPs (172.x.x.x, 10.x.x.x) rather
-	// than 127.0.0.1 due to NAT. We accept RFC1918 addresses because they can only reach
-	// this port via the loopback-bound Docker port mapping — not from the network.
-	// The token is equivalent in sensitivity to ~/.claude.json which is already on disk.
+	// Security: Prior to #540, /setup-token was protected by IP-based access control
+	// (local/RFC1918 only). This was insufficient because:
+	// 1. X-Real-IP spoofing could bypass the check (fixed in #551)
+	// 2. The token is equivalent in sensitivity to ~/.claude.json which is already on disk
+	// 3. Bearer authentication provides cryptographic verification without relying on IP reputation
 	//
-	// Rate limit: 3 calls per 5-minute window per IP (#243).
-	mux.HandleFunc("/setup-token", func(w http.ResponseWriter, r *http.Request) {
-		ip := s.clientIP(r)
-		if !isLocalAddress(ip, s.cfg.AllowRFC1918SetupToken) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		if !setupLimiter.allowSetupToken(ip) {
-			slog.Warn("setup-token rate limited", "remote_ip", ip)
-			w.Header().Set("Retry-After", "100")
-			http.Error(w, "rate limited", http.StatusTooManyRequests)
-			return
-		}
-		slog.Warn("setup-token accessed", "remote_ip", ip)
-		writeJSON(w, http.StatusOK, map[string]string{
-			"token":    apiKey,
-			"endpoint": advertised + "/sse",
-			"name":     "engram",
-		})
-	})
+	// Rate limit: per token (3 calls per 5-minute window).
+	mux.Handle("/setup-token", s.applyMiddlewareWithRL(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !setupLimiter.allowSetupToken(s.clientIP(r)) {
+				slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+				w.Header().Set("Retry-After", "100")
+				http.Error(w, "rate limited", http.StatusTooManyRequests)
+				return
+			}
+			slog.Warn("setup-token accessed", "remote_ip", s.clientIP(r))
+			writeJSON(w, http.StatusOK, map[string]string{
+				"token":    apiKey,
+				"endpoint": advertised + "/sse",
+				"name":     "engram",
+			})
+		}),
+		apiKey,
+		setupLimiter,
+	))
 
 	// GET /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource —
 	// Return 404 to tell Claude Code this server does not use MCP OAuth (spec 2025-03-26).

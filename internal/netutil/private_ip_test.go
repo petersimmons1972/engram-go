@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,48 @@ func TestIsPrivateIP(t *testing.T) {
 			got := IsPrivateIP(tc.ip)
 			if got != tc.want {
 				t.Errorf("IsPrivateIP(%q) = %v, want %v", tc.ip, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateUpstreamURL_S549(t *testing.T) {
+	cases := []struct {
+		name      string
+		url       string
+		wantError bool
+		errMsg    string
+	}{
+		// Literal IPs — private (should error)
+		{"literal loopback", "http://127.0.0.1:9200", true, "private IP"},
+		{"literal rfc1918 10", "http://10.0.0.1:8000", true, "private IP"},
+		{"literal rfc1918 172", "http://172.16.0.1:8000", true, "private IP"},
+		{"literal rfc1918 192", "http://192.168.1.1:8000", true, "private IP"},
+
+		// Literal IPs — public (should pass)
+		{"literal public 8.8.8.8", "http://8.8.8.8:53", false, ""},
+		{"literal public 1.1.1.1", "http://1.1.1.1:53", false, ""},
+
+		// Invalid URLs
+		{"invalid scheme ftp", "ftp://example.com", true, "invalid scheme"},
+		{"malformed url", "ht!tp://example.com", true, "invalid URL"},
+		{"no hostname", "http://", true, "no hostname"},
+
+		// Hostname without scheme
+		{"no scheme", "example.com", true, "invalid scheme"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateUpstreamURL(tc.url)
+			if tc.wantError && err == nil {
+				t.Errorf("ValidateUpstreamURL(%q) = nil, wanted error", tc.url)
+			}
+			if !tc.wantError && err != nil {
+				t.Errorf("ValidateUpstreamURL(%q) = %v, wanted no error", tc.url, err)
+			}
+			if tc.wantError && err != nil && tc.errMsg != "" && !strings.Contains(err.Error(), tc.errMsg) {
+				t.Errorf("ValidateUpstreamURL(%q) error %q does not contain %q", tc.url, err, tc.errMsg)
 			}
 		})
 	}

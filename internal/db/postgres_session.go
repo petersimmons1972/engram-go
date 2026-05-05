@@ -12,7 +12,7 @@ import (
 type SessionRegistry interface {
 	RegisterSession(ctx context.Context, sessionID, apiKeyHash string) error
 	UnregisterSession(ctx context.Context, sessionID string) error
-	ListActiveSessions(ctx context.Context, since time.Duration) ([]string, error)
+	ListActiveSessions(ctx context.Context, since time.Duration, apiKeyHash string) ([]string, error)
 	TouchSession(ctx context.Context, sessionID string) error
 }
 
@@ -57,14 +57,19 @@ func (b *PostgresBackend) UnregisterSession(ctx context.Context, sessionID strin
 }
 
 // ListActiveSessions returns session IDs whose last_seen_at is within the given
-// duration from now. Used at startup to rehydrate sessions from before a restart.
-// since must be positive.
-func (b *PostgresBackend) ListActiveSessions(ctx context.Context, since time.Duration) ([]string, error) {
+// duration from now AND whose api_key_hash matches. Used at startup to rehydrate
+// sessions from before a restart, filtering by the current API key to prevent
+// replay of sessions established with a different API key (#548).
+// since must be positive; apiKeyHash must be non-empty.
+func (b *PostgresBackend) ListActiveSessions(ctx context.Context, since time.Duration, apiKeyHash string) ([]string, error) {
 	if b.pool == nil {
 		return nil, fmt.Errorf("backend has no pool")
 	}
 	if since <= 0 {
 		return nil, fmt.Errorf("since must be a positive duration")
+	}
+	if apiKeyHash == "" {
+		return nil, fmt.Errorf("apiKeyHash must not be empty (#548)")
 	}
 	// Pass seconds as an integer and construct the interval server-side via
 	// make_interval so the query does not depend on Go's Duration.String() format
@@ -73,8 +78,9 @@ func (b *PostgresBackend) ListActiveSessions(ctx context.Context, since time.Dur
 	rows, err := b.pool.Query(ctx, `
 		SELECT session_id FROM mcp_sessions
 		WHERE last_seen_at > now() - make_interval(secs => $1)
+		  AND api_key_hash = $2
 		ORDER BY last_seen_at DESC`,
-		int64(since.Seconds()),
+		int64(since.Seconds()), apiKeyHash,
 	)
 	if err != nil {
 		return nil, err
