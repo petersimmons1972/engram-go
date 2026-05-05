@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -117,4 +118,121 @@ func TestQuickStoreHandler_InvalidJSON(t *testing.T) {
 	s.handleQuickStore(w, req)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestQuickStoreHandler_OversizedContent verifies that content > 1 MiB is rejected with 400.
+func TestQuickStoreHandler_OversizedContent(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	oversized := bytes.Repeat([]byte("x"), 1024*1024+1)
+	body, _ := json.Marshal(map[string]any{
+		"content": string(oversized),
+		"project": "global",
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestQuickStoreHandler_TooManyTags verifies that > 64 tags are rejected with 400.
+func TestQuickStoreHandler_TooManyTags(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	tags := make([]string, 65)
+	for i := range tags {
+		tags[i] = "tag"
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"content":    "test",
+		"project":    "global",
+		"tags":       tags,
+		"importance": 1,
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestQuickStoreHandler_TagTooLong verifies that tags > 256 chars are rejected with 400.
+func TestQuickStoreHandler_TagTooLong(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	longTag := bytes.Repeat([]byte("x"), 257)
+	body, _ := json.Marshal(map[string]any{
+		"content":    "test",
+		"project":    "global",
+		"tags":       []string{string(longTag)},
+		"importance": 1,
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestQuickStoreHandler_InvalidImportance verifies that importance outside [0,100] is rejected with 400.
+func TestQuickStoreHandler_InvalidImportance(t *testing.T) {
+	tests := []int{-1, 101}
+	for _, imp := range tests {
+		t.Run(fmt.Sprintf("importance=%d", imp), func(t *testing.T) {
+			s := newQuickStoreServer(t)
+
+			body, _ := json.Marshal(map[string]any{
+				"content":    "test",
+				"project":    "global",
+				"importance": imp,
+			})
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleQuickStore(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+// TestQuickStoreHandler_InvalidProjectName verifies that project names with spaces,
+// special chars, or too many chars are rejected with 400.
+func TestQuickStoreHandler_InvalidProjectName(t *testing.T) {
+	tests := []struct {
+		name      string
+		projectID string
+	}{
+		{"spaces", "foo bar"},
+		{"uppercase", "Foo"},
+		{"parent_dir", "../etc"},
+		{"special_chars", "foo@bar"},
+		{"too_long", string(bytes.Repeat([]byte("x"), 65))},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newQuickStoreServer(t)
+
+			body, _ := json.Marshal(map[string]any{
+				"content": "test",
+				"project": tc.projectID,
+			})
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleQuickStore(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
