@@ -85,7 +85,7 @@ type mockSessionRegistry struct {
 
 func (m *mockSessionRegistry) RegisterSession(_ context.Context, _, _ string) error { return nil }
 func (m *mockSessionRegistry) UnregisterSession(_ context.Context, _ string) error  { return nil }
-func (m *mockSessionRegistry) ListActiveSessions(_ context.Context, _ time.Duration) ([]string, error) {
+func (m *mockSessionRegistry) ListActiveSessions(_ context.Context, _ time.Duration, _ string) ([]string, error) {
 	return m.sessions, m.err
 }
 func (m *mockSessionRegistry) TouchSession(_ context.Context, _ string) error { return nil }
