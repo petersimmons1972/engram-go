@@ -23,7 +23,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/metrics"
-	"github.com/petersimmons1972/engram/internal/netutil"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -201,21 +200,26 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// Validate LiteLLM URL (SSRF protection — block private/reserved IPs and hostnames that resolve to them) (#549).
-	if err := netutil.ValidateUpstreamURL(*litellmURL); err != nil {
-		return fmt.Errorf("invalid --litellm-url %q: %w (#549)", *litellmURL, err)
+	// LITELLM_URL and ENGRAM_EMBED_URL come from operator config (env vars at process start),
+	// not from user input. Operators self-host on private networks by design — Docker bridges,
+	// LAN DNS, RFC1918 — so blocking private IPs at startup is a category error: it asserts a
+	// SaaS threat model on a homelab deployment.
+	//
+	// SSRF protection belongs at the user-input boundary (any future MCP tool that accepts a
+	// URL from a user). The validator stays exported in netutil for that use case (#608).
+	//
+	// We still parse + reject the URL if it isn't a valid http(s) URL — that's not SSRF, that's
+	// basic config sanity.
+	parsedLiteLLMURL, err := url.ParseRequestURI(*litellmURL)
+	if err != nil || (parsedLiteLLMURL.Scheme != "http" && parsedLiteLLMURL.Scheme != "https") {
+		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *litellmURL)
 	}
-	parsedLiteLLMURL, _ := url.ParseRequestURI(*litellmURL)
+	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
+		return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
+	}
 	safeLiteLLMURL := *parsedLiteLLMURL
 	safeLiteLLMURL.User = nil
 	slog.Info("connecting to LiteLLM", "url", safeLiteLLMURL.String(), "model", *embedModel)
-
-	// Validate ENGRAM_EMBED_URL if it differs from LiteLLM URL (#549).
-	if embedURL != *litellmURL {
-		if err := netutil.ValidateUpstreamURL(embedURL); err != nil {
-			return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: %w (#549)", embedURL, err)
-		}
-	}
 
 	// E6: startup probe is non-fatal. Server starts in degraded mode when
 	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
