@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -159,26 +158,31 @@ func run() error {
 		slog.Warn("embed config warning", "detail", warn)
 	}
 
-	// Unset secrets from the process environment after reading (#139, #141, #250).
+	// Unset secrets from the process environment after reading (#139, #141, #250, #549).
 	// Reduces the exposure window for credentials in /proc/self/environ.
 	_ = os.Unsetenv("ENGRAM_API_KEY")
 	_ = os.Unsetenv("ANTHROPIC_API_KEY")
 	_ = os.Unsetenv("DATABASE_URL")
+	_ = os.Unsetenv("LITELLM_API_KEY")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// Validate LiteLLM URL (SSRF protection — block literal private IPs).
-	parsedLiteLLMURL, err := url.ParseRequestURI(*litellmURL)
-	if err != nil || (parsedLiteLLMURL.Scheme != "http" && parsedLiteLLMURL.Scheme != "https") {
-		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *litellmURL)
+	// Validate LiteLLM URL (SSRF protection — block private/reserved IPs and hostnames that resolve to them) (#549).
+	if err := netutil.ValidateUpstreamURL(*litellmURL); err != nil {
+		return fmt.Errorf("invalid --litellm-url %q: %w (#549)", *litellmURL, err)
 	}
-	if h := parsedLiteLLMURL.Hostname(); net.ParseIP(h) != nil && netutil.IsPrivateIP(h) {
-		return fmt.Errorf("invalid --litellm-url: IP %q is in a private/reserved range (SSRF protection)", h)
-	}
+	parsedLiteLLMURL, _ := url.ParseRequestURI(*litellmURL)
 	safeLiteLLMURL := *parsedLiteLLMURL
 	safeLiteLLMURL.User = nil
 	slog.Info("connecting to LiteLLM", "url", safeLiteLLMURL.String(), "model", *embedModel)
+
+	// Validate ENGRAM_EMBED_URL if it differs from LiteLLM URL (#549).
+	if embedURL != *litellmURL {
+		if err := netutil.ValidateUpstreamURL(embedURL); err != nil {
+			return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: %w (#549)", embedURL, err)
+		}
+	}
 
 	// E6: startup probe is non-fatal. Server starts in degraded mode when
 	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
