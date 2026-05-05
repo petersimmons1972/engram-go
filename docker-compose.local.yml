@@ -1,0 +1,154 @@
+# engram — Docker Compose Local Profile (Ollama-only, no LiteLLM)
+#
+# Use this profile when you want a completely self-contained Engram instance
+# with no external dependencies. Ollama serves both embeddings and summarization.
+#
+# Services:
+#   postgres        — persistent storage
+#   ollama          — local embedding and summarization
+#   engram-go       — MCP server (port 8788)
+#   engram-reembed  — background embedding worker
+#
+# Start with:
+#   docker compose -f docker-compose.local.yml up -d
+#
+# First time setup:
+#   docker volume create engram_pgdata
+#   docker volume create ollama_storage
+#   make init
+#
+# WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
+# volumes and permanently deletes all memory data. Use 'make down-safe' or
+# 'docker compose down' (no -v) to stop containers while preserving data.
+
+services:
+
+  postgres:
+    container_name: engram-postgres
+    image: engram-postgres-cg:latest
+    shm_size: '2gb'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    command: >-
+      -c max_connections=300
+      -c shared_buffers=24GB
+      -c effective_cache_size=96GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=512MB
+      -c wal_buffers=64MB
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+      -c max_worker_processes=16
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=2.0
+      -c effective_io_concurrency=32
+    environment:
+      - POSTGRES_USER=engram
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=engram
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engram && psql -U engram -d engram -c 'SELECT 1' -q --no-psqlrc 2>/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    container_name: engram-ollama
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 8g
+
+  engram-go:
+    container_name: engram-go-app
+    image: engram-go:latest
+    ports:
+      - "${ENGRAM_PORT:-8788}:8788"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.machine-identity
+        required: true
+    environment:
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - LITELLM_URL=http://ollama:11434/v1
+      - LITELLM_API_KEY=
+      - ENGRAM_EMBED_URL=http://ollama:11434/v1
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-mxbai-embed-large}
+      - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
+      - ENGRAM_REEMBED_BATCH_SIZE=0
+      - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ENGRAM_CLAUDE_SUMMARIZE=${ENGRAM_CLAUDE_SUMMARIZE:-false}
+      - ENGRAM_CLAUDE_CONSOLIDATE=${ENGRAM_CLAUDE_CONSOLIDATE:-false}
+      - ENGRAM_CLAUDE_RERANK=${ENGRAM_CLAUDE_RERANK:-false}
+      - ENGRAM_DATA_DIR=/data
+    volumes:
+      - engram-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/starter", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  engram-reembed:
+    container_name: engram-reembed
+    build:
+      context: .
+      dockerfile: Dockerfile.reembed
+    image: engram-reembed:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - LITELLM_URL=http://ollama:11434/v1
+      - LITELLM_API_KEY=
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-mxbai-embed-large}
+      - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
+      - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
+      - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
+      - ENGRAM_REEMBED_CONCURRENCY=${ENGRAM_REEMBED_CONCURRENCY:-8}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:
+    external: true
+    name: engram_pgdata
+  ollama_storage:
+    external: true
+    name: ollama_storage
+  engram-data:
+
+networks:
+  default: {}
