@@ -399,6 +399,15 @@ func run() error {
 
 	logRecommendedClientPermissions(srv)
 
+	// Warn if binding to 0.0.0.0 — all network interfaces (#550).
+	// This is a valid deployment in a trusted LAN (e.g. behind a reverse proxy),
+	// but operators should understand the threat model.
+	if *host == "0.0.0.0" {
+		slog.Warn("SECURITY: engram is binding to 0.0.0.0 (all network interfaces). " +
+			"Ensure it is behind a reverse proxy with authentication, not directly exposed. " +
+			"For local development, use --host=127.0.0.1 instead. (#550)")
+	}
+
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 	return srv.Start(ctx, *host, *port, apiKey, *baseURL)
