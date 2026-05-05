@@ -1285,6 +1285,16 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate input per issue #515/#573.
+	project := body.Project
+	if project == "" {
+		project = "default"
+	}
+	if err := validateQuickStoreInput(body.Content, project, body.Tags, body.Importance); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	args := map[string]any{"content": body.Content}
 	if body.Project != "" {
 		args["project"] = body.Project
@@ -1366,6 +1376,12 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Query) == "" {
 		writeJSONError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+
+	// Validate input per issue #515/#573.
+	if err := validateQuickRecallInput(body.Project, body.Query); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

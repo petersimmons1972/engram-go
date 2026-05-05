@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -353,6 +354,61 @@ func handleMemoryForget(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 }
 
 // handleMemoryHistory returns the version chain for a memory.
+
+// maxQuickStoreContentSize is the maximum content size for quick-store (1 MiB).
+const maxQuickStoreContentSize = 1024 * 1024
+
+// maxQuickStoreTags is the maximum number of tags allowed.
+const maxQuickStoreTags = 64
+
+// maxQuickStoreTagLength is the maximum length of a single tag.
+const maxQuickStoreTagLength = 256
+
+// maxImportanceValue is the maximum allowed importance value.
+const maxImportanceValue = 100
+
+// minImportanceValue is the minimum allowed importance value.
+const minImportanceValue = 0
+
+// projectNamePattern validates project names: ^[a-z0-9_-]{1,64}$
+var projectNamePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// validateQuickStoreInput validates all fields for quick-store:
+// - content: required, max 1 MiB
+// - project: must match ^[a-z0-9_-]{1,64}$
+// - tags: max 64, each max 256 chars
+// - importance: 0–100
+func validateQuickStoreInput(content string, project string, tags []string, importance int) error {
+	if len(content) > maxQuickStoreContentSize {
+		return fmt.Errorf("content exceeds max size %d bytes", maxQuickStoreContentSize)
+	}
+	if !projectNamePattern.MatchString(project) {
+		return fmt.Errorf("project name must match ^[a-z0-9_-]{1,64}$, got %q", project)
+	}
+	if len(tags) > maxQuickStoreTags {
+		return fmt.Errorf("too many tags (%d > max %d)", len(tags), maxQuickStoreTags)
+	}
+	for i, tag := range tags {
+		if len(tag) > maxQuickStoreTagLength {
+			return fmt.Errorf("tag %d exceeds max length %d chars", i, maxQuickStoreTagLength)
+		}
+	}
+	if importance < minImportanceValue || importance > maxImportanceValue {
+		return fmt.Errorf("importance must be %d–%d, got %d", minImportanceValue, maxImportanceValue, importance)
+	}
+	return nil
+}
+
+// validateQuickRecallInput validates project and query for quick-recall.
+func validateQuickRecallInput(project string, query string) error {
+	if !projectNamePattern.MatchString(project) {
+		return fmt.Errorf("project name must match ^[a-z0-9_-]{1,64}$, got %q", project)
+	}
+	if len(query) == 0 {
+		return fmt.Errorf("query is required")
+	}
+	return nil
+}
 
 func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()

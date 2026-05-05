@@ -149,3 +149,35 @@ func TestHandleQuickRecall_DefaultLimit(t *testing.T) {
 	_, ok := resp["results"]
 	require.True(t, ok)
 }
+
+// TestHandleQuickRecall_InvalidProjectName verifies that project names with spaces,
+// special chars, or too many chars are rejected with 400.
+func TestHandleQuickRecall_InvalidProjectName(t *testing.T) {
+	tests := []struct {
+		name      string
+		projectID string
+	}{
+		{"spaces", "foo bar"},
+		{"uppercase", "Foo"},
+		{"parent_dir", "../etc"},
+		{"special_chars", "foo@bar"},
+		{"too_long", string(bytes.Repeat([]byte("x"), 65))},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newQuickRecallServer(t)
+
+			body, _ := json.Marshal(map[string]any{
+				"query":   "test",
+				"project": tc.projectID,
+			})
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-recall", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleQuickRecall(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
