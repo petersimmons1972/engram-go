@@ -80,6 +80,14 @@ init:
 	    touch .env.machine-identity; \
 	    echo "✓ Created .env.machine-identity (empty — add Infisical credentials here if using secret management)"; \
 	fi
+	@if ! docker volume inspect engram_pgdata >/dev/null 2>&1; then \
+	    docker volume create engram_pgdata; \
+	    echo "✓ Created Docker volume engram_pgdata"; \
+	fi
+	@if ! docker volume inspect ollama_storage >/dev/null 2>&1; then \
+	    docker volume create ollama_storage; \
+	    echo "✓ Created Docker volume ollama_storage"; \
+	fi
 
 ## Verify .env contains no placeholder values before deploying.
 check-env:

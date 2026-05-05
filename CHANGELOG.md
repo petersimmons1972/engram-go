@@ -6,6 +6,24 @@ All notable changes to engram-go are documented here.
 
 ## [Unreleased] — v3.2.0
 
+### Documentation
+- **Dual Docker Compose profiles:** Added `docker-compose.local.yml` for 100% local Ollama-only setup. Default profile remains hybrid (LiteLLM external). Both profiles share identical PostgreSQL backend and MCP tool set — swap without migration.
+- **Deployment notes:** New `docs/deployment-notes.md` documents Ollama vs LiteLLM trade-offs, Infisical integration, embedding model selection, and scaling guidance.
+- **Operations runbook:** New `docs/runbook.md` covers every Prometheus metric with interpretation, thresholds, diagnostics, and fixes.
+- **Command reference:** New `cmd/README.md` documents six binaries (starter, engram, engram-setup, engram-eval, instinct, benchmark) with usage, frequency, and typical scenarios.
+- **Contributing updates:** Added Rust toolchain section for `reembed-rs/` development. Generalized AI-PR policy to permit any AI-assisted development (Claude Code, Copilot, etc.) with labeling and depth-of-review as control, not prohibition.
+- **README overhaul:** Rewritten Quick Start covering both Docker profiles, environment variable table, RFC1918 setup guidance, and clear section dividers.
+- **VERSION file:** Added canonical version constant (3.1.0).
+
+### Environment & Configuration
+- **Makefile `init` target:** Now creates Docker volumes (`engram_pgdata`, `ollama_storage`) automatically, eliminating separate `docker volume create` step.
+- **.env.example header:** Added namespace convention note documenting ENGRAM_*, LITELLM_*, ANTHROPIC_*, POSTGRES_* intentional coexistence.
+- **docker-compose.yml:** Added inline documentation for RFC1918, LiteLLM endpoint requirement, ENGRAM_SETUP_TOKEN_ALLOW_RFC1918 behavior.
+
+---
+
+## [3.1.0] — 2026-04-20 (Previous Release)
+
 ### Added
 - **`POST /quick-store`** — sessionless REST endpoint that stores a memory directly using Bearer auth, without requiring an active SSE session. Enables hook scripts (Claude Code `PreCompact`, shell scripts, CLI tools) that cannot perform the SSE handshake. Accepts `{"content","project","tags","importance"}`, returns `{"ok":true,"id":"..."}`.
 

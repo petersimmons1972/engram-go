@@ -2,16 +2,17 @@
 
 ## AI-Generated PR Policy
 
-PRs submitted by AI agents (Codex, Cursor, etc.) must be labeled `ai-generated` and require adversarial review before merge.
+PRs submitted by any AI-assisted development (Claude Code, Cursor, GitHub Copilot, or manual LLM use) must be labeled `ai-generated` and require three rounds of adversarial review before merge:
 
-**Required reviewers:**
-- Rickover (correctness audit — boundary conditions, logic bugs, error handling)
-- Spruance (coverage audit — ensure ≥ 70% function coverage on new files)
-- Zero-context reviewer (fresh-eyes structural review — receives only the diff)
+1. **Correctness** — boundary conditions, logic bugs, error handling, nil dereferences, panics
+2. **Coverage** — ≥ 70% function coverage on new files, complete tests for exported APIs
+3. **Structural** — fresh-eyes review, architecture fit, naming clarity, complexity
 
 **Merge gate:** All three must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
 
-**Why:** PR #162 (Codex, April 2026) passed syntax checks but had 4 logic bugs and 20/24 functions untested. The adversarial review caught all of them before merge. The clean TDD reimplementation in commit aaf56c6 documented the pattern to follow.
+**Tools are tools:** Use Claude Code, GitHub Copilot, or any AI assistance freely. Label the PR `ai-generated` upfront. Depth of review, not prohibition on AI use, is the control.
+
+**Why:** PR #162 (April 2026) had 4 logic bugs and 20/24 untested functions. Adversarial review caught all of them. Commit aaf56c6 documents adequate AI-assisted work.
 
 ## Coverage Gate
 

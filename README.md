@@ -1,4 +1,4 @@
-![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white) ![License](https://img.shields.io/badge/License-GPL%20v3-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-SSE-purple) ![Local](https://img.shields.io/badge/Local--Only-No%20Cloud-ff6b6b)
+![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white) ![License](https://img.shields.io/badge/License-GPL%20v3-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-SSE-purple) ![Version](https://img.shields.io/badge/Version-3.1.0-green)
 
 <p align="center"><img src="docs/hero.svg" alt="Engram — Persistent Memory for AI Agents" width="100%"></p>
 
@@ -20,21 +20,23 @@ memory_store(
 
 ---
 
-## 100% Local. No exceptions.
+## Local-First by Default
 
-> **Your memories never leave your machine.**
+> **Your memories stay on your machine.**
 
-Most memory tools send your code context, architectural notes, and decision logs to a third-party API. Engram doesn't. Your PostgreSQL stores every memory. Your Ollama instance runs every embedding. Nothing leaves your infrastructure unless you push it yourself.
+Engram stores everything locally by design. Your PostgreSQL keeps every memory. Embeddings run locally via Ollama. Nothing leaves your machine unless you explicitly send it. Choose your setup:
 
-- No account to create
-- No API key to manage
-- No vendor terms governing your codebase notes
-- No data leaving your network
+- **100% Local** — Ollama handles both embeddings and summarization. Zero external dependencies. Start with `docker-compose.local.yml`.
+- **Hybrid** — Use a LiteLLM proxy for advanced models (Qwen, Claude). Default `docker-compose.yml`. Requires `LITELLM_URL` in `.env`.
+
+Both setups share the same PostgreSQL backend, API contract, and tool set. Swap profiles without data loss or schema migration.
 
 ```bash
 make init && make up && make setup
-# Done. Memory server at localhost:8788.
+# Done. Memory server at localhost:8788 (default: hybrid with LiteLLM).
 ```
+
+For local-only, use: `docker compose -f docker-compose.local.yml up -d`
 
 ---
 
@@ -52,24 +54,85 @@ make init && make up && make setup
 
 ## Quick Start
 
+### Prerequisites
+
+- **Docker Engine 20.10+** and **Docker Compose 2.0+** — check with `docker --version` and `docker compose version`
+- **Go 1.25+** — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
+- **4 GB RAM free** — Ollama keeps the embedding model in memory
+- **2 GB disk** — PostgreSQL volume + Ollama model download (both cached on restart)
+
+### Initialize and Start
+
 ```bash
 git clone https://github.com/petersimmons1972/engram-go.git && cd engram-go
-make init     # generates POSTGRES_PASSWORD and ENGRAM_API_KEY in .env
-make up       # starts postgres, ollama, and engram-go
+make init     # generates POSTGRES_PASSWORD, ENGRAM_API_KEY, creates volumes
+make up       # starts postgres, engram-go, and external LiteLLM (requires LITELLM_URL)
 make setup    # writes bearer token to ~/.claude/mcp_servers.json
 ```
 
-The server starts on port 8788. If you prefer to author `.env` by hand rather than using `make init`, `.env.example` at the repo root documents every available variable with its default and purpose. Cold start: under 200ms. Memory at idle: 18 MB.
+**For local-only setup** (Ollama-only, no LiteLLM required):
 
-> **Docker users:** `docker-compose.yml` now sets `ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1` automatically. If you run engram outside Docker and need `/setup-token` accessible from RFC1918 addresses (e.g. a LAN host), add this variable to your environment. Without it, `/setup-token` only accepts loopback (127.0.0.1 / ::1).
+```bash
+docker compose -f docker-compose.local.yml up -d
+make setup
+```
 
-Run `/mcp` in Claude Code after setup to connect. All 38 core tools are available immediately. Five optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) activate when `ANTHROPIC_API_KEY` is set.
+Both setups expose the server at `http://localhost:8788`. Cold start: ~200ms. Idle memory: 18 MB.
 
-### Claude Code permissions
+### Environment Configuration
 
-Engram's read-side tools (`memory_recall`, `memory_fetch`, `memory_query`, `memory_list`, `memory_status`, `memory_history`, `memory_timeline`, `memory_projects`, audit/episode listings, constraint checks, `memory_diagnose`) ship with the MCP `ReadOnlyHint: true` annotation. Claude Code's plan mode treats them as safe to invoke without a permission prompt — recall just works, even from inside plan mode.
+If you prefer to author `.env` manually rather than using `make init`, see `.env.example` for all available variables, defaults, and descriptions. Key variables:
 
-Mutating tools (`memory_store`, `memory_correct`, `memory_forget`, `memory_consolidate`, `memory_delete_project`, etc.) intentionally prompt for permission on first use. To skip prompts on the read-only tools in normal mode, add the recommended snippet to `~/.claude/settings.json`:
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `POSTGRES_PASSWORD` | PostgreSQL auth | *(generated by make init)* |
+| `ENGRAM_API_KEY` | Bearer token for MCP | *(generated by make init)* |
+| `ENGRAM_PORT` | Server listen port | 8788 |
+| `LITELLM_URL` | LiteLLM proxy endpoint | `http://litellm:4000` |
+| `ENGRAM_EMBED_MODEL` | Embedding model name | `qwen3-embedding:8b` (LiteLLM) or `mxbai-embed-large` (Ollama) |
+| `ENGRAM_EMBED_URL` | Embedding service endpoint | Inherits from `LITELLM_URL` |
+| `ANTHROPIC_API_KEY` | Claude API key (optional) | *(empty)* |
+
+### Connect to Claude Code
+
+After `make setup`:
+
+```bash
+/mcp
+```
+
+All 38 core tools activate immediately. Five optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) activate when `ANTHROPIC_API_KEY` is set in `.env`.
+
+### Important: RFC1918 and `/setup-token`
+
+When Engram is in Docker (both profiles), it automatically accepts `/setup-token` requests from the Docker bridge (RFC1918). If you run Engram outside Docker and need to call `/setup-token` from a LAN address, add to `.env`:
+
+```bash
+ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1
+```
+
+Without this, `/setup-token` only accepts loopback (127.0.0.1 / ::1). See [Operations → HTTP Endpoints](docs/operations.md#http-endpoints) for the full endpoint contract.
+
+---
+
+## Configuration & Deployment
+
+| Topic | Where to Read |
+|-------|---------------|
+| Detailed install steps, GPU setup, troubleshooting | [Getting Started](docs/getting-started.md) |
+| Bearer-token destination, key rotation, and stash recovery | [Operations](docs/operations.md) |
+| `/setup-token` endpoint contract, health checks, diagnostics | [Operations → HTTP Endpoints](docs/operations.md#http-endpoints) |
+| Local-first vs hybrid (LiteLLM), personal infra notes | [Deployment Notes](docs/deployment-notes.md) |
+| Backup, security model, data portability, RFC1918 setup | [Operations](docs/operations.md) |
+| What each command-line binary does, who runs it, when | [cmd/README.md](cmd/README.md) |
+
+---
+
+## Read-Only Tool Permissions (Claude Code)
+
+Engram's read-side tools (`memory_recall`, `memory_fetch`, `memory_query`, `memory_list`, `memory_status`, `memory_history`, `memory_timeline`, `memory_projects`, audit/episode listings, constraint checks, `memory_diagnose`) carry the MCP `ReadOnlyHint: true` annotation. Claude Code's plan mode treats them as safe to invoke without a permission prompt.
+
+Mutating tools (`memory_store`, `memory_correct`, `memory_forget`, `memory_consolidate`, `memory_delete_project`, etc.) intentionally prompt for permission on first use. To allow all engram tools without further prompts, add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -79,9 +142,7 @@ Mutating tools (`memory_store`, `memory_correct`, `memory_forget`, `memory_conso
 }
 ```
 
-The engram server logs a paste-ready `permissions.allow` snippet at startup containing the exact list of read-only tool names — copy from the log if you want a narrower allowlist than the wildcard.
-
-If a recall tool ever vanishes silently (no result, no prompt, no error), the call was almost certainly blocked client-side. Check that you're running an engram build that includes the `ReadOnlyHint` annotation (engram-go ≥ this PR) and that no `permissions.deny` rule shadows the engram tool name.
+For a narrower allowlist, copy the `permissions.allow` snippet logged by engram at startup — it lists only the read-only tool names.
 
 ---
 
