@@ -73,8 +73,15 @@ func run() error {
 		return configureWithSetup(base, *name, *dryRun, *format, setup)
 	}
 
-	// --offline mode: skip server calls
-	return fmt.Errorf("--offline flag not yet fully implemented (stub for issue #589)")
+	// --offline mode: stub output without server calls
+	// User can use --offline when the server is rate-limited (#589)
+	// In offline mode, we cannot fetch a real token, so generate a stub (#589)
+	stubSetup := &setupResponse{
+		Token:    "stub-offline-token-" + fmt.Sprintf("%d", time.Now().Unix()),
+		Endpoint: fmt.Sprintf("http://127.0.0.1:%d/sse", *port),
+		Name:     *name,
+	}
+	return configureWithSetup(base, *name, *dryRun, *format, stubSetup)
 }
 
 func configureWithSetup(base, name string, dryRun bool, format string, setup *setupResponse) error {
@@ -99,7 +106,7 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 
 	if dryRun {
 		// Redact token in dry-run output
-		redactedToken := setup.Token[:8] + "..." + setup.Token[len(setup.Token)-4:]
+		redactedToken := redactToken(setup.Token)
 		displayEntry := map[string]interface{}{
 			"type": "sse",
 			"url":  setup.Endpoint,
@@ -107,10 +114,27 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 				"Authorization": "Bearer " + redactedToken,
 			},
 		}
-		displayJSON, _ := json.MarshalIndent(displayEntry, "    ", "  ")
-		fmt.Printf("DRY RUN — would write mcpServers.%s to:\n  %s\n  %s\n\n",
-			name, targets[0], targets[1])
-		fmt.Printf("  entry: %s\n\n(no changes written)\n", string(displayJSON))
+
+		if format == "json" {
+			// JSON format for --dry-run --format=json
+			output := map[string]interface{}{
+				"status":   "dry-run",
+				"endpoint": setup.Endpoint,
+				"token":    redactedToken,
+				"would_write": map[string]interface{}{
+					"targets": targets,
+					"entry":   displayEntry,
+				},
+			}
+			outJSON, _ := json.MarshalIndent(output, "", "  ")
+			fmt.Println(string(outJSON))
+		} else {
+			// Text format for --dry-run (default)
+			displayJSON, _ := json.MarshalIndent(displayEntry, "    ", "  ")
+			fmt.Printf("DRY RUN — would write mcpServers.%s to:\n  %s\n  %s\n\n",
+				name, targets[0], targets[1])
+			fmt.Printf("  entry: %s\n\n(no changes written)\n", string(displayJSON))
+		}
 		return nil
 	}
 
