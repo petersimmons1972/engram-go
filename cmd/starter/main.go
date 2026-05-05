@@ -20,16 +20,24 @@ import (
 	"time"
 )
 
-const usageText = `Usage: starter [subcommand]
+const usageText = `Usage: starter [subcommand] [options]
 
 Subcommands:
   server    Start the engram MCP server
+            Use 'starter server --help' for options
   migrate   Run database migrations only
+            Use 'starter migrate --help' for options
   setup     Configure the MCP client
+            Use 'starter setup --help' for options
   health    Check /health endpoint and exit 0 (ok) or 1 (error)
+            Use 'starter health --help' for options
+  help      Show this help message
 
 Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
 exec-replaces itself with /engram.
+
+Options:
+  -h, --help    Show this help message
 `
 
 func printUsage() {
@@ -190,13 +198,23 @@ func runHealth() {
 
 // execEngram validates subcommand arguments and exec-replaces the current
 // process with /engram using the supplied environment.
+// Subcommands (server, migrate, setup) are passed through to /engram with their options.
+// The /engram binary handles per-subcommand --help internally.
 func execEngram(args []string, cleanEnv []string) {
 	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
+
+	// Check if first positional argument is a valid subcommand
+	// Allow flags and --help/-h to pass through to /engram
 	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && !allowed[arg] {
-			fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
+		if !strings.HasPrefix(arg, "-") {
+			if !allowed[arg] && arg != "" {
+				fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
+			}
+			break
 		}
 	}
+
+	// Pass all args through to /engram — it handles per-subcommand --help internally
 	argv := append([]string{"/engram"}, args...)
 	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)

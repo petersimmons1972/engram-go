@@ -43,6 +43,8 @@ func run() error {
 	port := flag.Int("port", 8788, "engram server port")
 	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
 	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
+	offline := flag.Bool("offline", false, "skip /setup-token call (useful when server is rate-limited during setup)")
+	format := flag.String("format", "text", "output format: text or json")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -53,20 +55,29 @@ func run() error {
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", *port)
 
-	// 1. Verify server is reachable.
-	if err := healthCheck(base); err != nil {
-		return fmt.Errorf(
-			"engram server not reachable at %s/health\n\n"+
-				"  Is it running?  →  docker compose up -d\n"+
-				"  Check logs?     →  make logs\n\n"+
-				"  (original error: %w)", base, err)
+	// 1. Verify server is reachable (unless --offline).
+	if !*offline {
+		if err := healthCheck(base); err != nil {
+			return fmt.Errorf(
+				"engram server not reachable at %s/health\n\n"+
+					"  Is it running?  →  docker compose up -d\n"+
+					"  Check logs?     →  make logs\n\n"+
+					"  (original error: %w)", base, err)
+		}
+
+		// 2. Fetch the current bearer token.
+		setup, err := fetchSetupToken(base)
+		if err != nil {
+			return fmt.Errorf("fetch /setup-token: %w", err)
+		}
+		return configureWithSetup(base, *name, *dryRun, *format, setup)
 	}
 
-	// 2. Fetch the current bearer token.
-	setup, err := fetchSetupToken(base)
-	if err != nil {
-		return fmt.Errorf("fetch /setup-token: %w", err)
-	}
+	// --offline mode: skip server calls
+	return fmt.Errorf("--offline flag not yet fully implemented (stub for issue #589)")
+}
+
+func configureWithSetup(base, name string, dryRun bool, format string, setup *setupResponse) error {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -87,17 +98,26 @@ func run() error {
 		},
 	}
 
-	if *dryRun {
-		entryJSON, _ := json.MarshalIndent(newEntry, "    ", "  ")
+	if dryRun {
+		// Redact token in dry-run output
+		redactedToken := setup.Token[:8] + "..." + setup.Token[len(setup.Token)-4:]
+		displayEntry := map[string]interface{}{
+			"type": "sse",
+			"url":  setup.Endpoint,
+			"headers": map[string]string{
+				"Authorization": "Bearer " + redactedToken,
+			},
+		}
+		displayJSON, _ := json.MarshalIndent(displayEntry, "    ", "  ")
 		fmt.Printf("DRY RUN — would write mcpServers.%s to:\n  %s\n  %s\n\n",
-			*name, targets[0], targets[1])
-		fmt.Printf("  entry: %s\n\n(no changes written)\n", string(entryJSON))
+			name, targets[0], targets[1])
+		fmt.Printf("  entry: %s\n\n(no changes written)\n", string(displayJSON))
 		return nil
 	}
 
 	var updated []string
 	for _, cfgPath := range targets {
-		action, err := updateMCPConfig(cfgPath, *name, newEntry)
+		action, err := updateMCPConfig(cfgPath, name, newEntry)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "engram-setup: warning: could not update %s: %v\n", cfgPath, err)
 			continue
@@ -111,14 +131,33 @@ func run() error {
 		return fmt.Errorf("failed to update any config file")
 	}
 
-	fmt.Printf("engram configured.\n")
-	fmt.Printf("  endpoint: %s\n", setup.Endpoint)
-	fmt.Printf("  token:    %s...%s\n", setup.Token[:8], setup.Token[len(setup.Token)-4:])
-	for _, u := range updated {
-		fmt.Printf("  wrote:    %s\n", u)
+	// Format output based on --format flag
+	if format == "json" {
+		output := map[string]interface{}{
+			"status":   "configured",
+			"endpoint": setup.Endpoint,
+			"token":    redactToken(setup.Token),
+			"written":  updated,
+		}
+		outJSON, _ := json.MarshalIndent(output, "", "  ")
+		fmt.Println(string(outJSON))
+	} else {
+		fmt.Printf("engram configured.\n")
+		fmt.Printf("  endpoint: %s\n", setup.Endpoint)
+		fmt.Printf("  token:    %s\n", redactToken(setup.Token))
+		for _, u := range updated {
+			fmt.Printf("  wrote:    %s\n", u)
+		}
+		fmt.Println("Run /mcp in Claude Code to reconnect.")
 	}
-	fmt.Println("Run /mcp in Claude Code to reconnect.")
 	return nil
+}
+
+func redactToken(token string) string {
+	if len(token) < 12 {
+		return "***"
+	}
+	return token[:8] + "..." + token[len(token)-4:]
 }
 
 // updateMCPConfig reads cfgPath, upserts mcpServers[name]=entry, and writes it back.

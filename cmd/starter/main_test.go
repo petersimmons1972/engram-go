@@ -383,3 +383,33 @@ func TestEnvOr(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Subcommand help (issue #587)
+// ---------------------------------------------------------------------------
+
+func TestSubcommandHelp(t *testing.T) {
+	t.Run("usage text mentions per-subcommand help", func(t *testing.T) {
+		// The usageText constant should document that users can run:
+		// starter <subcommand> --help for per-subcommand help
+
+		if !strings.Contains(usageText, "starter server --help") {
+			t.Error("usage text should document 'starter server --help'")
+		}
+		if !strings.Contains(usageText, "starter migrate --help") {
+			t.Error("usage text should document 'starter migrate --help'")
+		}
+		if !strings.Contains(usageText, "starter setup --help") {
+			t.Error("usage text should document 'starter setup --help'")
+		}
+	})
+
+	t.Run("usage text includes all allowed subcommands", func(t *testing.T) {
+		subcommands := []string{"server", "migrate", "setup", "health"}
+		for _, sub := range subcommands {
+			if !strings.Contains(usageText, sub) {
+				t.Errorf("usage text missing subcommand: %s", sub)
+			}
+		}
+	})
+}
