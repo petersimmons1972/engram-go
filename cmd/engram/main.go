@@ -353,6 +353,23 @@ func run() error {
 
 	srv := internalmcp.NewServer(pool, cfg)
 
+	// Start SIGHUP handler for runtime config reload (#557).
+	// This goroutine listens for SIGHUP and reloads Claude-related feature flags
+	// and log level without restarting the server.
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGHUP)
+		defer signal.Stop(sigCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sigCh:
+				srv.ReloadRuntimeConfig()
+			}
+		}
+	}()
+
 	// Track all long-running workers with a WaitGroup so we can wait for them
 	// to exit gracefully after SIGTERM before closing the DB connection (#559).
 	var workersWg sync.WaitGroup
