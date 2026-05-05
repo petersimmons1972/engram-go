@@ -126,6 +126,14 @@ func run() error {
 	rateLimitBurst := fs.Int("rate-limit-burst", envInt("ENGRAM_RATE_LIMIT_BURST", 0), "Per-IP token-bucket burst size (0 = default 200)")
 	rateLimitDisable := fs.Bool("rate-limit-disable", envBool("ENGRAM_RATE_LIMIT_DISABLE", false), "Disable HTTP rate limiting entirely (single-user local use)")
 
+	// Circuit breaker knobs (#604): per-upstream protection against persistent failures.
+	embedCircuitDisable := fs.Bool("embed-circuit-disable", envBool("ENGRAM_EMBED_CIRCUIT_DISABLE", false), "Disable circuit breaker on embed client (escape hatch for testing)")
+	embedCircuitThreshold := fs.Int("embed-circuit-failure-threshold", envInt("ENGRAM_EMBED_CIRCUIT_FAILURE_THRESHOLD", 5), "Number of retry-exhausted failures to trigger circuit open")
+	embedCircuitWindow := fs.Duration("embed-circuit-failure-window", envDuration("ENGRAM_EMBED_CIRCUIT_FAILURE_WINDOW", 30*time.Second), "Time window for counting failures")
+	embedCircuitOpenDuration := fs.Duration("embed-circuit-open-duration", envDuration("ENGRAM_EMBED_CIRCUIT_OPEN_DURATION", 30*time.Second), "Initial cooldown when circuit opens")
+	embedCircuitBackoffMultiplier := fs.Float64("embed-circuit-backoff-multiplier", envFloat("ENGRAM_EMBED_CIRCUIT_BACKOFF_MULTIPLIER", 2.0), "Exponential backoff multiplier for consecutive opens")
+	embedCircuitBackoffCap := fs.Duration("embed-circuit-backoff-cap", envDuration("ENGRAM_EMBED_CIRCUIT_BACKOFF_CAP", 5*time.Minute), "Maximum cooldown duration (cap on exponential backoff)")
+
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -213,7 +221,17 @@ func run() error {
 	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
 	// BM25+recency fallback keeps recall functional until LiteLLM recovers.
 	embedDegraded := false
-	embedClient := embed.Client(embed.NewLiteLLMClientNoProbe(embedURL, *embedModel, litellmAPIKey, *embedDims))
+
+	// Construct circuit breaker config
+	cbCfg := embed.CircuitConfig{
+		Enabled:           !*embedCircuitDisable,
+		FailureThreshold:  *embedCircuitThreshold,
+		FailureWindow:     *embedCircuitWindow,
+		OpenDuration:      *embedCircuitOpenDuration,
+		BackoffMultiplier: *embedCircuitBackoffMultiplier,
+		BackoffCap:        *embedCircuitBackoffCap,
+	}
+	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	probeVec, probeErr := embedClient.Embed(probeCtx, "startup probe")
 	probeCancel()

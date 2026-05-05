@@ -88,6 +88,20 @@ var (
 		Name: "engram_extraction_dropped_total",
 		Help: "Entity extraction jobs dropped (semaphore_full or queue_error)",
 	}, []string{"reason"})
+
+	// EmbedCircuitState records the current state of the embed circuit breaker.
+	// Labels: state=open|closed|half_open.
+	EmbedCircuitState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "engram_embed_circuit_state",
+		Help: "Current state of the embed circuit breaker (1=open, 2=closed, 3=half_open)",
+	}, []string{"state"})
+
+	// EmbedCircuitTransitions counts state transitions in the embed circuit breaker.
+	// Labels: from=X, to=Y where X,Y are open|closed|half_open.
+	EmbedCircuitTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_embed_circuit_transitions_total",
+		Help: "Circuit breaker state transitions",
+	}, []string{"from", "to"})
 )
 
 func init() {
@@ -105,5 +119,7 @@ func init() {
 		EmbedFailures,
 		WorkerPanics,
 		ExtractionDropped,
+		EmbedCircuitState,
+		EmbedCircuitTransitions,
 	)
 }
