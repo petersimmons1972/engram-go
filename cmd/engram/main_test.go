@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -120,5 +123,31 @@ func TestIsPrivateIP_ViaNetutil(t *testing.T) {
 		if got != tc.private {
 			t.Errorf("netutil.IsPrivateIP(%q) = %v, want %v", tc.ip, got, tc.private)
 		}
+	}
+}
+
+// TestPprofNotRegisteredByDefault verifies that pprof HTTP handlers are NOT
+// registered by default (requires -tags=pprof). This is the complement of the
+// pprof_enabled.go build tag — pprof should only be available in opt-in builds.
+func TestPprofNotRegisteredByDefault(t *testing.T) {
+	// In the default build (without -tags=pprof), the pprof import should not
+	// be active, so no handlers should be registered on http.DefaultServeMux.
+	//
+	// We test this by iterating the mux and checking that no pattern contains
+	// the "debug/pprof" string that pprof handlers are registered under.
+	defaultMux := http.DefaultServeMux
+	defaultMux.Handle("/test-marker", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	req := &http.Request{
+		Method: "GET",
+		URL:    &url.URL{Path: "/debug/pprof/"},
+		Host:   "localhost",
+	}
+	handler, pattern := defaultMux.Handler(req)
+	if pattern != "" && strings.Contains(pattern, "debug/pprof") {
+		t.Errorf("pprof should not be registered by default; found pattern %q", pattern)
+	}
+	if handler != nil && strings.Contains(fmt.Sprint(handler), "pprof") {
+		t.Errorf("pprof handler should not be registered by default")
 	}
 }

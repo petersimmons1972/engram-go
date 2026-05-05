@@ -29,9 +29,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/summarize"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/petersimmons1972/engram/internal/weight"
-
-	// Register pprof HTTP handlers at /debug/pprof/ (localhost only).
-	_ "net/http/pprof"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".

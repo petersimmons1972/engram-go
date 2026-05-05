@@ -29,9 +29,19 @@ func SafePath(baseDir, target string) (string, error) {
 		return "", fmt.Errorf("resolving real base dir: %w", err)
 	}
 
-	absTarget, err := filepath.Abs(target)
-	if err != nil {
-		return "", fmt.Errorf("resolving target path: %w", err)
+	// Resolve target against baseDir if it's a relative path; otherwise use as-is.
+	// This ensures that relative paths are always resolved within baseDir, not
+	// against the process's current working directory.
+	var absTarget string
+	if filepath.IsAbs(target) {
+		var err error
+		absTarget, err = filepath.Abs(target)
+		if err != nil {
+			return "", fmt.Errorf("resolving target path: %w", err)
+		}
+	} else {
+		// Relative path: join with baseDir and clean
+		absTarget = filepath.Join(absBase, target)
 	}
 
 	// First check (traversal): absTarget must sit inside absBase. This blocks

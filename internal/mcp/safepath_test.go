@@ -61,6 +61,22 @@ func TestSafePath_BlocksSymlinkEscape(t *testing.T) {
 	require.Contains(t, err.Error(), "escapes allowed directory")
 }
 
+// TestSafePathRelativeResolvesAgainstBaseDir verifies that relative paths are
+// resolved against baseDir, not the process's current working directory. This
+// ensures that "relative.txt" inside /data is /data/relative.txt, not
+// /cwd/relative.txt.
+func TestSafePathRelativeResolvesAgainstBaseDir(t *testing.T) {
+	base := t.TempDir()
+	// Test with a simple relative path that should resolve within baseDir
+	result, err := internalmcp.SafePath(base, "relative.txt")
+	require.NoError(t, err)
+	// Result should contain baseDir
+	require.Contains(t, result, base)
+	// The result should be baseDir + relative path
+	expected := base + "/relative.txt"
+	require.Equal(t, expected, result, "relative path should resolve to baseDir + relative path")
+}
+
 func TestEnginePool_LRU_EvictsAtCap(t *testing.T) {
 	const poolCap = 50
 	created := make(map[string]int)

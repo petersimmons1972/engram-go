@@ -221,6 +221,7 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 			lockTimeoutMs = rem
 		}
 	}
+	// integer-only — DO NOT change to %s; SET LOCAL cannot use parameter binding
 	if _, err := conn.Exec(ctx,
 		fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", lockTimeoutMs),
 	); err != nil {
