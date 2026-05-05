@@ -146,6 +146,15 @@ func (rl *rateLimiter) allowSetupToken(ip string) bool {
 	return ok
 }
 
+// RuntimeConfig holds feature flags and settings that can be reloaded at runtime via SIGHUP (#557).
+// All fields are atomic to support zero-copy reads from tool handlers without locks.
+type RuntimeConfig struct {
+	ClaudeSummarize   atomic.Bool
+	ClaudeConsolidate atomic.Bool
+	ClaudeRerank      atomic.Bool
+	LogLevel          atomic.Int32 // 0=debug, 1=info, 2=warn, 3=error
+}
+
 // Server wraps the MCP SSE server and owns the EnginePool.
 type Server struct {
 	pool                *EnginePool
@@ -181,6 +190,10 @@ type Server struct {
 	// updated by the /health probe loop every 30s so it can flip back to false
 	// when LiteLLM recovers (#565).
 	embedDegraded *atomic.Bool
+
+	// runtimeCfg holds feature flags that can be reloaded at runtime via SIGHUP (#557).
+	// Tool handlers read these without locking to avoid contention.
+	runtimeCfg *RuntimeConfig
 }
 
 // readOnlyToolNames returns the canonical set of MCP tool names that perform
@@ -261,6 +274,33 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	embedDegradedFlag := &atomic.Bool{}
 	embedDegradedFlag.Store(cfg.EmbedDegraded)
 
+	// Initialize runtime config from env vars.
+	runtimeCfg := &RuntimeConfig{}
+	if v := os.Getenv("ENGRAM_CLAUDE_SUMMARIZE"); v == "true" || v == "1" {
+		runtimeCfg.ClaudeSummarize.Store(true)
+	}
+	if v := os.Getenv("ENGRAM_CLAUDE_CONSOLIDATE"); v == "true" || v == "1" {
+		runtimeCfg.ClaudeConsolidate.Store(true)
+	}
+	if v := os.Getenv("ENGRAM_CLAUDE_RERANK"); v == "true" || v == "1" {
+		runtimeCfg.ClaudeRerank.Store(true)
+	}
+	// Parse log level if set in env; default to 1 (info).
+	logLevelVal := int32(1) // info
+	if v := os.Getenv("ENGRAM_LOG_LEVEL"); v != "" {
+		switch strings.ToLower(v) {
+		case "debug":
+			logLevelVal = 0
+		case "info":
+			logLevelVal = 1
+		case "warn":
+			logLevelVal = 2
+		case "error":
+			logLevelVal = 3
+		}
+	}
+	runtimeCfg.LogLevel.Store(logLevelVal)
+
 	s := &Server{
 		pool:              pool,
 		cfg:               cfg,
@@ -270,6 +310,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		toolAnnotations:   make(map[string]mcpgo.ToolAnnotation),
 		sessionTouchTimes: make(map[string]time.Time),
 		embedDegraded:     embedDegradedFlag,
+		runtimeCfg:        runtimeCfg,
 	}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
@@ -285,6 +326,14 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 func (s *Server) SetClaudeClient(client *claude.Client) {
 	s.cfg.claudeClient = client
 	s.cfg.ClaudeEnabled = (client != nil)
+}
+
+// ReloadRuntimeConfig reloads runtime configuration from environment variables (#557).
+// Called by the SIGHUP handler to update feature flags without restarting the server.
+func (s *Server) ReloadRuntimeConfig() {
+	if s.runtimeCfg != nil {
+		reloadRuntimeConfig(s.runtimeCfg)
+	}
 }
 
 // setupTokenWindow is the rate-limit window for /setup-token: 3 calls per 5 minutes.
@@ -1160,19 +1209,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			resp, herr := http.DefaultClient.Do(req)
 			if herr != nil {
-				ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
+				ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
 				slog.Warn("health: litellm probe failed", "err", herr)
 			} else {
 				_ = resp.Body.Close()
 				if resp.StatusCode >= 500 {
-					ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
+					ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
 					slog.Warn("health: litellm returned server error", "status", resp.StatusCode)
 				} else {
 					embedLiveOK = true
 				}
 			}
 		} else {
-			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
+			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
 			slog.Warn("health: could not build litellm probe request", "err", err)
 		}
 
@@ -1480,4 +1529,54 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"results": out})
+}
+
+// reloadRuntimeConfig re-reads config env vars and updates the atomic fields (#557).
+// Called by the SIGHUP handler on each signal.
+func reloadRuntimeConfig(cfg *RuntimeConfig) {
+	var reloadedKeys []string
+	if v := os.Getenv("ENGRAM_CLAUDE_SUMMARIZE"); v != "" {
+		newVal := v == "true" || v == "1"
+		if cfg.ClaudeSummarize.Load() != newVal {
+			cfg.ClaudeSummarize.Store(newVal)
+			reloadedKeys = append(reloadedKeys, "ENGRAM_CLAUDE_SUMMARIZE")
+		}
+	}
+	if v := os.Getenv("ENGRAM_CLAUDE_CONSOLIDATE"); v != "" {
+		newVal := v == "true" || v == "1"
+		if cfg.ClaudeConsolidate.Load() != newVal {
+			cfg.ClaudeConsolidate.Store(newVal)
+			reloadedKeys = append(reloadedKeys, "ENGRAM_CLAUDE_CONSOLIDATE")
+		}
+	}
+	if v := os.Getenv("ENGRAM_CLAUDE_RERANK"); v != "" {
+		newVal := v == "true" || v == "1"
+		if cfg.ClaudeRerank.Load() != newVal {
+			cfg.ClaudeRerank.Store(newVal)
+			reloadedKeys = append(reloadedKeys, "ENGRAM_CLAUDE_RERANK")
+		}
+	}
+	if v := os.Getenv("ENGRAM_LOG_LEVEL"); v != "" {
+		// Store log level as an int32: debug=0, info=1, warn=2, error=3
+		var level int32
+		switch strings.ToLower(v) {
+		case "debug":
+			level = 0
+		case "info":
+			level = 1
+		case "warn":
+			level = 2
+		case "error":
+			level = 3
+		default:
+			level = 1 // default to info
+		}
+		if cfg.LogLevel.Load() != level {
+			cfg.LogLevel.Store(level)
+			reloadedKeys = append(reloadedKeys, "ENGRAM_LOG_LEVEL")
+		}
+	}
+	if len(reloadedKeys) > 0 {
+		slog.Info("config reloaded via SIGHUP", "changed_keys", reloadedKeys)
+	}
 }
