@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -76,6 +78,16 @@ func (c *Client) CompleteWithUsage(ctx context.Context, system, prompt, executor
 		defer cancel()
 	}
 
+	// Read ENGRAM_CLAUDE_TOOL_TYPE env var, defaulting to "advisor_20260301".
+	// Log a deprecation warning if a non-default value is used.
+	advisorToolType := os.Getenv("ENGRAM_CLAUDE_TOOL_TYPE")
+	if advisorToolType == "" {
+		advisorToolType = "advisor_20260301"
+	} else if advisorToolType != "advisor_20260301" {
+		slog.Warn("ENGRAM_CLAUDE_TOOL_TYPE is deprecated; consider using the default value",
+			"value", advisorToolType)
+	}
+
 	reqBody := messagesRequest{
 		Model:     executorModel,
 		MaxTokens: maxTokens,
@@ -85,7 +97,7 @@ func (c *Client) CompleteWithUsage(ctx context.Context, system, prompt, executor
 		},
 		Tools: []advisorTool{
 			{
-				Type:    "advisor_20260301",
+				Type:    advisorToolType,
 				Name:    "advisor",
 				Model:   advisorModel,
 				MaxUses: advisorMaxUses,

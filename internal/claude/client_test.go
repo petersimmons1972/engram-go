@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -89,4 +90,50 @@ func TestClient_Complete_RequestBuildError(t *testing.T) {
 	c.BaseURL = "://bad-url"
 	_, err := c.Complete(context.Background(), "sys", "prompt", "claude-sonnet-4-6", "claude-opus-4-6", 2, 1024)
 	require.Error(t, err)
+}
+
+func TestClient_Complete_ClaudeToolTypeFromEnv(t *testing.T) {
+	tests := []struct {
+		name       string
+		envValue   string
+		wantType   string
+	}{
+		{"default_when_unset", "", "advisor_20260301"},
+		{"custom_from_env", "advisor_custom", "advisor_custom"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original env var
+			original, wasSet := os.LookupEnv("ENGRAM_CLAUDE_TOOL_TYPE")
+			defer func() {
+				if wasSet {
+					_ = os.Setenv("ENGRAM_CLAUDE_TOOL_TYPE", original)
+				} else {
+					_ = os.Unsetenv("ENGRAM_CLAUDE_TOOL_TYPE")
+				}
+			}()
+
+			if tc.envValue == "" {
+				_ = os.Unsetenv("ENGRAM_CLAUDE_TOOL_TYPE")
+			} else {
+				_ = os.Setenv("ENGRAM_CLAUDE_TOOL_TYPE", tc.envValue)
+			}
+
+			var capturedBody struct {
+				Tools []struct {
+					Type string `json:"type"`
+				} `json:"tools"`
+			}
+			c := claude.NewWithTransport("test-key", roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				require.Equal(t, "/v1/messages", r.URL.Path)
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&capturedBody))
+				return jsonResp(http.StatusOK, `{"content":[{"type":"text","text":"ok"}]}`), nil
+			}))
+
+			_, err := c.Complete(context.Background(), "sys", "prompt", "claude-sonnet-4-6", "claude-opus-4-6", 2, 1024)
+			require.NoError(t, err)
+			require.Len(t, capturedBody.Tools, 1)
+			require.Equal(t, tc.wantType, capturedBody.Tools[0].Type)
+		})
+	}
 }
