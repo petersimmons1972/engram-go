@@ -50,14 +50,29 @@ These are the server's internal API. Most users never call them directly — `ma
 curl http://localhost:8788/health
 ```
 
-**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Localhost-only (accepts loopback and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste. Rate-limited to 3 requests per 5 minutes per IP — do not poll it in a loop:
+**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
 
+**Request:**
 ```bash
 curl http://localhost:8788/setup-token
-# {"token":"...","endpoint":"http://127.0.0.1:8788/sse","name":"engram"}
 ```
 
-All other routes (`/sse`, message POSTs) require `Authorization: Bearer <token>`.
+**Response (200 OK):**
+```json
+{
+  "token": "64-char-hex-bearer-token",
+  "endpoint": "http://127.0.0.1:8788/sse",
+  "name": "engram"
+}
+```
+
+**Rate limit:** 3 requests per 5 minutes per IP. Exceeding this returns `429 Too Many Requests`.
+
+**Error responses:**
+- `403 Forbidden` — Request from an address outside loopback/RFC1918. Use `127.0.0.1` from localhost, or set `ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1` if outside Docker.
+- `429 Too Many Requests` — Rate limit exceeded. Call this endpoint once during setup, then use the token in your IDE config.
+
+All other routes (`/sse`, memory operation POSTs) require `Authorization: Bearer <token>`.
 
 ---
 
