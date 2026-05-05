@@ -79,15 +79,15 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 // safeProcessBatch wraps processBatch with per-iteration panic recovery (#247).
-// A panic logs an error and sleeps 1s so the loop can continue rather than
-// killing the worker goroutine permanently.
+// A panic logs an error, increments the panic counter, and sleeps 1s so the loop
+// can continue rather than killing the worker goroutine permanently.
 func (w *Worker) safeProcessBatch(ctx context.Context) {
 	metrics.WorkerTicks.WithLabelValues("entity").Inc()
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("entity worker panic — will retry next tick",
 				"panic", r)
-			metrics.WorkerErrors.WithLabelValues("entity").Inc()
+			metrics.WorkerPanics.WithLabelValues("entity").Inc()
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Second):

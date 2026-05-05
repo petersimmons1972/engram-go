@@ -116,13 +116,15 @@ func NewAuditWorkerWithDB(pool *pgxpool.Pool, db AuditQuerier, recaller Recaller
 
 // Run starts the background audit loop. Call as a goroutine.
 // Fires once immediately then on each ticker tick.
+// Panics are caught, logged, and incremented on the WorkerPanics metric before
+// the loop continues to the next iteration.
 func (w *AuditWorker) Run(ctx context.Context) {
 	run := func() {
 		metrics.WorkerTicks.WithLabelValues("audit").Inc()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("audit worker: panic", "err", r)
-				metrics.WorkerErrors.WithLabelValues("audit").Inc()
+				metrics.WorkerPanics.WithLabelValues("audit").Inc()
 			}
 		}()
 		if _, err := w.RunPass(ctx); err != nil {

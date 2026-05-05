@@ -111,13 +111,15 @@ func NewTunerWorkerWithDB(pool *pgxpool.Pool, db tunerQuerier, interval time.Dur
 
 // Run starts the background tuning loop. Call as a goroutine.
 // Fires once immediately then on each ticker tick.
+// Panics are caught, logged, and incremented on the WorkerPanics metric before
+// the loop continues to the next iteration.
 func (w *TunerWorker) Run(ctx context.Context) {
 	run := func() {
 		metrics.WorkerTicks.WithLabelValues("weight").Inc()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("weight tuner: panic", "err", r)
-				metrics.WorkerErrors.WithLabelValues("weight").Inc()
+				metrics.WorkerPanics.WithLabelValues("weight").Inc()
 			}
 		}()
 		if err := w.RunPass(ctx); err != nil {

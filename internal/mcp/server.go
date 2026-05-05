@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -167,6 +168,19 @@ type Server struct {
 	// read-only tools carry ReadOnlyHint=true so client-side gating (e.g. Claude
 	// Code's plan mode) does not block them.
 	toolAnnotations map[string]mcpgo.ToolAnnotation
+
+	// sessionTouchMu and sessionTouchTimes track the last time each session was
+	// touched to implement coalescing: at most one DB write per session per 30s.
+	// This prevents unbounded goroutine spawning when the same session makes
+	// multiple requests in quick succession (#553).
+	sessionTouchMu    sync.Mutex
+	sessionTouchTimes map[string]time.Time // sessionID -> last TouchSession time
+
+	// embedDegraded is an atomic flag that tracks whether embedding is currently
+	// degraded. Unlike cfg.EmbedDegraded (set once at startup), this value is
+	// updated by the /health probe loop every 30s so it can flip back to false
+	// when LiteLLM recovers (#565).
+	embedDegraded *atomic.Bool
 }
 
 // readOnlyToolNames returns the canonical set of MCP tool names that perform
@@ -242,13 +256,20 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	// Add embedder health to config so all tool handlers can access it.
 	cfg.EmbedderHealth = embedderHealth
 
+	// Initialize embedDegraded from cfg.EmbedDegraded; this will be updated
+	// by the /health probe loop as LiteLLM availability changes (#565).
+	embedDegradedFlag := &atomic.Bool{}
+	embedDegradedFlag.Store(cfg.EmbedDegraded)
+
 	s := &Server{
-		pool:             pool,
-		cfg:              cfg,
-		uploads:          make(map[string]*uploadSession),
-		trustProxy:       trustProxy,
-		embedderHealth:   embedderHealth,
-		toolAnnotations:  make(map[string]mcpgo.ToolAnnotation),
+		pool:              pool,
+		cfg:               cfg,
+		uploads:           make(map[string]*uploadSession),
+		trustProxy:        trustProxy,
+		embedderHealth:    embedderHealth,
+		toolAnnotations:   make(map[string]mcpgo.ToolAnnotation),
+		sessionTouchTimes: make(map[string]time.Time),
+		embedDegraded:     embedDegradedFlag,
 	}
 	mcpServer := server.NewMCPServer("engram", "1.0.0",
 		server.WithToolCapabilities(true),
@@ -642,8 +663,26 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 		panic("engram: auth middleware called with empty apiKey — programming error")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Attach a short request correlation ID to the context for log threading (#320).
-		requestID := fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+		// Extract or generate a request correlation ID for log threading (#320, #555).
+		// Check X-Request-Id first, then traceparent (OpenTelemetry), else generate.
+		requestID := r.Header.Get("X-Request-Id")
+		if requestID == "" {
+			if traceparent := r.Header.Get("traceparent"); traceparent != "" {
+				// traceparent format: version-trace_id-parent_id-trace_flags
+				// Extract the trace_id (32-char hex) for correlation purposes
+				parts := strings.Split(traceparent, "-")
+				if len(parts) >= 2 && len(parts[1]) >= 12 {
+					requestID = parts[1][:12]
+				}
+			}
+		}
+		if requestID == "" {
+			requestID = fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+		}
+
+		// Echo the request ID in the response header for client-side correlation (#555)
+		w.Header().Set("X-Request-Id", requestID)
+
 		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
 
 		// Inject the auto-episode flag when ?auto_episode=1 is present in the URL.
@@ -715,14 +754,26 @@ func (s *Server) withSessionFingerprint(next http.Handler, apiKey string) http.H
 
 		// Update last_seen_at so the session remains within the rehydration window
 		// even for long-lived connections that exceed the registration timestamp (#362).
+		// Coalesce touches: at most one DB write per session per 30 seconds (#553).
 		if s.cfg.SessionDB != nil {
-			go func() {
-				dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := s.cfg.SessionDB.TouchSession(dbCtx, sessionID); err != nil {
-					slog.Debug("session touch failed", "session_id", sessionID, "err", err)
-				}
-			}()
+			s.sessionTouchMu.Lock()
+			lastTouch := s.sessionTouchTimes[sessionID]
+			now := time.Now()
+			shouldTouch := now.Sub(lastTouch) >= 30*time.Second
+			if shouldTouch {
+				s.sessionTouchTimes[sessionID] = now
+			}
+			s.sessionTouchMu.Unlock()
+
+			if shouldTouch {
+				go func() {
+					dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					if err := s.cfg.SessionDB.TouchSession(dbCtx, sessionID); err != nil {
+						slog.Debug("session touch failed", "session_id", sessionID, "err", err)
+					}
+				}()
+			}
 		}
 
 		storedFP, _ := stored.([]byte)
@@ -1124,16 +1175,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			ollamaStatus = "error"
 			slog.Warn("health: could not build litellm probe request", "err", err)
 		}
-	}
 
-	// When EmbedDegraded is set, LiteLLM was unavailable at startup but the server
-	// started anyway. If LiteLLM has since recovered, promote to "ok". If still
-	// unreachable, report "degraded" — the server is operational, BM25+recency active.
-	if s.cfg.EmbedDegraded {
+		// Check the current embedding degradation status. Update the atomic flag
+		// so the state can flip back to false when LiteLLM recovers (#565).
+		currentlyDegraded := s.embedDegraded.Load()
 		if embedLiveOK {
+			// LiteLLM is currently healthy — clear the degraded flag
 			ollamaStatus = "ok"
+			s.embedDegraded.Store(false)
 		} else {
-			ollamaStatus = "degraded"
+			// LiteLLM is currently unhealthy
+			if currentlyDegraded {
+				// Was already degraded; stay degraded but report as operational (HTTP 200)
+				ollamaStatus = "degraded"
+			} else {
+				// Was healthy but is now unhealthy — this is a new failure
+				ollamaStatus = "error"
+			}
+			s.embedDegraded.Store(true)
 		}
 	}
 
@@ -1167,7 +1226,7 @@ var extractionSem = make(chan struct{}, 20)
 // enqueueExtractionAsync submits memID to the entity extraction queue via pool.
 // Intended to run in a detached goroutine; all failures are logged, never surfaced.
 // Bounded by extractionSem: if more than 20 extraction goroutines are already
-// running, this call is dropped and a warning is logged.
+// running, this call is dropped and ExtractionDropped metric is incremented.
 func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
 	select {
 	case extractionSem <- struct{}{}:
@@ -1176,6 +1235,7 @@ func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
 		// semaphore full; skip this extraction rather than queuing unboundedly
 		slog.Warn("memory_store: entity extraction skipped, semaphore full",
 			"id", memID, "project", project)
+		metrics.ExtractionDropped.WithLabelValues("semaphore_full").Inc()
 		return
 	}
 	defer func() { <-extractionSem }()
@@ -1193,6 +1253,7 @@ func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
 	if eerr := h.Engine.Backend().EnqueueExtractionJob(ctx, memID, project); eerr != nil {
 		slog.Warn("memory_store: enqueue extraction job failed",
 			"id", memID, "project", project, "err", eerr)
+		metrics.ExtractionDropped.WithLabelValues("queue_error").Inc()
 	}
 }
 

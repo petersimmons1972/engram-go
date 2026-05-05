@@ -74,6 +74,20 @@ var (
 		Name: "engram_embed_failures_total",
 		Help: "Total final embedding failures by reason",
 	}, []string{"reason"})
+
+	// WorkerPanics counts panics caught and recovered by background workers.
+	// Incremented by the deferred recover() in each worker's main loop.
+	WorkerPanics = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_worker_panics_total",
+		Help: "Background worker panics caught and recovered",
+	}, []string{"worker"})
+
+	// ExtractionDropped counts entity-extraction jobs dropped when the semaphore is full.
+	// Labels: reason="semaphore_full" or "queue_error".
+	ExtractionDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_extraction_dropped_total",
+		Help: "Entity extraction jobs dropped (semaphore_full or queue_error)",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -89,5 +103,7 @@ func init() {
 		EpisodesEndedByReaperTotal,
 		EmbedRetries,
 		EmbedFailures,
+		WorkerPanics,
+		ExtractionDropped,
 	)
 }

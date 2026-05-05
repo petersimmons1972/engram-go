@@ -387,11 +387,14 @@ func TestHealthProbe_OllamaDegraded_Returns200WithDegradedField(t *testing.T) {
 	// Use a port on 127.0.0.1 that is almost certainly unbound.
 	unreachableOllama := "http://127.0.0.1:19999"
 
+	b := &atomic.Bool{}
+	b.Store(true)
 	s := &Server{
 		cfg: Config{
 			LiteLLMURL:      unreachableOllama,
 			EmbedDegraded: true, // set as if startup probe failed
 		},
+		embedDegraded: b,
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -421,11 +424,14 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 	}))
 	defer fakeOllama.Close()
 
+	b := &atomic.Bool{}
+	b.Store(true)
 	s := &Server{
 		cfg: Config{
 			LiteLLMURL:      fakeOllama.URL,
 			EmbedDegraded: true, // startup probe failed, but Ollama recovered
 		},
+		embedDegraded: b,
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -511,7 +517,8 @@ func TestHealthProbe_IgnoresExpiredRequestContext(t *testing.T) {
 	// Build a minimal Server pointing at the fake Ollama. No PgPool, so the
 	// Postgres probe is skipped and only the Ollama probe exercises the context.
 	s := &Server{
-		cfg: Config{LiteLLMURL: fakeOllama.URL},
+		cfg:           Config{LiteLLMURL: fakeOllama.URL},
+		embedDegraded: &atomic.Bool{},
 	}
 
 	// Create an already-cancelled request context — simulates an HTTP client
