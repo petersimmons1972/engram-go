@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -31,6 +32,7 @@ func newHealthServer(ollamaURL string) *Server {
 		cfg: Config{
 			LiteLLMURL: ollamaURL,
 		},
+		embedDegraded: &atomic.Bool{},
 	}
 }
 

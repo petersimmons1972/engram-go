@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -343,15 +344,29 @@ func run() error {
 
 	srv := internalmcp.NewServer(pool, cfg)
 
+	// Track all long-running workers with a WaitGroup so we can wait for them
+	// to exit gracefully after SIGTERM before closing the DB connection (#559).
+	var workersWg sync.WaitGroup
+
 	// Start audit worker — monitors ranking drift by re-running canonical queries.
 	auditRecaller := &auditRecallerAdapter{pool: pool}
 	auditWorker := audit.NewAuditWorker(sharedPool, auditRecaller, *embedModel, *auditInterval)
-	go auditWorker.Run(ctx)
+	workersWg.Add(1)
+	go func() {
+		defer workersWg.Done()
+		auditWorker.Run(ctx)
+		slog.Debug("audit worker shutdown complete")
+	}()
 	slog.Info("audit worker started", "interval", auditInterval.String())
 
 	// Start weight tuner worker — adjusts per-project weights on dominant failure classes.
 	tunerWorker := weight.NewTunerWorker(sharedPool, *weightInterval)
-	go tunerWorker.Run(ctx)
+	workersWg.Add(1)
+	go func() {
+		defer workersWg.Done()
+		tunerWorker.Run(ctx)
+		slog.Debug("weight tuner worker shutdown complete")
+	}()
 	slog.Info("weight tuner started", "interval", weightInterval.String())
 	if cc != nil {
 		srv.SetClaudeClient(cc)
@@ -389,7 +404,12 @@ func run() error {
 				PollInterval: time.Duration(envInt("ENGRAM_ENTITY_POLL_SECONDS", 5)) * time.Second,
 				BatchSize:    envInt("ENGRAM_ENTITY_BATCH_SIZE", 10),
 			})
-			go w.Run(ctx)
+			workersWg.Add(1)
+			go func() {
+				defer workersWg.Done()
+				w.Run(ctx)
+				slog.Debug("entity extraction worker shutdown complete", "project", proj)
+			}()
 			slog.Info("entity extraction worker started", "project", proj)
 		}
 	}
@@ -425,7 +445,29 @@ func run() error {
 
 	slog.Info("engram ready", "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
-	return srv.Start(ctx, *host, *port, apiKey, *baseURL)
+
+	err = srv.Start(ctx, *host, *port, apiKey, *baseURL)
+
+	// Wait for all background workers to exit (they listen to ctx.Done(), which
+	// is cancelled when SIGTERM is received). Use a timeout to avoid hanging forever (#559).
+	slog.Info("waiting for background workers to shut down...")
+	workersDone := make(chan struct{})
+	go func() {
+		workersWg.Wait()
+		close(workersDone)
+	}()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	select {
+	case <-workersDone:
+		slog.Info("all background workers shut down cleanly")
+	case <-shutdownCtx.Done():
+		slog.Warn("background worker shutdown timeout — some workers did not exit gracefully")
+	}
+
+	return err
 }
 
 func envOr(key, def string) string {

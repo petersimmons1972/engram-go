@@ -126,3 +126,50 @@ func TestChunksPendingReembedGauge(t *testing.T) {
 		t.Errorf("expected 0 after reset, got %v", v)
 	}
 }
+
+// TestWorkerPanicsCounter verifies the worker panic counter increments by worker label.
+func TestWorkerPanicsCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_worker_panics_total_test",
+		Help: "test",
+	}, []string{"worker"})
+	reg.MustRegister(c)
+
+	c.WithLabelValues("audit").Inc()
+	c.WithLabelValues("audit").Inc()
+	c.WithLabelValues("weight_tuner").Inc()
+
+	auditCount := testutil.ToFloat64(c.WithLabelValues("audit"))
+	if auditCount != 2 {
+		t.Errorf("expected 2 audit panics, got %v", auditCount)
+	}
+	tunerCount := testutil.ToFloat64(c.WithLabelValues("weight_tuner"))
+	if tunerCount != 1 {
+		t.Errorf("expected 1 tuner panic, got %v", tunerCount)
+	}
+}
+
+// TestExtractionDroppedCounter verifies the extraction dropped counter
+// increments by reason label.
+func TestExtractionDroppedCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_extraction_dropped_total_test",
+		Help: "test",
+	}, []string{"reason"})
+	reg.MustRegister(c)
+
+	c.WithLabelValues("semaphore_full").Inc()
+	c.WithLabelValues("semaphore_full").Inc()
+	c.WithLabelValues("queue_error").Inc()
+
+	semCount := testutil.ToFloat64(c.WithLabelValues("semaphore_full"))
+	if semCount != 2 {
+		t.Errorf("expected 2 semaphore_full drops, got %v", semCount)
+	}
+	qErr := testutil.ToFloat64(c.WithLabelValues("queue_error"))
+	if qErr != 1 {
+		t.Errorf("expected 1 queue_error drop, got %v", qErr)
+	}
+}
