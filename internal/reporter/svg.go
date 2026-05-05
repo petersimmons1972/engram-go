@@ -2,8 +2,8 @@ package reporter
 
 import (
 	"fmt"
+	"html/template"
 	"strings"
-	"text/template"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
