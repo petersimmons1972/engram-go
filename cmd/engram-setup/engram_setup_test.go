@@ -14,11 +14,12 @@ import (
 // bearer token before displaying it (#545).
 func TestDryRunRedactsBearer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		switch r.URL.Path {
+		case "/health":
 			w.WriteHeader(http.StatusOK)
-		} else if r.URL.Path == "/setup-token" {
+		case "/setup-token":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"token":    "test-token-1234567890abcdefghij",
 				"endpoint": "http://localhost:8788",
 				"name":     "engram",

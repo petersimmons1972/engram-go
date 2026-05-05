@@ -78,7 +78,6 @@ func run() error {
 }
 
 func configureWithSetup(base, name string, dryRun bool, format string, setup *setupResponse) error {
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
