@@ -1160,19 +1160,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			resp, herr := http.DefaultClient.Do(req)
 			if herr != nil {
-				ollamaStatus = "error"
+				ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
 				slog.Warn("health: litellm probe failed", "err", herr)
 			} else {
 				_ = resp.Body.Close()
 				if resp.StatusCode >= 500 {
-					ollamaStatus = "error"
+					ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
 					slog.Warn("health: litellm returned server error", "status", resp.StatusCode)
 				} else {
 					embedLiveOK = true
 				}
 			}
 		} else {
-			ollamaStatus = "error"
+			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded; intentional fallthrough when not degraded
 			slog.Warn("health: could not build litellm probe request", "err", err)
 		}
 

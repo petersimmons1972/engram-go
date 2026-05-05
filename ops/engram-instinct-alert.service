@@ -1,0 +1,13 @@
+[Unit]
+Description=Alert on instinct consolidation timer failure
+Documentation=https://github.com/petersimmons1972/engram-go/issues/556
+PartOf=instinct.timer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl status instinct.timer
+ExecStart=/bin/journalctl -xe --no-pager -n 20 -u instinct.service
+
+# Prevent alert spam: only run when the timer is failing.
+# If the timer unit itself is unhealthy, the journal-dump above will show why.
+OnFailure=

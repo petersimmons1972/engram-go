@@ -35,8 +35,17 @@ import (
 var Version = "dev"
 
 func main() {
+	startTime := time.Now()
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
+		// Startup backoff: prevent crash-loop when bad config is detected early.
+		// If the process fails within 30 seconds of startup, sleep 5s before exiting.
+		// This gives systemd/Kubernetes time to back off before restart attempts (#586, #481, #539).
+		uptimeSec := int64(time.Since(startTime).Seconds())
+		if uptimeSec < 30 {
+			slog.Info("startup failed quickly — sleeping 5s to prevent crash loop", "uptime_sec", uptimeSec)
+			time.Sleep(5 * time.Second)
+		}
 		os.Exit(1)
 	}
 }

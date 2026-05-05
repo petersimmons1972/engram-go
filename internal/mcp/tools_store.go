@@ -370,14 +370,14 @@ const maxImportanceValue = 100
 // minImportanceValue is the minimum allowed importance value.
 const minImportanceValue = 0
 
-// projectNamePattern validates project names: ^[a-z0-9_-]{1,64}$
+// projectNamePattern validates project names: ^[a-z0-9_-]{1,64}$.
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // validateQuickStoreInput validates all fields for quick-store:
 // - content: required, max 1 MiB
 // - project: must match ^[a-z0-9_-]{1,64}$
 // - tags: max 64, each max 256 chars
-// - importance: 0–100
+// - importance: 0–100.
 func validateQuickStoreInput(content string, project string, tags []string, importance int) error {
 	if len(content) > maxQuickStoreContentSize {
 		return fmt.Errorf("content exceeds max size %d bytes", maxQuickStoreContentSize)

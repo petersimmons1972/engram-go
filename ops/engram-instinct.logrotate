@@ -1,0 +1,12 @@
+# Log rotation for instinct consolidation runs
+# Place this file in /etc/logrotate.d/engram-instinct
+# Managed by: ops/README.md
+
+/var/lib/instinct/run.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    create 0644 nobody nobody
+}
