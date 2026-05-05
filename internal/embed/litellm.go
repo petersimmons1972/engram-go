@@ -131,7 +131,7 @@ func isRetryableError(err error, statusCode int) bool {
 // Formula: base * 2^attempt + jitter, where base=100ms.
 // Attempt 0: 100ms → 200ms ± 25% = 75–125ms (no jitter needed, it's the first retry)
 // Attempt 1: 200ms → 400ms ± 25% = 300–500ms
-// Attempt 2: 400ms → 1600ms ± 25% = 1.2–2.0s
+// Attempt 2: 400ms → 1600ms ± 25% = 1.2–2.0s.
 func computeBackoff(attempt int) time.Duration {
 	base := 100 * time.Millisecond
 	// base * 2^attempt gives us the exponential part
