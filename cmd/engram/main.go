@@ -93,7 +93,7 @@ func run() error {
 	// are visible in /proc/cmdline to any process on the host. Read from env only.
 	apiKey := envOr("ENGRAM_API_KEY", "")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
-	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs")
+	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = disabled)")
 	auditInterval := fs.Duration("audit-interval", envDuration("ENGRAM_AUDIT_INTERVAL", 6*time.Hour), "How often the decay audit worker runs")
 	weightInterval := fs.Duration("weight-interval", envDuration("ENGRAM_WEIGHT_INTERVAL", 24*time.Hour), "How often the weight tuner worker runs")
 
@@ -107,11 +107,12 @@ func run() error {
 	maxDocumentBytes := fs.Int("max-document-bytes", envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024), "Maximum document size for ingest operations")
 	rawDocumentMaxBytes := fs.Int("raw-document-max-bytes", envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024), "Maximum raw document size before rejection")
 	ragMaxTokens := fs.Int("rag-max-tokens", envInt("ENGRAM_RAG_MAX_TOKENS", 4096), "Maximum tokens for RAG context assembly")
-	rateLimit := fs.Float64("rate-limit", envFloat("ENGRAM_RATE_LIMIT", 0), "per-IP HTTP rate limit in req/s (0 = unlimited, recommended for local use)")
+	rateLimit := fs.Float64("rate-limit", envFloat("ENGRAM_RATE_LIMIT", 0), "DEPRECATED: use --rate-limit-rps instead. Per-IP HTTP rate limit in req/s (0 = unlimited, recommended for local use)")
 	entityProjectsFlag := fs.String("entity-projects", envOr("ENGRAM_ENTITY_PROJECTS", ""), "Comma-separated list of projects to run entity extraction on")
 
-	// Rate limiter knobs (#387): configurable per-IP rate limit and loopback auto-disable.
-	rateLimitRPS := fs.Int("rate-limit-rps", envInt("ENGRAM_RATE_LIMIT_RPS", 0), "Per-IP sustained request rate limit in req/s (0 = default 50)")
+	// Rate limiter knobs (#387, #560): configurable per-IP rate limit and loopback auto-disable.
+	// When both --rate-limit and --rate-limit-rps are set, --rate-limit-rps takes precedence (#560).
+	rateLimitRPS := fs.Int("rate-limit-rps", envInt("ENGRAM_RATE_LIMIT_RPS", 0), "Per-IP sustained request rate limit in req/s (0 = default 50) — preferred over --rate-limit")
 	rateLimitBurst := fs.Int("rate-limit-burst", envInt("ENGRAM_RATE_LIMIT_BURST", 0), "Per-IP token-bucket burst size (0 = default 200)")
 	rateLimitDisable := fs.Bool("rate-limit-disable", envBool("ENGRAM_RATE_LIMIT_DISABLE", false), "Disable HTTP rate limiting entirely (single-user local use)")
 
@@ -124,6 +125,13 @@ func run() error {
 	if *versionFlag {
 		fmt.Printf("engram %s\n", Version)
 		os.Exit(0)
+	}
+
+	// Rate-limit precedence: --rate-limit-rps wins over --rate-limit (#560).
+	// Log a warning if both are set so users understand which one is active.
+	if *rateLimit != 0 && *rateLimitRPS != 0 {
+		slog.Warn("both --rate-limit and --rate-limit-rps are set; using --rate-limit-rps (deprecated flag --rate-limit is ignored)",
+			"rate_limit", *rateLimit, "rate_limit_rps", *rateLimitRPS)
 	}
 
 	// Docker HEALTHCHECK support — distroless images have no shell or wget,
