@@ -26,6 +26,7 @@ type LiteLLMClient struct {
 	dims       int
 	targetDims int
 	http       *http.Client
+	cb         *CircuitBreaker
 }
 
 func newLiteLLMHTTPClient() *http.Client {
@@ -70,13 +71,42 @@ func NewLiteLLMClient(ctx context.Context, baseURL, model, apiKey string, target
 // probe. Use when the server must start even if LiteLLM is unavailable;
 // Embed() will return errors until LiteLLM recovers.
 func NewLiteLLMClientNoProbe(baseURL, model, apiKey string, targetDims int) *LiteLLMClient {
-	return &LiteLLMClient{
+	return NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey, targetDims, CircuitConfig{})
+}
+
+// NewLiteLLMClientNoProbeWithCircuitBreaker constructs a LiteLLMClient without a connectivity
+// probe, with optional circuit breaker configuration.
+func NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey string, targetDims int, cbCfg CircuitConfig) *LiteLLMClient {
+	c := &LiteLLMClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
 		http:       newLiteLLMHTTPClient(),
 	}
+
+	if cbCfg.Enabled || cbCfg.FailureThreshold > 0 {
+		c.cb = NewCircuitBreaker(cbCfg)
+		// Register callback to emit metrics on state transitions
+		c.cb.onStateChange = func(from, to CircuitState) {
+			fromStr := from.String()
+			toStr := to.String()
+			metrics.EmbedCircuitTransitions.WithLabelValues(fromStr, toStr).Inc()
+			// Emit state gauge (convert state to numeric value for clarity)
+			stateValue := 0.0
+			switch to {
+			case StateClosed:
+				stateValue = 1.0
+			case StateOpen:
+				stateValue = 2.0
+			case StateHalfOpen:
+				stateValue = 3.0
+			}
+			metrics.EmbedCircuitState.WithLabelValues(toStr).Set(stateValue)
+		}
+	}
+
+	return c
 }
 
 // isRetryableError checks if an error is transient and should trigger a retry.
@@ -167,7 +197,18 @@ func (c *LiteLLMClient) Dimensions() int {
 // connection refused, EOF) with up to 3 attempts (2 retries), 100ms→400ms→1.6s
 // backoff with ±25% jitter. Increments engram_embed_retries_total per retry
 // and engram_embed_failures_total{reason=exhausted|non_retryable} on final failure.
+//
+// If a circuit breaker is configured, checks circuit state first and short-circuits
+// with errCircuitOpen if the upstream is consistently failing.
 func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	// Check circuit breaker before attempting request
+	if c.cb != nil {
+		if err := c.cb.Allow(); err != nil {
+			metrics.EmbedFailures.WithLabelValues("circuit_open").Inc()
+			return nil, err
+		}
+	}
+
 	text = TruncateToModelWindow(text, ModelMaxTokens(c.model))
 
 	reqBody := map[string]any{
@@ -221,6 +262,9 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			// Network error: check if retryable
 			if !isRetryableError(err, 0) {
 				metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
+				if c.cb != nil {
+					c.cb.RecordFailure()
+				}
 				return nil, fmt.Errorf("litellm embed request: %w", err)
 			}
 			// Retryable error; log and retry
@@ -230,6 +274,9 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			}
 			// Last attempt failed
 			metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
+			if c.cb != nil {
+				c.cb.RecordFailure()
+			}
 			return nil, fmt.Errorf("litellm embed request (exhausted retries): %w", err)
 		}
 
@@ -242,6 +289,9 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 
 			if !isRetryableError(statusErr, resp.StatusCode) {
 				metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
+				if c.cb != nil {
+					c.cb.RecordFailure()
+				}
 				return nil, fmt.Errorf("litellm embed: %w", statusErr)
 			}
 			// Retryable HTTP error; log and retry
@@ -251,6 +301,9 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			}
 			// Last attempt failed
 			metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
+			if c.cb != nil {
+				c.cb.RecordFailure()
+			}
 			return nil, fmt.Errorf("litellm embed: %w (exhausted retries)", statusErr)
 		}
 
@@ -263,14 +316,21 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			// Decode error is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
+			if c.cb != nil {
+				c.cb.RecordFailure()
+			}
 			return nil, fmt.Errorf("litellm embed decode: %w", err)
 		}
 		if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
 			// Empty response is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
+			if c.cb != nil {
+				c.cb.RecordFailure()
+			}
 			return nil, fmt.Errorf("litellm embed: empty response")
 		}
 
+		// Success!
 		vec := result.Data[0].Embedding
 		if c.targetDims > 0 && len(vec) > c.targetDims {
 			// MRL client-side truncation: take first N dims, then L2-normalize
@@ -280,11 +340,20 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 		if c.dims == 0 {
 			c.dims = len(vec)
 		}
+
+		// Record success in circuit breaker and return
+		if c.cb != nil {
+			c.cb.RecordSuccess()
+		}
+
 		return vec, nil
 	}
 
 	// Should not reach here, but as a fallback
 	metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
+	if c.cb != nil {
+		c.cb.RecordFailure()
+	}
 	return nil, fmt.Errorf("litellm embed: exhausted %d attempts, last error: %w (status %d)", maxAttempts, lastErr, lastStatusCode)
 }
 

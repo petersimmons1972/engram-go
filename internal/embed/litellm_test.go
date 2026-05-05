@@ -260,6 +260,129 @@ func resetMetrics() {
 	// For now, we just note that tests should be independent or use separate instances
 }
 
+// TestEmbedReturnsCircuitOpenError verifies that when the circuit breaker is open,
+// Embed returns the circuit open error without calling the upstream.
+func TestEmbedReturnsCircuitOpenError(t *testing.T) {
+	t.Helper()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		// Always return 503
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Service Unavailable"))
+	}))
+	defer server.Close()
+
+	cbCfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  3,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+	client := NewLiteLLMClientNoProbeWithCircuitBreaker(server.URL, "test-model", "", 3, cbCfg)
+	ctx := context.Background()
+
+	// Record enough exhausted failures to open the circuit.
+	// Each Embed call exhausts retries (3 HTTP attempts) → 1 failure recorded to circuit.
+	// We need 3 Embed calls to reach the threshold of 3 failures.
+	for i := 0; i < 3; i++ {
+		_, _ = client.Embed(ctx, "test text")
+	}
+
+	// Circuit should now be open; attempts should be 9 (3 Embed calls × 3 retries each)
+	if attempts != 9 {
+		t.Errorf("expected 9 attempts to open circuit, got %d", attempts)
+	}
+
+	initialAttempts := attempts
+
+	// Next call should short-circuit without calling upstream
+	_, err := client.Embed(ctx, "test text")
+	if err != errCircuitOpen {
+		t.Errorf("expected errCircuitOpen, got %v", err)
+	}
+
+	// Upstream should not have been called
+	if attempts != initialAttempts {
+		t.Errorf("expected no additional attempts while circuit is open, got %d", attempts)
+	}
+}
+
+// TestEmbedWithCircuitBreakerSuccess verifies that successful calls record success
+// in the circuit breaker and keep it closed.
+func TestEmbedWithCircuitBreakerSuccess(t *testing.T) {
+	t.Helper()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		encodeEmbeddingResponse(w, []float32{0.1, 0.2, 0.3})
+	}))
+	defer server.Close()
+
+	cbCfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  5,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+	client := NewLiteLLMClientNoProbeWithCircuitBreaker(server.URL, "test-model", "", 3, cbCfg)
+	ctx := context.Background()
+
+	// Make successful calls; circuit should stay closed
+	for i := 0; i < 10; i++ {
+		vec, err := client.Embed(ctx, "test text")
+		if err != nil {
+			t.Fatalf("expected success, got error: %v", err)
+		}
+		if len(vec) == 0 {
+			t.Fatalf("expected non-empty vector")
+		}
+	}
+
+	if attempts != 10 {
+		t.Errorf("expected 10 upstream calls, got %d", attempts)
+	}
+
+	// Circuit should still be closed
+	if client.cb.State() != StateClosed {
+		t.Errorf("expected circuit to be Closed, got %v", client.cb.State())
+	}
+}
+
+// TestEmbedCircuitBreakerDisabledByDefault verifies that circuit breaker is
+// disabled when no config is provided (backward compatibility).
+func TestEmbedCircuitBreakerDisabledByDefault(t *testing.T) {
+	t.Helper()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Service Unavailable"))
+	}))
+	defer server.Close()
+
+	// Create client with empty config (disabled by default)
+	client := NewLiteLLMClientNoProbe(server.URL, "test-model", "", 3)
+	ctx := context.Background()
+
+	// Make calls that would fail; circuit breaker should be nil
+	for i := 0; i < 10; i++ {
+		_, _ = client.Embed(ctx, "test text")
+	}
+
+	// Circuit breaker should not be created
+	if client.cb != nil {
+		t.Errorf("expected circuit breaker to be nil when disabled")
+	}
+}
+
 // Helper: encodeEmbeddingResponse writes a valid embedding response
 func encodeEmbeddingResponse(w http.ResponseWriter, embedding []float32) {
 	w.Header().Set("Content-Type", "application/json")
