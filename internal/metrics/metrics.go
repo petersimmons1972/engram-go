@@ -60,6 +60,20 @@ var (
 		Name: "engram_episodes_ended_by_reaper_total",
 		Help: "Total auto-episodes closed by the TTL reaper (high reaper:clean ratio indicates disconnect-handler bugs)",
 	})
+
+	// EmbedRetries counts embedding requests that were retried due to transient errors
+	// (502, 503, 504, connection refused, EOF, context timeout).
+	EmbedRetries = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_embed_retries_total",
+		Help: "Total embedding retries due to transient errors",
+	})
+
+	// EmbedFailures counts final embedding failures by reason.
+	// reason is "exhausted" (retries exceeded) or "non_retryable" (4xx except 408/429, context canceled, etc.).
+	EmbedFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_embed_failures_total",
+		Help: "Total final embedding failures by reason",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -73,5 +87,7 @@ func init() {
 		EpisodesStartedTotal,
 		EpisodesEndedCleanTotal,
 		EpisodesEndedByReaperTotal,
+		EmbedRetries,
+		EmbedFailures,
 	)
 }
