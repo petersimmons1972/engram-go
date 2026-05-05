@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -675,6 +676,32 @@ func upsertPattern(ctx context.Context, e engramAPI, p Pattern, events []Event) 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
+	fs := flag.NewFlagSet("instinct", flag.ExitOnError)
+	help := fs.Bool("help", false, "show help and exit")
+	fs.Bool("h", false, "show help and exit") // alias for -help
+	version := fs.Bool("version", false, "print version and exit")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: instinct [options]\n")
+		fmt.Fprintf(os.Stderr, "\nPatern detection daemon for Claude Code tool-use events.\n")
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		os.Exit(1)
+	}
+
+	if *help {
+		fs.Usage()
+		os.Exit(0)
+	}
+
+	if *version {
+		fmt.Println("instinct dev")
+		os.Exit(0)
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("config", "err", err)

@@ -45,10 +45,11 @@ func run() error {
 	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
 	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
 	logLevel := slog.LevelInfo
+	logLevelErr := error(nil)
 	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
 		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
-			// Invalid level — keep INFO, log the issue after handler is set.
-			_ = err
+			// Invalid level — keep INFO, but remember to log the issue after handler is set.
+			logLevelErr = err
 		}
 	}
 	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
@@ -60,6 +61,10 @@ func run() error {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: logLevel,
 		})))
+	}
+	// Log warning about invalid log level after handler is initialized
+	if logLevelErr != nil {
+		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
 	}
 
 	fs := flag.NewFlagSet("engram", flag.ExitOnError)
@@ -88,9 +93,9 @@ func run() error {
 	// are visible in /proc/cmdline to any process on the host. Read from env only.
 	apiKey := envOr("ENGRAM_API_KEY", "")
 	dataDir := fs.String("data-dir", envOr("ENGRAM_DATA_DIR", ""), "Base directory for file operations (required when using export/ingest tools)")
-	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs (0 = default 8h)")
-	auditInterval := fs.Duration("audit-interval", envDuration("ENGRAM_AUDIT_INTERVAL", 6*time.Hour), "How often the decay audit worker runs (default 6h)")
-	weightInterval := fs.Duration("weight-interval", envDuration("ENGRAM_WEIGHT_INTERVAL", 24*time.Hour), "How often the weight tuner worker runs (default 24h)")
+	decayInterval := fs.Duration("decay-interval", envDuration("ENGRAM_DECAY_INTERVAL", 0), "How often the importance decay worker runs")
+	auditInterval := fs.Duration("audit-interval", envDuration("ENGRAM_AUDIT_INTERVAL", 6*time.Hour), "How often the decay audit worker runs")
+	weightInterval := fs.Duration("weight-interval", envDuration("ENGRAM_WEIGHT_INTERVAL", 24*time.Hour), "How often the weight tuner worker runs")
 
 	// Knobs previously only configurable via environment variables — registered as flags
 	// so they appear in --help. Env vars remain supported as defaults (closes #306).
@@ -124,13 +129,18 @@ func run() error {
 	// Docker HEALTHCHECK support — distroless images have no shell or wget,
 	// so CMD-SHELL form is unusable. This flag lets the binary probe its own
 	// /health endpoint and exit with the appropriate code. See issue #341.
+	// Must use *port flag (parsed above), not envInt("ENGRAM_PORT") — fixes #544.
 	if *healthcheckFlag {
-		probePort := envInt("ENGRAM_PORT", 8788)
 		hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", probePort), nil)
+		apiKeyForProbe := apiKey
+		// Read API key before it gets unset; only add auth header if key was set
+		req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", *port), nil)
 		if err != nil {
 			os.Exit(1)
+		}
+		if apiKeyForProbe != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKeyForProbe)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != http.StatusOK {
