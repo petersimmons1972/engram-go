@@ -14,7 +14,7 @@ Engram runs as three Docker containers. Before you start, confirm you have what 
 
 - **Docker Engine 20.10 or newer** — check with `docker --version`
 - **Docker Compose 2.0 or newer** — check with `docker compose version` (note: the subcommand, not `docker-compose`)
-- **Go 1.23 or newer** — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
+- **Go 1.25 or newer** — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/) (matches `go.mod`)
 - **4 GB RAM free** — Ollama loads the embedding model into memory and keeps it there
 - **2 GB disk** — PostgreSQL data volume plus the Ollama model download
 
