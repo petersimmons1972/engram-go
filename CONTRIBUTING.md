@@ -8,13 +8,15 @@ That philosophy shapes every design decision. Keep it in mind when you propose c
 
 ## Development Setup
 
+### Go + PostgreSQL (MCP Server)
+
 Start the stack:
 
 ```bash
 docker compose up -d
 ```
 
-This starts PostgreSQL and Ollama. The server reads `DATABASE_URL` and `OLLAMA_URL` from the environment — defaults are in `docker-compose.yml`.
+This starts PostgreSQL. The server reads `DATABASE_URL` from the environment — defaults are in `docker-compose.yml`.
 
 Run the test suite:
 
@@ -31,6 +33,40 @@ TEST_DATABASE_URL=postgres://engram:PASSWORD@localhost:5432/engram go test ./int
 ```
 
 Integration tests hit a real database. Unit tests do not. Keep them clearly separated — a test that relies on database state but is not named `*Integration*` will fail silently in CI when the test database is not present.
+
+### Rust (Re-embedder)
+
+The `reembed-rs/` directory contains the high-throughput re-embedding worker in Rust. It shares the same PostgreSQL backend but runs in its own container to isolate re-embedding concurrency from MCP request handling.
+
+**Prerequisites:**
+- Rust 1.75+ (`rustc --version`)
+- Cargo (installed with Rust)
+
+**Build:**
+
+```bash
+cd reembed-rs
+cargo build --release
+```
+
+**Test:**
+
+```bash
+cd reembed-rs
+cargo test --release
+```
+
+**Run locally:**
+
+```bash
+cd reembed-rs
+cargo run --release -- \
+  --database-url postgres://engram:PASSWORD@localhost:5432/engram \
+  --litellm-url http://localhost:4000 \
+  --engram-embed-model mxbai-embed-large
+```
+
+See `reembed-rs/README.md` for detailed Rust-specific documentation.
 
 ---
 
@@ -74,15 +110,24 @@ go test ./... -coverprofile=coverage.out && go tool cover -func=coverage.out
 
 ## AI-Generated PR Policy
 
-PRs from AI agents must carry the `ai-generated` label and require three reviewers before merge:
+PRs submitted by AI agents, code generation tools, or LLM-assisted development must carry the `ai-generated` label and require three rounds of adversarial review before merge:
 
-- **Rickover** — correctness audit: boundary conditions, logic bugs, error handling
-- **Spruance** — coverage audit: at least 70% function coverage on new files
-- **Zero-context reviewer** — fresh-eyes structural review: receives only the diff, no prior context
+1. **Correctness Review** — boundary conditions, logic bugs, error handling, off-by-one errors, nil pointer dereferences, panic conditions
+2. **Coverage Review** — at minimum 70% function coverage on new files, complete test for every exported API
+3. **Structural Review** — fresh-eyes perspective, architecture alignment, naming clarity, no unnecessary complexity
 
-All three must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
+All three reviews must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
 
-Why the extra reviewers? PR #162 (April 2026) was AI-generated. It passed syntax checks. It had four logic bugs and 20 of 24 functions untested. The adversarial review process caught all of them before merge. The clean TDD reimplementation in commit `aaf56c6` is the documented reference for what adequate AI-submitted work looks like. The policy exists because of that specific failure, and it stays until we have a better signal.
+**Why?** PR #162 (April 2026) was AI-generated. It passed syntax checks. It had:
+- Four logic bugs (two off-by-one errors, one nil dereference, one panic on edge case)
+- 20 of 24 functions with no tests
+- Three functions shadowing standard library methods without clear intent
+
+The adversarial review process caught all of them. The clean TDD reimplementation in commit `aaf56c6` is the documented reference for what adequate AI-submitted work looks like.
+
+**Tools at contributor's discretion:** Use GitHub Copilot, Claude Code, LLM pair programming, or any other AI tooling. The requirement is review depth, not prohibition on AI use.
+
+**For authors:** If your code is AI-assisted, label the PR `ai-generated` upfront. It ensures the right review depth and is faster than explaining it later.
 
 ---
 
