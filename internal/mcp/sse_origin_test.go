@@ -51,6 +51,39 @@ func TestBuildSSEServer_EndpointEventIsRelative(t *testing.T) {
 		"endpoint event must be a path-only URL; got %q", endpoint)
 }
 
+// TestBuildSSEServer_EmitsKeepalive verifies that the SSE stream sends a
+// keepalive ping within the configured interval. Regression guard for #612.
+func TestBuildSSEServer_EmitsKeepalive(t *testing.T) {
+	// Use a short interval so the test doesn't wait the full 15s production value.
+	sseKeepaliveInterval = 200 * time.Millisecond
+	t.Cleanup(func() { sseKeepaliveInterval = 15 * time.Second })
+
+	mcp := server.NewMCPServer("test", "0.0.0", server.WithToolCapabilities(false))
+	sse := buildSSEServer(mcp, "http://127.0.0.1:8788")
+
+	ts := httptest.NewServer(sse.SSEHandler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	_ = readEndpointEvent(t, resp.Body)
+
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		if strings.Contains(sc.Text(), `"ping"`) {
+			return // keepalive received within timeout
+		}
+	}
+	t.Fatal("no keepalive ping received within 3s — WithKeepAliveInterval not enabled (#612)")
+}
+
 // readEndpointEvent reads SSE frames until it captures the `endpoint`
 // event's data line, then returns it.
 func readEndpointEvent(t *testing.T, body interface{ Read(p []byte) (int, error) }) string {
