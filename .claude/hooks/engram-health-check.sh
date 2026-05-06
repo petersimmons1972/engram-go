@@ -60,15 +60,15 @@ TMPFILE=$(mktemp)
 } > "$TMPFILE"
 mv "$TMPFILE" "$STATE_FILE"
 
-# Emit warning if threshold exceeded
+# Emit warning if threshold exceeded — but DO NOT block the tool call.
+# Exit 1 from a PreToolUse hook is interpreted by Claude Code as a tool denial,
+# which made every engram MCP call fail when this probe was unreliable
+# (e.g., when /quick-recall blocked behind a degraded embed pipeline).
+# The hook's job is to warn, not gatekeep: warn via systemMessage and exit 0
+# so the tool call proceeds. Engram itself reports degraded state via /health
+# and the circuit breaker handles persistent embed failures.
 if [[ "$FAILURES" -ge "$WARN_THRESHOLD" ]]; then
-  echo ""
-  echo "⛔ ENGRAM DISCONNECTED"
-  echo "   Engram unreachable since $LAST_FAILURE_TIME"
-  echo "   Engram-dependent work (memory_recall, memory_store, etc.) will silently fail."
-  echo "   Check: http://localhost:8788/health or restart Engram service."
-  echo ""
-  exit 1
+  printf '{"systemMessage":"Engram health probe failing (consecutive failures=%s, since %s). MCP call will proceed; recall may degrade to BM25+recency. Investigate: curl http://localhost:8788/health"}' "$FAILURES" "$LAST_FAILURE_TIME"
 fi
 
 exit 0
