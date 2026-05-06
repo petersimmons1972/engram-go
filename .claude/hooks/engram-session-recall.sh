@@ -120,33 +120,40 @@ rm -f "$_recall_tmp"
 
 # Strip any previous recall section and append fresh one
 if [[ -f "$MEMORY_FILE" ]]; then
-  python3 - "$MEMORY_FILE" "$RECALL_SECTION" <<'PYEOF'
-import sys, os, tempfile
+  MEMORY_LOCK="${MEMORY_FILE}.lock"
+  python3 - "$MEMORY_FILE" "$MEMORY_LOCK" "$RECALL_SECTION" <<'PYEOF'
+import sys, os, tempfile, fcntl
 
 path = sys.argv[1]
-new_section = sys.argv[2]
+lock_path = sys.argv[2]
+new_section = sys.argv[3]
 
-with open(path) as f:
-    content = f.read()
+with open(lock_path, "w") as lf:
+    fcntl.flock(lf, fcntl.LOCK_EX)
+    try:
+        with open(path) as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
 
-# Remove previous recall section if present
-if "## Engram Session Recall" in content:
-    content = content[:content.index("## Engram Session Recall")].rstrip()
+    # Remove previous recall section if present
+    if "## Engram Session Recall" in content:
+        content = content[:content.index("## Engram Session Recall")].rstrip()
 
-content = content.rstrip() + "\n" + new_section + "\n"
+    content = content.rstrip() + "\n" + new_section + "\n"
 
-# Atomic write — never leaves MEMORY.md truncated on interrupt (#393)
-dir_ = os.path.dirname(path) or "."
-fd, tmp = tempfile.mkstemp(dir=dir_, prefix=".memory_recall_tmp")
-try:
-    with os.fdopen(fd, "w") as f:
-        f.write(content)
-    os.replace(tmp, path)
-except Exception:
-    os.unlink(tmp)
-    raise
+    # Atomic write — never leaves MEMORY.md truncated on interrupt (#393)
+    dir_ = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=dir_, prefix=".memory_recall_tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
 
-print("✅ Engram: session recall injected into MEMORY.md")
+    print("✅ Engram: session recall injected into MEMORY.md")
 PYEOF
 else
   echo "⚠️  Engram session recall: MEMORY.md not found at ${MEMORY_FILE}"
