@@ -34,80 +34,47 @@ Each step has an explicit trigger. Execute the step when its trigger fires. Do n
 
 ## Advisory Protocol — Tiered Self-Escalation
 
-Models escalate up the tier only when the task genuinely requires stronger **reasoning**. Capacity problems (rate limits, timeouts, connection exhaustion, tool unavailability) stay at the current tier or below — fix them in Haiku.
-
-**Tier order:** Haiku → Sonnet → Opus
-
-**Minimum tier rule:** Always use the lowest tier that can execute the task correctly. Before spawning any agent or choosing a model, ask: "Would a less capable model get this right?" If yes, use the lower tier.
+**Capacity problems (rate limits, timeouts, infra failures) never escalate tiers — fix them in place.** Escalate only when reasoning quality changes the answer.
+**Tier rule:** Use the lowest tier that can decide correctly. Default Sonnet for execution, Haiku for mechanical work, Opus only for reasoning forks. Set each parallel agent's model independently — uneven teams (1 Sonnet coordinator + 4 Haiku workers + on-demand Opus) are correct and preferred. Homogeneous model selection is a smell.
 
 | Tier | Use for |
 |------|---------|
-| **Haiku** | Classification, formatting, retries, health checks, simple lookups, mechanical transforms, bulk judge/scoring tasks, any task where output quality is independent of reasoning depth |
-| **Sonnet** | Implementation, debugging, multi-file edits, code review, most engineering decisions |
-| **Opus** | Architectural forks with long-term consequences, irreversible high-stakes decisions, problems where stronger reasoning materially changes the answer |
+| **Haiku** | Classification, formatting, retries, health checks, mechanical transforms, bulk judge/scoring |
+| **Sonnet** | Implementation, debugging, multi-file edits, code review, executing diagnosed fixes |
+| **Opus** | Architecture decisions, irreversible high-stakes choices, reframing stuck diagnoses |
 
-When dispatching parallel agents, set each agent's model independently — do not default all agents to Sonnet when some are doing Haiku-tier work. **Uneven agent teams are correct and preferred**: a campaign with one Sonnet coordinator, four Haiku workers, and an on-demand Opus advisor costs a fraction of an all-Sonnet team and produces the same result. Homogeneous model selection is a smell.
+**Spawn Sonnet** to execute a fix you've already diagnosed — `subagent_type: "general-purpose"`, `model: "sonnet"`. Brief with error message, log excerpt, file paths.
 
-**The advisor pattern makes over-provisioning indefensible.** Sonnet and Haiku have a direct escalation path to Opus reasoning via the opus-advisor agent whenever they genuinely need it. There is no justification for defaulting to a higher tier "just in case" — escalate on demand, not by default.
+**Spawn `opus-advisor` before** any of:
+- **A1 — Architecture fork:** 2+ approaches with meaningfully different long-term consequences
+- **A2 — Infrastructure change:** K8s manifests, DNS, cert-manager, Cloudflare, storage
+- **A3 — Large refactor:** restructuring a module/class/boundary >100 lines
+- **A4 — Stuck on reasoning:** same root cause failed twice AND the failure is logic, not capacity
+- **A5 — Irreversible + ambiguous:** can't easily undo and the right answer isn't clear
 
-### Sonnet Advisor — Primary Fix Agent
+**Opus briefing format:**
+1. **Decision** — one sentence
+2. **Options** — A, B, (C) with one-sentence tradeoffs
+3. **Lean** — current preference and source of uncertainty
+4. **Context** — file paths, constraints
 
-Spawn a Sonnet advisor for **any fix work** — debugging, code changes, prompt tuning, log analysis, or operational troubleshooting. Sonnet's job is to diagnose and implement fixes; you orchestrate.
-
-**When to spawn Sonnet:**
-- Binary error, crash, or unexpected output — diagnose and fix
-- Test failure with non-obvious root cause — debug and repair
-- Checkpoint corruption or worker failure — inspect logs and fix
-- Rate limits, Engram slow, or infrastructure error — fix in place
-- GPU/OOM/network error — resolve directly
-- Scoring prompt producing wrong judgments — inspect and adjust
-
-Brief: share the error message, relevant log excerpt, and file paths. Sonnet implements the fix. Use `subagent_type: "general-purpose"` with `model: "sonnet"`.
-
-### Opus Advisor — Reasoning Failures Only
-
-Spawn Opus only for **reasoning or strategy problems** — problems not fixable by implementation alone.
-
-When the primary model encounters any of the following, **spawn the `opus-advisor` agent** via the Agent tool before proceeding:
-
-| Trigger | Description |
-|---------|-------------|
-| **A1 — Architecture fork** | Choosing between 2+ implementation approaches with meaningfully different long-term consequences |
-| **A2 — Infrastructure change** | Any modification to K8s manifests, DNS, cert-manager, Cloudflare, or storage configuration |
-| **A3 — Large refactor** | Restructuring a module, class, or system boundary > 100 lines |
-| **A4 — Stuck after 2 attempts** | The same root cause has failed twice AND the failure is a reasoning/logic problem; before the third attempt, get Opus to reframe |
-| **A5 — Ambiguous high-stakes decision** | A decision that cannot be easily reversed and the right answer isn't clear |
-
-**Skip the advisor for:** read-only investigation, single-file fixes < 50 lines with obvious root cause, routine dependency updates, **any failure caused by capacity/rate limits/timeouts/infra rather than reasoning**.
-
-**Opus is for reasoning quality, not capacity problems.** Rate limits, timeouts, connection exhaustion, and tool unavailability are infrastructure problems — fix them in Haiku. Never upgrade tiers because something failed; only upgrade when the task genuinely requires stronger reasoning to decide correctly.
-
-### Opus Advisor Briefing Format
-
-When spawning the Opus advisor for a reasoning problem, include:
-
-1. **Decision**: One sentence — what must be decided
-2. **Options**: A, B, (C) — each with a one-sentence tradeoff
-3. **Lean**: Which option you're currently leaning toward and why you're uncertain
-4. **Context**: Relevant file paths or constraints
-
-Use `subagent_type: "opus-advisor"` in the Agent tool call. Wait for the RECOMMENDATION before proceeding.
+Wait for RECOMMENDATION before proceeding.
 
 ## Engram Memory — MANDATORY
 
-Endpoint: `http://localhost:8788/mcp` · Known projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
+Endpoint: `http://localhost:8788/mcp` · Projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 
-Each rule has an explicit trigger. Execute when the trigger fires; do not execute outside its trigger.
+**Skip all memory ops for:** read-only investigation, informational answers, trivial single-file edits, or transient operational state with TTL <4h (service/DNS/build/migration/health output → file a GitHub Issue instead).
 
 | Rule | Trigger | Action |
 |------|---------|--------|
-| **R1 — Session-start recall** | First user message of a new conversation, before any other tool call | `memory_recall("current project status recent work", project="global")`, then `memory_recall("<topic of the request>", project="<relevant project>")`. If the relevant project is unclear, also recall from `global`. Once per conversation. |
-| **R2 — Pre-decision recall** | Before: (a) proposing an architecture or design, (b) choosing between 2+ implementation options, (c) modifying infrastructure (K8s, DNS, cert-manager, storage), (d) modifying a Clearwatch feature area | `memory_recall("<decision topic or feature area>", project="<relevant project>")`. Skip: read-only investigation, informational answers, trivial single-file edits. |
-| **R3 — Retrieval feedback** | Immediately after any `memory_recall` call — no exceptions | If results helped → `memory_feedback` with the IDs that actually informed the answer. If results were absent or wrong for a query where context should exist → `memory_store(content="MISS: searched '<query>', expected '<what I needed>', got '<what I got or nothing>'", memory_type="error", project="<project>", tags=["retrieval-miss"], importance=1)`. Feeds retrieval-quality data to Peter's memory benchmarking. |
-| **R4 — Post-work storage** | After: (a) a bug fix committed, (b) an architectural decision made, (c) a pattern used 2+ times in this session, (d) end of a working session | `memory_store` with the appropriate `memory_type`: `decision` (architectural choices — include why) · `error` (bug fixes — include root cause) · `pattern` (patterns established) · `context` (`importance=1, project="global"` for session summary at end) |
-| **R5 — Never-store exclusion** | Before any `memory_store` call | If content is transient operational state with expected lifespan < 4 hours (service status, DNS state, build status, migration progress, health output) → do NOT store. File a GitHub Issue instead. |
-| **R6 — Fallback to filesystem** | Engram unreachable after one retry within 30 seconds | Write the memory entry to `~/.claude/projects/-home-psimmons/memory/fallback.md` using the format defined in that file. On Engram reconnect, flush all pending entries via `memory_store` and clear them from the file. `fallback.md` is a staging file only — nothing should live there permanently. |
-| **R7 — Dispute tracking (Eisenhower only)** | Before Eisenhower adjudicates a user-raised dispute | `memory_recall("dispute-tracker <issue description>", project="<project>")`. If count ≥ 3, do NOT adjudicate — escalate to founder. Store each adjudication: `content="DISPUTE: <description> \| VERDICT: <summary> \| COUNT: N \| LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`. |
+| **R1 — Recall at start** | First user message of a new conversation | `memory_recall("current project status recent work", project="global")`, then recall the request topic from the relevant project. Once per conversation. |
+| **R2 — Recall before deciding** | Before proposing architecture/design, choosing between 2+ options, modifying infra (K8s/DNS/cert-manager/storage), or modifying a Clearwatch feature area | `memory_recall("<topic>", project="<project>")` |
+| **R3 — Feedback after recall** | After every `memory_recall` | `memory_feedback` with the IDs that informed the answer. If results were absent/wrong where context should exist, store a MISS entry (`memory_type="error"`, `tags=["retrieval-miss"]`). |
+| **R4 — Store after work** | Bug fix committed, decision made, pattern used 2+ times, or end of session | `memory_store` with type: `decision` (include why) · `error` (include root cause) · `pattern` · `context` (`importance=1, project="global"` for session summary). |
+| **R6 — Fallback** | Engram unreachable after 1 retry within 30s | Stage entry in `~/.claude/projects/-home-psimmons/memory/fallback.md` (format defined in that file). Flush all pending entries on reconnect. Staging only — nothing lives there permanently. |
+
+*Eisenhower only — R7 dispute tracking:* before adjudicating a user-raised dispute, `memory_recall("dispute-tracker <issue>", project="<project>")`. If count ≥3, escalate to founder instead of adjudicating. Store each adjudication: `content="DISPUTE: <desc> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
 
 ## Test-After-Edit Protocol
 - After any code edit, run the relevant test suite before moving to the next task
@@ -115,14 +82,12 @@ Each rule has an explicit trigger. Execute when the trigger fires; do not execut
 - Watch for hardcoded counts/constants (e.g., chart counts) that break when adding/removing items
 
 ## Workflow
-- **Test first.** Failing test before first line of implementation. Run tests after EVERY edit. Never batch untested changes.
-- Plan mode for non-trivial tasks (3+ steps). Preserve error state if things go sideways — never push through unpredicted errors.
-- **Worktree before implementation — MANDATORY.** Use `superpowers:using-git-worktrees` before any approved plan. No exceptions.
-- Use skills for procedural work — authoritative over summaries here.
-- **Stay in scope.** >15 min tangent → file GitHub Issue, keep moving. <15 min → fix and note it.
-- `superpowers:verification-before-completion` before claiming done.
-- **Graceful degradation:** For research-heavy dispatches (multi-tool, expected >8 turns), add to the dispatch brief: "If you reach turn 8 of 10 without a complete answer, stop tool calls and return a partial summary labeled `PARTIAL:` with what you have gathered. Do not wait for perfect information."
-- **Two escalation modes — use the right one:** Partial-work (agent made real progress, got stuck) → preserve the partial output and hand off with context, never discard useful work. Hard-failure (infrastructure or tooling broke before meaningful work happened) → dead letter it, retry from scratch, don't try to salvage.
+- **Test-first.** Failing test before implementation; run tests after every edit.
+- **Non-trivial tasks (3+ steps):** plan mode → worktree (`superpowers:using-git-worktrees`) → implement. Worktree step has no exceptions. Preserve error state — never push through unpredicted errors.
+- **Procedural work:** use skills — authoritative over summaries here.
+- **Before claiming done:** `superpowers:verification-before-completion`.
+- **Stay in scope.** >15 min tangent → file Issue, keep moving. <15 min → fix and note.
+- **Agent dispatch trouble:** if real progress was made, salvage partial output and hand off with context. If infrastructure broke before progress, dead-letter and retry from scratch — don't salvage broken state. For research dispatches >8 expected turns, brief: "stop at turn 8/10 and return PARTIAL: with what you have."
 
 ## Decisions
 - 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
@@ -138,30 +103,22 @@ GitHub Issues ARE the work. Defect not in the system = does not exist.
 - **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
 
 ## CLI Tool Preferences
-- **HTTP requests:** use `xh` not `curl` — cleaner output, no flags needed for JSON
-- **kubectl shortcuts:** check `just --list` before typing raw kubectl commands; use `just <recipe>` when one exists
-- **Multi-pod logs:** use `stern <name> -n <ns>` not `kubectl logs` when tailing across multiple pods
-- **Security reviews:** always run `semgrep scan --config auto <path>` as first step before manual review
-- **Git diffs:** `git diff --staged` output is automatically rendered by delta (line numbers included)
-- **Structural code search:** use `ast-grep --pattern 'def func_name($$$)'` to locate functions precisely — avoids reading large files just to find insertion points. Installed at `/home/linuxbrew/.linuxbrew/bin/ast-grep`
-- **JSON field extraction:** use `gron dossier.json | grep field_name` to pull single fields from large JSON without loading the whole file into context. Installed at `/home/linuxbrew/.linuxbrew/bin/gron`
-- **YAML field extraction:** `kubectl get deploy -n NS -o yaml | yq '.items[] | {"name":.metadata.name,"replicas":.spec.replicas}'` — 1123 lines → ~36 (97% reduction). Full patterns → `~/TOOLS.md`
-- **kubectl output cleanup:** `kubectl get X -o yaml | kubectl-neat` — use for full-spec copy/templating; prefer `yq` for targeted field reads. Installed at `~/bin/kubectl-neat`
-- **Large data files + multi-file queries:** `duckdb -c "SELECT ... FROM read_json('/tmp/pod-*.json')"` — SQL on CSV/JSON/Parquet with glob support. Full patterns → `~/TOOLS.md`
-- **JSON modification without jq syntax:** `gron file.json | sed 's/old/new/' | gron --ungron` — round-trip modify. Full patterns → `~/TOOLS.md`
-- **Code refactoring previews:** `ast-grep --pattern 'X' --rewrite 'Y' src/` shows diff; `--update-all` applies. Full patterns → `~/TOOLS.md`
-- **Codebase size:** use `tokei pipeline/` for a one-call language/file/line breakdown before diving into an unfamiliar subsystem. Installed at `/home/linuxbrew/.linuxbrew/bin/tokei`
+
+Behavioral defaults (telemetry shows I default to the wrong tool without these):
+- HTTP requests → `xh` (not `curl`)
+- Multi-pod log tailing → `stern <name> -n <ns>` (not `kubectl logs`)
+- Security review first step → `semgrep scan --config auto <path>`
+
+Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckdb`, `tokei`, `jq`, `just`, full `kubectl`/`git` workflows → `~/TOOLS.md`.
 
 ## Critical Rules
 **NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup
 **ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
 
 ## Self-Learning & Autonomous Bug Fixing
-- **Never ask permission for:** low-severity bug fixes (fix, test, commit, report after) · feedback integration
-- **Always ask permission for:** data-affecting fixes, breaking API changes, resource-intensive ops, actions with external visibility
-- **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`
-- **Retry limit:** Per agentic step, attempt 1 = initial try; attempt 2 = one retry after a fix. On the third occurrence of the same root cause (same stack trace or same explicit error message), escalate instead of retrying. Counter resets when the session ends or the root cause changes.
-- **Also escalate on:** circular token loops (same tool call + same result repeated 2+ times).
+- **Fix without asking** when reversible and low-blast-radius (low-severity bugs, feedback integration). **Always ask** when irreversible, data-affecting, externally visible, or resource-intensive.
+- **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`.
+- Retry/escalation limits live in §Cost Guardrails ("same error 3+ times" + circular loops).
 
 ## Project Priority Stack
 1. **Clearwatch** — revenue: reports, cache, charts, grading

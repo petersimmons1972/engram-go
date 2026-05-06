@@ -60,7 +60,7 @@
       "Bash(cd ~/projects/security-intelligence-business*)",
       "Bash(* ~/projects/security-intelligence-business*)"
     ],
-    "defaultMode": "plan"
+    "defaultMode": "auto"
   },
   "model": "sonnet",
   "hooks": {
@@ -71,6 +71,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/engram-mcp-error-handler.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-denial-capture.sh",
             "timeout": 5
           }
         ]
@@ -111,6 +116,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/no-silent-tool-failure.sh",
+            "timeout": 8
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/stop-checks.sh",
             "timeout": 10
           },
@@ -148,6 +158,12 @@
       {
         "matcher": "mcp__engram__*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-health-check.sh",
+            "timeout": 8,
+            "statusMessage": "Checking Engram connectivity"
+          },
           {
             "type": "command",
             "command": "~/.claude/hooks/engram-precheck.sh",
@@ -247,5 +263,6 @@
   "verbose": false,
   "showTurnDuration": true,
   "terminalProgressBarEnabled": true,
+  "teammateMode": "auto",
   "skipAutoPermissionPrompt": true
 }
