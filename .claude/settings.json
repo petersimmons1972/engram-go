@@ -60,8 +60,9 @@
       "Bash(cd ~/projects/security-intelligence-business*)",
       "Bash(* ~/projects/security-intelligence-business*)"
     ],
-    "defaultMode": "plan"
+    "defaultMode": "auto"
   },
+  "model": "sonnet",
   "hooks": {
     "PostToolUse": [
       {
@@ -70,6 +71,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/engram-mcp-error-handler.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-denial-capture.sh",
             "timeout": 5
           }
         ]
@@ -108,6 +114,11 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/no-silent-tool-failure.sh",
+            "timeout": 8
+          },
           {
             "type": "command",
             "command": "~/.claude/hooks/stop-checks.sh",
@@ -246,11 +257,12 @@
     "gopls-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "effortLevel": "low",
+  "effortLevel": "medium",
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "verbose": false,
   "showTurnDuration": true,
   "terminalProgressBarEnabled": true,
+  "teammateMode": "auto",
   "skipAutoPermissionPrompt": true
 }
