@@ -29,14 +29,26 @@ func ModelMaxTokens(name string) int {
 // SuggestedModels is the curated list of embedding models available via LiteLLM.
 // Set ENGRAM_EMBED_MODEL to switch. Run memory_embedding_eval to compare before
 // migrating stored embeddings.
+//
+// SINGLE SOURCE OF TRUTH: The entry with Recommended=true is the official embedding
+// model for this deployment. docker-compose.yml fallback defaults and .env must match
+// this entry. When changing the recommended model, update all three in one commit.
 var SuggestedModels = []ModelSpec{
+	{
+		Name:        "diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest",
+		Dimensions:  1024, // Matryoshka truncation from native 2048; set ENGRAM_EMBED_DIMENSIONS=1024
+		MaxTokens:   8192,
+		SizeMB:      9200,
+		Description: "Official embedding model. Jina v4 Q8 GGUF, Matryoshka-truncated to 1024 dims. Served via engram-ollama (ROCm) and precision Ollama.",
+		Recommended: true,
+	},
 	{
 		Name:        "qwen3-embedding:8b",
 		Dimensions:  1536,
 		MaxTokens:   8192,
 		SizeMB:      5400,
-		Description: "Current default. Best MTEB retrieval score available locally; 8192-token context window.",
-		Recommended: true,
+		Description: "High-quality alternative. Best MTEB retrieval score; 8192-token context window.",
+		Recommended: false,
 	},
 	{
 		Name:        "mxbai-embed-large",

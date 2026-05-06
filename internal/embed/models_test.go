@@ -46,7 +46,11 @@ func TestDefaultRecommendedModel(t *testing.T) {
 	if rec == nil {
 		t.Fatal("DefaultRecommendedModel returned nil")
 	}
-	if rec.Name != "qwen3-embedding:8b" {
-		t.Errorf("expected qwen3-embedding:8b as recommended, got %q", rec.Name)
+	const wantModel = "diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest"
+	if rec.Name != wantModel {
+		t.Errorf("expected %q as recommended, got %q", wantModel, rec.Name)
+	}
+	if rec.Dimensions != 1024 {
+		t.Errorf("expected recommended model dimensions=1024, got %d", rec.Dimensions)
 	}
 }
