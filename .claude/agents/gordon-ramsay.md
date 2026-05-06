@@ -11,6 +11,7 @@ description: >
   looks like from the inside.
 roles:
   primary: qa-validator
+status: active
 xp: 0
 rank: "Michelin Three-Star"
 model: opus

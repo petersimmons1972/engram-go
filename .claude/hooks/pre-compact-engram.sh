@@ -5,6 +5,9 @@ set -euo pipefail
 
 PORT=8788
 BASE="http://127.0.0.1:${PORT}"
+PAYLOAD_FILE=$(mktemp "${TMPDIR:-/tmp}/engram-precompact.XXXXXX.json")
+trap 'rm -f "$PAYLOAD_FILE"' EXIT
+cat > "$PAYLOAD_FILE" || true
 
 # Bail if engram is down — never block compaction
 if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then
@@ -17,10 +20,15 @@ TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
 [[ -z "$TOKEN" ]] && exit 0
 
 # Read the compaction payload from stdin, extract a summary of recent assistant turns
-SUMMARY=$(python3 - <<'PYEOF'
+SUMMARY=$(python3 - "$PAYLOAD_FILE" <<'PYEOF'
 import json, sys, datetime
 
-raw = sys.stdin.read()
+payload_path = sys.argv[1]
+try:
+    with open(payload_path, "r", encoding="utf-8") as f:
+        raw = f.read()
+except Exception:
+    raw = ""
 try:
     data = json.loads(raw)
 except Exception:
@@ -28,6 +36,8 @@ except Exception:
     sys.exit(0)
 
 messages = data.get("messages") or data.get("conversation") or []
+if not messages and data:
+    sys.stderr.write(f"[pre-compact] WARN: no messages key. Payload keys: {list(data.keys())}\n")
 recent = []
 for m in reversed(messages):
     role = m.get("role", "")

@@ -13,6 +13,8 @@ BUFFER_FILE="$BUFFER_DIR/buffer.jsonl"
 LOG_FILE="$BUFFER_DIR/run.log"
 CONSOLIDATOR="$HOME/projects/instinct/consolidator/.venv/bin/python"
 CONSOLIDATOR_MODULE="$HOME/projects/instinct/consolidator"
+MAX_BUFFER_BYTES="${INSTINCT_MAX_BUFFER_BYTES:-1048576}"
+MAX_BUFFER_EVENTS="${INSTINCT_MAX_BUFFER_EVENTS:-2000}"
 
 mkdir -p "$BUFFER_DIR"
 
@@ -76,6 +78,24 @@ print(json.dumps(event))
 (
     if flock -w 0.1 -x 9; then
         echo "$parsed" >> "$BUFFER_FILE"
+        python3 - "$BUFFER_FILE" "$MAX_BUFFER_BYTES" "$MAX_BUFFER_EVENTS" <<'PYEOF'
+import os, sys
+path, max_bytes, max_events = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [line for line in f.read().splitlines() if line.strip()]
+except FileNotFoundError:
+    sys.exit(0)
+if max_events > 0 and len(lines) > max_events:
+    lines = lines[-max_events:]
+while max_bytes > 0 and len(("\n".join(lines) + "\n").encode()) > max_bytes and lines:
+    lines = lines[1:]
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    if lines:
+        f.write("\n".join(lines) + "\n")
+os.replace(tmp, path)
+PYEOF
     fi
 ) 9>"$BUFFER_DIR/.buffer.lock"
 
@@ -90,9 +110,12 @@ if (( count % threshold == 0 )); then
             _key_file="$HOME/.config/gmail-job-tracker/anthropic_api_key"
             [[ -r "$_key_file" ]] && _api_key=$(tr -d '\n' < "$_key_file")
         fi
-        PYTHONPATH="$CONSOLIDATOR_MODULE" \
-            ANTHROPIC_API_KEY="$_api_key" \
-            "$CONSOLIDATOR" -m instinct.run >> "$LOG_FILE" 2>&1 &
+        (
+            flock -n 9 || exit 0
+            PYTHONPATH="$CONSOLIDATOR_MODULE" \
+                ANTHROPIC_API_KEY="$_api_key" \
+                "$CONSOLIDATOR" -m instinct.run >> "$LOG_FILE" 2>&1
+        ) 9>"$BUFFER_DIR/.run.lock" &
         disown $!
     else
         (

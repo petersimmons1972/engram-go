@@ -11,6 +11,7 @@ description: >
   spawn sub-agents; executes directly. Cannot be used as a coordinator.
 roles:
   primary: implementer
+status: active
 xp: 100
 rank: Colonel
 disallowedTools:

@@ -9,6 +9,7 @@ description: >
   Full documentation mandatory on every deployment.
 roles:
   primary: troubleshooter
+status: active
 xp: 650
 rank: "General"
 model: sonnet

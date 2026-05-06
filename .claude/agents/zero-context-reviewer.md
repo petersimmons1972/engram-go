@@ -3,6 +3,7 @@ name: zero-context-reviewer
 display_name: "Zero-Context Reviewer"
 roles:
   primary: observer
+status: active
 xp: 300
 rank: "Major"
 model: sonnet

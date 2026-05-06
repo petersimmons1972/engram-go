@@ -3,6 +3,7 @@ name: spruance
 display_name: "Admiral Raymond A. Spruance"
 roles:
   primary: qa-validator
+status: active
 xp: 900
 rank: "Admiral"
 model: opus

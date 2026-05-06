@@ -112,3 +112,45 @@ with open(lock_path, "w") as lf:
         raise
 PYEOF
 }
+
+sync_degraded_counters() {
+    # Reset noisy session counters when there is no fallback backlog.
+    python3 - "$STATE_FILE" "$STATE_LOCK" <<'PYEOF'
+import json, sys, os, tempfile, fcntl
+
+path, lock_path = sys.argv[1], sys.argv[2]
+defaults = {
+    "last_session_start": None,
+    "last_recall_results": 0,
+    "last_flush_at": None,
+    "fallback_entry_count": 0,
+    "consecutive_auth_failures": 0,
+    "last_auth_ok_at": None,
+    "sessions_since_last_flush": 0,
+}
+
+with open(lock_path, "w") as lf:
+    fcntl.flock(lf, fcntl.LOCK_EX)
+    try:
+        with open(path) as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = defaults.copy()
+    for key, val in defaults.items():
+        state.setdefault(key, val)
+    if int(state.get("fallback_entry_count") or 0) == 0:
+        state["sessions_since_last_flush"] = 0
+    dir_ = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=dir_, prefix=".engram-state-tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
+PYEOF
+}
+
+sync_degraded_counters

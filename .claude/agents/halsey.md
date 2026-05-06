@@ -3,6 +3,7 @@ name: halsey
 display_name: "Fleet Admiral William F. Halsey"
 roles:
   primary: specialist
+status: active
 xp: 150
 rank: "Fleet Admiral"
 model: sonnet

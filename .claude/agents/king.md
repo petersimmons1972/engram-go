@@ -3,6 +3,7 @@ name: king
 display_name: "Fleet Admiral Ernest J. King"
 roles:
   primary: specialist
+status: active
 xp: 175
 rank: "Fleet Admiral"
 model: sonnet

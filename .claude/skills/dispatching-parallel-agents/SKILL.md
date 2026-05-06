@@ -1,6 +1,6 @@
 ---
 name: dispatching-parallel-agents
-description: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
+description: Use when the user has 2+ independent tasks to run in parallel, dispatches agents, coordinates a multi-agent campaign, or says "in parallel", "simultaneously", "split the work", "dispatch", or "coordinate specialists". Manages context isolation, briefing, and synthesis. Do NOT use for sequential tasks or tasks with shared state.
 ---
 
 <!--
