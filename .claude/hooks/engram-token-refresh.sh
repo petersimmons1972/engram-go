@@ -211,12 +211,43 @@ PYEOF
     echo "✅ Engram: MCP authenticated and ready"
   fi
 else
-  echo "❌ Engram: MCP auth failed — token written but Claude Code MCP connection is stale"
-  echo ""
-  echo "   To reconnect, run these two steps:"
-  echo "   1.  cd ~/projects/engram-go && make setup"
-  echo "   2.  Type /mcp in Claude Code to reconnect"
-  echo ""
-  echo "   Memory recall is DISABLED this session until reconnected."
-  # Exit 0 — don't block the session, but make the error impossible to miss
+  # Recovery path (#615, #616): cached token failed — try fallback key sources.
+  # Priority: ~/.config/engram/api_key (Infisical backup) > .env (docker default).
+  # /starter injects the real key from Infisical at runtime; .env may diverge.
+  ENV_KEY=""
+  if [[ -f "$HOME/.config/engram/api_key" ]]; then
+    ENV_KEY=$(cat "$HOME/.config/engram/api_key" | tr -d '[:space:]')
+  fi
+  if [[ -z "$ENV_KEY" ]]; then
+    ENV_KEY=$(grep '^ENGRAM_API_KEY=' "$ENGRAM_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]')
+  fi
+  ENV_RECOVERED=false
+  if [[ -n "$ENV_KEY" ]]; then
+    ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+      -H "Authorization: Bearer ${ENV_KEY}" \
+      -H "Content-Type: application/json" \
+      -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+      -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
+    if [[ "$ENV_STATUS" != "401" && "$ENV_STATUS" != "000" ]]; then
+      TOKEN="$ENV_KEY"
+      _write_token "$HOME/.claude/mcp_servers.json"
+      _write_token "$HOME/.claude.json"
+      ENV_RECOVERED=true
+    fi
+  fi
+
+  if [[ "$ENV_RECOVERED" == "true" ]]; then
+    echo "✅ Engram: recovered from .env key — token updated in MCP config"
+    update_state "last_session_start" "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" 2>/dev/null || true
+    update_state "consecutive_auth_failures" "0" 2>/dev/null || true
+  else
+    echo "❌ Engram: MCP auth failed — token written but Claude Code MCP connection is stale"
+    echo ""
+    echo "   To reconnect, run these two steps:"
+    echo "   1.  cd ~/projects/engram-go && make restart && make setup"
+    echo "   2.  Type /mcp in Claude Code to reconnect"
+    echo ""
+    echo "   Memory recall is DISABLED this session until reconnected."
+    # Exit 0 — don't block the session, but make the error impossible to miss
+  fi
 fi

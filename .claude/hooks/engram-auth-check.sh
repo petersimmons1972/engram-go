@@ -54,20 +54,72 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
   # Invalidate stale cache on auth failure; track in state (#404)
   rm -f "$CACHE"
   increment_state "consecutive_auth_failures" 2>/dev/null || true
-  # Auto-remediate: refresh the token by re-running setup.
-  # Uses pre-built binary if available (fast), falls back to go run.
+
+  # Recovery path 1: engram-setup (works when /setup-token doesn't require auth).
+  # Since #540 /setup-token requires Bearer auth, this will fail if we have no
+  # valid token — but try it first in case it's been fixed or the server is older.
+  REFRESHED=false
   if [[ -d "$ENGRAM_DIR" ]]; then
     if command -v engram-setup &>/dev/null; then
-      engram-setup >/dev/null 2>&1 || true
+      engram-setup >/dev/null 2>&1 && REFRESHED=true || true
     elif [[ -x "$ENGRAM_DIR/engram-setup" ]]; then
-      "$ENGRAM_DIR/engram-setup" >/dev/null 2>&1 || true
+      "$ENGRAM_DIR/engram-setup" >/dev/null 2>&1 && REFRESHED=true || true
     else
-      (cd "$ENGRAM_DIR" && timeout 30 go run ./cmd/engram-setup >/dev/null 2>&1) || true
+      (cd "$ENGRAM_DIR" && timeout 30 go run ./cmd/engram-setup >/dev/null 2>&1) && REFRESHED=true || true
     fi
   fi
 
-  # Output systemMessage so Claude surfaces this to the user immediately
-  printf '{"systemMessage":"⚠️  Engram auth was stale — token refreshed automatically.\\nRun /mcp in Claude Code to reconnect memory. Without this step, memory tools will fail."}'
+  # Recovery path 2 (#614, #616): probe fallback key sources in priority order:
+  #   1. ~/.config/engram/api_key  — backup of the Infisical key (most reliable)
+  #   2. ENGRAM_API_KEY in .env    — docker-level default (may diverge from Infisical)
+  # /starter injects the real key from Infisical at runtime; .env is NOT authoritative.
+  if [[ "$REFRESHED" == "false" ]]; then
+    FALLBACK_KEY=""
+    # Try Infisical backup first
+    if [[ -f "$HOME/.config/engram/api_key" ]]; then
+      FALLBACK_KEY=$(cat "$HOME/.config/engram/api_key" | tr -d '[:space:]')
+    fi
+    # Fall back to .env if config backup didn't work or is absent
+    if [[ -z "$FALLBACK_KEY" && -f "$ENGRAM_DIR/.env" ]]; then
+      FALLBACK_KEY=$(grep '^ENGRAM_API_KEY=' "$ENGRAM_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]')
+    fi
+    ENV_KEY="$FALLBACK_KEY"
+    if [[ -n "$ENV_KEY" ]]; then
+      ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
+        -H "Authorization: Bearer ${ENV_KEY}" \
+        -H "Content-Type: application/json" \
+        -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+        -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
+      if [[ "$ENV_STATUS" != "401" && "$ENV_STATUS" != "000" ]]; then
+        # Fallback key is valid — write it atomically to mcp_servers.json (#614)
+        python3 - "$MCP_CONFIG" "$ENV_KEY" <<'PYEOF' 2>/dev/null && REFRESHED=true || true
+import json, os, sys, tempfile
+path, key = sys.argv[1], sys.argv[2]
+if not os.path.exists(path):
+    sys.exit(1)
+with open(path) as f:
+    cfg = json.load(f)
+cfg.setdefault("mcpServers", {}).setdefault("engram", {})["headers"] = {"Authorization": "Bearer " + key}
+dir_ = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(dir=dir_, prefix=".engram_token_tmp")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+except Exception:
+    os.unlink(tmp)
+    raise
+PYEOF
+      fi
+    fi
+  fi
+
+  if [[ "$REFRESHED" == "true" ]]; then
+    printf '{"systemMessage":"⚠️  Engram auth token was stale — recovered from .env.\\nRun /mcp in Claude Code to reconnect memory."}'
+  else
+    printf '{"systemMessage":"❌ Engram auth failed and auto-recovery failed.\\nRun: cd ~/projects/engram-go && make restart && make setup\\nThen run /mcp in Claude Code."}'
+  fi
   exit 0  # must exit here — fall-through would overwrite failure state updates
 fi
 
