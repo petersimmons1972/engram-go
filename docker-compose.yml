@@ -90,6 +90,7 @@ services:
     networks:
       - default
       - litellm
+      - ai-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,3 +170,6 @@ networks:
   litellm:
     external: true
     name: litellm_default          # shared with the LiteLLM proxy container
+  ai-network:
+    external: true
+    name: ai-network               # shared with olla load balancer
