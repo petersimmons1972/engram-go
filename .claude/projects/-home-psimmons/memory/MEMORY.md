@@ -1,12 +1,14 @@
 # Learning Index
 
-**Last Updated**: 2026-05-07T01:24:17Z
-**Session**: 20260506-212417
+**Last Updated**: 2026-05-07T02:08:20Z
+**Session**: 20260506-220820
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-05-06: fix(hooks): fallback to Infisical backup key on auth failure — engram-go#614 #615 #616
+- 2026-05-06: chore: sync CLAUDE.md and session memory files
 - 2026-05-06: chore: sync armies roster, hooks, litellm config, AGENTS.md
 - 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
 - 2026-05-06: chore: reconcile history — github/master was squash merge of local commits (engram-go#399 flock fix now applied separately)
@@ -15,11 +17,9 @@
 - 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
 - 2026-05-04: refactor(claude-md): compress sections + bench 15 unused skills
 - 2026-05-04: feat(hooks): add engram-health-check to detect connectivity loss
-- 2026-05-04: fix(engram-go#399): flock MEMORY.md against concurrent session-start writes (#13)
-- 2026-05-04: fix(engram-session-recall): add flock on MEMORY.md to prevent concurrent-update races
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  3 modified, 0 staged
+**Uncommitted**: ⚠️  1 modified, 0 staged
 
 ---
 
