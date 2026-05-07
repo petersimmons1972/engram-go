@@ -29,8 +29,8 @@ services:
       - pgdata:/var/lib/postgresql/data
     command: >-
       -c max_connections=300
-      -c shared_buffers=24GB
-      -c effective_cache_size=96GB
+      -c shared_buffers=${PG_SHARED_BUFFERS:-12GB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-48GB}
       -c work_mem=32MB
       -c maintenance_work_mem=512MB
       -c wal_buffers=64MB
