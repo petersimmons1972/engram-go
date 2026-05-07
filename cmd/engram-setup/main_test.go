@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +161,177 @@ func TestFetchSetupToken(t *testing.T) {
 		_, err := fetchSetupTokenWithClient("http://example", client)
 		if err == nil {
 			t.Fatal("expected connection error, got nil")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// tryKeyFromDisk (#614, #616)
+// ---------------------------------------------------------------------------
+
+// TestTryKeyFromDisk verifies that tryKeyFromDisk reads a key from a file,
+// probes /quick-recall to validate it, and returns the key only when auth
+// succeeds. Covers absent files, short keys, and wrong keys (#614, #616).
+func TestTryKeyFromDisk(t *testing.T) {
+	const validKey = "valid-fallback-key-0123456789abcd" // 32 chars
+
+	// Test server: /quick-recall returns 200 only for the valid key.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/quick-recall" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer "+validKey {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	t.Run("valid key file returns key", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "api_key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(validKey); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+
+		got, err := tryKeyFromDisk(f.Name(), srv.URL, srv.Client())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != validKey {
+			t.Errorf("got %q, want %q", got, validKey)
+		}
+	})
+
+	t.Run("valid key with trailing newline is trimmed", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "api_key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(validKey + "\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+
+		got, err := tryKeyFromDisk(f.Name(), srv.URL, srv.Client())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != validKey {
+			t.Errorf("got %q, want %q (trailing newline not trimmed)", got, validKey)
+		}
+	})
+
+	t.Run("absent file returns empty key without error", func(t *testing.T) {
+		got, err := tryKeyFromDisk(filepath.Join(t.TempDir(), "absent_api_key"), srv.URL, srv.Client())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("expected empty key for absent file, got %q", got)
+		}
+	})
+
+	t.Run("wrong key returns empty without error", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "api_key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("wrong-key-0123456789abcdef012345"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+
+		got, err := tryKeyFromDisk(f.Name(), srv.URL, srv.Client())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("expected empty for wrong key, got %q", got)
+		}
+	})
+
+	t.Run("key shorter than 12 chars returns empty without probing server", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "api_key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("short"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+
+		got, err := tryKeyFromDisk(f.Name(), srv.URL, srv.Client())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("expected empty for short key, got %q", got)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// readKeyFromEnvFile (#616)
+// ---------------------------------------------------------------------------
+
+// TestReadKeyFromEnvFile verifies that readKeyFromEnvFile extracts the
+// ENGRAM_API_KEY value from a .env-format file (#616).
+func TestReadKeyFromEnvFile(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		f, err := os.CreateTemp(t.TempDir(), ".env")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(content); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		return f.Name()
+	}
+
+	t.Run("returns key from valid .env file", func(t *testing.T) {
+		path := write(t, "POSTGRES_PASSWORD=secret\nENGRAM_API_KEY=mykey12345678901234\nOTHER=x\n")
+		got := readKeyFromEnvFile(path)
+		if got != "mykey12345678901234" {
+			t.Errorf("got %q, want %q", got, "mykey12345678901234")
+		}
+	})
+
+	t.Run("last ENGRAM_API_KEY wins when duplicated", func(t *testing.T) {
+		path := write(t, "ENGRAM_API_KEY=first\nENGRAM_API_KEY=second\n")
+		got := readKeyFromEnvFile(path)
+		if got != "second" {
+			t.Errorf("got %q, want last value %q", got, "second")
+		}
+	})
+
+	t.Run("absent file returns empty string", func(t *testing.T) {
+		got := readKeyFromEnvFile(filepath.Join(t.TempDir(), "nonexistent.env"))
+		if got != "" {
+			t.Errorf("expected empty for absent file, got %q", got)
+		}
+	})
+
+	t.Run("file without ENGRAM_API_KEY returns empty string", func(t *testing.T) {
+		path := write(t, "POSTGRES_PASSWORD=secret\nOTHER=x\n")
+		got := readKeyFromEnvFile(path)
+		if got != "" {
+			t.Errorf("expected empty when key absent, got %q", got)
+		}
+	})
+
+	t.Run("ENGRAM_API_KEY with empty value returns empty string", func(t *testing.T) {
+		path := write(t, "ENGRAM_API_KEY=\n")
+		got := readKeyFromEnvFile(path)
+		if got != "" {
+			t.Errorf("expected empty for empty value, got %q", got)
 		}
 	})
 }
