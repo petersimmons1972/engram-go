@@ -1,25 +1,25 @@
 # Learning Index
 
-**Last Updated**: 2026-04-24T01:24:34Z
-**Session**: 20260423-212434
+**Last Updated**: 2026-05-07T01:24:17Z
+**Session**: 20260506-212417
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-04-23: fix: prune stale bench profiles from ~/.claude/agents/ on sync
-- 2026-04-23: feat: add PreCompact hook to store session snapshot to engram before compaction
-- 2026-04-23: docs: telemetry sink design spec + Go-default preference
-- 2026-04-22: remove security-program-mcp — moved to repo at ~/projects/security-program/ops/mcp-launcher.sh
-- 2026-04-22: add security-program MCP launcher wrapper
-- 2026-04-17: chore: memory janitor compression + health-check updates
-- 2026-04-17: docs: engram-go vs. Iusztin GraphRAG comparison report + workflow memory
-- 2026-04-17: feat: Opus 4.7 migration — Tier 1 literal-interpretation fixes
-- 2026-04-17: chore: snapshot rickover-validator.md as migration baseline
-- 2026-04-17: chore: snapshot live CLAUDE.md into migration branch
+- 2026-05-06: chore: sync armies roster, hooks, litellm config, AGENTS.md
+- 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
+- 2026-05-06: chore: reconcile history — github/master was squash merge of local commits (engram-go#399 flock fix now applied separately)
+- 2026-05-06: fix(engram-session-recall): add flock on MEMORY.md — engram-go#399
+- 2026-05-06: fix(engram-health-check): replace exit 1 with systemMessage — engram-go#408
+- 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
+- 2026-05-04: refactor(claude-md): compress sections + bench 15 unused skills
+- 2026-05-04: feat(hooks): add engram-health-check to detect connectivity loss
+- 2026-05-04: fix(engram-go#399): flock MEMORY.md against concurrent session-start writes (#13)
+- 2026-05-04: fix(engram-session-recall): add flock on MEMORY.md to prevent concurrent-update races
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  41 modified, 0 staged
+**Uncommitted**: ⚠️  3 modified, 0 staged
 
 ---
 

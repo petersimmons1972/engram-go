@@ -20,6 +20,7 @@
 - **Pre-ship QA:** dispatch the 6-persona fault-finder sweep (`spawn-patterns.md` Pattern 6, or `/qa-personas <target>`) before claiming done on user-facing work. Two-round methodology: fix blockers, re-run.
 - **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
 - **Validator bash guard:** Before dispatching Spruance or Rickover-validator, run `touch ~/.claude/.validator-bash-guard`. After the validation session ends, run `rm ~/.claude/.validator-bash-guard`. This enables the read-only Bash enforcement hook.
+- **Model floor rule:** Always set `model:` explicitly on every agent dispatch. Default to the lowest tier that can do the job correctly — Haiku first, Sonnet only when the task requires judgment or multi-file synthesis, Opus only per the A1–A5 triggers below. Homogeneous Sonnet teams are a smell. If you cannot articulate why Haiku is insufficient for a given agent, use Haiku.
 
 ## Pre-Flight Protocol — MANDATORY
 
