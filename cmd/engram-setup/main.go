@@ -1,8 +1,16 @@
 // Command engram-setup configures the local MCP client (Claude Code) to connect to a
 // running engram server.
 //
-// It calls the unauthenticated /setup-token endpoint on the engram server, retrieves the
-// current bearer token, and writes the mcpServers.engram block in the Claude Code config.
+// Primary path: calls /setup-token (requires Bearer auth since #540) to retrieve the
+// current token and writes the mcpServers.engram block in the Claude Code config.
+//
+// Fallback path (#614, #616): when /setup-token returns 401 (bootstrap scenario where
+// no valid token exists yet), engram-setup reads the key from disk in priority order:
+//  1. ~/.config/engram/api_key — backup written by `make init`, matches Infisical secret
+//  2. ENGRAM_API_KEY in ~/projects/engram-go/.env — lower trust, may diverge from Infisical
+//
+// Each candidate key is probed against /quick-recall before being written, so a stale
+// or wrong key on disk never silently corrupts the config.
 //
 // Claude Code reads MCP servers from two files:
 //   - ~/.claude/mcp_servers.json  — primary (live config, read each session)
@@ -19,6 +27,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -26,6 +35,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -66,9 +76,55 @@ func run() error {
 		}
 
 		// 2. Fetch the current bearer token.
-		setup, err := fetchSetupToken(base)
-		if err != nil {
-			return fmt.Errorf("fetch /setup-token: %w", err)
+		// Falls back to key sources on disk when /setup-token returns 401 (#614, #616).
+		// /starter injects ENGRAM_API_KEY from Infisical at runtime; ~/.config/engram/api_key
+		// is the backup written by `make init` and is the most reliable local copy.
+		setup, setupErr := fetchSetupToken(base)
+		if setupErr != nil {
+			home, _ := os.UserHomeDir()
+			httpClient := &http.Client{Timeout: 5 * time.Second}
+			// Each candidate produces a raw key string; probeAuth validates it.
+			type candidate struct {
+				label string
+				key   func() string
+			}
+			candidates := []candidate{
+				{
+					label: "~/.config/engram/api_key",
+					key: func() string {
+						k, _ := tryKeyFromDisk(
+							filepath.Join(home, ".config", "engram", "api_key"),
+							base, httpClient)
+						return k
+					},
+				},
+				{
+					label: "~/projects/engram-go/.env (ENGRAM_API_KEY)",
+					key: func() string {
+						raw := readKeyFromEnvFile(filepath.Join(home, "projects", "engram-go", ".env"))
+						if raw == "" || len(raw) < 12 {
+							return ""
+						}
+						ok, _ := probeAuth(raw, base, httpClient)
+						if !ok {
+							return ""
+						}
+						return raw
+					},
+				},
+			}
+			for _, c := range candidates {
+				if key := c.key(); key != "" {
+					fmt.Fprintf(os.Stderr,
+						"engram-setup: /setup-token unavailable (%v) — recovered key from %s\n",
+						setupErr, c.label)
+					stub := &setupResponse{Token: key, Endpoint: fmt.Sprintf("http://127.0.0.1:%d/sse", *port)}
+					return configureWithSetup(base, *name, *dryRun, *format, stub)
+				}
+			}
+			return fmt.Errorf("fetch /setup-token: %w\n\n"+
+				"  Disk fallbacks (~/.config/engram/api_key, .env) also failed.\n"+
+				"  Ensure ENGRAM_API_KEY is set correctly, then run: make init && make restart", setupErr)
 		}
 		return configureWithSetup(base, *name, *dryRun, *format, setup)
 	}
@@ -284,6 +340,69 @@ func healthCheckWithClient(base string, client *http.Client) error {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// tryKeyFromDisk reads a bearer key from a raw-key file (one key per file, no
+// key=value format), trims whitespace, and probes /quick-recall to confirm the
+// key authenticates. Returns the key on success, "" if the file is absent or the
+// key fails auth, or an error only for unexpected failures (#614, #616).
+func tryKeyFromDisk(path, base string, client *http.Client) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil // absent or unreadable — caller tries next source
+	}
+	key := strings.TrimSpace(string(raw))
+	if len(key) < 12 {
+		return "", nil // too short to be a valid token
+	}
+	ok, err := probeAuth(key, base, client)
+	if err != nil || !ok {
+		return "", nil
+	}
+	return key, nil
+}
+
+// readKeyFromEnvFile reads the value of ENGRAM_API_KEY from a .env-format file.
+// Returns the last matching value, or "" if the file is absent or the key is not set.
+func readKeyFromEnvFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close() //nolint:errcheck
+	var last string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "ENGRAM_API_KEY=") {
+			continue
+		}
+		val := strings.TrimPrefix(line, "ENGRAM_API_KEY=")
+		if val != "" {
+			last = val
+		}
+	}
+	return last
+}
+
+// probeAuth sends a /quick-recall POST with the given key and returns whether
+// the server accepted it. Returns (false, nil) on 401; (false, err) on transport
+// failure; (true, nil) on any 2xx or 5xx (token accepted, backend may have erred).
+func probeAuth(key, base string, client *http.Client) (bool, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		base+"/quick-recall",
+		strings.NewReader(`{"query":"auth-check","project":"global","limit":1}`))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, nil // network failure — treat as auth miss, not hard error
+	}
+	resp.Body.Close() //nolint:errcheck
+	return resp.StatusCode != http.StatusUnauthorized, nil
 }
 
 func fetchSetupToken(base string) (*setupResponse, error) {
