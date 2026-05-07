@@ -1,12 +1,13 @@
 # Learning Index
 
-**Last Updated**: 2026-05-07T02:08:20Z
-**Session**: 20260506-220820
+**Last Updated**: 2026-05-07T06:24:39Z
+**Session**: 20260507-022439
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-05-06: chore: sync session memory
 - 2026-05-06: fix(hooks): fallback to Infisical backup key on auth failure — engram-go#614 #615 #616
 - 2026-05-06: chore: sync CLAUDE.md and session memory files
 - 2026-05-06: chore: sync armies roster, hooks, litellm config, AGENTS.md
@@ -16,10 +17,9 @@
 - 2026-05-06: fix(engram-health-check): replace exit 1 with systemMessage — engram-go#408
 - 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
 - 2026-05-04: refactor(claude-md): compress sections + bench 15 unused skills
-- 2026-05-04: feat(hooks): add engram-health-check to detect connectivity loss
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  1 modified, 0 staged
+**Uncommitted**: ⚠️  2 modified, 0 staged
 
 ---
 
@@ -44,6 +44,12 @@ Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cac
 
 ---
 
+## Active project state
+
+- [Clearwatch issue batch 2026-05-07](project_clearwatch_issue_batch_2026-05-07.md) — PR #4706 closed 5 issues; W2 epic + 8 children open with gates landed but not wired; W1 needs follow-on Opus session.
+
+---
+
 ## Engram Offline?
 
 If Engram is unreachable, stage entries in `memory/fallback.md` and flush to Engram on reconnect.
@@ -51,3 +57,14 @@ If Engram is unreachable, stage entries in `memory/fallback.md` and flush to Eng
 ---
 
 **Auto-updated at session start by `~/bin/generate-session-context.py`**
+
+## Engram Session Recall
+
+**1.** Miss's searches yielded no results for expected context and implementation information about the current project and engram token refresh hook.
+   *tags: retrieval-miss | score: 0.63*
+
+**2.** The key decision was assigning roles for the Triad security program, where Peter assigned Butler=Attacker, Dornberger=Defender, and Bradley=Coordinator/Auditor to create a structured adversarial approach.
+   *tags: security-program, pending, founder-interview-needed, triad-roles | score: 0.50*
+
+**3.** A user approved a quality bar for signed-document work on April 7, 2026, specifying a rigorous set of standards including cryptographic signing, confidence tags, and period-authentic visual style.
+   *tags: quality-bar, calibration, user-praise, published-standard | score: 0.46*
