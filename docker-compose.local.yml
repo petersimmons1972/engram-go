@@ -55,13 +55,22 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama:latest
+    image: ollama/ollama:rocm
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama_storage:/root/.ollama
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      # KV-cache tuning (2026-05-07): cut jina VRAM ~8.9 GB → ~4 GB on 7900 XT
+      # to leave more headroom for the display + small utility model.
+      - OLLAMA_NUM_PARALLEL=2          # was 8 — 4× KV slot reduction
+      - OLLAMA_FLASH_ATTENTION=1       # required for KV quantization
+      - OLLAMA_KV_CACHE_TYPE=q8_0      # halves KV bytes per slot vs f16
+      - OLLAMA_KEEP_ALIVE=1h
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 5s
@@ -152,7 +161,7 @@ volumes:
     name: engram_pgdata
   ollama_storage:
     external: true
-    name: ollama_storage
+    name: ollama_ollama_storage
   engram-data:
 
 networks:
