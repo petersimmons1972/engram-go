@@ -68,9 +68,9 @@ services:
       # OpenAI-compatible upstream (olla load balancer; LiteLLM container retired 2026-05-05)
       - LITELLM_URL=${LITELLM_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
-      # Embedding service — same olla endpoint by default
-      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
+      # Embedding service — Infinity/bge-m3 on oblivion (2026-05-08: switched from vLLM/jina-v5, 14x throughput)
+      - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://oblivion.petersimmons.com:8003}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # IMPORTANT: MCP server does NOT run the reembed worker — that lives in the
@@ -121,7 +121,7 @@ services:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
       - LITELLM_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-2000}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
