@@ -257,6 +257,12 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let http = HttpClient::builder()
         .timeout(cfg.embed_timeout + Duration::from_secs(5))
+        // Keep enough idle connections for all concurrent sub-batch tasks so
+        // every batch cycle reuses warm connections. Without this, reqwest may
+        // close excess connections between cycles, causing 19/20 tasks to pay
+        // TCP setup cost (~1ms each) and stagger their arrival at vLLM —
+        // preventing vLLM from batching all requests in a single forward pass.
+        .pool_max_idle_per_host(cfg.concurrency_max)
         .build()
         .context("build http client")?;
 
@@ -273,6 +279,26 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
     {
         Ok(v) => info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, "litellm probe ok"),
         Err(e) => warn!(err = %e, "litellm probe failed — will retry on each batch"),
+    }
+
+    // Pre-warm connection pool — establish concurrency_max keep-alive connections
+    // so all sub-batch tasks start with ready sockets (no TCP setup during the
+    // batch). With TOKIO_WORKER_THREADS=concurrency_max, all async tasks also
+    // get OS-thread-level parallelism, ensuring socket writes overlap in time.
+    {
+        let mut warmup = tokio::task::JoinSet::new();
+        for _ in 0..cfg.concurrency_max {
+            let h = http.clone();
+            let url = cfg.litellm_url.clone();
+            let key = cfg.litellm_api_key.clone();
+            let model = cfg.embed_model.clone();
+            let dims = cfg.embed_dims;
+            warmup.spawn(async move {
+                let _ = embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")]).await;
+            });
+        }
+        while warmup.join_next().await.is_some() {}
+        info!(connections = cfg.concurrency_max, "connection pool warmed");
     }
 
     info!(
