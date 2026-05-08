@@ -72,7 +72,7 @@ services:
       - OLLAMA_KV_CACHE_TYPE=q8_0      # halves KV bytes per slot vs f16
       - OLLAMA_KEEP_ALIVE=1h
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -94,7 +94,7 @@ services:
       - LITELLM_URL=http://ollama:11434/v1
       - LITELLM_API_KEY=
       - ENGRAM_EMBED_URL=http://ollama:11434/v1
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-mxbai-embed-large}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       - ENGRAM_REEMBED_BATCH_SIZE=0
       - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
@@ -133,9 +133,9 @@ services:
         required: false
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=http://ollama:11434/v1
+      - LITELLM_URL=${LITELLM_URL:-http://ollama:11434/v1}
       - LITELLM_API_KEY=
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-mxbai-embed-large}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}

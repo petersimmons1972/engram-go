@@ -70,7 +70,7 @@ services:
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       # Embedding service — same olla endpoint by default
       - ENGRAM_EMBED_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       # IMPORTANT: MCP server does NOT run the reembed worker — that lives in the
@@ -121,7 +121,7 @@ services:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
       - LITELLM_URL=${ENGRAM_EMBED_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
