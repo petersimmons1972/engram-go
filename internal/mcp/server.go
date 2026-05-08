@@ -606,7 +606,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 			slog.Warn("setup-token accessed", "remote_ip", s.clientIP(r))
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
-				"endpoint": advertised + "/sse",
+				"endpoint": advertised + "/mcp",
 				"name":     "engram",
 			})
 		}),

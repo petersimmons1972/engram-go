@@ -118,7 +118,7 @@ func run() error {
 					fmt.Fprintf(os.Stderr,
 						"engram-setup: /setup-token unavailable (%v) — recovered key from %s\n",
 						setupErr, c.label)
-					stub := &setupResponse{Token: key, Endpoint: fmt.Sprintf("http://127.0.0.1:%d/sse", *port)}
+					stub := &setupResponse{Token: key, Endpoint: fmt.Sprintf("http://127.0.0.1:%d/mcp", *port)}
 					return configureWithSetup(base, *name, *dryRun, *format, stub)
 				}
 			}
@@ -134,7 +134,7 @@ func run() error {
 	// In offline mode, we cannot fetch a real token, so generate a stub (#589)
 	stubSetup := &setupResponse{
 		Token:    "stub-offline-token-" + fmt.Sprintf("%d", time.Now().Unix()),
-		Endpoint: fmt.Sprintf("http://127.0.0.1:%d/sse", *port),
+		Endpoint: fmt.Sprintf("http://127.0.0.1:%d/mcp", *port),
 		Name:     *name,
 	}
 	return configureWithSetup(base, *name, *dryRun, *format, stubSetup)
@@ -153,7 +153,7 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 	}
 
 	newEntry := map[string]interface{}{
-		"type": "sse",
+		"type": "http",
 		"url":  setup.Endpoint,
 		"headers": map[string]string{
 			"Authorization": "Bearer " + setup.Token,
@@ -164,7 +164,7 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 		// Redact token in dry-run output
 		redactedToken := redactToken(setup.Token)
 		displayEntry := map[string]interface{}{
-			"type": "sse",
+			"type": "http",
 			"url":  setup.Endpoint,
 			"headers": map[string]string{
 				"Authorization": "Bearer " + redactedToken,
