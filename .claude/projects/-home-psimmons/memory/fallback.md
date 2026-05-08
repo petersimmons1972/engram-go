@@ -10,6 +10,19 @@ This file is a staging area. When Engram is unreachable, store entries here in t
 On reconnect, call `memory_store` for each entry then delete it from this file.
 
 ---
+## 2026-05-07 — Olla + Claude Code local model findings
+**project**: homelab | **type**: context | **importance**: 2 | **tags**: olla, gpu-fleet, local-models, load-balancer
+
+- Olla endpoint: `http://localhost:40114` (Docker, config: `/home/psimmons/projects/olla/config.local.yaml`)
+- Correct API path: `/olla/openai/v1/` — `/v1/` returns 404
+- Model discovery: auto every 5 min from all 4 GPU endpoints
+- GPU fleet: oblivion:8002 (vLLM/GB10, jina embeddings), precision:11434 (w6800, qwen3-coder:30b), precision:11436 (MI-50), engram-ollama:11434 (7900XT)
+- Olla Anthropic translator: passthrough-only — cannot route to local Ollama models
+- Claude Code limitation: cannot use non-Anthropic models as its AI engine; `ANTHROPIC_BASE_URL` only changes endpoint, still requires Anthropic Messages API + Claude model IDs
+- openai/gpt-oss-20b: deployed to oblivion, starting up as of 2026-05-07
+- Engram embedder mismatch detected: needs `memory_migrate_embedder` (jina-v4 → jina-v5-small)
+
+---
 ## PENDING: 2026-05-06 substack polish session
 type: context
 project: global
@@ -40,6 +53,30 @@ Next: Phase 8 artwork (026–060 headers) — period public domain photos (milit
 
 <content>
 -->
+
+## [2026-05-08] Olla circuit breaker does not reset on restart
+**Project:** homelab | **Type:** error | **Importance:** 2
+**Tags:** olla, circuit-breaker, oblivion, reembed, embeddings, concurrency
+
+Olla circuit breaker on oblivion-gb10-vllm does not clear on container restart. Triggered by concurrency=16 burst from reembed worker. Even after `docker restart olla`, breaker re-opens immediately on first probe wave. Fix: route reembed worker directly to vLLM endpoint (LITELLM_URL=http://oblivion.petersimmons.com:8002), bypassing Olla entirely. Safe concurrency ceiling through Olla is ≤8. Restore Olla routing after concurrency is tuned.
+
+## [2026-05-08] Docker Compose environment: overrides env_file:
+**Project:** engram | **Type:** pattern | **Importance:** 2
+**Tags:** docker-compose, env-file, environment-precedence, reembed
+
+Docker Compose `environment:` block takes precedence over `env_file:`. Found when LITELLM_URL=http://ollama:11434/v1 in docker-compose.local.yml silently overrode LITELLM_URL=http://olla:40114/olla/openai in .env — reembed worker was hitting wrong endpoint for hours. Fix: use `${LITELLM_URL:-http://ollama:11434/v1}` so .env can override the default.
+
+## [2026-05-08] Jina v4→v5 migration decisions
+**Project:** engram | **Type:** decision | **Importance:** 2
+**Tags:** jina-v5, jina-v4, embeddings, oblivion, migration, models-go, embed-max-chars, rust-reembed
+
+jinaai/jina-embeddings-v5-text-small on oblivion GB10 vLLM port 8002. 118 emb/s vs ~12 emb/s GGUF (~10x faster). v4 retained on engram-ollama only; 7900 XT and W6800 unloaded. ENGRAM_EMBED_MAX_CHARS lowered 32000→24000 — Rust reembed worker reads this directly and does NOT use Go ModelMaxTokens registry. Register new model in internal/embed/models.go as Recommended:true; update both docker-compose.yml and docker-compose.local.yml in same commit (SINGLE SOURCE OF TRUTH comment). engram-ollama healthcheck: curl not in rocm image → change to `ollama list`. xh unload requires --ignore-stdin flag; for remote hosts use SSH + curl.
+
+## [2026-05-08] Writer voice: Cronkite beats Murrow for short analytical rebuttal
+**Project:** global | **Type:** pattern | **Importance:** 1
+**Tags:** writers, cronkite, murrow, commentary, voice-selection, write-skill
+
+For short analytical rebuttal (350-450w), Cronkite outperforms Murrow. Murrow's formal witness voice reads as personal opinion; Cronkite's attribution-chain broadcast style reads as neutral report. User rejected Murrow explicitly. For direct replies use second-person 'you'; third-person reads as a report about the subject rather than a reply to them.
 
 ---
 type: decision
@@ -92,3 +129,45 @@ PR #594/#549 added netutil.ValidateUpstreamURL called at startup against LITELLM
 - petersimmons1972/engram-go#608 (CLOSED via #609) — SSRF self-hosted regression
 
 <!-- dedup:incident-2026-05-05-lessons -->
+
+## [2026-05-07] Batch 090726 W2 gate validation — Reports 1-4 complete, Report 5 pending
+**Project:** clearwatch
+**Type:** context
+**Tags:** ["batch-090726", "gate-validation", "prose-generation", "w2-gates"]
+**Importance:** 2
+
+Tier-1 GOLD batch 090726 (started 2026-05-07 09:07:26) is validating three W2 fixes:
+- **Commit 62b37ffc**: insight marker validation (<<insight:high>>/<<insight:medium>> required before accepting prose)
+- **Commit f5d21c39**: executive_verdict claim synthesis when section missing from dossier manifest
+- **Commit 708359ef**: removed invalid Report 5 (now fixed, replaced with correct SentinelOne_v_PaloAltoNetworks)
+
+**Report Status** (as of 2026-05-07 10:44 UTC):
+
+1. **CrowdStrike_v_SentinelOne (v298)**: FAILED Stage 6 with 1 error
+   - Error: uncited percentage '98%' (F2.a gate)
+   - Previous (v280): 20 errors (including insight marker blocker)
+   - **Validation**: insight marker fix is WORKING — error reduced 95%, marker blocker eliminated ✓
+
+2. **PaloAltoNetworks_v_CrowdStrike (v138)**: FAILED Stage 6 with 2 errors
+   - Errors: word count 954 (below 1080 minimum) + uncited percentage '99%'
+   - First generation of this report version
+   - **Validation**: insight marker fix working (no "Found 0 <<insight>>" error)
+
+3. **SentinelOne_v_MicrosoftDefender (v114)**: FAILED Stage 6 with 4 errors
+   - Errors: document-level insight check (Found 0 <<insight>>) + 3× uncited percentages (100%, 88%, 100%)
+   - Previous (v113): 15 errors (word count errors eliminated in v114)
+   - **Concern**: Document-level insight marker check still failing despite section-level validation working. Dossier has 8 sections, no executive_verdict in manifest.
+
+4. **MicrosoftDefender_v_PaloAltoNetworks**: RUNNING (Stage 5 completed, Stage 6 surgical retries in flight, 10:44 UTC)
+   - **CRITICAL**: executive_verdict section successfully generated (175 tokens deducted, not skipped) ✓
+   - Token budget exceeded after detection_efficacy, surgical retries in progress (round 2/3)
+   - **TEST**: Will F1.a "no H2 headings" error be eliminated? (confirms executive_verdict synthesis fix worked)
+
+5. **SentinelOne_v_PaloAltoNetworks (v103 pending)**: QUEUED
+
+**Uncited Percentage Pattern**: All reports show F2.a errors with consistent percentages (98%, 99%, 100%, 88%). This is a separate data quality issue from the W2 gate fixes, likely in dossier claims or prose generation.
+
+**Next Steps**: 
+- Await Report 4 completion to validate F1.a gate fix
+- Complete Report 5
+- Analyze why Report 3 fails document-level insight check while Reports 1-2 pass (section-level validation is working)
