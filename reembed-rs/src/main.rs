@@ -154,6 +154,7 @@ async fn run_batch(
     }
 
     let n = rows.len();
+    let t_select = start.elapsed();
     tracing::debug!(count = n, concurrency, "processing batch");
 
     let sem = Arc::new(Semaphore::new(concurrency));
@@ -173,6 +174,7 @@ async fn run_batch(
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
+            let t0 = std::time::Instant::now();
 
             // Truncate each text to the model context window.
             let texts: Vec<String> = chunks.iter().map(|c| {
@@ -192,13 +194,15 @@ async fn run_batch(
             )
             .await;
 
+            let t_embed = t0.elapsed();
+
             let vecs = match embed_result {
                 Err(_) => {
-                    warn!(count = chunks.len(), "embed sub-batch timeout");
+                    warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), "embed sub-batch timeout");
                     return;
                 }
                 Ok(Err(e)) => {
-                    warn!(count = chunks.len(), err = %e, "embed sub-batch failed");
+                    warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), err = %e, "embed sub-batch failed");
                     return;
                 }
                 Ok(Ok(v)) => v,
@@ -216,6 +220,14 @@ async fn run_batch(
                     warn!(chunk_id = %chunk.id, err = %e, "update failed");
                 }
             }
+
+            let t_write = t0.elapsed() - t_embed;
+            tracing::debug!(
+                count = chunks.len(),
+                embed_ms = t_embed.as_millis(),
+                write_ms = t_write.as_millis(),
+                "sub-batch done"
+            );
         }));
     }
 
@@ -223,7 +235,15 @@ async fn run_batch(
         let _ = h.await;
     }
 
-    Ok((n, start.elapsed()))
+    let total = start.elapsed();
+    tracing::info!(
+        chunks = n,
+        select_ms = t_select.as_millis(),
+        total_ms = total.as_millis(),
+        "batch complete"
+    );
+
+    Ok((n, total))
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -381,6 +401,9 @@ fn env_duration(key: &str, default: Duration) -> Duration {
         .and_then(|v| {
             if let Ok(secs) = v.parse::<u64>() {
                 return Some(Duration::from_secs(secs));
+            }
+            if let Some(ms) = v.strip_suffix("ms") {
+                return ms.parse::<u64>().ok().map(Duration::from_millis);
             }
             if let Some(s) = v.strip_suffix('s') {
                 return s.parse().ok().map(Duration::from_secs);
