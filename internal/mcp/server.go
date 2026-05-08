@@ -639,6 +639,13 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	msgHandler := s.withSessionFingerprint(sse.MessageHandler(), apiKey)
 	mux.Handle("/message", s.applyMiddleware(msgHandler, apiKey, rl))
 
+	// /mcp — Streamable HTTP transport (stateless POST per tool call).
+	// Preferred over /sse for Claude Code: no persistent connection to drop,
+	// no keepalive required, no /mcp reconnect needed on idle timeout (#612).
+	// Configure in mcp_servers.json: type:"http", url:"http://127.0.0.1:8788/mcp"
+	streamable := buildStreamableHTTPServer(s.mcp)
+	mux.Handle("/mcp", s.applyMiddleware(streamable, apiKey, rl))
+
 	// /quick-store — sessionless REST endpoint for hook scripts and CLI callers
 	// that cannot establish an SSE session (e.g. PreCompact hooks).
 	mux.Handle("/quick-store", s.applyMiddleware(http.HandlerFunc(s.handleQuickStore), apiKey, rl))
