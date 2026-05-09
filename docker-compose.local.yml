@@ -94,7 +94,7 @@ services:
       - LITELLM_URL=http://ollama:11434/v1
       - LITELLM_API_KEY=
       - ENGRAM_EMBED_URL=http://ollama:11434/v1
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_SUMMARIZE_MODEL=${ENGRAM_SUMMARIZE_MODEL:-llama3.2:3b}
       - ENGRAM_REEMBED_BATCH_SIZE=0
       - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
@@ -135,7 +135,7 @@ services:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
       - LITELLM_URL=${LITELLM_URL:-http://ollama:11434/v1}
       - LITELLM_API_KEY=
-      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-jinaai/jina-embeddings-v5-text-small}
+      - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-100}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10s}
