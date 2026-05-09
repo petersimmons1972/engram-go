@@ -1,8 +1,11 @@
 package longmemeval
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -91,6 +94,95 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 		return "", fmt.Errorf("claude --print: %s", out)
 	}
 	return out, nil
+}
+
+// GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
+// the claude CLI. baseURL is the API root (e.g. "http://oblivion:8000/v1").
+// Retry/backoff behaviour mirrors generate().
+func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int) (string, error) {
+	var lastErr error
+	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
+	for attempt := 0; attempt <= retries; attempt++ {
+		out, err := callOAI(ctx, prompt, baseURL, model)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if attempt >= retries {
+			break
+		}
+		wait := backoffs[attempt%len(backoffs)]
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return "", lastErr
+}
+
+func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error) {
+	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
+	defer cancel()
+
+	type oaiMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	reqBody, err := json.Marshal(struct {
+		Model    string       `json:"model"`
+		Messages []oaiMessage `json:"messages"`
+	}{
+		Model:    model,
+		Messages: []oaiMessage{{Role: "user", Content: prompt}},
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal OAI request: %w", err)
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(tctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("create OAI request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if tctx.Err() != nil {
+			return "", fmt.Errorf("OAI request timed out after %s", generateTimeout)
+		}
+		return "", fmt.Errorf("OAI request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)
+	}
+
+	var oaiResp struct {
+		Choices []struct {
+			Message oaiMessage `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
+		return "", fmt.Errorf("decode OAI response: %w", err)
+	}
+	if len(oaiResp.Choices) == 0 {
+		return "", fmt.Errorf("OAI response: no choices returned")
+	}
+	return strings.TrimSpace(oaiResp.Choices[0].Message.Content), nil
+}
+
+// ScoreOAI is like Score but uses the OpenAI-compatible endpoint.
+func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
+	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
+	out, err := GenerateOAI(ctx, prompt, baseURL, model, retries)
+	if err != nil {
+		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+	}
+	label, explanation := ParseScoreLabel(out)
+	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
 // GenerationPrompt builds the prompt for answer generation.

@@ -110,7 +110,13 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 		}
 	}()
 
-	result, err := longmemeval.Score(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.Retries)
+	var result longmemeval.ScoreResult
+	var err error
+	if cfg.LLMBaseURL != "" {
+		result, err = longmemeval.ScoreOAI(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
+	} else {
+		result, err = longmemeval.Score(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.Retries)
+	}
 	if err != nil {
 		return longmemeval.ScoreEntry{
 			QuestionID:   item.QuestionID,

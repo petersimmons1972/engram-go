@@ -17,14 +17,16 @@ import (
 
 // Config holds flags shared across all subcommands.
 type Config struct {
-	DataFile  string
-	Workers   int
-	RunID     string
-	ServerURL string
-	APIKey    string
-	NoCleanup bool
-	Retries   int
-	OutDir    string
+	DataFile   string
+	Workers    int
+	RunID      string
+	ServerURL  string
+	APIKey     string
+	NoCleanup  bool
+	Retries    int
+	OutDir     string
+	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
+	LLMModel   string // model name for LLMBaseURL endpoint
 }
 
 func main() {
@@ -43,8 +45,10 @@ func main() {
 	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
 	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
 	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Skip Engram project deletion after run stage")
-	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for claude --print and Engram calls")
+	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for generation and Engram calls")
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
+	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
+	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		log.Fatal(err)

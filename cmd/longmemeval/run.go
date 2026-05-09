@@ -154,7 +154,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	prompt := longmemeval.GenerationPrompt(item.Question, item.QuestionDate, contextBlocks)
-	hypothesis, err := longmemeval.Generate(ctx, prompt, cfg.Retries)
+	var hypothesis string
+	if cfg.LLMBaseURL != "" {
+		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
+	} else {
+		hypothesis, err = longmemeval.Generate(ctx, prompt, cfg.Retries)
+	}
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID:   item.QuestionID,
