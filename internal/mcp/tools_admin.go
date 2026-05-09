@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -273,6 +275,32 @@ func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		"invalidated_sources": ev.InvalidatedSources,
 		"memories_used":       len(ev.Memories),
 	})
+}
+
+// handleMemoryStatusPing is a lightweight liveness probe — no DB writes, 2s
+// internal timeout. Used by the Claude Code Stop hook to detect MCP
+// disconnection without requiring a full tool call round-trip.
+func handleMemoryStatusPing(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := pool.Get(pingCtx, "global"); err != nil {
+		return &mcpgo.CallToolResult{
+			IsError: true,
+			Content: []mcpgo.Content{
+				mcpgo.TextContent{
+					Type: "text",
+					Text: "engram connectivity probe failed: " + err.Error(),
+				},
+			},
+		}, nil
+	}
+	result := map[string]any{
+		"status": "ok",
+		"ping":   true,
+		"ts":     time.Now().UTC().Format(time.RFC3339),
+	}
+	b, _ := json.Marshal(result)
+	return mcpgo.NewToolResultText(string(b)), nil
 }
 
 // handleMemoryReason recalls memories relevant to a question and uses Claude to

@@ -29,6 +29,29 @@ import (
 	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
+// serverPhase constants track the startup lifecycle of the Server.
+// The phase advances from starting → warming → warm as pool pre-warming completes.
+// /ready returns 503 until phaseWarm is reached.
+const (
+	phaseStarting int32 = 0
+	phaseWarming  int32 = 1
+	phaseWarm     int32 = 2
+)
+
+// Exported aliases for use by main.go and other external callers that need to
+// advance the server phase without accessing unexported fields directly.
+const (
+	PhaseStarting = phaseStarting
+	PhaseWarming  = phaseWarming
+	PhaseWarm     = phaseWarm
+)
+
+// SetPhase advances the server startup phase. Called by main.go during startup
+// to mark progression from starting → warming → warm. Thread-safe.
+func (s *Server) SetPhase(phase int32) {
+	s.serverPhase.Store(phase)
+}
+
 // contextKey is a typed key for values stored in request contexts.
 // Using a named type prevents collisions with context values from other packages.
 type contextKey string
@@ -178,6 +201,11 @@ type Server struct {
 	// Code's plan mode) does not block them.
 	toolAnnotations map[string]mcpgo.ToolAnnotation
 
+	// toolDescriptions records the description string passed to each registered
+	// tool. Populated alongside toolAnnotations for tests that inspect descriptions
+	// (e.g. verifying the embed-degraded suffix is applied — pillar 1C, #611).
+	toolDescriptions map[string]string
+
 	// sessionTouchMu and sessionTouchTimes track the last time each session was
 	// touched to implement coalescing: at most one DB write per session per 30s.
 	// This prevents unbounded goroutine spawning when the same session makes
@@ -194,6 +222,16 @@ type Server struct {
 	// runtimeCfg holds feature flags that can be reloaded at runtime via SIGHUP (#557).
 	// Tool handlers read these without locking to avoid contention.
 	runtimeCfg *RuntimeConfig
+
+	// tofuGranted tracks whether the one-time localhost bootstrap grant for /setup-token
+	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
+	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
+	tofuGranted atomic.Bool
+
+	// serverPhase tracks startup lifecycle: 0=starting, 1=warming, 2=warm.
+	// /ready returns 503 until phaseWarm is stored. Advanced by the pre-warm goroutine
+	// in main.go after pool.WarmProjects completes.
+	serverPhase atomic.Int32
 }
 
 // readOnlyToolNames returns the canonical set of MCP tool names that perform
@@ -230,6 +268,7 @@ func readOnlyToolNames() map[string]bool {
 		"get_constraints":           true,
 		"check_constraints":         true,
 		"verify_before_acting":      true,
+		"memory_status_ping":        true,
 	}
 }
 
@@ -239,6 +278,17 @@ func readOnlyToolNames() map[string]bool {
 func (s *Server) RegisteredToolAnnotations() map[string]mcpgo.ToolAnnotation {
 	out := make(map[string]mcpgo.ToolAnnotation, len(s.toolAnnotations))
 	for k, v := range s.toolAnnotations {
+		out[k] = v
+	}
+	return out
+}
+
+// RegisteredToolDescriptions returns a copy of the description string recorded
+// for each registered tool. Used by tests to verify description mutations such
+// as the embed-degraded suffix (pillar 1C, #611). The returned map is safe to mutate.
+func (s *Server) RegisteredToolDescriptions() map[string]string {
+	out := make(map[string]string, len(s.toolDescriptions))
+	for k, v := range s.toolDescriptions {
 		out[k] = v
 	}
 	return out
@@ -308,6 +358,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		trustProxy:        trustProxy,
 		embedderHealth:    embedderHealth,
 		toolAnnotations:   make(map[string]mcpgo.ToolAnnotation),
+		toolDescriptions:  make(map[string]string),
 		sessionTouchTimes: make(map[string]time.Time),
 		embedDegraded:     embedDegradedFlag,
 		runtimeCfg:        runtimeCfg,
@@ -389,7 +440,11 @@ func (s *Server) RehydrateSessions(ctx context.Context, apiKey string) error {
 	if s.cfg.SessionDB == nil {
 		return nil
 	}
-	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, 2*time.Hour, hashAPIKey(apiKey))
+	window := s.cfg.SessionRehydrateWindow
+	if window == 0 {
+		window = 2 * time.Hour
+	}
+	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, window, hashAPIKey(apiKey))
 	if err != nil {
 		return fmt.Errorf("list active sessions for rehydration: %w", err)
 	}
@@ -578,6 +633,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// a previously-healthy dependency is now unreachable.
 	mux.HandleFunc("/health", s.handleHealth)
 
+	// GET /ready — unauthenticated readiness probe. Returns 200 when pool is warm.
+	// Unlike /health, /ready tracks startup phase and pre-warming state.
+	mux.HandleFunc("/ready", s.handleReady)
+
 	// GET /metrics — requires Bearer authentication (#552).
 	mux.Handle("/metrics", s.applyMiddlewareWithRL(
 		promhttp.Handler(),
@@ -585,7 +644,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		newRateLimiterWithConfig(ctx, s.cfg.rateLimitRPS(), s.cfg.rateLimitBurst()),
 	))
 
-	// GET /setup-token — requires Bearer authentication (#540).
+	// GET /setup-token — TOFU bootstrap on first localhost request; Bearer auth thereafter (#613, #540).
 	// Returns the current bearer token so MCP clients can self-configure without manual copy-paste.
 	//
 	// Security: Prior to #540, /setup-token was protected by IP-based access control
@@ -594,25 +653,49 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// 2. The token is equivalent in sensitivity to ~/.claude.json which is already on disk
 	// 3. Bearer authentication provides cryptographic verification without relying on IP reputation
 	//
-	// Rate limit: per token (3 calls per 5-minute window).
-	mux.Handle("/setup-token", s.applyMiddlewareWithRL(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !setupLimiter.allowSetupToken(s.clientIP(r)) {
-				slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
-				w.Header().Set("Retry-After", "100")
-				http.Error(w, "rate limited", http.StatusTooManyRequests)
-				return
-			}
-			slog.Warn("setup-token accessed", "remote_ip", s.clientIP(r))
+	// TOFU (#613): the very first unauthenticated request from the loopback interface is
+	// auto-approved (one-time-only, raw TCP peer address, not proxy headers). This breaks
+	// the chicken-and-egg problem where engram-setup needs the token before it can authenticate.
+	//
+	// Rate limit: per IP (3 calls per 5-minute window).
+	mux.Handle("/setup-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit applies unconditionally — security-critical endpoint.
+		if !setupLimiter.allowSetupToken(s.clientIP(r)) {
+			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+			w.Header().Set("Retry-After", "100")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+
+		// TOFU: first unauthenticated request from loopback only.
+		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
+		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
+				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
 				"endpoint": advertised + "/mcp",
 				"name":     "engram",
 			})
-		}),
-		apiKey,
-		setupLimiter,
-	))
+			return
+		}
+
+		// All other requests: require Bearer authentication (unchanged from #540).
+		s.applyMiddlewareWithRL(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
+				writeJSON(w, http.StatusOK, map[string]string{
+					"token":    apiKey,
+					"endpoint": advertised + "/mcp",
+					"name":     "engram",
+				})
+			}),
+			apiKey,
+			setupLimiter,
+		).ServeHTTP(w, r)
+	}))
 
 	// GET /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource —
 	// Return 404 to tell Claude Code this server does not use MCP OAuth (spec 2025-03-26).
@@ -789,6 +872,65 @@ func isLoopbackIP(ip string) bool {
 	return parsed != nil && parsed.IsLoopback()
 }
 
+// setupTokenTOFUHandler returns the /setup-token handler with TOFU (Trust On
+// First Use) logic. It creates an internal rate limiter with default parameters.
+// Use setupTokenTOFUHandlerWithLimiter in tests to inject a pre-exhausted limiter.
+func (s *Server) setupTokenTOFUHandler(apiKey string) http.Handler {
+	return s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+}
+
+// setupTokenTOFUHandlerWithLimiter returns the /setup-token handler using the
+// provided rate limiter. This is the implementation; setupTokenTOFUHandler is
+// the production convenience wrapper.
+//
+// Security contract:
+//  1. Rate limit is checked unconditionally — even TOFU requests are throttled.
+//  2. TOFU path uses r.RemoteAddr (raw TCP peer), NOT s.clientIP(r), to prevent
+//     X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1 (#540).
+//  3. Exactly one unauthenticated loopback request is granted via CompareAndSwap.
+//  4. All subsequent requests require Bearer authentication (unchanged from #540).
+func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit applies unconditionally — security-critical endpoint.
+		// Use clientIP here for rate limiting (proxy headers are fine for rate limits).
+		if !rl.allowSetupToken(s.clientIP(r)) {
+			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+			w.Header().Set("Retry-After", "100")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+
+		// TOFU: first unauthenticated request from loopback only.
+		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
+		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
+				"remote_ip", rawPeer)
+			writeJSON(w, http.StatusOK, map[string]string{
+				"token":    apiKey,
+				"endpoint": "/mcp",
+				"name":     "engram",
+			})
+			return
+		}
+
+		// All other requests: require Bearer authentication (unchanged from #540).
+		s.applyMiddlewareWithRL(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
+				writeJSON(w, http.StatusOK, map[string]string{
+					"token":    apiKey,
+					"endpoint": "/mcp",
+					"name":     "engram",
+				})
+			}),
+			apiKey,
+			rl,
+		).ServeHTTP(w, r)
+	})
+}
+
 // withSessionFingerprint wraps next with a check that the sessionId query
 // parameter was established by the same bearer token that is presenting the
 // request (#245). The fingerprint is HMAC(apiKey, sessionID) stored at SSE
@@ -955,6 +1097,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 		s.toolAnnotations = make(map[string]mcpgo.ToolAnnotation)
 	}
 	s.toolAnnotations[name] = annotation
+	if s.toolDescriptions == nil {
+		s.toolDescriptions = make(map[string]string)
+	}
+	s.toolDescriptions[name] = desc
 	s.mcp.AddTool(mcpgo.NewTool(name,
 		mcpgo.WithDescription(desc),
 		mcpgo.WithToolAnnotation(annotation)),
@@ -967,20 +1113,19 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 
 			result, err := h(ctx, pool, req, cfg)
 			if err != nil && ctx.Err() == context.DeadlineExceeded {
-				slog.Warn("mcp tool timed out", "tool", toolName, "timeout", toolTimeout)
+				slog.Warn("mcp tool timed out — returning degraded success to prevent false 'user denied' synthesis",
+					"tool", toolName, "timeout", toolTimeout)
 				metrics.ToolRequests.WithLabelValues(toolName, "timeout").Inc()
-				return &mcpgo.CallToolResult{
-					IsError: true,
-					Content: []mcpgo.Content{
-						mcpgo.TextContent{
-							Type: "text",
-							Text: toolName + " timed out after " + toolTimeout.String() +
-								" — backend (Ollama/LiteLLM) may be slow or unavailable. " +
-								"If you did not see a permission prompt either, the call may have been blocked client-side " +
-								"(e.g. Claude Code plan mode or a deny rule) before reaching engram; check ~/.claude/settings.json permissions and current mode.",
-						},
-					},
-				}, nil
+				degradedJSON, _ := json.Marshal(map[string]any{
+					"_engram_degraded":        true,
+					"_engram_degraded_reason": "embed_timeout",
+					"_engram_tool":            toolName,
+					"status":                  "degraded",
+					"message": toolName + " ran in degraded mode (GPU saturated or backend slow) — " +
+						"results use BM25 text search only. Memory tools remain accessible. " +
+						"Recovery is automatic when GPU pressure eases.",
+				})
+				return mcpgo.NewToolResultText(string(degradedJSON)), nil
 			}
 			status := "ok"
 			if err != nil || (result != nil && result.IsError) {
@@ -998,6 +1143,14 @@ func (s *Server) registerTool(name, desc string, h toolHandler) {
 }
 
 func (s *Server) registerTools() {
+	// embedSuffix is appended to the description of embedding-dependent tools
+	// when the embedder is unavailable at startup. This surfaces the degradation
+	// to the AI client so it can communicate the limitation to users (#611).
+	embedSuffix := ""
+	if s.embedDegraded != nil && s.embedDegraded.Load() {
+		embedSuffix = " [EMBEDDING UNAVAILABLE: semantic search degraded, BM25+recency fallback active]"
+	}
+
 	type toolDef struct {
 		name    string
 		desc    string
@@ -1005,7 +1158,7 @@ func (s *Server) registerTools() {
 	}
 	tools := []toolDef{
 		// Core store operations
-		{"memory_store", "Store a focused memory (<=10k chars)",
+		{"memory_store", "Store a focused memory (<=10k chars)" + embedSuffix,
 			withEntityEnqueue(handleMemoryStore)},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			handleMemoryStoreDocument},
@@ -1013,10 +1166,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
-		{"memory_store_batch", "Store multiple memories in one call",
+		{"memory_store_batch", "Store multiple memories in one call" + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
-		{"memory_recall", "Recall memories by semantic + full-text query",
+		{"memory_recall", "Recall memories by semantic + full-text query" + embedSuffix,
 			withWarnLog("memory_recall", handleMemoryRecall)},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
 			handleMemoryFetch},
@@ -1043,6 +1196,8 @@ func (s *Server) registerTools() {
 			noConfig(handleMemoryResummarize)},
 		{"memory_status", "Return project statistics",
 			noConfig(handleMemoryStatus)},
+		{"memory_status_ping", "Lightweight liveness probe — no DB writes, 2s internal timeout. Used by the Claude Code Stop hook to detect MCP disconnection.",
+			noConfig(handleMemoryStatusPing)},
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
 			noConfig(handleMemoryVerify)},
 		// Feedback and aggregation
@@ -1119,7 +1274,7 @@ func (s *Server) registerTools() {
 		// Simplified front-door tools
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
 			withWarnLog("memory_quick_store", withEntityEnqueue(handleMemoryQuickStore))},
-		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
+		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied." + embedSuffix,
 			handleMemoryQuery},
 		// Safety constraint verification
 		{"get_constraints", "List constraint and policy memories relevant to an optional query",
@@ -1270,6 +1425,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, statusCode, res)
+}
+
+// handleReady reports the server's startup phase and embedding health.
+// Returns 200 only when the pool has completed pre-warming (phaseWarm).
+// Unlike /health, /ready is specifically designed for startup gating:
+// K8s initialDelaySeconds / readinessProbe and MCP client retry logic can
+// poll this endpoint to know when to begin routing tool calls.
+//
+// Unauthenticated — suitable as a K8s readiness probe.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	phase := s.serverPhase.Load()
+	embedStatus := "ok"
+	if s.embedDegraded.Load() {
+		embedStatus = "degraded"
+	}
+
+	phaseStr := "starting"
+	switch phase {
+	case phaseWarming:
+		phaseStr = "warming"
+	case phaseWarm:
+		phaseStr = "warm"
+	}
+
+	ready := phase == phaseWarm
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+
+	writeJSON(w, status, map[string]any{
+		"ready":          ready,
+		"phase":          phaseStr,
+		"embed":          embedStatus,
+		"transport_hint": "http",
+	})
 }
 
 // extractionSem caps the number of concurrent entity-extraction goroutines.

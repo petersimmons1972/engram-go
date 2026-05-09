@@ -610,3 +610,45 @@ func TestDispatchTimeout_RegisterToolAppliesDeadline(t *testing.T) {
 		t.Errorf("call took %v — should complete within 2x the 200ms timeout", elapsed)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Pillar 1C: degraded description suffix in registerTools (#611)
+// ---------------------------------------------------------------------------
+
+// TestRegisterTools_EmbedDegraded_DescriptionContainsSuffix verifies that when
+// EmbedDegraded is set at startup, the four embedding-dependent tools have the
+// degradation notice appended to their descriptions. This surfaces the limitation
+// to the AI client without altering tool behaviour or routing.
+func TestRegisterTools_EmbedDegraded_DescriptionContainsSuffix(t *testing.T) {
+	const suffix = "[EMBEDDING UNAVAILABLE: semantic search degraded, BM25+recency fallback active]"
+	degradedTools := []string{"memory_store", "memory_store_batch", "memory_recall", "memory_query"}
+
+	// Build a server with EmbedDegraded set — registerTools() is called in NewServer.
+	s := NewServer(nil, Config{EmbedDegraded: true})
+	descs := s.RegisteredToolDescriptions()
+
+	for _, name := range degradedTools {
+		desc, ok := descs[name]
+		if !ok {
+			t.Errorf("tool %q not found in registered tools", name)
+			continue
+		}
+		if !strings.Contains(desc, suffix) {
+			t.Errorf("tool %q description missing degraded suffix\ngot:  %q", name, desc)
+		}
+	}
+}
+
+// TestRegisterTools_EmbedHealthy_NoSuffix verifies that when EmbedDegraded is false
+// (the normal case), tool descriptions are not modified.
+func TestRegisterTools_EmbedHealthy_NoSuffix(t *testing.T) {
+	const suffix = "[EMBEDDING UNAVAILABLE"
+	s := NewServer(nil, Config{EmbedDegraded: false})
+	descs := s.RegisteredToolDescriptions()
+
+	for name, desc := range descs {
+		if strings.Contains(desc, suffix) {
+			t.Errorf("tool %q has unexpected degraded suffix in healthy mode\ngot: %q", name, desc)
+		}
+	}
+}

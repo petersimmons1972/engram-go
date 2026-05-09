@@ -133,6 +133,9 @@ func run() error {
 	embedCircuitBackoffMultiplier := fs.Float64("embed-circuit-backoff-multiplier", envFloat("ENGRAM_EMBED_CIRCUIT_BACKOFF_MULTIPLIER", 2.0), "Exponential backoff multiplier for consecutive opens")
 	embedCircuitBackoffCap := fs.Duration("embed-circuit-backoff-cap", envDuration("ENGRAM_EMBED_CIRCUIT_BACKOFF_CAP", 5*time.Minute), "Maximum cooldown duration (cap on exponential backoff)")
 
+	// Token bucket rate limiter (#611): per-project embed call budget to prevent GPU saturation.
+	embedRatePerSecond := fs.Float64("embed-rate-per-second", envFloat("ENGRAM_EMBED_RATE_PER_SECOND", 0), "Per-project embed call rate limit in calls/s (0 = disabled)")
+
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -340,6 +343,8 @@ func run() error {
 		}
 	}()
 
+	sessionRehydrateWindow := envDuration("ENGRAM_SESSION_REHYDRATE_WINDOW", 0)
+
 	cfg := internalmcp.Config{
 		LiteLLMURL:               *litellmURL,
 		EmbedModel:               *embedModel,
@@ -367,6 +372,8 @@ func run() error {
 		RateLimitRPS:             *rateLimitRPS,
 		RateLimitBurst:           *rateLimitBurst,
 		RateLimitDisable:         *rateLimitDisable,
+		SessionRehydrateWindow:   sessionRehydrateWindow,
+		EmbedRatePerSecond:       *embedRatePerSecond,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
@@ -374,6 +381,7 @@ func run() error {
 	}
 
 	srv := internalmcp.NewServer(pool, cfg)
+	srv.SetPhase(internalmcp.PhaseStarting)
 
 	// Start SIGHUP handler for runtime config reload (#557).
 	// This goroutine listens for SIGHUP and reloads Claude-related feature flags
@@ -479,6 +487,28 @@ func run() error {
 	if err := srv.RehydrateSessions(ctx, apiKey); err != nil {
 		slog.Warn("session rehydration failed — clients will need to reconnect", "err", err)
 	}
+
+	// Pre-warm the top N most recently active project engines in background.
+	// Phase advances: starting → warming → warm. /ready returns 503 until warm.
+	maxPrewarm := envInt("ENGRAM_PREWARM_PROJECTS", 5)
+	go func() {
+		srv.SetPhase(internalmcp.PhaseWarming)
+		warmCtx, warmCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer warmCancel()
+		// Use common top-level projects as warm-up targets. ListAllProjects is not
+		// available at this scope; retentionBackend is project-scoped ("default").
+		// Hardcode the well-known projects for OOBE smoothing; operators can tune
+		// ENGRAM_PREWARM_PROJECTS=0 to skip pre-warming entirely.
+		if maxPrewarm > 0 {
+			warmProjects := []string{"global", "homelab", "clearwatch", "engram", "3dprint"}
+			if len(warmProjects) > maxPrewarm {
+				warmProjects = warmProjects[:maxPrewarm]
+			}
+			pool.WarmProjects(warmCtx, warmProjects, 3)
+		}
+		srv.SetPhase(internalmcp.PhaseWarm)
+		slog.Info("pool pre-warm complete", "max_projects", maxPrewarm)
+	}()
 
 	logRecommendedClientPermissions(srv)
 
