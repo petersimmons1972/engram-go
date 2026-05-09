@@ -130,11 +130,13 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 		Content string `json:"content"`
 	}
 	reqBody, err := json.Marshal(struct {
-		Model    string       `json:"model"`
-		Messages []oaiMessage `json:"messages"`
+		Model     string       `json:"model"`
+		Messages  []oaiMessage `json:"messages"`
+		MaxTokens int          `json:"max_tokens"`
 	}{
-		Model:    model,
-		Messages: []oaiMessage{{Role: "user", Content: prompt}},
+		Model:     model,
+		Messages:  []oaiMessage{{Role: "user", Content: prompt}},
+		MaxTokens: 256,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
