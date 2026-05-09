@@ -201,6 +201,11 @@ type Server struct {
 	// Code's plan mode) does not block them.
 	toolAnnotations map[string]mcpgo.ToolAnnotation
 
+	// toolDescriptions records the description string passed to each registered
+	// tool. Populated alongside toolAnnotations for tests that inspect descriptions
+	// (e.g. verifying the embed-degraded suffix is applied — pillar 1C, #611).
+	toolDescriptions map[string]string
+
 	// sessionTouchMu and sessionTouchTimes track the last time each session was
 	// touched to implement coalescing: at most one DB write per session per 30s.
 	// This prevents unbounded goroutine spawning when the same session makes
@@ -278,6 +283,17 @@ func (s *Server) RegisteredToolAnnotations() map[string]mcpgo.ToolAnnotation {
 	return out
 }
 
+// RegisteredToolDescriptions returns a copy of the description string recorded
+// for each registered tool. Used by tests to verify description mutations such
+// as the embed-degraded suffix (pillar 1C, #611). The returned map is safe to mutate.
+func (s *Server) RegisteredToolDescriptions() map[string]string {
+	out := make(map[string]string, len(s.toolDescriptions))
+	for k, v := range s.toolDescriptions {
+		out[k] = v
+	}
+	return out
+}
+
 // NewServer constructs a Server with all MCP tools registered.
 func NewServer(pool *EnginePool, cfg Config) *Server {
 	trustProxy := false
@@ -342,6 +358,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		trustProxy:        trustProxy,
 		embedderHealth:    embedderHealth,
 		toolAnnotations:   make(map[string]mcpgo.ToolAnnotation),
+		toolDescriptions:  make(map[string]string),
 		sessionTouchTimes: make(map[string]time.Time),
 		embedDegraded:     embedDegradedFlag,
 		runtimeCfg:        runtimeCfg,
@@ -1080,6 +1097,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 		s.toolAnnotations = make(map[string]mcpgo.ToolAnnotation)
 	}
 	s.toolAnnotations[name] = annotation
+	if s.toolDescriptions == nil {
+		s.toolDescriptions = make(map[string]string)
+	}
+	s.toolDescriptions[name] = desc
 	s.mcp.AddTool(mcpgo.NewTool(name,
 		mcpgo.WithDescription(desc),
 		mcpgo.WithToolAnnotation(annotation)),
