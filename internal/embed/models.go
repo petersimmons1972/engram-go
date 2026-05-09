@@ -35,19 +35,27 @@ func ModelMaxTokens(name string) int {
 // this entry. When changing the recommended model, update all three in one commit.
 var SuggestedModels = []ModelSpec{
 	{
+		Name:        "BAAI/bge-m3",
+		Dimensions:  1024,
+		MaxTokens:   8192,
+		SizeMB:      1200,
+		Description: "Official embedding model. Infinity/bge-m3 on oblivion via olla. Switched from vLLM/jina-v5 on 2026-05-08 — ~22% throughput improvement on real-world chunk lengths.",
+		Recommended: true,
+	},
+	{
 		Name:        "jinaai/jina-embeddings-v5-text-small",
 		Dimensions:  1024,
 		MaxTokens:   8192,
 		SizeMB:      560,
-		Description: "Official embedding model. Jina v5-text-small via vLLM on oblivion (GB10, 128 GB unified). 118 emb/s vs ~12 emb/s GGUF. Sole embedding endpoint as of 2026-05-08.",
-		Recommended: true,
+		Description: "Legacy. Jina v5-text-small via vLLM on oblivion. Superseded by BAAI/bge-m3 on 2026-05-08.",
+		Recommended: false,
 	},
 	{
 		Name:        "diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest",
 		Dimensions:  1024, // Matryoshka truncation from native 2048; set ENGRAM_EMBED_DIMENSIONS=1024
 		MaxTokens:   8192,
 		SizeMB:      9200,
-		Description: "Legacy. Jina v4 Q8 GGUF. Retained on engram-ollama only; all other nodes migrated to v5.",
+		Description: "Legacy. Jina v4 Q8 GGUF. Retained on engram-ollama only; all other nodes migrated.",
 		Recommended: false,
 	},
 	{
@@ -64,14 +72,6 @@ var SuggestedModels = []ModelSpec{
 		MaxTokens:   512,
 		SizeMB:      669,
 		Description: "Strong general-purpose baseline with 1024 dims.",
-		Recommended: false,
-	},
-	{
-		Name:        "bge-m3",
-		Dimensions:  1024,
-		MaxTokens:   512,
-		SizeMB:      1200,
-		Description: "Best multilingual option. Recommended when memories span multiple languages.",
 		Recommended: false,
 	},
 	{

@@ -46,7 +46,7 @@ func TestDefaultRecommendedModel(t *testing.T) {
 	if rec == nil {
 		t.Fatal("DefaultRecommendedModel returned nil")
 	}
-	const wantModel = "diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest"
+	const wantModel = "BAAI/bge-m3"
 	if rec.Name != wantModel {
 		t.Errorf("expected %q as recommended, got %q", wantModel, rec.Name)
 	}
