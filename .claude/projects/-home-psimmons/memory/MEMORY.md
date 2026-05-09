@@ -1,12 +1,14 @@
 # Learning Index
 
-**Last Updated**: 2026-05-08T00:34:11Z
-**Session**: 20260507-203411
+**Last Updated**: 2026-05-09T12:09:17Z
+**Session**: 20260509-080917
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-05-08: docs: complete Stanford HAI AI Index 2026 PDF-to-markdown conversion
+- 2026-05-07: chore(memory): capture session 20260508 lessons
 - 2026-05-07: chore(memory): capture session 20260507 lessons + Clearwatch Go port state
 - 2026-05-07: chore(memory): capture local GPU routing + Clearwatch batch state
 - 2026-05-06: chore: sync session memory
@@ -15,11 +17,9 @@
 - 2026-05-06: chore: sync armies roster, hooks, litellm config, AGENTS.md
 - 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
 - 2026-05-06: chore: reconcile history — github/master was squash merge of local commits (engram-go#399 flock fix now applied separately)
-- 2026-05-06: fix(engram-session-recall): add flock on MEMORY.md — engram-go#399
-- 2026-05-06: fix(engram-health-check): replace exit 1 with systemMessage — engram-go#408
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  2 modified, 0 staged
+**Uncommitted**: ⚠️  3 modified, 0 staged
 
 ---
 
@@ -40,13 +40,9 @@ Stored in Engram. Recall:
 - Homelab patterns: `memory_recall("<topic>", project="homelab")`
 - General patterns: `memory_recall("<topic>", project="global")`
 
-Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing
+Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing · Go signal test races
 
-## Local Memory Files
-
-- [Oblivion/Spark state](project_oblivion_spark_state.md) — GPU budget, running services, gpt-oss-20b paused, reembed rebuild in progress
-- [tiktoken aarch64 fix](feedback_tiktoken_aarch64.md) — TIKTOKEN_RS_CACHE_DIR must be /root/.cache/tiktoken-rs-cache on ARM64
-- [engram reembed dims](feedback_engram_reembed_dims.md) — ENGRAM_EMBED_DIMENSIONS=0 required when using vLLM embedding backend
+- [SIGHUP test races](feedback_sighup_test_races.md) — `ready` channel + `<-goroutineDone` pattern for Go tests that send signals to themselves
 
 ---
 
