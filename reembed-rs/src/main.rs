@@ -154,6 +154,7 @@ async fn run_batch(
     }
 
     let n = rows.len();
+    let t_select = start.elapsed();
     tracing::debug!(count = n, concurrency, "processing batch");
 
     let sem = Arc::new(Semaphore::new(concurrency));
@@ -173,6 +174,7 @@ async fn run_batch(
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
+            let t0 = std::time::Instant::now();
 
             // Truncate each text to the model context window.
             let texts: Vec<String> = chunks.iter().map(|c| {
@@ -192,13 +194,15 @@ async fn run_batch(
             )
             .await;
 
+            let t_embed = t0.elapsed();
+
             let vecs = match embed_result {
                 Err(_) => {
-                    warn!(count = chunks.len(), "embed sub-batch timeout");
+                    warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), "embed sub-batch timeout");
                     return;
                 }
                 Ok(Err(e)) => {
-                    warn!(count = chunks.len(), err = %e, "embed sub-batch failed");
+                    warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), err = %e, "embed sub-batch failed");
                     return;
                 }
                 Ok(Ok(v)) => v,
@@ -216,6 +220,14 @@ async fn run_batch(
                     warn!(chunk_id = %chunk.id, err = %e, "update failed");
                 }
             }
+
+            let t_write = t0.elapsed() - t_embed;
+            tracing::debug!(
+                count = chunks.len(),
+                embed_ms = t_embed.as_millis(),
+                write_ms = t_write.as_millis(),
+                "sub-batch done"
+            );
         }));
     }
 
@@ -223,7 +235,15 @@ async fn run_batch(
         let _ = h.await;
     }
 
-    Ok((n, start.elapsed()))
+    let total = start.elapsed();
+    tracing::info!(
+        chunks = n,
+        select_ms = t_select.as_millis(),
+        total_ms = total.as_millis(),
+        "batch complete"
+    );
+
+    Ok((n, total))
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -237,6 +257,12 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let http = HttpClient::builder()
         .timeout(cfg.embed_timeout + Duration::from_secs(5))
+        // Keep enough idle connections for all concurrent sub-batch tasks so
+        // every batch cycle reuses warm connections. Without this, reqwest may
+        // close excess connections between cycles, causing 19/20 tasks to pay
+        // TCP setup cost (~1ms each) and stagger their arrival at vLLM —
+        // preventing vLLM from batching all requests in a single forward pass.
+        .pool_max_idle_per_host(cfg.concurrency_max)
         .build()
         .context("build http client")?;
 
@@ -253,6 +279,26 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
     {
         Ok(v) => info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, "litellm probe ok"),
         Err(e) => warn!(err = %e, "litellm probe failed — will retry on each batch"),
+    }
+
+    // Pre-warm connection pool — establish concurrency_max keep-alive connections
+    // so all sub-batch tasks start with ready sockets (no TCP setup during the
+    // batch). With TOKIO_WORKER_THREADS=concurrency_max, all async tasks also
+    // get OS-thread-level parallelism, ensuring socket writes overlap in time.
+    {
+        let mut warmup = tokio::task::JoinSet::new();
+        for _ in 0..cfg.concurrency_max {
+            let h = http.clone();
+            let url = cfg.litellm_url.clone();
+            let key = cfg.litellm_api_key.clone();
+            let model = cfg.embed_model.clone();
+            let dims = cfg.embed_dims;
+            warmup.spawn(async move {
+                let _ = embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")]).await;
+            });
+        }
+        while warmup.join_next().await.is_some() {}
+        info!(connections = cfg.concurrency_max, "connection pool warmed");
     }
 
     info!(
@@ -381,6 +427,9 @@ fn env_duration(key: &str, default: Duration) -> Duration {
         .and_then(|v| {
             if let Ok(secs) = v.parse::<u64>() {
                 return Some(Duration::from_secs(secs));
+            }
+            if let Some(ms) = v.strip_suffix("ms") {
+                return ms.parse::<u64>().ok().map(Duration::from_millis);
             }
             if let Some(s) = v.strip_suffix('s') {
                 return s.parse().ok().map(Duration::from_secs);
