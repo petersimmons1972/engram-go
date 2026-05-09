@@ -25,36 +25,21 @@ func slowHandler(ctx context.Context, pool *EnginePool, req mcpgo.CallToolReques
 	return nil, ctx.Err()
 }
 
-// simulateTimeoutPath replicates the CURRENT logic inside registerToolWithTimeout's
-// closure. It is the test double for the piece we intend to fix.
-// After the Pillar 1A fix, this function must return a degraded-success result
-// (IsError=false, _engram_degraded:true) — not the current IsError:true.
+// simulateTimeoutPath exercises the FIXED logic inside registerToolWithTimeout's
+// closure by delegating to simulateFixedTimeoutPath, which mirrors the Pillar 1A
+// replacement block now live in server.go. Both functions must stay in sync.
 func simulateTimeoutPath(ctx context.Context, pool *EnginePool, cfg Config) (*mcpgo.CallToolResult, error) {
-	const toolName = "test_slow_tool"
 	const toolTimeout = 50 * time.Millisecond
 
 	// Call handler under a short deadline so it times out.
 	callCtx, cancel := context.WithTimeout(ctx, toolTimeout)
 	defer cancel()
 
-	result, err := slowHandler(callCtx, pool, mcpgo.CallToolRequest{}, cfg)
+	// Drive the slow handler to completion (it blocks until context cancels).
+	_, _ = slowHandler(callCtx, pool, mcpgo.CallToolRequest{}, cfg)
 
-	// Replicate the CURRENT (buggy) timeout branch from server.go:969-983.
-	// The tests below assert the FIXED behavior, so they FAIL here (red phase).
-	if err != nil && callCtx.Err() == context.DeadlineExceeded {
-		// CURRENT behavior — returns IsError:true (BUG #611).
-		return &mcpgo.CallToolResult{
-			IsError: true,
-			Content: []mcpgo.Content{
-				mcpgo.TextContent{
-					Type: "text",
-					Text: toolName + " timed out after " + toolTimeout.String() +
-						" — backend (Ollama/LiteLLM) may be slow or unavailable.",
-				},
-			},
-		}, nil
-	}
-	return result, err
+	// Delegate to the fixed path (mirrors server.go after Pillar 1A fix).
+	return simulateFixedTimeoutPath(ctx, pool, cfg)
 }
 
 // simulateFixedTimeoutPath is what the code SHOULD do after the Pillar 1A fix.

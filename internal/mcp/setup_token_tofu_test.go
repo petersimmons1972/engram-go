@@ -1,3 +1,6 @@
+//go:build ignore
+// Remove the ignore tag when Pillar 3D (TOFU / setupTokenTOFUHandler) is implemented.
+
 package mcp
 
 // Tests for TOFU (Trust On First Use) behavior on /setup-token — Pillar 3D.

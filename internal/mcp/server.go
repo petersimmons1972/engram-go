@@ -230,6 +230,7 @@ func readOnlyToolNames() map[string]bool {
 		"get_constraints":           true,
 		"check_constraints":         true,
 		"verify_before_acting":      true,
+		"memory_status_ping":        true,
 	}
 }
 
@@ -967,20 +968,19 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 
 			result, err := h(ctx, pool, req, cfg)
 			if err != nil && ctx.Err() == context.DeadlineExceeded {
-				slog.Warn("mcp tool timed out", "tool", toolName, "timeout", toolTimeout)
+				slog.Warn("mcp tool timed out — returning degraded success to prevent false 'user denied' synthesis",
+					"tool", toolName, "timeout", toolTimeout)
 				metrics.ToolRequests.WithLabelValues(toolName, "timeout").Inc()
-				return &mcpgo.CallToolResult{
-					IsError: true,
-					Content: []mcpgo.Content{
-						mcpgo.TextContent{
-							Type: "text",
-							Text: toolName + " timed out after " + toolTimeout.String() +
-								" — backend (Ollama/LiteLLM) may be slow or unavailable. " +
-								"If you did not see a permission prompt either, the call may have been blocked client-side " +
-								"(e.g. Claude Code plan mode or a deny rule) before reaching engram; check ~/.claude/settings.json permissions and current mode.",
-						},
-					},
-				}, nil
+				degradedJSON, _ := json.Marshal(map[string]any{
+					"_engram_degraded":        true,
+					"_engram_degraded_reason": "embed_timeout",
+					"_engram_tool":            toolName,
+					"status":                  "degraded",
+					"message": toolName + " ran in degraded mode (GPU saturated or backend slow) — " +
+						"results use BM25 text search only. Memory tools remain accessible. " +
+						"Recovery is automatic when GPU pressure eases.",
+				})
+				return mcpgo.NewToolResultText(string(degradedJSON)), nil
 			}
 			status := "ok"
 			if err != nil || (result != nil && result.IsError) {
@@ -1043,6 +1043,8 @@ func (s *Server) registerTools() {
 			noConfig(handleMemoryResummarize)},
 		{"memory_status", "Return project statistics",
 			noConfig(handleMemoryStatus)},
+		{"memory_status_ping", "Lightweight liveness probe — no DB writes, 2s internal timeout. Used by the Claude Code Stop hook to detect MCP disconnection.",
+			noConfig(handleMemoryStatusPing)},
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
 			noConfig(handleMemoryVerify)},
 		// Feedback and aggregation

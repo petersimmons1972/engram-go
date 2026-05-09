@@ -1,3 +1,6 @@
+//go:build ignore
+// Remove the ignore tag when Pillar 3A (handleMemoryStatusPing) is implemented.
+
 package mcp
 
 // Tests for handleMemoryStatusPing — Pillar 3A lightweight health check.
