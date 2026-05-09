@@ -1,6 +1,3 @@
-//go:build ignore
-// Remove the ignore tag when Pillar 3A (handleMemoryStatusPing) is implemented.
-
 package mcp
 
 // Tests for handleMemoryStatusPing — Pillar 3A lightweight health check.
@@ -53,6 +50,10 @@ func TestMemoryStatusPing_PoolDown_ReturnsIsError(t *testing.T) {
 	require.NoError(t, err, "Go error must be nil — errors go in IsError result, not returned")
 	require.NotNil(t, res)
 	require.True(t, res.IsError, "pool failure must return IsError:true")
+	require.NotEmpty(t, res.Content, "error result must have non-empty Content")
+	text, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok, "error content must be TextContent")
+	require.NotEmpty(t, text.Text, "error content text must describe the failure")
 }
 
 // TestMemoryStatusPing_RegisteredReadOnly verifies that memory_status_ping is

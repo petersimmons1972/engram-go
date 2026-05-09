@@ -166,7 +166,7 @@ func TestSetupToken_TOFURateLimitRunsFirst(t *testing.T) {
 	s := newTOFUTestServer(t, apiKey)
 
 	// Build a rate limiter and exhaust the setup-token budget.
-	rl := newRateLimiter(t.Context())
+	rl := newRateLimiter(context.Background())
 	const ip = "127.0.0.1"
 	for rl.allowSetupToken(ip) {
 		// Consume all tokens.

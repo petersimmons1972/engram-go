@@ -119,20 +119,19 @@ func TestToolTimeout_MessageMentionsDegradedNotDenied(t *testing.T) {
 		"message field must not contain 'denied', got: %q", msg)
 }
 
-// TestToolTimeout_MetricsLabel_IsTimeout verifies the timeout counter increments
-// with label status="timeout". This pins existing behavior — the fix must keep it.
-//
-// May already pass (counter label was added pre-fix). Kept as a regression guard.
+// TestToolTimeout_MetricsLabel_IsTimeout verifies that a timed-out tool call
+// returns a non-nil, non-error result (regression guard for the Pillar 1A fix).
+// Prometheus counter assertion requires the full metrics registry — verified
+// in integration tests; this test guards against panics and nil returns.
 func TestToolTimeout_MetricsLabel_IsTimeout(t *testing.T) {
 	pool := newTestNoopPool(t)
 	cfg := testConfig()
 
-	// Calling the timeout path must not panic and must return a result.
 	result, err := simulateTimeoutPath(context.Background(), pool, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// Prometheus counter assertion requires metrics registry access —
-	// verified in integration tests. Here we just confirm no panic.
+	require.NotEmpty(t, result.Content, "degraded result must have non-empty Content")
+	require.False(t, result.IsError, "timeout must not produce IsError=true after fix")
 }
 
 // TestToolTimeout_DegradedReason_IsEmbedTimeout verifies the _engram_degraded_reason
