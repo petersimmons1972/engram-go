@@ -194,6 +194,11 @@ type Server struct {
 	// runtimeCfg holds feature flags that can be reloaded at runtime via SIGHUP (#557).
 	// Tool handlers read these without locking to avoid contention.
 	runtimeCfg *RuntimeConfig
+
+	// tofuGranted tracks whether the one-time localhost bootstrap grant for /setup-token
+	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
+	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
+	tofuGranted atomic.Bool
 }
 
 // readOnlyToolNames returns the canonical set of MCP tool names that perform
@@ -586,7 +591,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		newRateLimiterWithConfig(ctx, s.cfg.rateLimitRPS(), s.cfg.rateLimitBurst()),
 	))
 
-	// GET /setup-token — requires Bearer authentication (#540).
+	// GET /setup-token — TOFU bootstrap on first localhost request; Bearer auth thereafter (#613, #540).
 	// Returns the current bearer token so MCP clients can self-configure without manual copy-paste.
 	//
 	// Security: Prior to #540, /setup-token was protected by IP-based access control
@@ -595,25 +600,49 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// 2. The token is equivalent in sensitivity to ~/.claude.json which is already on disk
 	// 3. Bearer authentication provides cryptographic verification without relying on IP reputation
 	//
-	// Rate limit: per token (3 calls per 5-minute window).
-	mux.Handle("/setup-token", s.applyMiddlewareWithRL(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !setupLimiter.allowSetupToken(s.clientIP(r)) {
-				slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
-				w.Header().Set("Retry-After", "100")
-				http.Error(w, "rate limited", http.StatusTooManyRequests)
-				return
-			}
-			slog.Warn("setup-token accessed", "remote_ip", s.clientIP(r))
+	// TOFU (#613): the very first unauthenticated request from the loopback interface is
+	// auto-approved (one-time-only, raw TCP peer address, not proxy headers). This breaks
+	// the chicken-and-egg problem where engram-setup needs the token before it can authenticate.
+	//
+	// Rate limit: per IP (3 calls per 5-minute window).
+	mux.Handle("/setup-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit applies unconditionally — security-critical endpoint.
+		if !setupLimiter.allowSetupToken(s.clientIP(r)) {
+			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+			w.Header().Set("Retry-After", "100")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+
+		// TOFU: first unauthenticated request from loopback only.
+		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
+		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
+				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
 				"endpoint": advertised + "/mcp",
 				"name":     "engram",
 			})
-		}),
-		apiKey,
-		setupLimiter,
-	))
+			return
+		}
+
+		// All other requests: require Bearer authentication (unchanged from #540).
+		s.applyMiddlewareWithRL(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
+				writeJSON(w, http.StatusOK, map[string]string{
+					"token":    apiKey,
+					"endpoint": advertised + "/mcp",
+					"name":     "engram",
+				})
+			}),
+			apiKey,
+			setupLimiter,
+		).ServeHTTP(w, r)
+	}))
 
 	// GET /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource —
 	// Return 404 to tell Claude Code this server does not use MCP OAuth (spec 2025-03-26).
@@ -788,6 +817,65 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 func isLoopbackIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	return parsed != nil && parsed.IsLoopback()
+}
+
+// setupTokenTOFUHandler returns the /setup-token handler with TOFU (Trust On
+// First Use) logic. It creates an internal rate limiter with default parameters.
+// Use setupTokenTOFUHandlerWithLimiter in tests to inject a pre-exhausted limiter.
+func (s *Server) setupTokenTOFUHandler(apiKey string) http.Handler {
+	return s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+}
+
+// setupTokenTOFUHandlerWithLimiter returns the /setup-token handler using the
+// provided rate limiter. This is the implementation; setupTokenTOFUHandler is
+// the production convenience wrapper.
+//
+// Security contract:
+//  1. Rate limit is checked unconditionally — even TOFU requests are throttled.
+//  2. TOFU path uses r.RemoteAddr (raw TCP peer), NOT s.clientIP(r), to prevent
+//     X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1 (#540).
+//  3. Exactly one unauthenticated loopback request is granted via CompareAndSwap.
+//  4. All subsequent requests require Bearer authentication (unchanged from #540).
+func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit applies unconditionally — security-critical endpoint.
+		// Use clientIP here for rate limiting (proxy headers are fine for rate limits).
+		if !rl.allowSetupToken(s.clientIP(r)) {
+			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+			w.Header().Set("Retry-After", "100")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+
+		// TOFU: first unauthenticated request from loopback only.
+		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
+		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
+				"remote_ip", rawPeer)
+			writeJSON(w, http.StatusOK, map[string]string{
+				"token":    apiKey,
+				"endpoint": "/mcp",
+				"name":     "engram",
+			})
+			return
+		}
+
+		// All other requests: require Bearer authentication (unchanged from #540).
+		s.applyMiddlewareWithRL(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
+				writeJSON(w, http.StatusOK, map[string]string{
+					"token":    apiKey,
+					"endpoint": "/mcp",
+					"name":     "engram",
+				})
+			}),
+			apiKey,
+			rl,
+		).ServeHTTP(w, r)
+	})
 }
 
 // withSessionFingerprint wraps next with a check that the sessionId query

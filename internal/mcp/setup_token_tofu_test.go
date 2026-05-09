@@ -1,21 +1,14 @@
-//go:build ignore
-// Remove the ignore tag when Pillar 3D (TOFU / setupTokenTOFUHandler) is implemented.
-
 package mcp
 
 // Tests for TOFU (Trust On First Use) behavior on /setup-token — Pillar 3D.
 //
-// Currently /setup-token requires Bearer authentication (post-#540). The TOFU
-// feature allows exactly ONE unauthenticated request from localhost, so that
-// engram-session-end.sh and fresh installations can self-configure without a
-// chicken-and-egg key problem.
-//
-// These tests reference Server.tofuGranted (atomic.Bool) and
-// Server.setupTokenTOFUHandler / Server.setupTokenTOFUHandlerWithLimiter
-// which do NOT exist yet. Tests will FAIL TO COMPILE until the implementation
-// is added. That is the expected red-phase state.
+// /setup-token allows exactly ONE unauthenticated request from localhost, so
+// that engram-session-end.sh and fresh installations can self-configure without
+// a chicken-and-egg key problem (#613). All subsequent requests require Bearer
+// authentication (unchanged from #540).
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
