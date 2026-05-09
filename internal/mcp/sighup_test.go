@@ -33,12 +33,19 @@ func TestSIGHUPConfigReload(t *testing.T) {
 
 	// Create a channel to signal when the config has been reloaded
 	reloaded := make(chan struct{})
+	ready := make(chan struct{})
+	goroutineDone := make(chan struct{})
 
-	// Start the SIGHUP handler
-	go handleSIGHUP(ctx, cfg, func() {
-		// This callback is invoked when config is reloaded
-		close(reloaded)
-	})
+	// Start the SIGHUP handler.
+	// - ready: closed after signal.Notify so we don't send SIGHUP before the
+	//   handler is registered (race that lets the default kill-on-SIGHUP fire).
+	// - goroutineDone: closed on exit so signal.Stop completes before the next
+	//   test registers its own handler — prevents double-delivery (#618).
+	go func() {
+		defer close(goroutineDone)
+		handleSIGHUP(ctx, cfg, func() { close(reloaded) }, ready)
+	}()
+	<-ready // handler is registered; safe to send SIGHUP now
 
 	// Set env vars that should be picked up by the reload
 	t.Setenv("ENGRAM_CLAUDE_SUMMARIZE", "true")
@@ -77,8 +84,10 @@ func TestSIGHUPConfigReload(t *testing.T) {
 		t.Errorf("expected LogLevel to be 0 (debug), got %d", cfg.LogLevel.Load())
 	}
 
-	// Stop the signal handler
+	// Stop the signal handler and wait for it to fully exit so signal.Stop
+	// is called before the next test registers its own handler (#618).
 	cancel()
+	<-goroutineDone
 }
 
 // TestSIGHUPPartialReload verifies that only changed flags are updated and
@@ -90,13 +99,14 @@ func TestSIGHUPPartialReload(t *testing.T) {
 	cfg.ClaudeRerank.Store(true)     // Pre-set another flag
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	reloaded := make(chan struct{})
-
-	go handleSIGHUP(ctx, cfg, func() {
-		close(reloaded)
-	})
+	ready := make(chan struct{})
+	goroutineDone := make(chan struct{})
+	go func() {
+		defer close(goroutineDone)
+		handleSIGHUP(ctx, cfg, func() { close(reloaded) }, ready)
+	}()
+	<-ready
 
 	// Set only one env var (summarize), leaving others unset
 	t.Setenv("ENGRAM_CLAUDE_SUMMARIZE", "false")
@@ -127,14 +137,19 @@ func TestSIGHUPPartialReload(t *testing.T) {
 	}
 
 	cancel()
+	<-goroutineDone
 }
 
 // handleSIGHUP runs the SIGHUP signal handler loop.
-// It blocks until ctx is cancelled.
-func handleSIGHUP(ctx context.Context, cfg *RuntimeConfig, onReload func()) {
+// It blocks until ctx is cancelled. If ready is non-nil it is closed immediately
+// after signal.Notify so callers can synchronise before sending SIGHUP.
+func handleSIGHUP(ctx context.Context, cfg *RuntimeConfig, onReload func(), ready chan<- struct{}) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
+	if ready != nil {
+		close(ready)
+	}
 
 	for {
 		select {
