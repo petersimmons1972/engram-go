@@ -1,6 +1,3 @@
-//go:build ignore
-// Remove the ignore tag when Pillar 2B (EnginePool.WarmProjects) is implemented.
-
 package mcp
 
 // Tests for EnginePool.WarmProjects — Pillar 2B pre-warming.

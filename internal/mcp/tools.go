@@ -103,6 +103,16 @@ type Config struct {
 	// bulk writes and setup-token hammering would otherwise cause 429s.
 	// Set via ENGRAM_RATE_LIMIT_DISABLE env var.
 	RateLimitDisable bool
+
+	// SessionRehydrateWindow is the lookback window for ListActiveSessions during
+	// server restart. Sessions older than this are not rehydrated. 0 means default 2h.
+	// Set via ENGRAM_SESSION_REHYDRATE_WINDOW env var.
+	SessionRehydrateWindow time.Duration
+	// EmbedRatePerSecond is the per-project sustained embed call rate (tokens/s).
+	// 0 disables per-project embed rate limiting. When set, the token bucket
+	// cap is 2× this value to allow short bursts. Set via
+	// ENGRAM_EMBED_RATE_PER_SECOND env var.
+	EmbedRatePerSecond float64
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.

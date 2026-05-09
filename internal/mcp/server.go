@@ -29,6 +29,29 @@ import (
 	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
+// serverPhase constants track the startup lifecycle of the Server.
+// The phase advances from starting → warming → warm as pool pre-warming completes.
+// /ready returns 503 until phaseWarm is reached.
+const (
+	phaseStarting int32 = 0
+	phaseWarming  int32 = 1
+	phaseWarm     int32 = 2
+)
+
+// Exported aliases for use by main.go and other external callers that need to
+// advance the server phase without accessing unexported fields directly.
+const (
+	PhaseStarting = phaseStarting
+	PhaseWarming  = phaseWarming
+	PhaseWarm     = phaseWarm
+)
+
+// SetPhase advances the server startup phase. Called by main.go during startup
+// to mark progression from starting → warming → warm. Thread-safe.
+func (s *Server) SetPhase(phase int32) {
+	s.serverPhase.Store(phase)
+}
+
 // contextKey is a typed key for values stored in request contexts.
 // Using a named type prevents collisions with context values from other packages.
 type contextKey string
@@ -199,6 +222,11 @@ type Server struct {
 	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
 	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
 	tofuGranted atomic.Bool
+
+	// serverPhase tracks startup lifecycle: 0=starting, 1=warming, 2=warm.
+	// /ready returns 503 until phaseWarm is stored. Advanced by the pre-warm goroutine
+	// in main.go after pool.WarmProjects completes.
+	serverPhase atomic.Int32
 }
 
 // readOnlyToolNames returns the canonical set of MCP tool names that perform
@@ -395,7 +423,11 @@ func (s *Server) RehydrateSessions(ctx context.Context, apiKey string) error {
 	if s.cfg.SessionDB == nil {
 		return nil
 	}
-	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, 2*time.Hour, hashAPIKey(apiKey))
+	window := s.cfg.SessionRehydrateWindow
+	if window == 0 {
+		window = 2 * time.Hour
+	}
+	ids, err := s.cfg.SessionDB.ListActiveSessions(ctx, window, hashAPIKey(apiKey))
 	if err != nil {
 		return fmt.Errorf("list active sessions for rehydration: %w", err)
 	}
@@ -583,6 +615,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// when Ollama was unavailable at startup (EmbedDegraded=true); 503 {"status":"degraded",...} when
 	// a previously-healthy dependency is now unreachable.
 	mux.HandleFunc("/health", s.handleHealth)
+
+	// GET /ready — unauthenticated readiness probe. Returns 200 when pool is warm.
+	// Unlike /health, /ready tracks startup phase and pre-warming state.
+	mux.HandleFunc("/ready", s.handleReady)
 
 	// GET /metrics — requires Bearer authentication (#552).
 	mux.Handle("/metrics", s.applyMiddlewareWithRL(
@@ -1086,6 +1122,14 @@ func (s *Server) registerTool(name, desc string, h toolHandler) {
 }
 
 func (s *Server) registerTools() {
+	// embedSuffix is appended to the description of embedding-dependent tools
+	// when the embedder is unavailable at startup. This surfaces the degradation
+	// to the AI client so it can communicate the limitation to users (#611).
+	embedSuffix := ""
+	if s.embedDegraded != nil && s.embedDegraded.Load() {
+		embedSuffix = " [EMBEDDING UNAVAILABLE: semantic search degraded, BM25+recency fallback active]"
+	}
+
 	type toolDef struct {
 		name    string
 		desc    string
@@ -1093,7 +1137,7 @@ func (s *Server) registerTools() {
 	}
 	tools := []toolDef{
 		// Core store operations
-		{"memory_store", "Store a focused memory (<=10k chars)",
+		{"memory_store", "Store a focused memory (<=10k chars)" + embedSuffix,
 			withEntityEnqueue(handleMemoryStore)},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			handleMemoryStoreDocument},
@@ -1101,10 +1145,10 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
-		{"memory_store_batch", "Store multiple memories in one call",
+		{"memory_store_batch", "Store multiple memories in one call" + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
-		{"memory_recall", "Recall memories by semantic + full-text query",
+		{"memory_recall", "Recall memories by semantic + full-text query" + embedSuffix,
 			withWarnLog("memory_recall", handleMemoryRecall)},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
 			handleMemoryFetch},
@@ -1209,7 +1253,7 @@ func (s *Server) registerTools() {
 		// Simplified front-door tools
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
 			withWarnLog("memory_quick_store", withEntityEnqueue(handleMemoryQuickStore))},
-		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied.",
+		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied." + embedSuffix,
 			handleMemoryQuery},
 		// Safety constraint verification
 		{"get_constraints", "List constraint and policy memories relevant to an optional query",
@@ -1360,6 +1404,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, statusCode, res)
+}
+
+// handleReady reports the server's startup phase and embedding health.
+// Returns 200 only when the pool has completed pre-warming (phaseWarm).
+// Unlike /health, /ready is specifically designed for startup gating:
+// K8s initialDelaySeconds / readinessProbe and MCP client retry logic can
+// poll this endpoint to know when to begin routing tool calls.
+//
+// Unauthenticated — suitable as a K8s readiness probe.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	phase := s.serverPhase.Load()
+	embedStatus := "ok"
+	if s.embedDegraded.Load() {
+		embedStatus = "degraded"
+	}
+
+	phaseStr := "starting"
+	switch phase {
+	case phaseWarming:
+		phaseStr = "warming"
+	case phaseWarm:
+		phaseStr = "warm"
+	}
+
+	ready := phase == phaseWarm
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+
+	writeJSON(w, status, map[string]any{
+		"ready":          ready,
+		"phase":          phaseStr,
+		"embed":          embedStatus,
+		"transport_hint": "http",
+	})
 }
 
 // extractionSem caps the number of concurrent entity-extraction goroutines.

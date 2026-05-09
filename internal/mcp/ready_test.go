@@ -1,6 +1,3 @@
-//go:build ignore
-// Remove the ignore tag when Pillar 2A (/ready endpoint + serverPhase) is implemented.
-
 package mcp
 
 // Tests for the /ready endpoint — Pillar 2A (phase tracking + readiness signal).

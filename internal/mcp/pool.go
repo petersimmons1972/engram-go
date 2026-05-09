@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -164,4 +165,37 @@ func (p *EnginePool) Close() {
 			e.handle.Engine.Close()
 		}
 	}
+}
+
+// WarmProjects pre-initializes project engines in the pool, best-effort.
+// Errors are logged but not returned. Respects ctx cancellation.
+// concurrency controls how many projects are initialized in parallel;
+// 0 or negative uses a default of 3.
+func (p *EnginePool) WarmProjects(ctx context.Context, projects []string, concurrency int) {
+	if len(projects) == 0 {
+		return
+	}
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for _, proj := range projects {
+		proj := proj
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if _, err := p.Get(ctx, proj); err != nil {
+				slog.Warn("pool pre-warm: Get failed", "project", proj, "err", err)
+			}
+		}()
+	}
+	wg.Wait()
 }
