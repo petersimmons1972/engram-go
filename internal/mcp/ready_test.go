@@ -94,6 +94,24 @@ func TestReady_AlwaysIncludesTransportHint_HTTP(t *testing.T) {
 	require.Equal(t, "http", body["transport_hint"])
 }
 
+// TestReady_WarmingPhase_Returns503 verifies that when the server is warming
+// (pool init in progress, not yet fully ready), /ready returns 503.
+func TestReady_WarmingPhase_Returns503(t *testing.T) {
+	s := &Server{}
+	s.serverPhase.Store(int32(phaseWarming)) // phaseWarming constant doesn't exist yet
+	s.embedDegraded = new(atomic.Bool)
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleReady(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, false, body["ready"])
+	require.Equal(t, "warming", body["phase"])
+}
+
 // TestReady_Returns503_TransportHintStillPresent verifies that even a 503
 // response includes transport_hint so clients can log the correct URL.
 func TestReady_Returns503_TransportHintStillPresent(t *testing.T) {

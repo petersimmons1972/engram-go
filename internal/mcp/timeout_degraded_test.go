@@ -106,11 +106,11 @@ func TestToolTimeout_ReturnsDegradedSuccess_NotIsError(t *testing.T) {
 		"degraded response must not contain the word 'denied'")
 }
 
-// TestToolTimeout_MessageMentionsDegradedMode verifies the degraded message body
+// TestToolTimeout_MessageMentionsDegradedNotDenied verifies the degraded message body
 // mentions "degraded" and not "denied".
 //
 // Currently FAILS: the current timeout text is plain-text, not JSON with "degraded".
-func TestToolTimeout_MessageMentionsDegradedMode(t *testing.T) {
+func TestToolTimeout_MessageMentionsDegradedNotDenied(t *testing.T) {
 	pool := newTestNoopPool(t)
 	cfg := testConfig()
 
