@@ -73,3 +73,23 @@ func isPreferenceQuery(query string) bool {
 func IsPreferenceContent(content string) bool {
 	return containsSignalFrom(content, preferenceContentSet)
 }
+
+// temporalQuerySignals are words that indicate the recall query is anchored to
+// time — asking when something happened, how long ago, or in what order.
+// Detecting these lets the engine apply recency-boosted weights so that
+// chronologically ordered memories surface ahead of semantically similar ones.
+var temporalQuerySignals = map[string]struct{}{
+	"when": {}, "ago": {}, "before": {}, "after": {},
+	"first": {}, "last": {}, "recent": {}, "recently": {},
+	"long": {}, "sequence": {}, "order": {}, "earliest": {},
+	"latest": {}, "previous": {}, "prior": {}, "since": {},
+}
+
+// isTemporalQuery returns true when the query asks about timing, order, or
+// recency. Used by the engine to select recency-boosted scoring weights.
+func isTemporalQuery(query string) bool {
+	return containsSignalFrom(query, temporalQuerySignals)
+}
+
+// IsTemporalQuery is the exported form of isTemporalQuery.
+func IsTemporalQuery(query string) bool { return isTemporalQuery(query) }

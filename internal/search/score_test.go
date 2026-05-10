@@ -38,14 +38,14 @@ func TestCompositeScore(t *testing.T) {
 	require.InDelta(t, 0.925, s, 0.001)
 
 	// Zero cosine and BM25: recency + cold-start precision contribute; boost=1.0
-	// raw = 0.10*1.0 + 0.15*0.5 = 0.175
+	// raw = recency(0.15)*1.0 + precision(0.15)*0.5 = 0.225
 	s2 := search.CompositeScore(search.ScoreInput{
 		Cosine:     0,
 		BM25:       0,
 		HoursSince: 0,
 		Importance: 2,
 	})
-	require.InDelta(t, 0.175, s2, 0.001)
+	require.InDelta(t, 0.225, s2, 0.001)
 
 	// Critical memory (importance=0) scores higher than trivial (importance=4)
 	sCritical := search.CompositeScore(search.ScoreInput{Cosine: 0.5, BM25: 0.5, HoursSince: 0, Importance: 0})

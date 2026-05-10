@@ -593,8 +593,19 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[r.Memory.ID] = r.Memory
 	}
 
-	// Detect preference-shaped queries once before the scoring loop (#364).
+	// Detect query type once before the scoring loop.
 	prefQuery := isPreferenceQuery(query)
+	tempQuery := isTemporalQuery(query)
+
+	// Resolve base weights: per-project cache when available, otherwise defaults.
+	// Temporal queries override with recency-boosted weights regardless of cache.
+	baseWeights := DefaultWeights()
+	if e.weightCache != nil {
+		baseWeights = e.weightCache.Get(ctx, e.project)
+	}
+	if tempQuery {
+		baseWeights = TemporalWeights()
+	}
 
 	// Composite scoring per memory.
 	results := make([]types.SearchResult, 0)
@@ -615,12 +626,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MemoryType:         m.MemoryType,
 			IsPreferenceQuery:  prefQuery,
 		}
-		var score float64
-		if e.weightCache != nil {
-			score = CompositeScoreWithWeights(input, e.weightCache.Get(ctx, e.project))
-		} else {
-			score = CompositeScore(input)
-		}
+		score := CompositeScoreWithWeights(input, baseWeights)
 
 		result := types.SearchResult{
 			Memory:     m,

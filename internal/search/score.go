@@ -9,11 +9,18 @@ import (
 )
 
 const (
-	weightVector    = 0.45 // was 0.50; reduced to make room for precision signal
-	weightBM25      = 0.30 // was 0.35
-	weightRecency   = 0.10 // was 0.15
-	weightPrecision = 0.15 // new: retrieval outcome precision
+	weightVector    = 0.40 // was 0.45; reduced to strengthen recency signal
+	weightBM25      = 0.30
+	weightRecency   = 0.15 // was 0.10; raised to help knowledge-update and temporal recall
+	weightPrecision = 0.15
 	decayRate       = 0.01 // per hour — canonical default, used when env var is absent or invalid
+
+	// temporalWeightRecency and temporalWeightVector define the recency-boosted
+	// weight profile applied when a recall query is classified as time-anchored.
+	temporalWeightVector    = 0.35
+	temporalWeightBM25      = 0.25
+	temporalWeightRecency   = 0.30
+	temporalWeightPrecision = 0.10
 )
 
 // decayConfig holds the resolved env-var knobs for recency decay.
@@ -82,6 +89,19 @@ func DefaultWeights() Weights {
 		BM25:      weightBM25,
 		Recency:   weightRecency,
 		Precision: weightPrecision,
+	}
+}
+
+// TemporalWeights returns the recency-boosted weight profile used when a recall
+// query is classified as time-anchored (via IsTemporalQuery). Recency is raised
+// to 0.30 so that chronologically recent sessions rank above semantically similar
+// but older sessions — directly targeting temporal-reasoning benchmark failures.
+func TemporalWeights() Weights {
+	return Weights{
+		Vector:    temporalWeightVector,
+		BM25:      temporalWeightBM25,
+		Recency:   temporalWeightRecency,
+		Precision: temporalWeightPrecision,
 	}
 }
 

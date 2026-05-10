@@ -72,6 +72,53 @@ func TestIsPreferenceContentStillNarrow(t *testing.T) {
 	}
 }
 
+// TestIsTemporalQueryDetectsSignals verifies that time-anchored recall queries
+// are classified as temporal so the engine can apply recency-boosted weights.
+func TestIsTemporalQueryDetectsSignals(t *testing.T) {
+	hits := []string{
+		"when did the user start the new job?",
+		"how many days ago did we discuss this?",
+		"what happened before the meeting?",
+		"what occurred after the incident?",
+		"which event happened first?",
+		"what did the user do recently?",
+		"how long ago was the trip?",
+		"what was the sequence of events?",
+	}
+	for _, q := range hits {
+		if !isTemporalQuery(q) {
+			t.Errorf("isTemporalQuery(%q) = false, want true", q)
+		}
+	}
+}
+
+func TestIsTemporalQueryIgnoresNeutralQueries(t *testing.T) {
+	misses := []string{
+		"what is the user's favorite food?",
+		"summarize the project decisions",
+		"what is the user's name?",
+		"find memories tagged auth",
+	}
+	for _, q := range misses {
+		if isTemporalQuery(q) {
+			t.Errorf("isTemporalQuery(%q) = true, want false", q)
+		}
+	}
+}
+
+func TestTemporalWeightsBoostRecency(t *testing.T) {
+	def := DefaultWeights()
+	tmp := TemporalWeights()
+	if tmp.Recency <= def.Recency {
+		t.Errorf("TemporalWeights recency %.3f must exceed default %.3f", tmp.Recency, def.Recency)
+	}
+	// Weights must still sum to 1.0.
+	sum := tmp.Vector + tmp.BM25 + tmp.Recency + tmp.Precision
+	if sum < 0.999 || sum > 1.001 {
+		t.Errorf("TemporalWeights do not sum to 1.0: got %.4f", sum)
+	}
+}
+
 // TestPreferenceBoostApplied verifies that a preference-typed memory scores
 // higher than an identical context memory when the query is preference-shaped.
 func TestPreferenceBoostApplied(t *testing.T) {
