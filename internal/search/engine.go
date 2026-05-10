@@ -596,15 +596,20 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// Detect query type once before the scoring loop.
 	prefQuery := isPreferenceQuery(query)
 	tempQuery := isTemporalQuery(query)
+	kuQuery := isKnowledgeUpdateQuery(query)
 
 	// Resolve base weights: per-project cache when available, otherwise defaults.
-	// Temporal queries override with recency-boosted weights regardless of cache.
+	// Type-specific profiles override the cache — recency dominance is correct
+	// regardless of per-project tuning for temporal and knowledge-update queries.
 	baseWeights := DefaultWeights()
 	if e.weightCache != nil {
 		baseWeights = e.weightCache.Get(ctx, e.project)
 	}
-	if tempQuery {
+	switch {
+	case tempQuery:
 		baseWeights = TemporalWeights()
+	case kuQuery:
+		baseWeights = KnowledgeUpdateWeights()
 	}
 
 	// Composite scoring per memory.
@@ -618,7 +623,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		input := ScoreInput{
 			Cosine:             hit.cosine,
 			BM25:               bm25,
-			HoursSince:         hoursSince(m.LastAccessed),
+			HoursSince:         temporalAnchorHours(*m),
 			Importance:         m.Importance,
 			DynamicImportance:  m.DynamicImportance,
 			RetrievalPrecision: m.RetrievalPrecision,
@@ -870,6 +875,17 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 
 func hoursSince(t time.Time) float64 {
 	return time.Since(t).Hours()
+}
+
+// temporalAnchorHours returns the hours since the memory's effective date.
+// When ValidFrom is set (populated from a date: tag at ingest), it reflects
+// the actual session date rather than the arbitrary last-access time, giving
+// the recency scorer accurate temporal ordering across ingested sessions.
+func temporalAnchorHours(m types.Memory) float64 {
+	if m.ValidFrom != nil {
+		return hoursSince(*m.ValidFrom)
+	}
+	return hoursSince(m.LastAccessed)
 }
 
 // toConnectedMemories converts raw relationship rows into ConnectedMemory values

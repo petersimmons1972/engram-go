@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -74,6 +75,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		Immutable:   getBool(args, "immutable", false),
 		StorageMode: "focused",
 		EpisodeID:   episodeID,
+		ValidFrom:   parseDateTag(tags),
 	}
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
@@ -430,6 +432,26 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	req2 := req
 	req2.Params.Arguments = merged
 	return handleMemoryStore(ctx, pool, req2, cfg)
+}
+
+// parseDateTag scans tags for a "date:YYYY-MM-DD" entry and returns the parsed
+// UTC time, or nil if no valid date tag is found. The first matching tag wins.
+// This is used to populate ValidFrom so the recency scorer uses the actual
+// session date rather than the arbitrary ingest/access time.
+func parseDateTag(tags []string) *time.Time {
+	for _, tag := range tags {
+		val, ok := strings.CutPrefix(tag, "date:")
+		if !ok {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", val)
+		if err != nil {
+			continue
+		}
+		t = t.UTC()
+		return &t
+	}
+	return nil
 }
 
 // handleMemoryQuery is a simplified front door for handleMemoryRecall.

@@ -21,6 +21,15 @@ const (
 	temporalWeightBM25      = 0.25
 	temporalWeightRecency   = 0.30
 	temporalWeightPrecision = 0.10
+
+	// knowledgeUpdateWeights are a mid-point profile for queries asking about
+	// current/changed state. Recency is raised above the default but below the
+	// full temporal profile — enough to prefer the more recent fact without
+	// completely discarding semantic relevance.
+	kuWeightVector    = 0.38
+	kuWeightBM25      = 0.27
+	kuWeightRecency   = 0.22
+	kuWeightPrecision = 0.13
 )
 
 // decayConfig holds the resolved env-var knobs for recency decay.
@@ -89,6 +98,19 @@ func DefaultWeights() Weights {
 		BM25:      weightBM25,
 		Recency:   weightRecency,
 		Precision: weightPrecision,
+	}
+}
+
+// KnowledgeUpdateWeights returns a mid-point recency-boosted profile for queries
+// asking about current or changed state (e.g., "where does X live currently?").
+// Recency is higher than the default (0.22 vs 0.15) but below the full temporal
+// profile (0.30), preserving semantic relevance for partially-updated facts.
+func KnowledgeUpdateWeights() Weights {
+	return Weights{
+		Vector:    kuWeightVector,
+		BM25:      kuWeightBM25,
+		Recency:   kuWeightRecency,
+		Precision: kuWeightPrecision,
 	}
 }
 

@@ -2,6 +2,9 @@ package search
 
 import (
 	"testing"
+	"time"
+
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // TestIsPreferenceQueryDetectsSignals verifies that queries containing known
@@ -116,6 +119,71 @@ func TestTemporalWeightsBoostRecency(t *testing.T) {
 	sum := tmp.Vector + tmp.BM25 + tmp.Recency + tmp.Precision
 	if sum < 0.999 || sum > 1.001 {
 		t.Errorf("TemporalWeights do not sum to 1.0: got %.4f", sum)
+	}
+}
+
+// TestIsKnowledgeUpdateQueryDetectsSignals verifies that queries asking about
+// the current state of a mutable fact are classified as knowledge-update shaped.
+func TestIsKnowledgeUpdateQueryDetectsSignals(t *testing.T) {
+	hits := []string{
+		"where does the user live currently?",
+		"does the user still work at the same company?",
+		"has the user changed their diet anymore?",
+		"what is the user's current job?",
+	}
+	for _, q := range hits {
+		if !isKnowledgeUpdateQuery(q) {
+			t.Errorf("isKnowledgeUpdateQuery(%q) = false, want true", q)
+		}
+	}
+}
+
+func TestIsKnowledgeUpdateQueryIgnoresNeutral(t *testing.T) {
+	misses := []string{
+		"what is the user's favorite food?",
+		"when did the user start the job?",
+		"summarize the project decisions",
+	}
+	for _, q := range misses {
+		if isKnowledgeUpdateQuery(q) {
+			t.Errorf("isKnowledgeUpdateQuery(%q) = true, want false", q)
+		}
+	}
+}
+
+func TestKnowledgeUpdateWeightsBoostRecency(t *testing.T) {
+	def := DefaultWeights()
+	ku := KnowledgeUpdateWeights()
+	if ku.Recency <= def.Recency {
+		t.Errorf("KnowledgeUpdateWeights recency %.3f must exceed default %.3f", ku.Recency, def.Recency)
+	}
+	sum := ku.Vector + ku.BM25 + ku.Recency + ku.Precision
+	if sum < 0.999 || sum > 1.001 {
+		t.Errorf("KnowledgeUpdateWeights do not sum to 1.0: got %.4f", sum)
+	}
+}
+
+func TestTemporalAnchorHours_UsesValidFrom(t *testing.T) {
+	old := time.Now().Add(-720 * time.Hour)  // 30 days ago
+	recent := time.Now().Add(-24 * time.Hour) // 1 day ago
+
+	mOld := types.Memory{LastAccessed: time.Now(), ValidFrom: &old}
+	mRecent := types.Memory{LastAccessed: time.Now(), ValidFrom: &recent}
+
+	hoursOld := temporalAnchorHours(mOld)
+	hoursRecent := temporalAnchorHours(mRecent)
+
+	if hoursOld <= hoursRecent {
+		t.Errorf("old ValidFrom should yield more hours: old=%.1f recent=%.1f", hoursOld, hoursRecent)
+	}
+}
+
+func TestTemporalAnchorHours_FallsBackToLastAccessed(t *testing.T) {
+	accessed := time.Now().Add(-48 * time.Hour)
+	m := types.Memory{LastAccessed: accessed, ValidFrom: nil}
+	hours := temporalAnchorHours(m)
+	if hours < 47 || hours > 49 {
+		t.Errorf("temporalAnchorHours without ValidFrom = %.1f, want ~48", hours)
 	}
 }
 

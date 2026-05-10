@@ -93,3 +93,20 @@ func isTemporalQuery(query string) bool {
 
 // IsTemporalQuery is the exported form of isTemporalQuery.
 func IsTemporalQuery(query string) bool { return isTemporalQuery(query) }
+
+// knowledgeUpdateQuerySignals detect queries asking about the current or changed
+// state of a mutable fact ("where does X live currently?", "does X still work there?").
+// Conservative set — only words that rarely appear outside KU-shaped questions.
+var knowledgeUpdateQuerySignals = map[string]struct{}{
+	"currently": {}, "anymore": {}, "still": {}, "current": {},
+}
+
+// isKnowledgeUpdateQuery returns true when the query asks about present or
+// changed state, suggesting memories may contain superseded facts that should
+// rank lower than the most recent version.
+func isKnowledgeUpdateQuery(query string) bool {
+	return containsSignalFrom(query, knowledgeUpdateQuerySignals)
+}
+
+// IsKnowledgeUpdateQuery is the exported form of isKnowledgeUpdateQuery.
+func IsKnowledgeUpdateQuery(query string) bool { return isKnowledgeUpdateQuery(query) }
