@@ -434,22 +434,29 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	return handleMemoryStore(ctx, pool, req2, cfg)
 }
 
-// parseDateTag scans tags for a "date:YYYY-MM-DD" entry and returns the parsed
-// UTC time, or nil if no valid date tag is found. The first matching tag wins.
+// parseDateTag scans tags for a "date:<value>" entry and returns the parsed
+// UTC time (date portion only), or nil if no valid date tag is found.
+// The first matching tag wins. Supported formats:
+//   - "2006-01-02"                — ISO date
+//   - "2006/01/02 (Mon) 15:04"   — LongMemEval haystack date format
+//
 // This is used to populate ValidFrom so the recency scorer uses the actual
 // session date rather than the arbitrary ingest/access time.
 func parseDateTag(tags []string) *time.Time {
+	layouts := []string{"2006-01-02", "2006/01/02 (Mon) 15:04"}
 	for _, tag := range tags {
 		val, ok := strings.CutPrefix(tag, "date:")
 		if !ok {
 			continue
 		}
-		t, err := time.Parse("2006-01-02", val)
-		if err != nil {
-			continue
+		for _, layout := range layouts {
+			t, err := time.Parse(layout, val)
+			if err != nil {
+				continue
+			}
+			t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+			return &t
 		}
-		t = t.UTC()
-		return &t
 	}
 	return nil
 }

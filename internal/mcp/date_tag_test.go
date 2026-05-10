@@ -51,3 +51,27 @@ func TestParseDateTag_FirstWins(t *testing.T) {
 		t.Errorf("parseDateTag first tag wins: got %v, want %v", *got, want)
 	}
 }
+
+// TestParseDateTag_LongMemEvalFormat verifies the LongMemEval haystack date
+// format "2006/01/02 (Mon) 15:04" is parsed correctly. This is the format
+// written by cmd/longmemeval/ingest.go from item.HaystackDates.
+func TestParseDateTag_LongMemEvalFormat(t *testing.T) {
+	cases := []struct {
+		tag  string
+		want time.Time
+	}{
+		{"date:2023/05/20 (Sat) 00:04", time.Date(2023, 5, 20, 0, 0, 0, 0, time.UTC)},
+		{"date:2023/05/30 (Tue) 22:37", time.Date(2023, 5, 30, 0, 0, 0, 0, time.UTC)},
+		{"date:2024/01/01 (Mon) 09:00", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		got := parseDateTag([]string{tc.tag})
+		if got == nil {
+			t.Errorf("parseDateTag(%q) = nil, want %v", tc.tag, tc.want)
+			continue
+		}
+		if !got.Equal(tc.want) {
+			t.Errorf("parseDateTag(%q) = %v, want %v", tc.tag, *got, tc.want)
+		}
+	}
+}
