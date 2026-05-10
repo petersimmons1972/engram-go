@@ -29,14 +29,45 @@ func TestIsPreferenceQueryIgnoresNeutralQueries(t *testing.T) {
 		"when was the last meeting?",
 		"summarize the architecture decisions",
 		"find all error patterns",
-		// "like", "want", "love" removed from signals — must not fire (#369)
-		"what does the user like to eat?",
-		"what does the user want for lunch?",
-		"what music does the user love?",
 	}
 	for _, q := range misses {
 		if isPreferenceQuery(q) {
 			t.Errorf("isPreferenceQuery(%q) = true, want false", q)
+		}
+	}
+}
+
+// TestIsPreferenceQueryExpandedSignals verifies that expanded personal-preference
+// words ("like", "love", "hate", "dislike", "interested") fire for query boosting.
+// These are distinct from content auto-tagging signals (#369 concern was about
+// engineering prose in stored memories; queries for personal preferences are safe).
+func TestIsPreferenceQueryExpandedSignals(t *testing.T) {
+	hits := []string{
+		"what does the user like to eat?",
+		"what music does the user love?",
+		"what food does the user hate?",
+		"what does the user dislike about commuting?",
+		"what is the user interested in for hobbies?",
+	}
+	for _, q := range hits {
+		if !isPreferenceQuery(q) {
+			t.Errorf("isPreferenceQuery(%q) = false, want true", q)
+		}
+	}
+}
+
+// TestIsPreferenceContentStillNarrow verifies that IsPreferenceContent (used for
+// auto-tagging stored memories) does NOT fire on "like/love/want" to avoid
+// false positives on engineering prose (#369).
+func TestIsPreferenceContentStillNarrow(t *testing.T) {
+	misses := []string{
+		"I'd like to fix this bug",
+		"we want to improve throughput",
+		"would love feedback on this PR",
+	}
+	for _, c := range misses {
+		if IsPreferenceContent(c) {
+			t.Errorf("IsPreferenceContent(%q) = true, want false (should stay narrow)", c)
 		}
 	}
 }
@@ -96,7 +127,7 @@ func TestPreferenceBoostNotAppliedForNeutralQuery(t *testing.T) {
 	}
 }
 
-// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.2×.
+// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.35×.
 func TestPreferenceBoostMagnitude(t *testing.T) {
 	base := ScoreInput{
 		Cosine: 0.8, BM25: 0.5, HoursSince: 1, Importance: 2,
@@ -114,7 +145,7 @@ func TestPreferenceBoostMagnitude(t *testing.T) {
 		t.Skip("base score is zero — cannot verify multiplier")
 	}
 	ratio := scorePreference / scoreContext
-	const want = 1.2
+	const want = 1.35
 	const eps = 0.001
 	if ratio < want-eps || ratio > want+eps {
 		t.Errorf("preference boost ratio = %.4f, want %.4f ± %.4f", ratio, want, eps)
