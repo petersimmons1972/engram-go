@@ -1,12 +1,13 @@
 # Learning Index
 
-**Last Updated**: 2026-05-09T12:09:17Z
-**Session**: 20260509-080917
+**Last Updated**: 2026-05-11T16:55:20Z
+**Session**: 20260511-125520
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-05-09: chore(memory): capture SIGHUP signal race fix pattern — engram-go#618
 - 2026-05-08: docs: complete Stanford HAI AI Index 2026 PDF-to-markdown conversion
 - 2026-05-07: chore(memory): capture session 20260508 lessons
 - 2026-05-07: chore(memory): capture session 20260507 lessons + Clearwatch Go port state
@@ -16,7 +17,6 @@
 - 2026-05-06: chore: sync CLAUDE.md and session memory files
 - 2026-05-06: chore: sync armies roster, hooks, litellm config, AGENTS.md
 - 2026-05-06: fix(hooks): prevent Engram MCP silent blocks — engram-go#408
-- 2026-05-06: chore: reconcile history — github/master was squash merge of local commits (engram-go#399 flock fix now applied separately)
 
 **Sessions**: - No recent session files found
 **Uncommitted**: ⚠️  3 modified, 0 staged
@@ -40,9 +40,12 @@ Stored in Engram. Recall:
 - Homelab patterns: `memory_recall("<topic>", project="homelab")`
 - General patterns: `memory_recall("<topic>", project="global")`
 
-Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing · Go signal test races
+Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing
 
-- [SIGHUP test races](feedback_sighup_test_races.md) — `ready` channel + `<-goroutineDone` pattern for Go tests that send signals to themselves
+## Model Selection & Cost
+
+- [Route health_check/mechanical turns to Haiku](feedback_haiku_for_health_checks.md) — 10% of Sonnet turns are Haiku-appropriate; health_check is the top miss pattern
+- [Substack model-selection series (Articles 024–025+)](project_substack_model_selection_series.md) — free articles through 024 posted 2026-05-11; audit scratch at `~/.claude/experiments/2026-05-11-024-model-overspend/`
 
 ---
 
