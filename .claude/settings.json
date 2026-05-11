@@ -62,7 +62,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
   "hooks": {
     "PostToolUse": [
       {
@@ -128,6 +127,11 @@
             "type": "command",
             "command": "~/.claude/hooks/engram-session-end.sh",
             "timeout": 8
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/engram-stop-ping.sh",
+            "timeout": 6
           },
           {
             "type": "command",
@@ -264,5 +268,6 @@
   "showTurnDuration": true,
   "terminalProgressBarEnabled": true,
   "teammateMode": "auto",
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "sonnet"
 }

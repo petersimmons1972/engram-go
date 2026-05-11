@@ -34,6 +34,11 @@ Health check: `~/bin/health-check.sh`
 
 ---
 
+## Substack (Clearwatch Research)
+
+- [Publication state](project_substack_state.md) — posts 021-026 live, artwork 027-036 committed, post IDs, daily cadence
+- [Workflow feedback](feedback_substack_workflow.md) — no uninstructed browser opens; artwork and publishing are separate steps
+
 ## Key Lessons
 
 Stored in Engram. Recall:

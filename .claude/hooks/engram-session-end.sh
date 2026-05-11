@@ -14,8 +14,16 @@ if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then
     exit 0
 fi
 
-TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
-    | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
+TOKEN=$(python3 -c "
+import json, os
+try:
+    with open(os.path.expanduser('~/.claude/mcp_servers.json')) as f:
+        d = json.load(f)
+    tok = d.get('mcpServers',{}).get('engram',{}).get('headers',{}).get('Authorization','')
+    print(tok.removeprefix('Bearer ').strip())
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
 [[ -z "$TOKEN" ]] && exit 0
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
