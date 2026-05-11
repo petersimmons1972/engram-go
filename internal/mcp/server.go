@@ -350,6 +350,7 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		}
 	}
 	runtimeCfg.LogLevel.Store(logLevelVal)
+	cfg.RuntimeConfig = runtimeCfg
 
 	s := &Server{
 		pool:              pool,
@@ -384,6 +385,18 @@ func (s *Server) SetClaudeClient(client *claude.Client) {
 func (s *Server) ReloadRuntimeConfig() {
 	if s.runtimeCfg != nil {
 		reloadRuntimeConfig(s.runtimeCfg)
+		if s.cfg.LogLevelVar != nil {
+			switch s.runtimeCfg.LogLevel.Load() {
+			case 0:
+				s.cfg.LogLevelVar.Set(slog.LevelDebug)
+			case 2:
+				s.cfg.LogLevelVar.Set(slog.LevelWarn)
+			case 3:
+				s.cfg.LogLevelVar.Set(slog.LevelError)
+			default:
+				s.cfg.LogLevelVar.Set(slog.LevelInfo)
+			}
+		}
 	}
 }
 
@@ -519,6 +532,9 @@ func (s *Server) registerSessionHooks(apiKey string) {
 	s.mcp.GetHooks().AddOnUnregisterSession(func(_ context.Context, sess server.ClientSession) {
 		sessionID := sess.SessionID()
 		s.sessionFingerprints.Delete(sessionID)
+		s.sessionTouchMu.Lock()
+		delete(s.sessionTouchTimes, sessionID)
+		s.sessionTouchMu.Unlock()
 
 		// Remove from DB on clean disconnect (#362).
 		if s.cfg.SessionDB != nil {

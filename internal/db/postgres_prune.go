@@ -16,13 +16,19 @@ import (
 // can reconstruct what was pruned from structured logs.
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
-	rows, err := b.pool.Query(ctx, `
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `
 		DELETE FROM memories
 		WHERE project=$1 AND NOT immutable AND (
 			(importance>=$2 AND last_accessed<$3 AND access_count=0)
 			OR (expires_at IS NOT NULL AND expires_at<NOW())
 		)
-		RETURNING id, content_hash, importance`, project, maxImportance, cutoff,
+		RETURNING id, content_hash, importance, document_id`, project, maxImportance, cutoff,
 	)
 	if err != nil {
 		return 0, err
@@ -30,23 +36,42 @@ func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string
 	defer rows.Close()
 
 	var count int
+	docIDs := map[string]struct{}{}
 	for rows.Next() {
 		var id, contentHash string
 		var importance int
-		if err := rows.Scan(&id, &contentHash, &importance); err != nil {
+		var documentID *string
+		if err := rows.Scan(&id, &contentHash, &importance, &documentID); err != nil {
 			return count, err
+		}
+		if documentID != nil && *documentID != "" {
+			docIDs[*documentID] = struct{}{}
 		}
 		slog.Info("prune: deleted stale memory",
 			"project", project, "id", id,
 			"importance", importance, "content_hash", contentHash)
 		count++
 	}
-	return count, rows.Err()
+	if err := rows.Err(); err != nil {
+		return count, err
+	}
+	for docID := range docIDs {
+		if _, err := b.DeleteOrphanedDocumentTx(ctx, tx, docID); err != nil {
+			return count, err
+		}
+	}
+	return count, tx.Commit(ctx)
 }
 
 func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
-	tag, err := b.pool.Exec(ctx, `
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `
 		DELETE FROM memories WHERE id IN (
 			SELECT m.id FROM memories m
 			WHERE m.project=$1 AND m.storage_mode='document'
@@ -55,9 +80,35 @@ func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string
 				SELECT 1 FROM chunks c
 				WHERE c.memory_id=m.id AND c.last_matched IS NOT NULL
 			  )
-		)`, project, maxImportance, cutoff,
+		)
+		RETURNING document_id`, project, maxImportance, cutoff,
 	)
-	return int(tag.RowsAffected()), err
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	count := 0
+	docIDs := map[string]struct{}{}
+	for rows.Next() {
+		var documentID *string
+		if err := rows.Scan(&documentID); err != nil {
+			return count, err
+		}
+		if documentID != nil && *documentID != "" {
+			docIDs[*documentID] = struct{}{}
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return count, err
+	}
+	for docID := range docIDs {
+		if _, err := b.DeleteOrphanedDocumentTx(ctx, tx, docID); err != nil {
+			return count, err
+		}
+	}
+	return count, tx.Commit(ctx)
 }
 
 func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.MemoryStats, error) {

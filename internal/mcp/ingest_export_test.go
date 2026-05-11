@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,41 @@ func TestHandleMemoryIngestExport_PathOutsideDataDir(t *testing.T) {
 	_, err := internalmcp.CallHandleMemoryIngestExport(context.Background(), t, pool, "default", cfg, "/etc/passwd")
 	if err == nil {
 		t.Error("want path validation error, got nil")
+	}
+}
+
+func TestHandleMemoryIngestExport_FileSizeRejectedBeforeParse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oversize.json")
+	os.WriteFile(path, []byte("[]"), 0o600)
+	pool := internalmcp.NewTestStorePool(t)
+	cfg := internalmcp.Config{DataDir: dir, ImportMaxBytes: 1}
+	_, err := internalmcp.CallHandleMemoryIngestExport(context.Background(), t, pool, "default", cfg, path)
+	if err == nil || !strings.Contains(err.Error(), "file exceeds maximum size") {
+		t.Fatalf("expected pre-parse size rejection, got %v", err)
+	}
+}
+
+func TestHandleMemoryIngestExport_SlackEntryTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oversize-slack.zip")
+	f, _ := os.Create(path)
+	w := zip.NewWriter(f)
+	write := func(name, body string) {
+		zf, _ := w.Create(name)
+		_, _ = zf.Write([]byte(body))
+	}
+	write("users.json", `[{"id":"U1","name":"a"}]`)
+	write("channels.json", `[{"id":"C1","name":"general"}]`)
+	write("general/2026-01-01.json", `[`+strings.Repeat(`{"type":"message","user":"U1","text":"hello","ts":"1700000000.000001"},`, 10)+`{"type":"message","user":"U1","text":"hello","ts":"1700000000.000001"}]`)
+	_ = w.Close()
+	_ = f.Close()
+
+	pool := internalmcp.NewTestStorePool(t)
+	cfg := internalmcp.Config{DataDir: dir, ImportMaxBytes: 1024, ImportExpandedMaxBytes: 200}
+	_, err := internalmcp.CallHandleMemoryIngestExport(context.Background(), t, pool, "default", cfg, path)
+	if err == nil || ( !strings.Contains(err.Error(), "entry") && !strings.Contains(err.Error(), "archive exceeds")) {
+		t.Fatalf("expected oversize entry rejection, got %v", err)
 	}
 }
 

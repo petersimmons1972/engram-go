@@ -16,6 +16,8 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+const DefaultParseMaxBytes = 50 * 1024 * 1024
+
 // Format identifies the detected export format.
 type Format string
 
@@ -93,9 +95,20 @@ func Detect(peek []byte) Format {
 // Streams are fully buffered in memory (the stream ingest tool already buffers
 // uploads; reusing that buffer is acceptable).
 func ParseAuto(r io.Reader) (Format, []*types.Memory, error) {
-	data, err := io.ReadAll(r)
+	return ParseAutoWithLimit(r, DefaultParseMaxBytes)
+}
+
+func ParseAutoWithLimit(r io.Reader, maxBytes int64) (Format, []*types.Memory, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultParseMaxBytes
+	}
+	lr := &io.LimitedReader{R: r, N: maxBytes + 1}
+	data, err := io.ReadAll(lr)
 	if err != nil {
-		return FormatUnknown, nil, fmt.Errorf("router.ParseAuto: read: %w", err)
+		return FormatUnknown, nil, fmt.Errorf("router.ParseAutoWithLimit: read: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return FormatUnknown, nil, fmt.Errorf("router.ParseAutoWithLimit: input exceeds maximum size (%d bytes)", maxBytes)
 	}
 
 	// Use up to peekSize bytes for detection.
@@ -112,14 +125,14 @@ func ParseAuto(r io.Reader) (Format, []*types.Memory, error) {
 	case FormatClaudeAI:
 		memories, err := claudeai.Parse(strings.NewReader(string(data)))
 		if err != nil {
-			return FormatClaudeAI, nil, fmt.Errorf("router.ParseAuto: claudeai: %w", err)
+			return FormatClaudeAI, nil, fmt.Errorf("router.ParseAutoWithLimit: claudeai: %w", err)
 		}
 		return FormatClaudeAI, memories, nil
 
 	case FormatChatGPT:
 		memories, err := chatgpt.Parse(strings.NewReader(string(data)))
 		if err != nil {
-			return FormatChatGPT, nil, fmt.Errorf("router.ParseAuto: chatgpt: %w", err)
+			return FormatChatGPT, nil, fmt.Errorf("router.ParseAutoWithLimit: chatgpt: %w", err)
 		}
 		return FormatChatGPT, memories, nil
 

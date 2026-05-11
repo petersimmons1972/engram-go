@@ -53,7 +53,7 @@ func run() error {
 	port := flag.Int("port", 8788, "engram server port")
 	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
 	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
-	offline := flag.Bool("offline", false, "skip /setup-token call (useful when server is rate-limited during setup)")
+	offline := flag.Bool("offline", false, "preview-only: skip /setup-token call and require --dry-run")
 	format := flag.String("format", "text", "output format: text or json")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -64,6 +64,10 @@ func run() error {
 	}
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", *port)
+
+	if *offline && !*dryRun {
+		return fmt.Errorf("--offline is preview-only and must be combined with --dry-run")
+	}
 
 	// 1. Verify server is reachable (unless --offline).
 	if !*offline {

@@ -24,7 +24,7 @@ import (
 // the warm phase and embedding is healthy, /ready returns 200 with ready:true.
 func TestReady_WarmPhase_Returns200_EmbedOK(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseWarm)) // phaseWarm constant doesn't exist yet
+	s.serverPhase.Store(phaseWarm) // phaseWarm constant doesn't exist yet
 	s.embedDegraded = new(atomic.Bool)
 
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -44,7 +44,7 @@ func TestReady_WarmPhase_Returns200_EmbedOK(t *testing.T) {
 // starting (pool cold, not yet ready), /ready returns 503 with ready:false.
 func TestReady_StartingPhase_Returns503(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseStarting)) // phaseStarting constant doesn't exist yet
+	s.serverPhase.Store(phaseStarting) // phaseStarting constant doesn't exist yet
 	s.embedDegraded = new(atomic.Bool)
 
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -61,7 +61,7 @@ func TestReady_StartingPhase_Returns503(t *testing.T) {
 // does not make the server report unready — BM25 is still operational.
 func TestReady_WarmPhase_EmbedDegraded_Returns200(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseWarm))
+	s.serverPhase.Store(phaseWarm)
 	s.embedDegraded = new(atomic.Bool)
 	s.embedDegraded.Store(true)
 
@@ -82,7 +82,7 @@ func TestReady_WarmPhase_EmbedDegraded_Returns200(t *testing.T) {
 // includes transport_hint: "http" so MCP clients know to use HTTP not SSE.
 func TestReady_AlwaysIncludesTransportHint_HTTP(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseWarm))
+	s.serverPhase.Store(phaseWarm)
 	s.embedDegraded = new(atomic.Bool)
 
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -98,7 +98,7 @@ func TestReady_AlwaysIncludesTransportHint_HTTP(t *testing.T) {
 // (pool init in progress, not yet fully ready), /ready returns 503.
 func TestReady_WarmingPhase_Returns503(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseWarming)) // phaseWarming constant doesn't exist yet
+	s.serverPhase.Store(phaseWarming) // phaseWarming constant doesn't exist yet
 	s.embedDegraded = new(atomic.Bool)
 
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -116,7 +116,7 @@ func TestReady_WarmingPhase_Returns503(t *testing.T) {
 // response includes transport_hint so clients can log the correct URL.
 func TestReady_Returns503_TransportHintStillPresent(t *testing.T) {
 	s := &Server{}
-	s.serverPhase.Store(int32(phaseStarting))
+	s.serverPhase.Store(phaseStarting)
 	s.embedDegraded = new(atomic.Bool)
 
 	req := httptest.NewRequest("GET", "/ready", nil)

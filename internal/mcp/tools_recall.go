@@ -263,7 +263,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	rerank := getBool(args, "rerank", false)
 	var opts search.RecallOpts
 	// Claude reranker is opt-in via rerank=true.
-	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
+	claudeRerankEnabled := cfg.ClaudeRerankEnabled
+	if cfg.RuntimeConfig != nil {
+		claudeRerankEnabled = cfg.RuntimeConfig.ClaudeRerank.Load()
+	}
+	if claudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
