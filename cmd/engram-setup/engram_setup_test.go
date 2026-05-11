@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -191,6 +193,40 @@ func TestOfflineFlag(t *testing.T) {
 			t.Errorf("output should contain redacted token indicator")
 		}
 	})
+}
+
+func TestOfflineRequiresDryRun(t *testing.T) {
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	defer func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	}()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+	claudePath := filepath.Join(tmpHome, ".claude", "mcp_servers.json")
+	legacyPath := filepath.Join(tmpHome, ".claude.json")
+
+	flag.CommandLine = flag.NewFlagSet("engram-setup", flag.ContinueOnError)
+	os.Args = []string{"engram-setup", "--offline"}
+
+	err := run()
+	if err == nil {
+		t.Fatal("expected --offline without --dry-run to fail")
+	}
+	if !strings.Contains(err.Error(), "preview-only") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(claudePath); !os.IsNotExist(statErr) {
+		t.Fatalf("offline failure must not write %s", claudePath)
+	}
+	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
+		t.Fatalf("offline failure must not write %s", legacyPath)
+	}
 }
 
 // TestConfigFormatFlag verifies that the --format flag controls output.

@@ -54,6 +54,8 @@ func run() error {
 	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
 	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
 	logLevel := slog.LevelInfo
+	logLevelVar := &slog.LevelVar{}
+	logLevelVar.Set(logLevel)
 	logLevelErr := error(nil)
 	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
 		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
@@ -61,14 +63,15 @@ func run() error {
 			logLevelErr = err
 		}
 	}
+	logLevelVar.Set(logLevel)
 	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
 		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 			AddSource: true,
-			Level:     logLevel,
+			Level:     logLevelVar,
 		})))
 	} else if logLevel != slog.LevelInfo {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: logLevel,
+			Level: logLevelVar,
 		})))
 	}
 	// Log warning about invalid log level after handler is initialized
@@ -374,6 +377,7 @@ func run() error {
 		RateLimitDisable:         *rateLimitDisable,
 		SessionRehydrateWindow:   sessionRehydrateWindow,
 		EmbedRatePerSecond:       *embedRatePerSecond,
+		LogLevelVar:              logLevelVar,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {

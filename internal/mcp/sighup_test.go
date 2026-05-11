@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -88,6 +89,22 @@ func TestSIGHUPConfigReload(t *testing.T) {
 	// is called before the next test registers its own handler (#618).
 	cancel()
 	<-goroutineDone
+}
+
+func TestReloadRuntimeConfigUpdatesServerLogLevelVar(t *testing.T) {
+	levelVar := &slog.LevelVar{}
+	levelVar.Set(slog.LevelInfo)
+	s := &Server{
+		cfg:        Config{LogLevelVar: levelVar},
+		runtimeCfg: &RuntimeConfig{},
+	}
+	t.Setenv("ENGRAM_LOG_LEVEL", "debug")
+
+	s.ReloadRuntimeConfig()
+
+	if levelVar.Level() != slog.LevelDebug {
+		t.Fatalf("expected shared LevelVar to update to debug, got %v", levelVar.Level())
+	}
 }
 
 // TestSIGHUPPartialReload verifies that only changed flags are updated and

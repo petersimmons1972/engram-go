@@ -43,6 +43,7 @@ func (s *stubEngine) StoreWithRawBody(_ context.Context, m *types.Memory, rawBod
 type stubDocBackend struct {
 	stored   map[string]string // docID -> content
 	linked   map[string]string // memID -> docID
+	deleted  []string
 	storeErr error
 	linkErr  error
 	nextID   int
@@ -60,6 +61,12 @@ func (s *stubDocBackend) StoreDocument(_ context.Context, _ string, content stri
 	id := fmt.Sprintf("doc-%d", s.nextID)
 	s.stored[id] = content
 	return id, nil
+}
+
+func (s *stubDocBackend) DeleteDocument(_ context.Context, id string) (bool, error) {
+	s.deleted = append(s.deleted, id)
+	delete(s.stored, id)
+	return true, nil
 }
 
 func (s *stubDocBackend) SetMemoryDocumentID(_ context.Context, memID, docID string) error {
@@ -207,6 +214,21 @@ func TestHandleMemoryStoreDocument_Tier2_HugeContent(t *testing.T) {
 	require.Less(t, len(stored.Content), len(content))
 	require.Empty(t, eng.calls[0].rawBody, "Tier-2: raw documents are not chunked inline — rawBody must be empty")
 	require.Equal(t, docID, stored.DocumentID, "Tier-2: memory must carry document_id")
+}
+
+func TestHandleMemoryStoreDocument_Tier2RollbackDeletesDocument(t *testing.T) {
+	const maxDoc = 8 * 1024 * 1024
+	const rawMax = 50 * 1024 * 1024
+
+	eng := &stubEngine{err: fmt.Errorf("downstream store failed")}
+	back := newStubDocBackend()
+	m := &types.Memory{ID: "m-tier2-rollback", Project: "p", MemoryType: types.MemoryTypeContext}
+	content := "# Huge doc\n" + makeContent(9*1024*1024)
+
+	_, err := execStoreDocument(context.Background(), storeDocumentDeps{engine: eng, backend: back}, m, content, maxDoc, rawMax)
+	require.Error(t, err)
+	require.Len(t, back.deleted, 1, "tier-2 rollback must reclaim the staged document row")
+	require.Empty(t, back.stored, "rolled-back document must not remain staged")
 }
 
 func TestHandleMemoryStoreDocument_TooLarge(t *testing.T) {
@@ -470,6 +492,7 @@ type backendStubForAdapter struct {
 	db.Backend
 	storeCalls  int
 	linkCalls   int
+	deleteCalls int
 	lastProject string
 	lastMem     string
 	lastDoc     string
@@ -488,6 +511,12 @@ func (b *backendStubForAdapter) SetMemoryDocumentID(_ context.Context, memID, do
 	return nil
 }
 
+func (b *backendStubForAdapter) DeleteDocument(_ context.Context, id string) (bool, error) {
+	b.deleteCalls++
+	b.lastDoc = id
+	return true, nil
+}
+
 func TestBackendDocumentAdapter(t *testing.T) {
 	bs := &backendStubForAdapter{}
 	a := backendDocumentAdapter{b: bs}
@@ -502,6 +531,11 @@ func TestBackendDocumentAdapter(t *testing.T) {
 	require.Equal(t, 1, bs.linkCalls)
 	require.Equal(t, "mem-1", bs.lastMem)
 	require.Equal(t, "doc-1", bs.lastDoc)
+
+	_, err = a.DeleteDocument(context.Background(), "doc-2")
+	require.NoError(t, err)
+	require.Equal(t, 1, bs.deleteCalls)
+	require.Equal(t, "doc-2", bs.lastDoc)
 }
 
 // TestRunStreamIngest_PoolError exercises runStreamIngest's error path when

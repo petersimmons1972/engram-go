@@ -29,6 +29,13 @@ func (b dimBackend) GetMeta(_ context.Context, _, key string) (string, bool, err
 	}
 	return "", false, nil
 }
+func (b dimBackend) DeleteDocument(_ context.Context, _ string) (bool, error) { return false, nil }
+func (b dimBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (b dimBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
 
 var _ db.Backend = dimBackend{}
 
@@ -243,7 +250,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_PrivateIPBlocked(t *testing.T) {
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SSRF protection", "private IP in ollama_url must be rejected")
+	require.Contains(t, err.Error(), "private IP", "private IP in ollama_url must be rejected")
 }
 
 // TestHandleMemoryMigrateEmbedder_OllamaURL_LoopbackBlocked verifies that
@@ -261,7 +268,7 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_LoopbackBlocked(t *testing.T) {
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SSRF protection", "loopback IP in ollama_url must be rejected")
+	require.Contains(t, err.Error(), "private IP", "loopback IP in ollama_url must be rejected")
 }
 
 // TestHandleMemoryMigrateEmbedder_OllamaURL_InvalidURLBlocked verifies that
@@ -282,29 +289,23 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_InvalidURLBlocked(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid ollama_url", "malformed URL must be rejected")
 }
 
-// TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed verifies that a
-// hostname-based ollama_url (not a raw IP) is accepted and forwarded — matching
-// the startup-time behavior that allows container hostnames like "ollama".
-func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameAllowed(t *testing.T) {
+// TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameResolvingPrivateBlocked
+// verifies that hostname overrides are rejected when DNS resolves them to
+// private/reserved targets.
+func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameResolvingPrivateBlocked(t *testing.T) {
 	pool := newDimPool(t, "", 384) // no stored dims — pre-flight skipped
 
 	var req mcpgo.CallToolRequest
 	req.Params.Arguments = map[string]any{
 		"project":    "proj",
 		"new_model":  "some-model",
-		"ollama_url": "http://custom-ollama:11434",
+		"ollama_url": "http://localhost:11434",
 	}
-	cfg := Config{
-		LiteLLMURL: "http://safe-ollama:11434",
-		testHooks: &testHooks{
-			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
-				return map[string]any{"nulled": 0, "model": "some-model"}, nil
-			},
-		},
-	}
+	cfg := Config{LiteLLMURL: "http://safe-ollama:11434"}
 
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
-	require.NoError(t, err, "hostname-based ollama_url must be accepted")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "resolves to private IP")
 }
 
 // TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate verifies that when

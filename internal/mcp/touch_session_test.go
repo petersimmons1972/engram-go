@@ -150,3 +150,18 @@ func TestTouchSessionBreaksCoalesceAfter30s(t *testing.T) {
 		t.Errorf("expected 2 TouchSession calls after 30s, got %d", callCount)
 	}
 }
+
+func TestUnregisterSessionClearsTouchTimestamp(t *testing.T) {
+	s := NewServer(nil, Config{})
+	s.registerSessionHooks("test-key")
+	s.sessionTouchTimes["sess-1"] = time.Now()
+
+	s.mcp.GetHooks().UnregisterSession(context.Background(), &fakeClientSession{id: "sess-1"})
+
+	s.sessionTouchMu.Lock()
+	_, ok := s.sessionTouchTimes["sess-1"]
+	s.sessionTouchMu.Unlock()
+	if ok {
+		t.Fatal("expected unregister hook to delete sessionTouchTimes entry")
+	}
+}

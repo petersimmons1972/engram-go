@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -40,12 +38,8 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// because they resolve to container IPs by design and are not attacker-controlled.
 	ollamaURL := cfg.LiteLLMURL
 	if raw := getString(args, "ollama_url", ""); raw != "" {
-		parsed, parseErr := url.ParseRequestURI(raw)
-		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			return nil, fmt.Errorf("invalid ollama_url %q: must be an http:// or https:// URL", raw)
-		}
-		if host := parsed.Hostname(); net.ParseIP(host) != nil && netutil.IsPrivateIP(host) {
-			return nil, fmt.Errorf("invalid ollama_url: IP %q is in a private/reserved range (SSRF protection)", host)
+		if err := netutil.ValidateUpstreamURL(raw); err != nil {
+			return nil, fmt.Errorf("invalid ollama_url %q: %w", raw, err)
 		}
 		ollamaURL = raw
 	}

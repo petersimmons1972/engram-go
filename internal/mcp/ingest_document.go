@@ -130,6 +130,7 @@ func buildSynopsis(content string) string {
 // full PostgresBackend.
 type documentStorer interface {
 	StoreDocument(ctx context.Context, project, content string) (string, error)
+	DeleteDocument(ctx context.Context, id string) (bool, error)
 	SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error
 }
 
@@ -206,6 +207,10 @@ func execStoreDocument(ctx context.Context, deps storeDocumentDeps, m *types.Mem
 		m.StorageMode = "document"
 		m.DocumentID = docID
 		if err := deps.engine.StoreWithRawBody(ctx, m, ""); err != nil {
+			if _, rollbackErr := deps.backend.DeleteDocument(ctx, docID); rollbackErr != nil {
+				slog.Warn("execStoreDocument: failed to rollback raw document after memory store failure",
+					"project", m.Project, "document_id", docID, "err", rollbackErr)
+			}
 			return nil, fmt.Errorf("store synopsis memory: %w", err)
 		}
 		return map[string]any{
@@ -251,6 +256,9 @@ type backendDocumentAdapter struct {
 
 func (a backendDocumentAdapter) StoreDocument(ctx context.Context, project, content string) (string, error) {
 	return a.b.StoreDocument(ctx, project, content)
+}
+func (a backendDocumentAdapter) DeleteDocument(ctx context.Context, id string) (bool, error) {
+	return a.b.DeleteDocument(ctx, id)
 }
 func (a backendDocumentAdapter) SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error {
 	return a.b.SetMemoryDocumentID(ctx, memoryID, documentID)

@@ -161,10 +161,22 @@ func envInt(key string, def int) int {
 
 // loadAndRotate reads the buffer JSONL. Returns empty if file missing or
 // line count < minEvents. On success renames to .processed and returns events + new path.
-func loadAndRotate(bufferPath string, minEvents int) ([]Event, string) {
+type bufferLoadOutcome int
+
+const (
+	bufferLoadMissing bufferLoadOutcome = iota
+	bufferLoadBelowThreshold
+	bufferLoadProcessed
+	bufferLoadRejected
+)
+
+func loadAndRotate(bufferPath string, minEvents int) ([]Event, string, bufferLoadOutcome, error) {
 	data, err := os.ReadFile(bufferPath)
 	if err != nil {
-		return nil, ""
+		if os.IsNotExist(err) {
+			return nil, "", bufferLoadMissing, nil
+		}
+		return nil, "", bufferLoadMissing, err
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
@@ -176,14 +188,16 @@ func loadAndRotate(bufferPath string, minEvents int) ([]Event, string) {
 	}
 
 	if len(valid) < minEvents {
-		return nil, ""
+		return nil, "", bufferLoadBelowThreshold, nil
 	}
 
 	var events []Event
+	malformedCount := 0
 	for _, l := range valid {
 		var e Event
 		if err := json.Unmarshal([]byte(l), &e); err != nil {
 			slog.Warn("instinct: skipping malformed line", "err", err)
+			malformedCount++
 			continue
 		}
 		events = append(events, e)
@@ -192,13 +206,23 @@ func loadAndRotate(bufferPath string, minEvents int) ([]Event, string) {
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	dir := filepath.Dir(bufferPath)
 	base := filepath.Base(bufferPath)
-	processedPath := filepath.Join(dir, base+"."+ts+".processed")
+	suffix := ".processed"
+	outcome := bufferLoadProcessed
+	if len(events) == 0 {
+		suffix = ".rejected"
+		outcome = bufferLoadRejected
+	}
+	processedPath := filepath.Join(dir, base+"."+ts+suffix)
 	if err := os.Rename(bufferPath, processedPath); err != nil {
 		slog.Error("instinct: failed to rotate buffer", "err", err)
-		return nil, ""
+		return nil, "", bufferLoadMissing, err
 	}
 
-	return events, processedPath
+	if outcome == bufferLoadRejected {
+		slog.Error("instinct: rejecting malformed buffer", "path", processedPath, "lines", len(valid), "malformed", malformedCount)
+		return nil, processedPath, outcome, fmt.Errorf("instinct: rejected malformed buffer %q: %d malformed lines and 0 decoded events", processedPath, malformedCount)
+	}
+	return events, processedPath, outcome, nil
 }
 
 // groupBySession partitions events into buckets keyed by (sessionID, projectID).
@@ -716,8 +740,14 @@ func main() {
 // run is the top-level pipeline: load buffer → group by session → write
 // episodes to Engram → detect patterns via Haiku → upsert patterns.
 func run(ctx context.Context, cfg config) error {
-	events, processedPath := loadAndRotate(cfg.bufferPath, cfg.minEvents)
+	events, processedPath, outcome, err := loadAndRotate(cfg.bufferPath, cfg.minEvents)
+	if err != nil {
+		return err
+	}
 	if len(events) == 0 {
+		if outcome == bufferLoadRejected {
+			return fmt.Errorf("instinct: malformed buffer rejected: %s", processedPath)
+		}
 		slog.Info("instinct: noop", "reason", "buffer below min events or missing")
 		return nil
 	}
