@@ -1047,30 +1047,6 @@ func noConfig(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpg
 	}
 }
 
-// withEntityEnqueue wraps handleMemoryStore to async-enqueue entity extraction on success.
-func withEntityEnqueue(h func(context.Context, *EnginePool, mcpgo.CallToolRequest, Config) (*mcpgo.CallToolResult, error)) toolHandler {
-	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-		result, err := h(ctx, pool, req, cfg)
-		if err != nil {
-			slog.Warn("memory_store: store failed", "err", err, "request_id", requestIDFromContext(ctx))
-			return result, err
-		}
-		// Enqueue entity extraction asynchronously. Runs in a detached goroutine
-		// with its own context so it never blocks memory_store.
-		// Non-fatal: if the enqueue fails the store has already succeeded.
-		args := req.GetArguments()
-		project, err := getProject(args, "default")
-		if err != nil {
-			return nil, err
-		}
-		if memID, ok := extractResultID(result); ok {
-			slog.Debug("memory_store: stored, enqueuing extraction",
-				"id", memID, "project", project, "request_id", requestIDFromContext(ctx))
-			go enqueueExtractionAsync(pool, memID, project)
-		}
-		return result, nil
-	}
-}
 
 // withWarnLog wraps a handler to emit slog.Warn when it returns an error.
 func withWarnLog(name string, h toolHandler) toolHandler {
@@ -1175,7 +1151,7 @@ func (s *Server) registerTools() {
 	tools := []toolDef{
 		// Core store operations
 		{"memory_store", "Store a focused memory (<=10k chars)" + embedSuffix,
-			withEntityEnqueue(handleMemoryStore)},
+			handleMemoryStore},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			handleMemoryStoreDocument},
 		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
@@ -1289,7 +1265,7 @@ func (s *Server) registerTools() {
 			noConfig(handleMemoryAdopt)},
 		// Simplified front-door tools
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
-			withWarnLog("memory_quick_store", withEntityEnqueue(handleMemoryQuickStore))},
+			withWarnLog("memory_quick_store", handleMemoryQuickStore)},
 		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied." + embedSuffix,
 			handleMemoryQuery},
 		// Safety constraint verification
@@ -1479,46 +1455,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractionSem caps the number of concurrent entity-extraction goroutines.
-// At 50 req/s burst each spawning a goroutine, an unbounded pool exhausts the
-// per-project pgxpool (MaxConns=10) within the 5-second async timeout window.
-// Non-blocking select: when the semaphore is full the goroutine exits immediately
-// rather than queuing, keeping goroutine count bounded.
-var extractionSem = make(chan struct{}, 20)
-
-// enqueueExtractionAsync submits memID to the entity extraction queue via pool.
-// Intended to run in a detached goroutine; all failures are logged, never surfaced.
-// Bounded by extractionSem: if more than 20 extraction goroutines are already
-// running, this call is dropped and ExtractionDropped metric is incremented.
-func enqueueExtractionAsync(pool *EnginePool, memID, project string) {
-	select {
-	case extractionSem <- struct{}{}:
-		// acquired — proceed
-	default:
-		// semaphore full; skip this extraction rather than queuing unboundedly
-		slog.Warn("memory_store: entity extraction skipped, semaphore full",
-			"id", memID, "project", project)
-		metrics.ExtractionDropped.WithLabelValues("semaphore_full").Inc()
-		return
-	}
-	defer func() { <-extractionSem }()
-
-	// No request context available here — this runs in a detached goroutine
-	// after the store has already returned. Use background context.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	h, herr := pool.Get(ctx, project)
-	if herr != nil {
-		slog.Warn("memory_store: enqueue pool.Get failed",
-			"id", memID, "project", project, "err", herr)
-		return
-	}
-	if eerr := h.Engine.Backend().EnqueueExtractionJob(ctx, memID, project); eerr != nil {
-		slog.Warn("memory_store: enqueue extraction job failed",
-			"id", memID, "project", project, "err", eerr)
-		metrics.ExtractionDropped.WithLabelValues("queue_error").Inc()
-	}
-}
 
 // handleQuickStore is a sessionless REST endpoint that stores a single memory
 // without requiring an active SSE session. Used by hook scripts (e.g. PreCompact)

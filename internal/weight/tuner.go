@@ -42,10 +42,10 @@ const (
 
 // Tuning policy constants.
 const (
-	minEventsBeforeTuning = 50    // minimum failure events in window before firing
+	minEventsBeforeTuning = 20    // minimum failure events in window before firing (lowered from 50)
 	dominantThreshold     = 0.40  // ≥40% of relevant events
 	dominantMargin        = 0.10  // ≥10pp above runner-up
-	tuningCooldownDays    = 7     // max once per 7 days per project
+	tuningCooldownDays    = 3     // max once per 3 days per project (lowered from 7)
 	lockKey               = 7332  // advisory lock key
 )
 

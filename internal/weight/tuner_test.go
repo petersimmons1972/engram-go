@@ -262,7 +262,7 @@ func makeTunerWorker(db *tunerStubDB) *TunerWorker {
 // --- maybeAdjust tests ---
 
 func TestMaybeAdjust_BelowThreshold(t *testing.T) {
-	// Total failure events = 10, below minEventsBeforeTuning (50) → no tuning.
+	// Total failure events = 10, below minEventsBeforeTuning (20) → no tuning.
 	db := &tunerStubDB{
 		queryRowFn: func(_ string, _ ...any) pgx.Row {
 			return &tunerStubRow{err: pgx.ErrNoRows} // no cooldown history
@@ -346,7 +346,7 @@ func TestMaybeAdjust_MarginTooSmall(t *testing.T) {
 }
 
 func TestMaybeAdjust_CooldownActive(t *testing.T) {
-	recent := time.Now().Add(-24 * time.Hour) // 1 day ago, within 7-day cooldown
+	recent := time.Now().Add(-24 * time.Hour) // 1 day ago, within 3-day cooldown
 	db := &tunerStubDB{
 		queryRowFn: func(_ string, _ ...any) pgx.Row {
 			return &tunerStubRow{vals: []any{recent}}
