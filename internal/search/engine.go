@@ -617,6 +617,21 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// Composite scoring per memory.
 	results := make([]types.SearchResult, 0)
 	for id, m := range memories {
+		// Extracted preference memories are ingest-time fragments tagged
+		// "extracted-preference". Surface them only for preference-shaped queries;
+		// for all other query types they add noise and dilute recall quality.
+		if !prefQuery {
+			skip := false
+			for _, t := range m.Tags {
+				if t == "extracted-preference" {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
 		bm25 := 0.0
 		if maxBM25 > 0 {
 			bm25 = ftsScores[id] / maxBM25
