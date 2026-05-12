@@ -2,8 +2,13 @@
 
 ## Repository Scope
 - This project is **Clearwatch only**. The SIB repo is DEPRECATED — never dispatch agents, fixes, or commits to it.
-- All NHI/SSPM/vendor research MUST be written through the K8s PostgreSQL database, NOT directly to git/markdown files.
 - Confirm target repo and storage layer before starting multi-file operations.
+
+## Core Principles
+
+- **Simplicity first.** Make every change as simple as possible. Impact minimal code. Three similar lines beat a premature abstraction.
+- **No laziness.** Find root causes. No temporary fixes. No hand-holding required — point at logs, errors, and failing tests, then resolve them.
+- **Minimal impact.** Changes should only touch what's necessary. If a fix feels hacky, find the clean solution — "Knowing everything I know now, implement the elegant solution."
 
 ## Behavioral Rules
 - Never tell the user to do something manually that you can do yourself — just do it.
@@ -34,6 +39,9 @@ Each step has an explicit trigger. Execute the step when its trigger fires. Do n
 | 4 | BRANCH VERIFICATION | After `git push` or after any `git commit` where commit landing is load-bearing for the next step | Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding. | After every qualifying event |
 
 ## Advisory Protocol — Tiered Self-Escalation
+
+**Quality floor (applies before escalating or presenting any non-trivial work):**
+Before presenting an implementation, pause and ask: "Is there a more elegant way?" If the fix feels hacky, don't present it — implement the clean solution instead. Skip this for obvious single-line fixes; apply it whenever you'd be slightly embarrassed showing the diff. Quality bar: **"Would a staff engineer approve this?"** If no, don't present it. If execution hits an unpredicted wall, STOP and re-plan — don't push through. Re-planning is not failure; pushing through unpredicted errors is.
 
 **Capacity problems (rate limits, timeouts, infra failures) never escalate tiers — fix them in place.** Escalate only when reasoning quality changes the answer.
 **Tier rule:** Use the lowest tier that can decide correctly. Default Sonnet for execution, Haiku for mechanical work, Opus only for reasoning forks. Set each parallel agent's model independently — uneven teams (1 Sonnet coordinator + 4 Haiku workers + on-demand Opus) are correct and preferred. Homogeneous model selection is a smell.
@@ -134,5 +142,5 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 **Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
 **Skills:** Debug → `superpowers:systematic-debugging` | Implement → `superpowers:brainstorming` | GitHub docs → `github-docs` (skill at `~/.claude/skills/github-docs/SKILL.md`)
 **Benched skills** (inactive, not auto-loaded): `~/.claude/skills/bench/INDEX.md` — reactivate with `mv ~/.claude/skills/bench/<name> ~/.claude/skills/`
-**Web Search:** ALWAYS use `search "query"` (`~/bin/search`) — hits local SearxNG (K8s deployment, `default/searxng`, 2 replicas, scales via `kubectl scale deploy/searxng -n default --replicas=N`). Aggregates Google + DuckDuckGo + Startpage. Use `--full` for snippets, `--limit N` for more results. NEVER use the WebSearch tool unless SearxNG is unreachable.
+**Web Search:** ALWAYS use the `searxng` MCP server (`searxng_web_search` tool) — hits local SearXNG at `https://searxng.petersimmons.com`, aggregates Google + DuckDuckGo + Startpage. Fall back to `search "query"` (`~/bin/search`) only if the MCP server is unavailable. NEVER use the WebSearch tool.
 **Learning:** Detail → topic file | one-liner → MEMORY.md | rule → CLAUDE.md | `~/.claude/projects/-home-psimmons/memory/`
