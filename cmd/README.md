@@ -68,7 +68,7 @@ go run ./cmd/engram
 
 **Who runs it:** Users, via `make setup` in the project root.
 
-**Purpose:** Configure Claude Code (and other IDE integrations) to connect to the running engram server. Fetches the current bearer token via the unauthenticated `/setup-token` endpoint, then writes the MCP server config to:
+**Purpose:** Configure Claude Code (and other IDE integrations) to connect to the running engram server. Fetches the current bearer token via the Bearer-protected `/setup-token` endpoint, with disk fallback to the local `ENGRAM_API_KEY` when bootstrapping, then writes the MCP server config to:
 
 - `~/.claude/mcp_servers.json` (primary, live config)
 - `~/.claude.json` (secondary, settings fallback)

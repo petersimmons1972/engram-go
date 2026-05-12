@@ -50,11 +50,13 @@ These are the server's internal API. Most users never call them directly — `ma
 curl http://localhost:8788/health
 ```
 
-**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
+**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Requires `Authorization: Bearer <ENGRAM_API_KEY>`. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
 
 **Request:**
 ```bash
-curl http://localhost:8788/setup-token
+curl \
+  --header "Authorization: Bearer $ENGRAM_API_KEY" \
+  http://localhost:8788/setup-token
 ```
 
 **Response (200 OK):**
