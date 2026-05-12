@@ -201,11 +201,12 @@ func CompositeScoreWithWeights(in ScoreInput, w Weights) float64 {
 	// Preference queries ("what does the user prefer?") don't always vector-match
 	// well against preference-expressing memories ("I really like X"), so a
 	// type-aware boost compensates for the embedding space gap.
-	// Raised from 1.2× to 1.35× — LongMemEval analysis showed single-session-preference
-	// recall at 3.3% correct; stronger boost is needed to surface preference memories
-	// above semantically similar but irrelevant context memories.
+	// Raised from 1.35× to 1.8× — with better ingest-time tagging via the expanded
+	// keyword set and PatternPreferenceExtractor, the boost now fires on correctly-typed
+	// memories. The larger multiplier overcomes the embedding space gap between
+	// preference queries and preference-expressing memories.
 	if in.IsPreferenceQuery && in.MemoryType == "preference" {
-		raw *= 1.35
+		raw *= 1.8
 	}
 	return raw * boost
 }

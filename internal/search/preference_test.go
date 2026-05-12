@@ -75,6 +75,60 @@ func TestIsPreferenceContentStillNarrow(t *testing.T) {
 	}
 }
 
+// TestIsPreferenceContentExpandedSignals verifies that the expanded keyword set
+// fires on strong personal preference expressions at ingest time.
+func TestIsPreferenceContentExpandedSignals(t *testing.T) {
+	hits := []string{
+		"I love jazz music",
+		"She loves hiking on weekends",
+		"He loved the mountains",
+		"I hate loud bars",
+		"She hates spicy food",
+		"He hated crowded places",
+		"I dislike bitter coffee",
+		"She dislikes horror movies",
+		"He disliked early mornings",
+		"I adore Italian cuisine",
+		"She adores cats",
+		"He adored the ocean",
+		"I detest raw onions",
+		"She detests cigarette smoke",
+		"He detested cold weather",
+		"I'm allergic to peanuts",
+		"She is vegetarian",
+		"He is vegan",
+		"I can't stand opera",
+		"I cannot stand crowded subways",
+		"I can't eat gluten",
+		"I cannot eat dairy",
+		"She avoids red meat",
+		"He avoids alcohol",
+	}
+	for _, c := range hits {
+		if !IsPreferenceContent(c) {
+			t.Errorf("IsPreferenceContent(%q) = false, want true", c)
+		}
+	}
+}
+
+// TestIsPreferenceContentFalsePositiveGuard verifies that the expanded signals
+// do NOT fire on engineering prose and similar false-positive phrases.
+func TestIsPreferenceContentFalsePositiveGuard(t *testing.T) {
+	misses := []string{
+		"I'd like to implement this feature",
+		"I would like to review the PR",
+		"I love this approach to the problem",
+		"I hate to say it but the build is broken",
+		"I love this PR, let's merge it",
+		"Would love to see this fixed",
+	}
+	for _, c := range misses {
+		if IsPreferenceContent(c) {
+			t.Errorf("IsPreferenceContent(%q) = true, want false (false-positive guard failed)", c)
+		}
+	}
+}
+
 // TestIsTemporalQueryDetectsSignals verifies that time-anchored recall queries
 // are classified as temporal so the engine can apply recency-boosted weights.
 func TestIsTemporalQueryDetectsSignals(t *testing.T) {
@@ -242,7 +296,7 @@ func TestPreferenceBoostNotAppliedForNeutralQuery(t *testing.T) {
 	}
 }
 
-// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.35×.
+// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.8×.
 func TestPreferenceBoostMagnitude(t *testing.T) {
 	base := ScoreInput{
 		Cosine: 0.8, BM25: 0.5, HoursSince: 1, Importance: 2,
@@ -260,7 +314,7 @@ func TestPreferenceBoostMagnitude(t *testing.T) {
 		t.Skip("base score is zero — cannot verify multiplier")
 	}
 	ratio := scorePreference / scoreContext
-	const want = 1.35
+	const want = 1.8
 	const eps = 0.001
 	if ratio < want-eps || ratio > want+eps {
 		t.Errorf("preference boost ratio = %.4f, want %.4f ± %.4f", ratio, want, eps)
