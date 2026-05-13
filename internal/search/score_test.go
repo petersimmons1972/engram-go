@@ -99,3 +99,72 @@ func TestCompositeScore_EpisodeMatch_Shorthand(t *testing.T) {
 		t.Fatalf("matched should outscore unmatched: %f vs %f", matched, unmatched)
 	}
 }
+
+func TestRRFScore(t *testing.T) {
+	const k = 60
+
+	// Both ranks absent → zero
+	require.InDelta(t, 0.0, search.RRFScore(0, 0, k), 0.0001)
+
+	// Single vector leg, rank 1 → 1/(k+1)
+	require.InDelta(t, 1.0/float64(k+1), search.RRFScore(1, 0, k), 0.0001)
+
+	// Single BM25 leg, rank 1 → 1/(k+1)
+	require.InDelta(t, 1.0/float64(k+1), search.RRFScore(0, 1, k), 0.0001)
+
+	// Both legs rank 1 → 2/(k+1)
+	require.InDelta(t, 2.0/float64(k+1), search.RRFScore(1, 1, k), 0.0001)
+
+	// Higher rank number (worse position) → lower score
+	require.Greater(t, search.RRFScore(1, 0, k), search.RRFScore(10, 0, k))
+	require.Greater(t, search.RRFScore(0, 1, k), search.RRFScore(0, 20, k))
+
+	// Both legs present, mixed ranks
+	want := 1.0/float64(k+10) + 1.0/float64(k+5)
+	require.InDelta(t, want, search.RRFScore(10, 5, k), 0.0001)
+
+	// Larger k → smaller score magnitude but flatter rank curve
+	scoreSmallK := search.RRFScore(1, 1, 10)
+	scoreLargeK := search.RRFScore(1, 1, 100)
+	require.Greater(t, scoreSmallK, scoreLargeK)
+}
+
+func TestCompositeScoreRRF(t *testing.T) {
+	w := search.DefaultWeights()
+	const k = 60
+
+	// Best case: both legs rank 1 with default weights + neutral inputs.
+	// rrfBase = 2/61; scaled = (2/61)*(61/2)*(0.40+0.30) = 0.70
+	// raw = 0.70 + 0.15*recency(0) + 0.15*0.5 = 0.70+0.15+0.075 = 0.925; boost=1.0
+	bestRRF := search.RRFScore(1, 1, k)
+	score := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 0, Importance: 2}, w, bestRRF)
+	require.InDelta(t, 0.925, score, 0.001)
+
+	// Single-leg (vector rank 1 only) scores lower than both-leg rank 1.
+	singleRRF := search.RRFScore(1, 0, k)
+	scoreSingle := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 0, Importance: 2}, w, singleRRF)
+	require.Less(t, scoreSingle, score)
+
+	// Episode boost applies: ~1.15×
+	noBoostInput := search.ScoreInput{HoursSince: 0, Importance: 2, EpisodeMatch: false}
+	boostInput := search.ScoreInput{HoursSince: 0, Importance: 2, EpisodeMatch: true}
+	noBoost := search.CompositeScoreRRF(noBoostInput, w, bestRRF)
+	withBoost := search.CompositeScoreRRF(boostInput, w, bestRRF)
+	require.InDelta(t, 1.15, withBoost/noBoost, 0.001)
+
+	// Preference boost applies: ~1.8× for preference-typed memory on preference query.
+	prefInput := search.ScoreInput{HoursSince: 0, Importance: 2, IsPreferenceQuery: true, MemoryType: "preference"}
+	noPrefInput := search.ScoreInput{HoursSince: 0, Importance: 2, IsPreferenceQuery: true, MemoryType: "context"}
+	withPref := search.CompositeScoreRRF(prefInput, w, bestRRF)
+	withoutPref := search.CompositeScoreRRF(noPrefInput, w, bestRRF)
+	require.InDelta(t, 1.8, withPref/withoutPref, 0.001)
+
+	// RRF=0 (no hits in either leg) still returns a positive score from recency+precision.
+	zeroRRF := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 0, Importance: 2}, w, 0)
+	require.Greater(t, zeroRRF, 0.0)
+
+	// Critical memory (importance=0) outscores trivial (importance=4) at same RRF.
+	critical := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 0, Importance: 0}, w, bestRRF)
+	trivial := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 0, Importance: 4}, w, bestRRF)
+	require.Greater(t, critical, trivial)
+}

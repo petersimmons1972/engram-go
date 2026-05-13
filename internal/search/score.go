@@ -28,7 +28,7 @@ const (
 	// completely discarding semantic relevance.
 	kuWeightVector    = 0.38
 	kuWeightBM25      = 0.27
-	kuWeightRecency   = 0.22
+	kuWeightRecency   = 0.35 // raised from 0.22 — after RRF fusion, recency dominance improves knowledge-update recall
 	kuWeightPrecision = 0.13
 )
 
@@ -176,6 +176,54 @@ func ImportanceBoost(importance int) float64 {
 //     (neutral), so it neither helps nor hurts new memories.
 func CompositeScore(in ScoreInput) float64 {
 	return CompositeScoreWithWeights(in, DefaultWeights())
+}
+
+// RRFScore computes reciprocal rank fusion score for a memory ID across two rank lists.
+// vectorRank and bm25Rank are 1-based positions in their respective sorted result lists;
+// pass 0 to indicate the memory was absent from that leg.
+// k=60 is the standard constant recommended by Cormack et al. 2009.
+func RRFScore(vectorRank, bm25Rank, k int) float64 {
+	score := 0.0
+	if vectorRank > 0 {
+		score += 1.0 / float64(k+vectorRank)
+	}
+	if bm25Rank > 0 {
+		score += 1.0 / float64(k+bm25Rank)
+	}
+	return score
+}
+
+// CompositeScoreRRF is identical to CompositeScoreWithWeights but uses rrfBase
+// (a pre-computed RRF score from RRFScore) in place of the raw cosine and BM25 signals.
+// The RRF score is scaled into the same budget as the combined vector+BM25 weight
+// terms so that the recency and precision weights retain their additive meaning.
+// Post-fusion boosts (episode, preference, importance) are applied unchanged.
+func CompositeScoreRRF(in ScoreInput, w Weights, rrfBase float64) float64 {
+	const rrfK = 60
+	// Scale RRF into the combined vector+BM25 budget.
+	// Max RRF with both legs at rank 1: 2/(k+1). Multiply by (k+1)/2 to normalize to [0,1],
+	// then by (w.Vector+w.BM25) to map into the weight budget.
+	rrfScaled := rrfBase * float64(rrfK+1) / 2.0 * (w.Vector + w.BM25)
+
+	recency := RecencyDecay(in.HoursSince)
+	var boost float64
+	if in.DynamicImportance != nil {
+		boost = math.Max(0.1, *in.DynamicImportance)
+	} else {
+		boost = ImportanceBoost(in.Importance)
+	}
+	precision := 0.5
+	if in.RetrievalPrecision != nil {
+		precision = *in.RetrievalPrecision
+	}
+	raw := rrfScaled + w.Recency*recency + w.Precision*precision
+	if in.EpisodeMatch {
+		raw *= 1.15
+	}
+	if in.IsPreferenceQuery && in.MemoryType == "preference" {
+		raw *= 1.8
+	}
+	return raw * boost
 }
 
 // CompositeScoreWithWeights is identical to CompositeScore but uses the
