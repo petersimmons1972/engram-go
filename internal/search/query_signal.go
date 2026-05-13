@@ -5,13 +5,52 @@ import (
 	"unicode"
 )
 
+// preferenceContentFalsePositivePhrases are phrases that contain preference
+// signal words but are NOT personal preferences — they are engineering prose,
+// social niceties, or meta-commentary. When any of these phrases appears in the
+// content (case-insensitive), IsPreferenceContent returns false regardless of
+// which keyword matched. Guards against false positives on "I love this PR",
+// "I'd like to fix", "I hate to say it" (#369 follow-up).
+var preferenceContentFalsePositivePhrases = []string{
+	"i'd like to",
+	"i would like",
+	"i love this approach",
+	"i love this pr",
+	"i love this idea",
+	"i love this solution",
+	"would love to",
+	"would love feedback",
+	"i hate to say",
+	"i hate to admit",
+}
+
 // preferenceContentSignals are high-confidence words for auto-tagging stored
-// memories as memory_type="preference". Kept narrow to avoid false positives
-// in engineering prose ("I'd like to", "we want to") — see issue #369.
+// memories as memory_type="preference". Expanded from the original narrow set
+// to cover common natural-language preference expressions while preserving the
+// false-positive guard for engineering prose (#369).
 var preferenceContentSignals = []string{
 	"prefer", "prefers", "preferred",
 	"favorite", "favourite",
 	"enjoy", "enjoys", "enjoyed",
+	// Expanded set — strong personal preference expressions
+	"like", "love", "loves", "loved",
+	"hate", "hates", "hated",
+	"dislike", "dislikes", "disliked",
+	"adore", "adores", "adored",
+	"detest", "detests", "detested",
+	"allergic",
+	"vegetarian",
+	"vegan",
+	"avoid", "avoids",
+}
+
+// preferenceContentPhraseSignals are multi-word signals that require phrase
+// matching rather than word-boundary tokenization. Checked separately.
+var preferenceContentPhraseSignals = []string{
+	"can't stand",
+	"cannot stand",
+	"can't eat",
+	"cannot eat",
 }
 
 // preferenceQuerySignals extends the content set with common personal-preference
@@ -67,11 +106,34 @@ func isPreferenceQuery(query string) bool {
 	return containsSignalFrom(query, preferenceQuerySet)
 }
 
-// IsPreferenceContent returns true when content text expresses a preference
-// (e.g., "I really prefer X", "My favorite is Y"). Uses the narrow content
-// signal set to avoid false positives when auto-tagging stored memories (#364, #369).
+// IsPreferenceContent returns true when content text expresses a personal preference
+// (e.g., "I love jazz", "She is vegetarian", "I can't stand opera").
+// Uses the expanded content signal set with a false-positive guard that rejects
+// engineering prose and social niceties ("I love this PR", "I'd like to", etc.) (#364, #369).
 func IsPreferenceContent(content string) bool {
-	return containsSignalFrom(content, preferenceContentSet)
+	lower := strings.ToLower(content)
+
+	// False-positive guard: if the content matches any engineering-prose pattern,
+	// reject immediately regardless of which keyword triggered.
+	for _, phrase := range preferenceContentFalsePositivePhrases {
+		if strings.Contains(lower, phrase) {
+			return false
+		}
+	}
+
+	// Keyword match via word-boundary tokenization.
+	if containsSignalFrom(content, preferenceContentSet) {
+		return true
+	}
+
+	// Phrase match for multi-word signals.
+	for _, phrase := range preferenceContentPhraseSignals {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // temporalQuerySignals are words that indicate the recall query is anchored to

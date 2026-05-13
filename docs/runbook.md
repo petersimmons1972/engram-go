@@ -143,10 +143,12 @@ docker exec engram-postgres pg_isready -U engram
 
 **Endpoint:** `GET /setup-token`
 
-**Contract:** Returns the current bearer token, SSE endpoint URL, and server name. Localhost-only (RFC1918 addresses accepted in Docker). No authentication required.
+**Contract:** Returns the current bearer token, SSE endpoint URL, and server name. Localhost-only (RFC1918 addresses accepted in Docker). Requires `Authorization: Bearer <ENGRAM_API_KEY>`.
 
 ```bash
-curl http://localhost:8788/setup-token
+curl \
+  --header "Authorization: Bearer $ENGRAM_API_KEY" \
+  http://localhost:8788/setup-token
 # {"token":"...","endpoint":"http://127.0.0.1:8788/sse","name":"engram"}
 ```
 
@@ -284,6 +286,26 @@ docker logs engram-go-app | grep -i "consolidat"
 - **Reduce memory store size:** Archive old memories or split into separate projects
 
 ---
+
+## W6800 Canary
+
+Use this sequence when validating the W6800-backed chat canary for LongMemEval or a small general share.
+
+Verification:
+
+1. Confirm the embedding backend is live and still probing `BAAI/bge-m3` successfully.
+2. Confirm `llama3.1:8b` is installed in `engram-ollama`.
+3. Run one short completion against `llama3.1:8b` and confirm it returns normally.
+4. Expand traffic only after the canary remains stable under a small batch.
+
+Rollback:
+
+1. Stop sending canary traffic to the W6800 host.
+2. Restore the previous chat backend.
+3. Leave the embedding backend pinned on `BAAI/bge-m3`.
+4. Recheck `ollama list` in the container and confirm the chat model you want is resident.
+
+If the Ollama container gets tight on memory, let `qwen3-coder:30b` fall out first. The embed backend should stay on `BAAI/bge-m3`.
 
 ## Common Issues & Solutions
 

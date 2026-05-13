@@ -132,18 +132,19 @@ type bestHit struct {
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend          db.Backend
-	embedMu          sync.RWMutex // protects embedder; use getEmbedder() for all reads
-	embedder         embed.Client
-	project          string
-	ollamaURL        string
-	targetDims       int             // MRL truncation target; 0 = model native output
-	ctx              context.Context // parent lifecycle context — passed to workers via StartWithContext
-	summarizer       *summarize.Worker
-	reembedder       *reembed.Worker
-	decayer          *DecayWorker
-	weightCache      *WeightCache   // nil when no pgxpool available (pre-migration or test)
-	globalReembedder globalNotifier // non-nil after SetGlobalReembedder; woken on chunk store
+	backend              db.Backend
+	embedMu              sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedder             embed.Client
+	project              string
+	ollamaURL            string
+	targetDims           int             // MRL truncation target; 0 = model native output
+	ctx                  context.Context // parent lifecycle context — passed to workers via StartWithContext
+	summarizer           *summarize.Worker
+	reembedder           *reembed.Worker
+	decayer              *DecayWorker
+	weightCache          *WeightCache       // nil when no pgxpool available (pre-migration or test)
+	globalReembedder     globalNotifier     // non-nil after SetGlobalReembedder; woken on chunk store
+	PreferenceExtractor  PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -201,16 +202,17 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		dims = targetDims[0]
 	}
 	return &SearchEngine{
-		backend:     backend,
-		embedder:    embedder,
-		project:     project,
-		ollamaURL:   ollamaURL,
-		targetDims:  dims,
-		ctx:         ctx,
-		summarizer:  sum,
-		reembedder:  reb,
-		decayer:     dec,
-		weightCache: wc,
+		backend:             backend,
+		embedder:            embedder,
+		project:             project,
+		ollamaURL:           ollamaURL,
+		targetDims:          dims,
+		ctx:                 ctx,
+		summarizer:          sum,
+		reembedder:          reb,
+		decayer:             dec,
+		weightCache:         wc,
+		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
 	}
 }
 
@@ -563,6 +565,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
+	// Build vector rank map (1-based, ordered by cosine similarity best-first).
+	vectorRankMap := make(map[string]int, len(uniqueIDs))
+	for i, id := range uniqueIDs {
+		vectorRankMap[id] = i + 1
+	}
+
 	// Batch-fetch memory records for vector hits.
 	batchMems, err := e.backend.GetMemoriesByIDs(ctx, e.project, uniqueIDs)
 	if err != nil {
@@ -585,12 +593,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 	ftsScores := make(map[string]float64)
 	maxBM25 := 0.0
-	for _, r := range ftsRes.results {
+	bm25RankMap := make(map[string]int, len(ftsRes.results))
+	for i, r := range ftsRes.results {
 		ftsScores[r.Memory.ID] = r.Score
 		if r.Score > maxBM25 {
 			maxBM25 = r.Score
 		}
 		memories[r.Memory.ID] = r.Memory
+		bm25RankMap[r.Memory.ID] = i + 1
 	}
 
 	// Detect query type once before the scoring loop.
@@ -615,6 +625,21 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// Composite scoring per memory.
 	results := make([]types.SearchResult, 0)
 	for id, m := range memories {
+		// Extracted preference memories are ingest-time fragments tagged
+		// "extracted-preference". Surface them only for preference-shaped queries;
+		// for all other query types they add noise and dilute recall quality.
+		if !prefQuery {
+			skip := false
+			for _, t := range m.Tags {
+				if t == "extracted-preference" {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
 		bm25 := 0.0
 		if maxBM25 > 0 {
 			bm25 = ftsScores[id] / maxBM25
@@ -631,7 +656,8 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MemoryType:         m.MemoryType,
 			IsPreferenceQuery:  prefQuery,
 		}
-		score := CompositeScoreWithWeights(input, baseWeights)
+		rrfBase := RRFScore(vectorRankMap[id], bm25RankMap[id], 60)
+		score := CompositeScoreRRF(input, baseWeights, rrfBase)
 
 		result := types.SearchResult{
 			Memory:     m,
@@ -641,6 +667,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				bd := map[string]float64{
 					"cosine":        hit.cosine,
 					"bm25":          bm25,
+					"rrf_base":      rrfBase,
 					"recency":       RecencyDecay(input.HoursSince),
 					"episode_boost": 1.0,
 				}
@@ -679,6 +706,80 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 
 	sortResults(results)
+
+	// Preference-first recall path: when the query is preference-shaped, ensure
+	// preference-typed memories are represented in the top results even if their
+	// raw composite scores are lower than irrelevant context memories.
+	// Strategy: split sorted results into preference-typed and general pools;
+	// take up to min(topK/2, 10) from the preference pool first, fill remaining
+	// slots from the general pool, deduplicate by ID, reassemble.
+	if prefQuery {
+		prefSlots := topK / 2
+		if prefSlots > 10 {
+			prefSlots = 10
+		}
+		if prefSlots < 1 {
+			prefSlots = 1
+		}
+		var prefResults, generalResults []types.SearchResult
+		for _, r := range results {
+			if r.Memory != nil && r.Memory.MemoryType == "preference" {
+				prefResults = append(prefResults, r)
+			} else {
+				generalResults = append(generalResults, r)
+			}
+		}
+		if len(prefResults) > 0 {
+			// Take up to prefSlots from preference pool.
+			taken := prefSlots
+			if taken > len(prefResults) {
+				taken = len(prefResults)
+			}
+			merged := make([]types.SearchResult, 0, topK)
+			seen := make(map[string]struct{}, topK)
+			for i := 0; i < taken; i++ {
+				merged = append(merged, prefResults[i])
+				if prefResults[i].Memory != nil {
+					seen[prefResults[i].Memory.ID] = struct{}{}
+				}
+			}
+			// Fill remaining slots from general pool (already sorted by score).
+			for _, r := range generalResults {
+				if len(merged) >= topK {
+					break
+				}
+				id := ""
+				if r.Memory != nil {
+					id = r.Memory.ID
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				merged = append(merged, r)
+				if id != "" {
+					seen[id] = struct{}{}
+				}
+			}
+			// Also add any remaining preference results that fit.
+			for i := taken; i < len(prefResults); i++ {
+				if len(merged) >= topK {
+					break
+				}
+				id := ""
+				if prefResults[i].Memory != nil {
+					id = prefResults[i].Memory.ID
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				merged = append(merged, prefResults[i])
+				if id != "" {
+					seen[id] = struct{}{}
+				}
+			}
+			results = merged
+		}
+	}
 
 	// Optional re-ranking: cap at topK candidates so the reranker only sees the
 	// same set that will be returned, not the full pre-truncation pool (which can

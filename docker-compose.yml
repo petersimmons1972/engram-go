@@ -45,22 +45,25 @@ services:
   postgres:
     container_name: engram-postgres
     image: engram-postgres-cg:latest
-    shm_size: '2gb'
+    shm_size: '16gb'
     volumes:
       - pgdata:/var/lib/postgresql/data
     command: >-
       -c max_connections=300
-      -c shared_buffers=${PG_SHARED_BUFFERS:-12GB}
-      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-48GB}
-      -c work_mem=32MB
-      -c maintenance_work_mem=512MB
-      -c wal_buffers=64MB
+      -c shared_buffers=${PG_SHARED_BUFFERS:-24GB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-72GB}
+      -c work_mem=128MB
+      -c maintenance_work_mem=2GB
+      -c wal_buffers=256MB
       -c max_parallel_workers_per_gather=4
       -c max_parallel_workers=8
       -c max_worker_processes=16
       -c checkpoint_completion_target=0.9
+      -c checkpoint_timeout=15min
+      -c max_wal_size=4GB
       -c random_page_cost=2.0
       -c effective_io_concurrency=32
+      -c synchronous_commit=off
     environment:
       # These variables are required and must be set via .env or shell environment
       - POSTGRES_USER=engram
@@ -116,7 +119,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 4gb
     pids_limit: 512
     security_opt:
       - no-new-privileges:true
