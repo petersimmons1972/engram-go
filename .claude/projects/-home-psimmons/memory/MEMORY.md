@@ -1,12 +1,15 @@
 # Learning Index
 
-**Last Updated**: 2026-05-14T02:02:29Z
-**Session**: 20260513-220229
+**Last Updated**: 2026-05-14T05:45:44Z
+**Session**: 20260514-014544
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
+- 2026-05-14: feat(hooks): task-specific Engram recall on first user message
+- 2026-05-13: docs(claude): extract detail sections to ~/docs/ — Article 028 A1-a
+- 2026-05-13: chore(hooks): add per-hook wall-time telemetry — #396 measurement
 - 2026-05-13: security(settings): replace bare Bash grant with tool-specific patterns — Article 028
 - 2026-05-12: docs(claude): add Core Principles, strengthen Advisory Protocol quality floor
 - 2026-05-11: chore: sync MEMORY.md, session-end hook auth fix, settings model move
@@ -14,12 +17,9 @@
 - 2026-05-09: chore(memory): capture SIGHUP signal race fix pattern — engram-go#618
 - 2026-05-08: docs: complete Stanford HAI AI Index 2026 PDF-to-markdown conversion
 - 2026-05-07: chore(memory): capture session 20260508 lessons
-- 2026-05-07: chore(memory): capture session 20260507 lessons + Clearwatch Go port state
-- 2026-05-07: chore(memory): capture local GPU routing + Clearwatch batch state
-- 2026-05-06: chore: sync session memory
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  12 modified, 0 staged
+**Uncommitted**: ⚠️  2 modified, 0 staged
 
 ---
 
