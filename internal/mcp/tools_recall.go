@@ -364,6 +364,15 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 	}
 
+	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
+	// surface a structured error instead of silently returning BM25 results.
+	// This prevents the MCP transport timeout from synthesising a "user denied"
+	// message: the caller receives a clear code and can decide whether to accept
+	// the fallback results or retry later. Opt-in; default is transparent passthrough.
+	if embedDegraded && cfg.DegradedErrorMode == "structured" {
+		return structuredEmbedDegradedError(results)
+	}
+
 	if mode == "handle" {
 		return toolResult(map[string]any{
 			"handles":    search.ToHandles(results),
@@ -386,6 +395,20 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 	out["degraded"] = degradedMap(embedDegraded || !ok, reason)
 	return toolResult(out)
+}
+
+// structuredEmbedDegradedError returns a structured error result when the
+// embed pipeline is degraded and ENGRAM_DEGRADED_ERROR_MODE=structured.
+// The result is IsError=false (so the MCP transport does not synthesise
+// "user denied"), but carries code:"embed_pipeline_degraded" so that
+// well-behaved clients can detect and surface the degradation (#611 fix#3).
+func structuredEmbedDegradedError(bm25Results []types.SearchResult) (*mcpgo.CallToolResult, error) {
+	return toolResult(map[string]any{
+		"code":          "embed_pipeline_degraded",
+		"message":       "embed pipeline degraded; recall fell back to BM25+recency",
+		"fallback_used": true,
+		"results":       bm25Results,
+	})
 }
 
 // handleMemoryProjects lists all projects with their memory counts and last-active timestamps.

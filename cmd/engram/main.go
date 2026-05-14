@@ -370,6 +370,7 @@ func run() error {
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
 		EmbedDegraded:            embedDegraded,
+		DegradedErrorMode:        envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:              ingestQ,
 		RateLimitRPS:             *rateLimitRPS,
