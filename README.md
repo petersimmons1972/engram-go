@@ -279,6 +279,10 @@ memory_embedding_eval(project="myapp", model_a="mxbai-embed-large", model_b="bge
 
 ---
 
+## Diagnostics
+
+`scripts/verify-recall-fetch.sh` surfaces recall→fetch orphans: cases where `memory_recall` returns handle IDs that `memory_fetch` then reports as not found. These indicate index entries whose backing store rows are missing. The script calls `/quick-recall` for a configurable query, issues a `memory_fetch` for every returned ID, and prints a summary of `total_handles / fetch_success / fetch_404 / fetch_other_error`. It exits non-zero when any orphans are found, making it safe to run in CI or from a cron job. Run `./scripts/verify-recall-fetch.sh --help` for all options.
+
 ## Documentation
 
 | | |
