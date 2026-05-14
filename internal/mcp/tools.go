@@ -122,6 +122,13 @@ type Config struct {
 	// cap is 2× this value to allow short bursts. Set via
 	// ENGRAM_EMBED_RATE_PER_SECOND env var.
 	EmbedRatePerSecond float64
+	// DegradedErrorMode controls whether embed-pipeline degradation is surfaced
+	// as a structured error envelope rather than silently falling back.
+	// When "structured" (set via ENGRAM_DEGRADED_ERROR_MODE=structured), recall
+	// and store tools return a JSON error with code "embed_pipeline_degraded",
+	// fallback_used:true, and any BM25 results that were produced before the
+	// embedder gave up. Default "": transparent passthrough (original behaviour).
+	DegradedErrorMode string
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.
