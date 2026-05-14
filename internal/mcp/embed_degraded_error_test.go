@@ -66,20 +66,6 @@ func TestStructuredEmbedDegradedError_IncludesBM25Results(t *testing.T) {
 
 // ── handleMemoryRecall integration: DegradedErrorMode flag gate ───────────────
 
-// degradedNoopEmbedder always fails so the search engine sets embedDegraded=true.
-type degradedNoopEmbedder struct{ noopEmbedder }
-
-func (degradedNoopEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
-	return nil, context.DeadlineExceeded
-}
-
-// newDegradedPool returns an EnginePool backed by a search engine that always
-// reports embedDegraded=true (because the embedder always times out).
-func newDegradedPool(t *testing.T) *EnginePool {
-	t.Helper()
-	return newFailingPool(t, noopBackend{})
-}
-
 // TestHandleMemoryRecall_StructuredDegradedMode_ReturnsErrorCode verifies that
 // when DegradedErrorMode=="structured" and the embed pipeline is degraded,
 // memory_recall returns a JSON body with code="embed_pipeline_degraded".
