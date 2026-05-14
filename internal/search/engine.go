@@ -613,12 +613,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
-	// Build vector rank map (1-based, ordered by cosine similarity best-first).
-	vectorRankMap := make(map[string]int, len(uniqueIDs))
-	for i, id := range uniqueIDs {
-		vectorRankMap[id] = i + 1
-	}
-
 	// Batch-fetch memory records for vector hits.
 	batchMems, err := e.backend.GetMemoriesByIDs(ctx, e.project, uniqueIDs)
 	if err != nil {
@@ -641,14 +635,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 	ftsScores := make(map[string]float64)
 	maxBM25 := 0.0
-	bm25RankMap := make(map[string]int, len(ftsRes.results))
-	for i, r := range ftsRes.results {
+	for _, r := range ftsRes.results {
 		ftsScores[r.Memory.ID] = r.Score
 		if r.Score > maxBM25 {
 			maxBM25 = r.Score
 		}
 		memories[r.Memory.ID] = r.Memory
-		bm25RankMap[r.Memory.ID] = i + 1
 	}
 
 	// Detect query type once before the scoring loop.
@@ -704,8 +696,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MemoryType:         m.MemoryType,
 			IsPreferenceQuery:  prefQuery,
 		}
-		rrfBase := RRFScore(vectorRankMap[id], bm25RankMap[id], 60)
-		score := CompositeScoreRRF(input, baseWeights, rrfBase)
+		score := CompositeScoreWithWeights(input, baseWeights)
 
 		result := types.SearchResult{
 			Memory:     m,
@@ -715,7 +706,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				bd := map[string]float64{
 					"cosine":        hit.cosine,
 					"bm25":          bm25,
-					"rrf_base":      rrfBase,
 					"recency":       RecencyDecay(input.HoursSince),
 					"episode_boost": 1.0,
 				}

@@ -297,7 +297,7 @@ func TestPreferenceBoostNotAppliedForNeutralQuery(t *testing.T) {
 	}
 }
 
-// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.8×.
+// TestPreferenceBoostMagnitude verifies the boost multiplier is exactly 1.35×.
 func TestPreferenceBoostMagnitude(t *testing.T) {
 	base := ScoreInput{
 		Cosine: 0.8, BM25: 0.5, HoursSince: 1, Importance: 2,
@@ -315,7 +315,7 @@ func TestPreferenceBoostMagnitude(t *testing.T) {
 		t.Skip("base score is zero — cannot verify multiplier")
 	}
 	ratio := scorePreference / scoreContext
-	const want = 1.8
+	const want = 1.35
 	const eps = 0.001
 	if ratio < want-eps || ratio > want+eps {
 		t.Errorf("preference boost ratio = %.4f, want %.4f ± %.4f", ratio, want, eps)
