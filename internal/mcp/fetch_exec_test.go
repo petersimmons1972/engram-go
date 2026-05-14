@@ -18,7 +18,7 @@ type fakeFetcher struct {
 	chunkErr error
 }
 
-func (f *fakeFetcher) GetMemory(_ context.Context, _ string) (*types.Memory, error) {
+func (f *fakeFetcher) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
 	return f.mem, f.memErr
 }
 

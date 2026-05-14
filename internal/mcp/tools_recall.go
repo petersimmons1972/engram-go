@@ -28,7 +28,7 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 }
 
 func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
-	m, err := f.GetMemory(ctx, id)
+	m, err := f.GetMemoryByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
