@@ -42,6 +42,13 @@ Stored in Engram. Recall:
 
 Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing
 
+## Memory Files
+
+- [Landscape claims extraction bugs](feedback_landscape_claims_extraction.md) — 3 Stage 3 failures on first devops_secrets run; Gate 1 segment, int/str claim leak, framework pseudo-claim
+- [Worktree branch safety](feedback_worktree_branch_safety.md) — 7 local-only branches found; always push at session close even if not merging
+- [Credential in working tree](feedback_credential_in_working_tree.md) — real DB password in research_store.py comment across all worktrees; caught before commit
+- [Stage 3 parallel enhancement](project_clearwatch_stage3_parallel.md) — #4803; edr_xdr primary target; needs thread-safety spec before implementation
+
 ---
 
 ## Engram Offline?
