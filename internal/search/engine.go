@@ -957,6 +957,7 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
+		metrics.RecallEmbedTimeoutTotal.Inc()
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)
