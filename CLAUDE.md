@@ -42,11 +42,9 @@ Each step has an explicit trigger. Execute the step when its trigger fires. Do n
 
 ## Advisory Protocol — Tiered Self-Escalation
 
-**Quality floor (applies before escalating or presenting any non-trivial work):**
-Before presenting an implementation, pause and ask: "Is there a more elegant way?" If the fix feels hacky, don't present it — implement the clean solution instead. Skip this for obvious single-line fixes; apply it whenever you'd be slightly embarrassed showing the diff. Quality bar: **"Would a staff engineer approve this?"** If no, don't present it. If execution hits an unpredicted wall, STOP and re-plan — don't push through. Re-planning is not failure; pushing through unpredicted errors is.
+**Quality floor:** Before presenting non-trivial work, ask "Is there a more elegant way?" Quality bar: **"Would a staff engineer approve this?"** If no, implement the clean solution. If execution hits an unpredicted wall, STOP and re-plan; capacity failures never escalate tiers.
 
-**Capacity problems (rate limits, timeouts, infra failures) never escalate tiers — fix them in place.** Escalate only when reasoning quality changes the answer.
-**Tier rule:** Use the lowest tier that can decide correctly. Default Sonnet for execution, Haiku for mechanical work, Opus only for reasoning forks. Set each parallel agent's model independently — uneven teams (1 Sonnet coordinator + 4 Haiku workers + on-demand Opus) are correct and preferred. Homogeneous model selection is a smell.
+**Tier rule:** Lowest tier that decides correctly. Uneven teams preferred; homogeneous selection is a smell.
 
 | Tier | Use for |
 |------|---------|
@@ -54,38 +52,23 @@ Before presenting an implementation, pause and ask: "Is there a more elegant way
 | **Sonnet** | Implementation, debugging, multi-file edits, code review, executing diagnosed fixes |
 | **Opus** | Architecture decisions, irreversible high-stakes choices, reframing stuck diagnoses |
 
-**Spawn Sonnet** to execute a fix you've already diagnosed — `subagent_type: "general-purpose"`, `model: "sonnet"`. Brief with error message, log excerpt, file paths.
-
-**Spawn `opus-advisor` before** any of:
-- **A1 — Architecture fork:** 2+ approaches with meaningfully different long-term consequences
-- **A2 — Infrastructure change:** K8s manifests, DNS, cert-manager, Cloudflare, storage
-- **A3 — Large refactor:** restructuring a module/class/boundary >100 lines
-- **A4 — Stuck on reasoning:** same root cause failed twice AND the failure is logic, not capacity
-- **A5 — Irreversible + ambiguous:** can't easily undo and the right answer isn't clear
-
-**Opus briefing format:**
-1. **Decision** — one sentence
-2. **Options** — A, B, (C) with one-sentence tradeoffs
-3. **Lean** — current preference and source of uncertainty
-4. **Context** — file paths, constraints
-
-Wait for RECOMMENDATION before proceeding.
+**Spawn Sonnet** (`subagent_type: "general-purpose"`, `model: "sonnet"`) to execute a diagnosed fix. **Spawn `opus-advisor`** for A1–A5 decisions — triggers and briefing format → `~/docs/advisory-protocol.md`.
 
 ## Engram Memory — MANDATORY
 
 Endpoint: `http://localhost:8788/mcp` · Projects: `clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`
 
-**Skip all memory ops for:** read-only investigation, informational answers, trivial single-file edits, or transient operational state with TTL <4h (service/DNS/build/migration/health output → file a GitHub Issue instead).
+**Skip:** read-only, informational, trivial single-file edits, transient state <4h TTL.
 
 | Rule | Trigger | Action |
 |------|---------|--------|
-| **R1 — Recall at start** | First user message of a new conversation | `memory_recall("current project status recent work", project="global")`, then recall the request topic from the relevant project. Once per conversation. |
-| **R2 — Recall before deciding** | Before proposing architecture/design, choosing between 2+ options, modifying infra (K8s/DNS/cert-manager/storage), or modifying a Clearwatch feature area | `memory_recall("<topic>", project="<project>")` |
-| **R3 — Feedback after recall** | After every `memory_recall` | `memory_feedback` with the IDs that informed the answer. If results were absent/wrong where context should exist, store a MISS entry (`memory_type="error"`, `tags=["retrieval-miss"]`). |
-| **R4 — Store after work** | Bug fix committed, decision made, pattern used 2+ times, or **end of session (extract wisdom/patterns before closing)** | `memory_store` with type: `decision` (include why) · `error` (include root cause) · `pattern` · `context` (`importance=1, project="global"` for session summary). |
-| **R6 — Fallback** | Engram unreachable after 1 retry within 30s | Stage entry in `~/.claude/projects/-home-psimmons/memory/fallback.md` (format defined in that file). Flush all pending entries on reconnect. Staging only — never skip wisdom capture; file it here if Engram is down. |
+| **R1** | Session start | `memory_recall("current project status recent work", project="global")` + topic. Once per conversation. |
+| **R2** | Before arch/design/infra decision | `memory_recall("<topic>", project="<project>")` |
+| **R3** | After every recall | `memory_feedback` with informing IDs; MISS entry if absent/wrong |
+| **R4** | After work / session end | `memory_store` type: `decision` · `error` · `pattern` · `context` |
+| **R6** | Engram unreachable (1 retry/30s) | Stage to `fallback.md`; flush on reconnect |
 
-*Eisenhower only — R7 dispute tracking:* before adjudicating a user-raised dispute, `memory_recall("dispute-tracker <issue>", project="<project>")`. If count ≥3, escalate to founder instead of adjudicating. Store each adjudication: `content="DISPUTE: <desc> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
+*R7 (Eisenhower only) — dispute tracking:* full protocol → `~/docs/engram-memory-rules.md`.
 
 ## Test-After-Edit Protocol
 - After any code edit, run the relevant test suite before moving to the next task
@@ -127,14 +110,7 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 **ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
 
 ## Container Image Standard — NON-NEGOTIABLE
-**Default to Chainguard base images for every Dockerfile in homelab / clearwatch / substack / engram repos.** Burden of justification is on the author for any other base. Free tier exposes `:latest` and `:latest-dev` only; no digest pinning unless paid.
-
-**Python-with-tools pattern** (Python apps needing git/ssh/etc at runtime):
-- Stage 1 (build): `cgr.dev/chainguard/python:latest-dev` → pip install into `/app/venv`
-- Stage 2 (runtime): `cgr.dev/chainguard/wolfi-base:latest` → `apk add python-3.12 git openssh-client tini ca-certificates-bundle`, then `COPY --from=build /app/venv`
-- Nonroot UID **65532**. Tini at **/sbin/tini**.
-
-**K8s pod spec MUST set `fsGroup: 65532`** (Chainguard nonroot user) or volume mounts crashloop on first write. Container-level: `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile.type: RuntimeDefault`.
+Default: Chainguard base images. Python-with-tools: `python:latest-dev` build stage → `wolfi-base` runtime; nonroot UID **65532**, tini at `/sbin/tini`. K8s: `fsGroup: 65532` MANDATORY or volume mounts crashloop; `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`. Full pattern → `~/docs/container-images.md`.
 
 ## Self-Learning & Autonomous Bug Fixing
 - **Fix without asking** when reversible and low-blast-radius (low-severity bugs, feedback integration). **Always ask** when irreversible, data-affecting, externally visible, or resource-intensive.
@@ -154,5 +130,8 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 **Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
 **Skills:** Debug → `superpowers:systematic-debugging` | Implement → `superpowers:brainstorming` | GitHub docs → `github-docs` (skill at `~/.claude/skills/github-docs/SKILL.md`)
 **Benched skills** (inactive, not auto-loaded): `~/.claude/skills/bench/INDEX.md` — reactivate with `mv ~/.claude/skills/bench/<name> ~/.claude/skills/`
-**Web Search:** ALWAYS use the `searxng` MCP server (`searxng_web_search` tool) — hits local SearXNG at `https://searxng.petersimmons.com`, aggregates Google + DuckDuckGo + Startpage. Fall back to `search "query"` (`~/bin/search`) only if the MCP server is unavailable. NEVER use the WebSearch tool.
+**Web Search:** Use `searxng_web_search` MCP tool (local SearXNG at `searxng.petersimmons.com`, aggregates Google + DDG + Startpage). Fallback: `~/bin/search`. NEVER use the built-in WebSearch tool.
 **Learning:** Detail → topic file | one-liner → MEMORY.md | rule → CLAUDE.md | `~/.claude/projects/-home-psimmons/memory/`
+**Advisory Protocol detail** (A1–A5 triggers + Opus briefing format) → `~/docs/advisory-protocol.md`
+**Engram Memory full rules** (verbose R-table + R7 dispute tracking) → `~/docs/engram-memory-rules.md`
+**Container image standard** (Chainguard full pattern + K8s security context) → `~/docs/container-images.md`
