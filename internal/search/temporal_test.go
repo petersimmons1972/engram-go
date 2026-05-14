@@ -96,7 +96,7 @@ func TestTemporalVersioning_History(t *testing.T) {
 	// Check history.
 	history, err := engine.MemoryHistory(ctx, m.ID)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(history), 3, "expected at least 3 version entries (2 updates + 1 invalidate)")
+	require.GreaterOrEqual(t, len(history), 3, "expected at least 3 version entries (2 updates + 1 invalidate)")
 
 	// Most recent entry should be the invalidation.
 	assert.Equal(t, types.VersionChangeInvalidate, history[0].ChangeType)

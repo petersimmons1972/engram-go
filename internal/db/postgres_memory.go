@@ -197,6 +197,11 @@ func (b *PostgresBackend) UpdateMemory(
 		return nil, fmt.Errorf("memory %q is immutable and cannot be updated", id)
 	}
 
+	// Snapshot current state into memory_versions before applying changes.
+	if err := b.versionMemoryTx(ctx, tx, m, types.VersionChangeUpdate, ""); err != nil {
+		return nil, fmt.Errorf("version snapshot: %w", err)
+	}
+
 	now := time.Now().UTC()
 	if content != nil {
 		m.Content = *content
@@ -500,6 +505,10 @@ func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, rea
 	}
 	if m.Immutable {
 		return false, fmt.Errorf("cannot soft-delete immutable memory %s", id)
+	}
+
+	if err := b.versionMemoryTx(ctx, tx, m, types.VersionChangeInvalidate, reason); err != nil {
+		return false, fmt.Errorf("version snapshot: %w", err)
 	}
 
 	var reasonPtr *string

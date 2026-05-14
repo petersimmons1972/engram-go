@@ -82,7 +82,7 @@ func splitSentences(text string) []string {
 
 // normalizeFact converts a raw preference sentence into a short normalized fact.
 // Replaces common first-person subjects with "User" for consistency in storage.
-// Example: "I love jazz music." → "User loves jazz music."
+// Example: "I love jazz music." → "User loves jazz music.".
 func normalizeFact(sentence string) string {
 	// Strip trailing punctuation.
 	sentence = strings.TrimRight(sentence, ".!?")
