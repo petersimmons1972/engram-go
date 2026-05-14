@@ -7,6 +7,7 @@ infisical/infisical-bin
 /engram
 /engram-*
 cover.out
+.env.bak.*
 .claude/
 testdata/longmemeval/*.json
 results/

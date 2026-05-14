@@ -1,0 +1,27 @@
+[Unit]
+Description=Ollama Service (MI50) — Docker ROCm gfx906
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=3
+ExecStartPre=-/usr/bin/docker rm -f ollama-mi50
+ExecStart=/usr/bin/docker run --rm \
+    --name ollama-mi50 \
+    -p 11436:11434 \
+    --device /dev/kfd \
+    --device /dev/dri/renderD129 \
+    --group-add 109 \
+    --group-add 44 \
+    -v /var/lib/ollama-mi50/.ollama:/root/.ollama \
+    -e OLLAMA_HOST=0.0.0.0:11434 \
+    -e ROCR_VISIBLE_DEVICES=0 \
+    -e HSA_OVERRIDE_GFX_VERSION=9.0.6 \
+    -e OLLAMA_KEEP_ALIVE=-1 \
+    -e OLLAMA_NUM_PARALLEL=1 \
+    ollama/ollama:0.6.8-rocm
+ExecStop=/usr/bin/docker stop ollama-mi50
+
+[Install]
+WantedBy=default.target
