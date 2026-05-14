@@ -308,6 +308,26 @@ func TestRecallOpts_CurrentEpisodeID_EpisodeMatchBoost(t *testing.T) {
 	}
 }
 
+// TestRRF_BM25HitsVectorMisses verifies that a memory appearing only in BM25 results
+// (exact entity name match) is surfaced ahead of a memory with a weak vector-only match.
+// This is the core knowledge-update failure mode that RRF fusion is intended to fix.
+func TestRRF_BM25HitsVectorMisses(t *testing.T) {
+	w := search.DefaultWeights()
+	const k = 60
+
+	// Memory A: strong BM25 hit (rank 1), absent from vector results — exact entity name match.
+	rrfA := search.RRFScore(0, 1, k) // vector absent, bm25 rank 1
+	scoreA := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 1, Importance: 2}, w, rrfA)
+
+	// Memory B: weak vector hit (rank 50), absent from BM25 — semantically similar but wrong entity.
+	rrfB := search.RRFScore(50, 0, k) // vector rank 50, bm25 absent
+	scoreB := search.CompositeScoreRRF(search.ScoreInput{HoursSince: 1, Importance: 2}, w, rrfB)
+
+	if scoreA <= scoreB {
+		t.Fatalf("BM25 rank-1 hit (%.4f) should outscore weak vector rank-50 hit (%.4f)", scoreA, scoreB)
+	}
+}
+
 // fakeClientWithName allows tests to customize the embedder name.
 type fakeClientWithName struct {
 	name string

@@ -51,6 +51,26 @@ ENGRAM_SUMMARIZE_MODEL=llama3.2:3b
 # LITELLM_URL and LITELLM_API_KEY are not used; Ollama serves both roles
 ```
 
+## W6800 Canary Rollout
+
+When you have a W6800-backed Ollama host that can keep the embed model resident, start with `llama3.1:8b` as a canary rather than shifting all traffic at once.
+
+Recommended rollout:
+
+1. Route LongMemEval traffic to the W6800 backend first.
+2. Verify the embed model remains available and the completion path is stable.
+3. Expand to a small general traffic share only after the canary behaves cleanly.
+4. Keep the current backend and the 7900XT path available as fallback targets.
+
+Current verified split:
+
+- `BAAI/bge-m3` is pinned on the embedding backend.
+- `llama3.1:8b` is the W6800 chat canary.
+- `qwen3-coder:30b` is allowed to fall out of the Ollama container cache when memory is needed.
+- `engram-reembed-*` continues to probe `BAAI/bge-m3` successfully.
+
+This repo does not enforce the routing itself; the canary is an operator-side Olla or proxy configuration choice. The important part is to avoid a broad cutover until the W6800 host has proven it can serve `llama3.1:8b` without displacing the pinned embed backend.
+
 ---
 
 ## Personal Infrastructure: Infisical

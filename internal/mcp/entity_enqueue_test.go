@@ -1,20 +1,15 @@
 package mcp
 
-// Tests for extractResultID and enqueueExtractionAsync.
+// Tests for extractResultID.
 //
 // extractResultID is unexported so these tests live in package mcp (same
-// package, no _test suffix in the declaration). This follows the convention
-// established by safety_test.go and fetch_recall_test.go in this directory.
+// package, no _test suffix in the declaration).
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
-	"github.com/petersimmons1972/engram/internal/db"
-	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,48 +90,4 @@ func TestExtractResultID_HappyPath(t *testing.T) {
 	id, ok := extractResultID(result)
 	require.True(t, ok, "valid id must return true")
 	require.Equal(t, want, id)
-}
-
-// ── enqueueExtractionAsync tests ─────────────────────────────────────────────
-
-// errBackend is a noopBackend override that makes EnqueueExtractionJob return
-// an error, so we can verify the handler proceeds without surfacing it.
-type errBackend struct{ noopBackend }
-
-func (errBackend) EnqueueExtractionJob(_ context.Context, _, _ string) error {
-	return errors.New("enqueue failed: simulated error")
-}
-
-var _ db.Backend = errBackend{}
-
-// errEntityBackend also satisfies the entity UpsertEntity signature (unchanged
-// from noopBackend — zero values).
-func (errBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) {
-	return "", nil
-}
-
-// TestEnqueueExtractionAsync_PoolGetFailure verifies that a pool.Get error is
-// swallowed: the function logs a warning and returns without panicking.
-func TestEnqueueExtractionAsync_PoolGetFailure(t *testing.T) {
-	failPool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
-		return nil, errors.New("pool: backend unavailable")
-	})
-	// Must not panic; failure is logged and swallowed.
-	enqueueExtractionAsync(failPool, "mem_test99", "test-project")
-}
-
-// TestEnqueueExtractionAsync_EnqueueJobError verifies that an EnqueueExtractionJob
-// error is also swallowed: the function logs a warning and returns without panicking.
-func TestEnqueueExtractionAsync_EnqueueJobError(t *testing.T) {
-	pool := newPoolWithBackend(t, errBackend{})
-	// Must not panic; EnqueueExtractionJob error is logged and swallowed.
-	enqueueExtractionAsync(pool, "mem_abc", "test-project")
-}
-
-// TestEnqueueExtractionAsync_HappyPath verifies that the function completes
-// without error when the pool and backend both succeed.
-func TestEnqueueExtractionAsync_HappyPath(t *testing.T) {
-	pool := newTestNoopPool(t)
-	// noopBackend.EnqueueExtractionJob returns nil — must not panic.
-	enqueueExtractionAsync(pool, "mem_happy", "test-project")
 }

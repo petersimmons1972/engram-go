@@ -28,6 +28,11 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+const (
+	DefaultMaxEntryBytes    int64 = 25 * 1024 * 1024
+	DefaultMaxExpandedBytes int64 = 100 * 1024 * 1024
+)
+
 // ---------------------------------------------------------------------------
 // JSON shape types
 // ---------------------------------------------------------------------------
@@ -73,6 +78,10 @@ type parsedMessage struct {
 // Returns one types.Memory per channel that has at least one non-skipped message.
 // Memories are returned in alphabetical channel-name order.
 func Parse(r io.ReaderAt, size int64) ([]*types.Memory, error) {
+	return ParseWithLimits(r, size, DefaultMaxEntryBytes, DefaultMaxExpandedBytes)
+}
+
+func ParseWithLimits(r io.ReaderAt, size, maxEntryBytes, maxExpandedBytes int64) ([]*types.Memory, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("slack.Parse: open zip: %w", err)
@@ -80,7 +89,15 @@ func Parse(r io.ReaderAt, size int64) ([]*types.Memory, error) {
 
 	// Build a lookup from zip entry name → *zip.File for O(1) access.
 	fileMap := make(map[string]*zip.File, len(zr.File))
+	var expandedTotal int64
 	for _, f := range zr.File {
+		if maxEntryBytes > 0 && int64(f.UncompressedSize64) > maxEntryBytes {
+			return nil, fmt.Errorf("slack.Parse: entry %q exceeds maximum expanded size (%d bytes)", f.Name, maxEntryBytes)
+		}
+		expandedTotal += int64(f.UncompressedSize64)
+		if maxExpandedBytes > 0 && expandedTotal > maxExpandedBytes {
+			return nil, fmt.Errorf("slack.Parse: archive exceeds maximum expanded size (%d bytes)", maxExpandedBytes)
+		}
 		fileMap[f.Name] = f
 	}
 
@@ -129,6 +146,10 @@ func Parse(r io.ReaderAt, size int64) ([]*types.Memory, error) {
 
 // ParseFile is a convenience wrapper that opens the .zip file at path and calls Parse.
 func ParseFile(path string) ([]*types.Memory, error) {
+	return ParseFileWithLimits(path, DefaultMaxEntryBytes, DefaultMaxExpandedBytes)
+}
+
+func ParseFileWithLimits(path string, maxEntryBytes, maxExpandedBytes int64) ([]*types.Memory, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("slack.ParseFile: %w", err)
@@ -139,7 +160,7 @@ func ParseFile(path string) ([]*types.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("slack.ParseFile: stat: %w", err)
 	}
-	return Parse(f, info.Size())
+	return ParseWithLimits(f, info.Size(), maxEntryBytes, maxExpandedBytes)
 }
 
 // ---------------------------------------------------------------------------

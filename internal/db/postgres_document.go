@@ -51,6 +51,44 @@ func (b *PostgresBackend) GetDocument(ctx context.Context, id string) (string, e
 	return content, nil
 }
 
+func (b *PostgresBackend) DeleteDocument(ctx context.Context, id string) (bool, error) {
+	tag, err := b.pool.Exec(ctx, `DELETE FROM documents WHERE id = $1`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete document: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (b *PostgresBackend) DeleteDocumentTx(ctx context.Context, tx Tx, id string) (bool, error) {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return false, err
+	}
+	tag, err := raw.Exec(ctx, `DELETE FROM documents WHERE id = $1`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete document tx: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (b *PostgresBackend) DeleteOrphanedDocumentTx(ctx context.Context, tx Tx, id string) (bool, error) {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return false, err
+	}
+	tag, err := raw.Exec(ctx, `
+		DELETE FROM documents d
+		WHERE d.id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM memories m
+			WHERE m.document_id = d.id
+		  )`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete orphaned document tx: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // SetMemoryDocumentID links a memory to a previously stored document.
 // Separated from StoreMemory so a Tier-2 write can run: StoreDocument →
 // Engine.Store(memory) → SetMemoryDocumentID(link), keeping the existing

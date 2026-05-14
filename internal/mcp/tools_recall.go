@@ -12,8 +12,23 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// degradedMap builds the "degraded" response field.
+// When embed is true the reason string is included; when embed is false the
+// reason key is omitted entirely so callers do not see a misleading
+// embed=false + reason="embed_timeout" combination (issue #634 fix#4).
+func degradedMap(embedDegraded bool, reason string) map[string]any {
+	if embedDegraded {
+		m := map[string]any{"embed": true}
+		if reason != "" {
+			m["reason"] = reason
+		}
+		return m
+	}
+	return map[string]any{"embed": false}
+}
+
 func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
-	m, err := f.GetMemory(ctx, id)
+	m, err := f.GetMemoryByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +251,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				"handles":    search.ToHandles(results),
 				"count":      len(results),
 				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
-				"degraded":   map[string]any{"embed": !ok, "reason": reason},
+				"degraded":   degradedMap(!ok, reason),
 			})
 		}
 		out := map[string]any{"results": results, "count": len(results)}
@@ -251,7 +266,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			out["conflict_count"] = len(conflicts)
 		}
 		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-		out["degraded"] = map[string]any{"embed": !ok, "reason": reason}
+		out["degraded"] = degradedMap(!ok, reason)
 		return toolResult(out)
 	}
 
@@ -263,7 +278,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	rerank := getBool(args, "rerank", false)
 	var opts search.RecallOpts
 	// Claude reranker is opt-in via rerank=true.
-	if cfg.ClaudeRerankEnabled && rerank && cfg.claudeClient != nil {
+	claudeRerankEnabled := cfg.ClaudeRerankEnabled
+	if cfg.RuntimeConfig != nil {
+		claudeRerankEnabled = cfg.RuntimeConfig.ClaudeRerank.Load()
+	}
+	if claudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
@@ -349,12 +368,21 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 	}
 
+	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
+	// surface a structured error instead of silently returning BM25 results.
+	// This prevents the MCP transport timeout from synthesising a "user denied"
+	// message: the caller receives a clear code and can decide whether to accept
+	// the fallback results or retry later. Opt-in; default is transparent passthrough.
+	if embedDegraded && cfg.DegradedErrorMode == "structured" {
+		return structuredEmbedDegradedError(results)
+	}
+
 	if mode == "handle" {
 		return toolResult(map[string]any{
 			"handles":    search.ToHandles(results),
 			"count":      len(results),
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
-			"degraded":   map[string]any{"embed": embedDegraded, "reason": "embed_timeout"},
+			"degraded":   degradedMap(embedDegraded, "embed_timeout"),
 		})
 	}
 	out := map[string]any{"results": results, "count": len(results)}
@@ -369,8 +397,22 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	// Add embedder health status to response.
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-	out["degraded"] = map[string]any{"embed": embedDegraded || !ok, "reason": reason}
+	out["degraded"] = degradedMap(embedDegraded || !ok, reason)
 	return toolResult(out)
+}
+
+// structuredEmbedDegradedError returns a structured error result when the
+// embed pipeline is degraded and ENGRAM_DEGRADED_ERROR_MODE=structured.
+// The result is IsError=false (so the MCP transport does not synthesise
+// "user denied"), but carries code:"embed_pipeline_degraded" so that
+// well-behaved clients can detect and surface the degradation (#611 fix#3).
+func structuredEmbedDegradedError(bm25Results []types.SearchResult) (*mcpgo.CallToolResult, error) {
+	return toolResult(map[string]any{
+		"code":          "embed_pipeline_degraded",
+		"message":       "embed pipeline degraded; recall fell back to BM25+recency",
+		"fallback_used": true,
+		"results":       bm25Results,
+	})
 }
 
 // handleMemoryProjects lists all projects with their memory counts and last-active timestamps.

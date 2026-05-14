@@ -613,18 +613,16 @@ func (r *Runner) AutoSupersede(ctx context.Context) (int, error) {
 }
 
 // RunAll executes all configured consolidation strategies and returns a stats map.
-// The stats map includes "inferred_relationships" and "detected_contradictions" counts.
+// The stats map includes "detected_contradictions" count.
+// Note: InferRelationships (relates_to edge writes) has been removed from the RunAll
+// path — relationship writes were stored but never used in ranking (#dead-code-audit).
+// DetectContradictions (contradicts edges) is kept because it is used by the diagnose tool.
 func (r *Runner) RunAll(ctx context.Context, opts RunOptions) (map[string]any, error) {
 	limit := opts.InferRelationshipsLimit
 	if limit <= 0 {
 		limit = 500
 	}
 	minSim := opts.InferRelationshipsMinSimilarity
-
-	inferred, err := r.InferRelationships(ctx, minSim, limit)
-	if err != nil {
-		return nil, fmt.Errorf("consolidate: RunAll: %w", err)
-	}
 
 	// Pass the full RunOptions to detectContradictions so the LLM second pass
 	// receives the Ollama URL and model without a public API change.
@@ -638,7 +636,7 @@ func (r *Runner) RunAll(ctx context.Context, opts RunOptions) (map[string]any, e
 		return nil, fmt.Errorf("consolidate: RunAll: DetectContradictions: %w", err)
 	}
 
-	superseded := 0
+	var superseded int
 	if opts.AutoSupersede {
 		superseded, err = r.AutoSupersede(ctx)
 		if err != nil {
@@ -647,7 +645,7 @@ func (r *Runner) RunAll(ctx context.Context, opts RunOptions) (map[string]any, e
 	}
 
 	return map[string]any{
-		"inferred_relationships":  inferred,
+		"inferred_relationships":  0,
 		"detected_contradictions": contradictions,
 		"auto_superseded":         superseded,
 	}, nil

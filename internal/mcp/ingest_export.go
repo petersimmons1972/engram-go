@@ -30,6 +30,21 @@ func handleMemoryIngestExport(ctx context.Context, pool *EnginePool, req mcpgo.C
 	if err != nil {
 		return nil, fmt.Errorf("invalid path: %w", err)
 	}
+	info, err := os.Stat(safePath)
+	if err != nil {
+		return nil, fmt.Errorf("memory_ingest_export: stat: %w", err)
+	}
+	importMax := cfg.ImportMaxBytes
+	if importMax <= 0 {
+		importMax = 50 * 1024 * 1024
+	}
+	expandedMax := cfg.ImportExpandedMaxBytes
+	if expandedMax <= 0 {
+		expandedMax = 100 * 1024 * 1024
+	}
+	if info.Size() > int64(importMax) {
+		return nil, fmt.Errorf("memory_ingest_export: file exceeds maximum size (%d bytes > %d)", info.Size(), importMax)
+	}
 
 	format := router.DetectFromPath(safePath)
 	if format == router.FormatUnknown {
@@ -39,7 +54,7 @@ func handleMemoryIngestExport(ctx context.Context, pool *EnginePool, req mcpgo.C
 	var memories []*types.Memory
 	switch format {
 	case router.FormatSlack:
-		memories, err = slack.ParseFile(safePath)
+		memories, err = slack.ParseFileWithLimits(safePath, int64(importMax), int64(expandedMax))
 		if err != nil {
 			return nil, fmt.Errorf("memory_ingest_export: slack parse: %w", err)
 		}
@@ -49,7 +64,7 @@ func handleMemoryIngestExport(ctx context.Context, pool *EnginePool, req mcpgo.C
 			return nil, fmt.Errorf("memory_ingest_export: open: %w", openErr)
 		}
 		defer func() { _ = f.Close() }()
-		_, memories, err = router.ParseAuto(f)
+		_, memories, err = router.ParseAutoWithLimit(f, int64(importMax))
 		if err != nil {
 			return nil, fmt.Errorf("memory_ingest_export: parse: %w", err)
 		}

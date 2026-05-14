@@ -67,9 +67,15 @@ func TestLoadAndRotate_BelowMinEvents(t *testing.T) {
 	lines := strings.Repeat(`{"session_id":"s1","project_id":"p1","tool_name":"Bash","tool_input_hash":"abc","tool_output_summary":"ok","exit_status":0,"schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}`+"\n", 3)
 	os.WriteFile(buf, []byte(lines), 0600)
 
-	events, processedPath := loadAndRotate(buf, 5)
+	events, processedPath, outcome, err := loadAndRotate(buf, 5)
+	if err != nil {
+		t.Fatalf("loadAndRotate() error: %v", err)
+	}
 	if len(events) != 0 {
 		t.Errorf("want 0 events, got %d", len(events))
+	}
+	if outcome != bufferLoadBelowThreshold {
+		t.Errorf("want below-threshold outcome, got %v", outcome)
 	}
 	if processedPath != "" {
 		t.Errorf("want empty processedPath, got %q", processedPath)
@@ -86,9 +92,15 @@ func TestLoadAndRotate_SkipsMalformed(t *testing.T) {
 	content := strings.Repeat(valid+"\n", 4) + "not-json\n" + valid + "\n"
 	os.WriteFile(buf, []byte(content), 0600)
 
-	events, _ := loadAndRotate(buf, 5)
+	events, _, outcome, err := loadAndRotate(buf, 5)
+	if err != nil {
+		t.Fatalf("loadAndRotate() error: %v", err)
+	}
 	if len(events) != 5 {
 		t.Errorf("want 5 valid events, got %d", len(events))
+	}
+	if outcome != bufferLoadProcessed {
+		t.Errorf("want processed outcome, got %v", outcome)
 	}
 }
 
@@ -99,9 +111,15 @@ func TestLoadAndRotate_Rotates(t *testing.T) {
 	content := strings.Repeat(valid+"\n", 5)
 	os.WriteFile(buf, []byte(content), 0600)
 
-	_, processedPath := loadAndRotate(buf, 5)
+	_, processedPath, outcome, err := loadAndRotate(buf, 5)
+	if err != nil {
+		t.Fatalf("loadAndRotate() error: %v", err)
+	}
 	if processedPath == "" {
 		t.Fatal("want non-empty processedPath")
+	}
+	if outcome != bufferLoadProcessed {
+		t.Errorf("want processed outcome, got %v", outcome)
 	}
 	if _, err := os.Stat(buf); !os.IsNotExist(err) {
 		t.Errorf("original buffer should be renamed, stat err: %v", err)
@@ -115,9 +133,39 @@ func TestLoadAndRotate_Rotates(t *testing.T) {
 }
 
 func TestLoadAndRotate_Missing(t *testing.T) {
-	events, path := loadAndRotate("/nonexistent/buffer.jsonl", 20)
+	events, path, outcome, err := loadAndRotate("/nonexistent/buffer.jsonl", 20)
+	if err != nil {
+		t.Fatalf("loadAndRotate() error: %v", err)
+	}
 	if len(events) != 0 || path != "" {
 		t.Errorf("want empty result for missing file, got %d events, path=%q", len(events), path)
+	}
+	if outcome != bufferLoadMissing {
+		t.Errorf("want missing outcome, got %v", outcome)
+	}
+}
+
+func TestLoadAndRotate_AllMalformedRejected(t *testing.T) {
+	dir := t.TempDir()
+	buf := filepath.Join(dir, "buffer.jsonl")
+	content := strings.Repeat("not-json\n", 5)
+	os.WriteFile(buf, []byte(content), 0600)
+
+	events, processedPath, outcome, err := loadAndRotate(buf, 5)
+	if err == nil {
+		t.Fatal("expected malformed buffer to be rejected")
+	}
+	if len(events) != 0 {
+		t.Errorf("want 0 events, got %d", len(events))
+	}
+	if outcome != bufferLoadRejected {
+		t.Errorf("want rejected outcome, got %v", outcome)
+	}
+	if !strings.Contains(processedPath, ".rejected") {
+		t.Fatalf("want rejected path, got %q", processedPath)
+	}
+	if _, statErr := os.Stat(processedPath); statErr != nil {
+		t.Fatalf("rejected file should exist: %v", statErr)
 	}
 }
 

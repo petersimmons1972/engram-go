@@ -69,7 +69,11 @@ func handleMemoryConsolidate(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 		return nil, err
 	}
 	var result map[string]any
-	if cfg.ClaudeConsolidateEnabled && cfg.claudeClient != nil {
+	claudeConsolidateEnabled := cfg.ClaudeConsolidateEnabled
+	if cfg.RuntimeConfig != nil {
+		claudeConsolidateEnabled = cfg.RuntimeConfig.ClaudeConsolidate.Load()
+	}
+	if claudeConsolidateEnabled && cfg.claudeClient != nil {
 		result, err = h.Engine.ConsolidateWithClaude(ctx, &claudeMergeAdapter{client: cfg.claudeClient})
 	} else {
 		result, err = h.Engine.Consolidate(ctx)

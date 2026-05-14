@@ -256,11 +256,14 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	var immutable bool
+	var (
+		immutable  bool
+		documentID *string
+	)
 	err = tx.QueryRow(ctx,
-		"SELECT immutable FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
+		"SELECT immutable, document_id FROM memories WHERE id=$1 AND project=$2 FOR UPDATE",
 		id, project,
-	).Scan(&immutable)
+	).Scan(&immutable, &documentID)
 	if err == pgx.ErrNoRows {
 		return false, nil
 	}
@@ -284,6 +287,11 @@ func (b *PostgresBackend) DeleteMemoryAtomic(ctx context.Context, project, id st
 	tag, err := tx.Exec(ctx, "DELETE FROM memories WHERE id=$1 AND project=$2", id, project)
 	if err != nil {
 		return false, err
+	}
+	if documentID != nil && *documentID != "" {
+		if _, err := b.DeleteOrphanedDocumentTx(ctx, tx, *documentID); err != nil {
+			return false, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -718,6 +726,12 @@ func (b *PostgresBackend) DeleteProject(ctx context.Context, project string) err
 	// Delete memories
 	if _, err := tx.Exec(ctx, "DELETE FROM memories WHERE project = $1", project); err != nil {
 		return fmt.Errorf("delete memories: %w", err)
+	}
+
+	// Delete documents after memories so any orphaned raw bodies are reclaimed
+	// in the same project-cleanup transaction.
+	if _, err := tx.Exec(ctx, "DELETE FROM documents WHERE project = $1", project); err != nil {
+		return fmt.Errorf("delete documents: %w", err)
 	}
 
 	// Delete episodes

@@ -215,9 +215,9 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 			break
 		}
 		eg.Go(func() error {
-			// Independent 15s deadline (E5): isolates each embed call from the
-			// worker context so a slow Ollama cannot stall the entire batch.
-			embedCtx, embedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			// Independent 15s deadline layered on the worker context so Stop()
+			// cancels blocked embeds promptly while still bounding each call.
+			embedCtx, embedCancel := context.WithTimeout(egCtx, 15*time.Second)
 			defer embedCancel()
 			vec, err := w.embedder.Embed(embedCtx, c.ChunkText)
 			if err != nil {
@@ -237,4 +237,3 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 	}
 	return len(chunks) < batchSize
 }
-

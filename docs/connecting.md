@@ -191,7 +191,7 @@ Bearer token authentication is required. The server refuses to start without `EN
 
 **For other clients:** copy `ENGRAM_API_KEY` from `.env` and add the `Authorization: Bearer <token>` header to your IDE's MCP config (see the Cursor example above).
 
-The token is stored in `.env` — never committed to git. The `/setup-token` endpoint (localhost-only) allows clients to fetch the token programmatically without a manual copy-paste step.
+The token is stored in `.env` — never committed to git. The `/setup-token` endpoint (localhost-only) is still Bearer-protected; `make setup` bootstraps by probing local key sources such as `.env` and `~/.config/engram/api_key`, then uses that token to fetch the live config programmatically.
 
 There is no per-tool or per-project access control. Authentication is all-or-nothing at the connection level.
 

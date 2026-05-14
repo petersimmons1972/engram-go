@@ -389,6 +389,13 @@ func (s *stubBackend) ExistsWithContentHash(_ context.Context, _ string, _ strin
 func (s *stubBackend) StoreDocument(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }
+func (s *stubBackend) DeleteDocument(_ context.Context, _ string) (bool, error) { return false, nil }
+func (s *stubBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (s *stubBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
 func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error) { return "", nil }
 func (s *stubBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error { return nil }
 

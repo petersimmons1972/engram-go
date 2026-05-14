@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -87,6 +88,33 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 			return mcpgo.NewToolResultError(string(body)), nil
 		}
 		return nil, err
+	}
+
+	// Preference extraction: when the memory is not already typed as a preference,
+	// run the extractor and store each discovered fact as a separate short preference
+	// memory. This gives the preference boost a correctly-typed target to fire on.
+	// Non-fatal: extraction errors are logged and swallowed so the primary store succeeds.
+	if extractor := h.Engine.PreferenceExtractor; extractor != nil && memType != types.MemoryTypePreference {
+		if facts, extractErr := extractor.Extract(ctx, content); extractErr == nil {
+			for _, fact := range facts {
+				if strings.TrimSpace(fact) == "" {
+					continue
+				}
+				factMem := &types.Memory{
+					ID:          types.NewMemoryID(),
+					Content:     fact,
+					MemoryType:  types.MemoryTypePreference,
+					Project:     project,
+					Importance:  1,
+					Tags:        []string{"extracted-preference"},
+					StorageMode: "focused",
+				}
+				if storeErr := h.Engine.Store(ctx, factMem); storeErr != nil {
+					slog.Debug("preference extraction: store fact failed",
+						"parent_id", m.ID, "fact", fact, "err", storeErr)
+				}
+			}
+		}
 	}
 
 	// Probe embedder health and add degraded field to response.

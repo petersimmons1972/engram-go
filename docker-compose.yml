@@ -1,8 +1,8 @@
-# engram — Docker Compose (v2.0, Go) — Hybrid Profile (LiteLLM)
+# engram — Docker Compose (v2.0, Go) — Hybrid Profile (olla router)
 #
 # Services:
 #   postgres                — persistent storage
-#   engram-go               — MCP server (port 8788) — NO direct LiteLLM calls at recall time
+#   engram-go               — MCP server (port 8788) — NO direct embed calls at recall time
 #   engram-reembed-7900xt   — reembed worker → leviathan RX 7900 XT (REEMBED_7900XT_URL)
 #   engram-reembed-w6800    — reembed worker → precision W6800 (REEMBED_W6800_URL)
 #   engram-reembed-oblivion — reembed worker → oblivion GB10 (REEMBED_OBLIVION_URL)
@@ -10,14 +10,16 @@
 # One reembed container per GPU endpoint. Tune each independently via .env:
 #   REEMBED_<GPU>_URL, REEMBED_<GPU>_CONCURRENCY_MAX, REEMBED_<GPU>_TOKIO_THREADS
 #
-# This profile assumes you have a LiteLLM proxy running externally (another host or compose stack).
+# This profile assumes you have an olla load balancer running externally (or LiteLLM proxy).
+# The LiteLLM proxy container was retired 2026-05-05; olla now handles all embed routing.
 # For local-only (Ollama-in-Docker), use: docker compose -f docker-compose.local.yml up -d
 #
-# Firewall design: engram-go uses LiteLLM only for query embedding (2s timeout +
+# Firewall design: engram-go uses the embed router only for query embedding (2s timeout +
 # BM25 fallback). Reembed workers run in isolated containers with their own
-# LiteLLM concurrency budgets so bulk re-embedding never starves MCP recall.
+# concurrency budgets so bulk re-embedding never starves MCP recall.
 #
-# LiteLLM endpoint: Must be set in .env as LITELLM_URL (e.g., http://your-host:4000)
+# Router endpoint: LITELLM_URL in .env (legacy name; points to olla, not LiteLLM).
+# Rename to ENGRAM_ROUTER_URL tracked in issue #634.
 # The Docker bridge IP (172.17.0.x) is whitelisted for /setup-token automatically.
 #
 # WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
@@ -45,22 +47,25 @@ services:
   postgres:
     container_name: engram-postgres
     image: engram-postgres-cg:latest
-    shm_size: '2gb'
+    shm_size: '16gb'
     volumes:
       - pgdata:/var/lib/postgresql/data
     command: >-
       -c max_connections=300
-      -c shared_buffers=${PG_SHARED_BUFFERS:-12GB}
-      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-48GB}
-      -c work_mem=32MB
-      -c maintenance_work_mem=512MB
-      -c wal_buffers=64MB
+      -c shared_buffers=${PG_SHARED_BUFFERS:-24GB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-72GB}
+      -c work_mem=128MB
+      -c maintenance_work_mem=2GB
+      -c wal_buffers=256MB
       -c max_parallel_workers_per_gather=4
       -c max_parallel_workers=8
       -c max_worker_processes=16
       -c checkpoint_completion_target=0.9
+      -c checkpoint_timeout=15min
+      -c max_wal_size=4GB
       -c random_page_cost=2.0
       -c effective_io_concurrency=32
+      -c synchronous_commit=off
     environment:
       # These variables are required and must be set via .env or shell environment
       - POSTGRES_USER=engram
@@ -116,7 +121,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 4gb
     pids_limit: 512
     security_opt:
       - no-new-privileges:true

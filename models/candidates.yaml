@@ -82,7 +82,9 @@ models:
     rationale: >
       Meta's flagship 8B model. Widely deployed; good baseline for comparison
       against Mistral at the same tier.
-    notes: null
+    notes: >
+      Canary candidate for the W6800 backend. Use this model first for
+      LongMemEval traffic, then expand cautiously if it stays stable.
 
   - name: deepseek-r1:8b
     params_b: 8.0

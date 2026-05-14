@@ -83,7 +83,7 @@ return SearchResult array
 | `POST /quick-recall` | handleQuickRecall | N/A | Sessionless memory recall (for Python/CLI callers) |
 | `GET /health` | handleHealth | N/A | Dependency health probes (PostgreSQL, LiteLLM) |
 | `GET /metrics` | promhttp.Handler | N/A | Prometheus metrics (requires Bearer auth) |
-| `GET /setup-token` | handleSetupToken | N/A | Return current bearer token + SSE endpoint |
+| `GET /setup-token` | handleSetupToken | N/A | Return current bearer token + SSE endpoint (requires Bearer auth) |
 
 ## Concurrency Model
 

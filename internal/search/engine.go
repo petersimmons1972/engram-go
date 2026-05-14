@@ -12,6 +12,8 @@ import (
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/envconf"
+	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/minhash"
 	"github.com/petersimmons1972/engram/internal/reembed"
 	"github.com/petersimmons1972/engram/internal/summarize"
@@ -129,21 +131,34 @@ type bestHit struct {
 	chunkID        string
 }
 
+// defaultEmbedRecallTimeoutMS is the bounded timeout for the embed call during
+// recall. On expiry the call degrades to BM25+recency; the parent context
+// deadline is untouched. Configurable via ENGRAM_EMBED_RECALL_TIMEOUT_MS.
+const defaultEmbedRecallTimeoutMS = 500
+
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend          db.Backend
-	embedMu          sync.RWMutex // protects embedder; use getEmbedder() for all reads
-	embedder         embed.Client
-	project          string
-	ollamaURL        string
-	targetDims       int             // MRL truncation target; 0 = model native output
-	ctx              context.Context // parent lifecycle context — passed to workers via StartWithContext
-	summarizer       *summarize.Worker
-	reembedder       *reembed.Worker
-	decayer          *DecayWorker
-	weightCache      *WeightCache   // nil when no pgxpool available (pre-migration or test)
-	globalReembedder globalNotifier // non-nil after SetGlobalReembedder; woken on chunk store
+	backend              db.Backend
+	embedMu              sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedder             embed.Client
+	project              string
+	ollamaURL            string
+	targetDims           int             // MRL truncation target; 0 = model native output
+	ctx                  context.Context // parent lifecycle context — passed to workers via StartWithContext
+	summarizer           *summarize.Worker
+	reembedder           *reembed.Worker
+	decayer              *DecayWorker
+	weightCache          *WeightCache       // nil when no pgxpool available (pre-migration or test)
+	globalReembedder     globalNotifier     // non-nil after SetGlobalReembedder; woken on chunk store
+	PreferenceExtractor  PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
+	// embedRecallTimeout is the bounded embed deadline for recall. Read from
+	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
+	embedRecallTimeout time.Duration
+	// storeEmbedSync, when true, embeds chunks inline during Store rather than
+	// deferring to the reembed worker. Controlled by ENGRAM_STORE_EMBED_MODE=sync.
+	// Default (false) is async: Store returns immediately after the DB write.
+	storeEmbedSync bool
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -200,17 +215,23 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	if len(targetDims) > 0 {
 		dims = targetDims[0]
 	}
+	recallTimeoutMS := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
+	storeEmbedSync := envconf.String("ENGRAM_STORE_EMBED_MODE", "async") == "sync"
+
 	return &SearchEngine{
-		backend:     backend,
-		embedder:    embedder,
-		project:     project,
-		ollamaURL:   ollamaURL,
-		targetDims:  dims,
-		ctx:         ctx,
-		summarizer:  sum,
-		reembedder:  reb,
-		decayer:     dec,
-		weightCache: wc,
+		backend:             backend,
+		embedder:            embedder,
+		project:             project,
+		ollamaURL:           ollamaURL,
+		targetDims:          dims,
+		ctx:                 ctx,
+		summarizer:          sum,
+		reembedder:          reb,
+		decayer:             dec,
+		weightCache:         wc,
+		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
+		embedRecallTimeout:  time.Duration(recallTimeoutMS) * time.Millisecond,
+		storeEmbedSync:      storeEmbedSync,
 	}
 }
 
@@ -288,9 +309,11 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		return nil, nil
 	}
 
-	// All new chunks are stored with nil embeddings. The reembed worker backfills
-	// them asynchronously, keeping the store path fully decoupled from Ollama.
-	// This eliminates the 48-minute hang caused by Ollama blocking the MCP call.
+	// Build chunk records. In async mode (default), embeddings are left nil and the
+	// reembed worker fills them in — this keeps Store fully decoupled from Ollama
+	// and eliminates the 48-minute hang caused by Ollama blocking the MCP call.
+	// In sync mode (ENGRAM_STORE_EMBED_MODE=sync), embeddings are computed inline
+	// for callers that require immediate vector availability (e.g. migration scripts).
 	chunks := make([]*types.Chunk, len(pending))
 	for j, p := range pending {
 		ch := &types.Chunk{
@@ -306,6 +329,16 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		if p.candidate.HasHeading {
 			heading := p.candidate.SectionHeading
 			ch.SectionHeading = &heading
+		}
+		if e.storeEmbedSync {
+			// Sync mode: embed inline. Errors are non-fatal — the chunk is stored
+			// with a nil embedding and the reembed worker will backfill it.
+			if vec, embedErr := e.getEmbedder().Embed(ctx, p.candidate.Text); embedErr == nil {
+				ch.Embedding = vec
+			} else {
+				slog.Warn("storeChunksForMemory: inline embed failed, chunk stored without embedding",
+					"project", e.project, "chunk_idx", p.idx, "err", embedErr)
+			}
 		}
 		chunks[j] = ch
 	}
@@ -387,7 +420,8 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 		return err
 	}
 	if len(chunks) > 0 {
-		// Enqueue chunks for async re-embedding by setting initial leases.
+		// Async path: enqueue chunks for reembed worker. In sync mode, embeddings
+		// were already computed inline; the worker will skip them (no NULL embedding).
 		chunkIDs := make([]string, len(chunks))
 		for i, c := range chunks {
 			chunkIDs[i] = c.ID
@@ -400,6 +434,10 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 		if e.globalReembedder != nil {
 			e.globalReembedder.Notify()
 		}
+	}
+	if !e.storeEmbedSync {
+		// Count each store call that returned before embedding completed.
+		metrics.StoreEmbedAsyncTotal.Inc()
 	}
 	return nil
 }
@@ -478,6 +516,11 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 			e.globalReembedder.Notify()
 		}
 	}
+	if !e.storeEmbedSync {
+		// Count each store-batch call that returned before embedding completed.
+		// One increment per StoreBatch call (not per memory) — tracks call volume.
+		metrics.StoreEmbedAsyncTotal.Inc()
+	}
 	return nil
 }
 
@@ -495,20 +538,27 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
-	// Embed call with a short 500ms timeout. On embed timeout or error, degrade
-	// gracefully to BM25+recency only; the vector leg is skipped but recall still
-	// returns useful results. The timeout is enforce on the embed call ONLY —
-	// the parent ctx's deadline is still respected for the overall operation
-	// (VectorSearch, FTS, etc.). This prevents a hanging embedder from causing
-	// a parent ctx cancellation to propagate as "context canceled" errors to callers.
-	embedCtx, embedCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	// Bound the embed call to embedRecallTimeout (default 500ms; configurable via
+	// ENGRAM_EMBED_RECALL_TIMEOUT_MS). On timeout or error, degrade gracefully to
+	// BM25+recency only — the vector leg is skipped but recall still returns useful
+	// results. The timeout applies to the embed call ONLY; the parent ctx's deadline
+	// governs the rest of the operation (VectorSearch, FTS, etc.). This prevents a
+	// hanging embedder from cancelling the parent context and surfacing a
+	// "context canceled" error to callers.
+	embedTimeout := e.embedRecallTimeout
+	if embedTimeout <= 0 {
+		embedTimeout = defaultEmbedRecallTimeoutMS * time.Millisecond
+	}
+	embedCtx, embedCancel := context.WithTimeout(ctx, embedTimeout)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	embedDegraded := false
 	if err != nil {
-		slog.Warn("embed query failed, degrading to BM25+recency only", "project", e.project, "err", err)
+		slog.Info("embed query failed, degrading to BM25+recency only",
+			"project", e.project, "timeout_ms", embedTimeout.Milliseconds(), "err", err)
 		queryVec = nil
 		embedDegraded = true
+		metrics.RecallEmbedTimeoutTotal.Inc()
 	}
 	// Populate the caller's embed degradation signal if they provided a pointer.
 	if opts.EmbedDegraded != nil {
@@ -615,6 +665,21 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// Composite scoring per memory.
 	results := make([]types.SearchResult, 0)
 	for id, m := range memories {
+		// Extracted preference memories are ingest-time fragments tagged
+		// "extracted-preference". Surface them only for preference-shaped queries;
+		// for all other query types they add noise and dilute recall quality.
+		if !prefQuery {
+			skip := false
+			for _, t := range m.Tags {
+				if t == "extracted-preference" {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
 		bm25 := 0.0
 		if maxBM25 > 0 {
 			bm25 = ftsScores[id] / maxBM25
@@ -679,6 +744,80 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 
 	sortResults(results)
+
+	// Preference-first recall path: when the query is preference-shaped, ensure
+	// preference-typed memories are represented in the top results even if their
+	// raw composite scores are lower than irrelevant context memories.
+	// Strategy: split sorted results into preference-typed and general pools;
+	// take up to min(topK/2, 10) from the preference pool first, fill remaining
+	// slots from the general pool, deduplicate by ID, reassemble.
+	if prefQuery {
+		prefSlots := topK / 2
+		if prefSlots > 10 {
+			prefSlots = 10
+		}
+		if prefSlots < 1 {
+			prefSlots = 1
+		}
+		var prefResults, generalResults []types.SearchResult
+		for _, r := range results {
+			if r.Memory != nil && r.Memory.MemoryType == "preference" {
+				prefResults = append(prefResults, r)
+			} else {
+				generalResults = append(generalResults, r)
+			}
+		}
+		if len(prefResults) > 0 {
+			// Take up to prefSlots from preference pool.
+			taken := prefSlots
+			if taken > len(prefResults) {
+				taken = len(prefResults)
+			}
+			merged := make([]types.SearchResult, 0, topK)
+			seen := make(map[string]struct{}, topK)
+			for i := 0; i < taken; i++ {
+				merged = append(merged, prefResults[i])
+				if prefResults[i].Memory != nil {
+					seen[prefResults[i].Memory.ID] = struct{}{}
+				}
+			}
+			// Fill remaining slots from general pool (already sorted by score).
+			for _, r := range generalResults {
+				if len(merged) >= topK {
+					break
+				}
+				id := ""
+				if r.Memory != nil {
+					id = r.Memory.ID
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				merged = append(merged, r)
+				if id != "" {
+					seen[id] = struct{}{}
+				}
+			}
+			// Also add any remaining preference results that fit.
+			for i := taken; i < len(prefResults); i++ {
+				if len(merged) >= topK {
+					break
+				}
+				id := ""
+				if prefResults[i].Memory != nil {
+					id = prefResults[i].Memory.ID
+				}
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				merged = append(merged, prefResults[i])
+				if id != "" {
+					seen[id] = struct{}{}
+				}
+			}
+			results = merged
+		}
+	}
 
 	// Optional re-ranking: cap at topK candidates so the reranker only sees the
 	// same set that will be returned, not the full pre-truncation pool (which can
@@ -797,13 +936,18 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
-	// Embed call with a short 500ms timeout, consistent with RecallWithOpts.
+	// Embed call bounded by embedRecallTimeout, consistent with RecallWithOpts.
 	// RecallWithinMemory has no BM25 fallback (document chunk search is
 	// vector-only), so it returns an error on embed failure.
-	embedCtx, embedCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	embedTimeout := e.embedRecallTimeout
+	if embedTimeout <= 0 {
+		embedTimeout = defaultEmbedRecallTimeoutMS * time.Millisecond
+	}
+	embedCtx, embedCancel := context.WithTimeout(ctx, embedTimeout)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	if err != nil {
+		metrics.RecallEmbedTimeoutTotal.Inc()
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)

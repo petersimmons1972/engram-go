@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ type Config struct {
 	ClaudeEnabled            bool // true when a claude client is present
 	ClaudeConsolidateEnabled bool
 	ClaudeRerankEnabled      bool
+	RuntimeConfig            *RuntimeConfig
+	LogLevelVar             *slog.LevelVar
 	// DataDir is the base directory for all file-system operations (export,
 	// import, ingest). Paths provided by callers are validated to stay within
 	// this directory. Must be set; file-operation tools return an error if empty.
@@ -53,6 +56,12 @@ type Config struct {
 	// Above this size, ingestion is refused. Defaults to 50 MiB. Set via
 	// ENGRAM_RAW_DOCUMENT_MAX_BYTES env var.
 	RawDocumentMaxBytes int
+	// ImportMaxBytes caps local import files before any parsing work begins.
+	// Defaults to 50 MiB. Set via ENGRAM_IMPORT_MAX_BYTES env var.
+	ImportMaxBytes int
+	// ImportExpandedMaxBytes caps total expanded bytes parsed from compressed
+	// archives such as Slack exports. Defaults to 100 MiB.
+	ImportExpandedMaxBytes int
 	// RAGMaxTokens caps the context window assembled for memory_ask prompt
 	// synthesis. Defaults to 4096. Set via ENGRAM_RAG_MAX_TOKENS env var.
 	RAGMaxTokens int
@@ -113,6 +122,13 @@ type Config struct {
 	// cap is 2× this value to allow short bursts. Set via
 	// ENGRAM_EMBED_RATE_PER_SECOND env var.
 	EmbedRatePerSecond float64
+	// DegradedErrorMode controls whether embed-pipeline degradation is surfaced
+	// as a structured error envelope rather than silently falling back.
+	// When "structured" (set via ENGRAM_DEGRADED_ERROR_MODE=structured), recall
+	// and store tools return a JSON error with code "embed_pipeline_degraded",
+	// fallback_used:true, and any BM25 results that were produced before the
+	// embedder gave up. Default "": transparent passthrough (original behaviour).
+	DegradedErrorMode string
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.
@@ -134,7 +150,13 @@ func (c Config) rateLimitBurst() int {
 // backendFetcher is the narrow interface required by execFetch.
 // Satisfied by db.Backend; declared separately so tests can inject a stub.
 type backendFetcher interface {
-	GetMemory(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByID retrieves a memory by its ID without project filtering.
+	// This is intentional: memory IDs are globally unique UUIDs, and fetch
+	// must work regardless of which project the caller's pool is scoped to.
+	// Using the project-filtered GetMemory here was the root cause of #634,
+	// where memory_recall (project="global") returned handles that
+	// memory_fetch (project="default") could not resolve.
+	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
 	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
 }
 

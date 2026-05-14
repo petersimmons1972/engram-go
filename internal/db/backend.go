@@ -284,6 +284,17 @@ type Backend interface {
 	// GetDocument retrieves raw document content by ID. Returns "" if not found.
 	GetDocument(ctx context.Context, id string) (string, error)
 
+	// DeleteDocument removes a document row by ID. Returns true if deleted.
+	DeleteDocument(ctx context.Context, id string) (bool, error)
+
+	// DeleteDocumentTx removes a document row by ID inside an existing transaction.
+	// Returns true if deleted.
+	DeleteDocumentTx(ctx context.Context, tx Tx, id string) (bool, error)
+
+	// DeleteOrphanedDocumentTx removes a document row inside an existing transaction
+	// only when no remaining memories reference it. Returns true if deleted.
+	DeleteOrphanedDocumentTx(ctx context.Context, tx Tx, id string) (bool, error)
+
 	// SetMemoryDocumentID links a memory to a document by setting
 	// memories.document_id = documentID.
 	SetMemoryDocumentID(ctx context.Context, memoryID, documentID string) error

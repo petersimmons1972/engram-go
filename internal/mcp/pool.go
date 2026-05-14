@@ -180,11 +180,16 @@ func (p *EnginePool) WarmProjects(ctx context.Context, projects []string, concur
 	}
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
+	stop := false
 	for _, proj := range projects {
 		proj := proj
+		if stop {
+			break
+		}
 		select {
 		case <-ctx.Done():
-			break
+			stop = true
+			continue
 		default:
 		}
 		sem <- struct{}{}

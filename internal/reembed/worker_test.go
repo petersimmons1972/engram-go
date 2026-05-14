@@ -239,6 +239,13 @@ func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ st
 	return nil, nil
 }
 func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (noopBackend) DeleteDocument(_ context.Context, _ string) (bool, error)      { return false, nil }
+func (noopBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (noopBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)      { return "", nil }
 func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error     { return nil }
 func (noopBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) {
@@ -431,5 +438,49 @@ func TestRunBatch_ConcurrentEmbedding(t *testing.T) {
 	backend.mu.Unlock()
 	if updatedCount != numChunks {
 		t.Errorf("expected %d chunk updates, got %d", numChunks, updatedCount)
+	}
+}
+
+type blockingEmbedder struct {
+	dims      int
+	started   chan struct{}
+	cancelled chan struct{}
+}
+
+func (b *blockingEmbedder) Embed(ctx context.Context, _ string) ([]float32, error) {
+	close(b.started)
+	<-ctx.Done()
+	close(b.cancelled)
+	return nil, ctx.Err()
+}
+func (b *blockingEmbedder) Name() string    { return "blocking" }
+func (b *blockingEmbedder) Dimensions() int { return b.dims }
+
+func TestWorkerStopCancelsBlockedEmbedPromptly(t *testing.T) {
+	chunk := &types.Chunk{ID: "chunk-blocked", ChunkText: "blocked"}
+	backend := &concurrentUpdateBackend{
+		pendingChunks: []*types.Chunk{chunk},
+	}
+	embedder := &blockingEmbedder{
+		dims:      768,
+		started:   make(chan struct{}),
+		cancelled: make(chan struct{}),
+	}
+
+	w := reembed.NewWorker(backend, embedder, "proj", true)
+	w.StartWithContext(context.Background())
+
+	select {
+	case <-embedder.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("embed did not start")
+	}
+
+	w.Stop()
+
+	select {
+	case <-embedder.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not cancel blocked embed promptly")
 	}
 }

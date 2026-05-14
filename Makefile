@@ -2,7 +2,7 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status
 
 ## Show available make targets
 help:
@@ -117,6 +117,11 @@ test:
 ## Run the explore-context soak test (50 synthetic questions, p95 iters ≤4, p95 tokens ≤15K)
 test-explore-soak:
 	go test ./bench/... -v -run TestExploreContext -timeout 60s
+
+## Show live health of every stack layer (postgres, engram-go, olla, reembed workers, precision host)
+## Pass NO_REMOTE=1 to skip SSH probes: make status NO_REMOTE=1
+status:
+	@bash infra/status.sh $(if $(NO_REMOTE),--no-remote,)
 
 .PHONY: eval
 ## Run retrieval evaluation harness

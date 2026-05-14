@@ -198,6 +198,13 @@ func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ st
 	return nil, nil
 }
 func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (noopBackend) DeleteDocument(_ context.Context, _ string) (bool, error)      { return false, nil }
+func (noopBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (noopBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)      { return "", nil }
 func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error     { return nil }
 

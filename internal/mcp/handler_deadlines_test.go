@@ -6,16 +6,12 @@ package mcp
 // 1. Each long-running handler (Consolidate, Sleep, Explore, Ask) derives its
 //    own child context with a fixed deadline, so it cannot run past the HTTP
 //    server's ReadTimeout even if the caller's context never cancels.
-// 2. enqueueExtractionAsync is bounded by a package-level semaphore: when the
-//    semaphore is full a new goroutine exits immediately rather than blocking.
 //
 // All tests are in-package (package mcp, no _test suffix) because they test
 // unexported symbols.
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,7 +124,7 @@ func TestHandlerDeadline_AskDeadlinePropagated(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-// ── Part 2: extraction semaphore tests ───────────────────────────────────────
+// ── Part 2: additional deadline tests ────────────────────────────────────────
 
 // TestMemoryReason_HasExplicitDeadline verifies that handleMemoryReason derives
 // its own child context with a deadline, so it cannot block indefinitely even
@@ -176,71 +172,3 @@ func TestMemoryReason_DeadlinePropagated(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-// ── Part 2: extraction semaphore tests ───────────────────────────────────────
-
-// TestExtractionSemaphore_BoundedConcurrency verifies that when the semaphore
-// is already full, a new enqueueExtractionAsync call exits immediately (skips)
-// rather than blocking indefinitely.
-func TestExtractionSemaphore_BoundedConcurrency(t *testing.T) {
-	// Drain the semaphore so it is full.
-	// extractionSem is a buffered channel of size 20.
-	// We fill it, call enqueue, then drain it back.
-	for len(extractionSem) < cap(extractionSem) {
-		extractionSem <- struct{}{}
-	}
-	t.Cleanup(func() {
-		// Drain all tokens so we don't pollute later tests.
-		for len(extractionSem) > 0 {
-			<-extractionSem
-		}
-	})
-
-	pool := newTestNoopPool(t)
-
-	var returned atomic.Bool
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		// This should detect a full semaphore and return immediately — not block.
-		enqueueExtractionAsync(pool, "mem_sem_test", "test-project")
-		returned.Store(true)
-	}()
-
-	select {
-	case <-done:
-		require.True(t, returned.Load(), "enqueueExtractionAsync must return when semaphore is full")
-	case <-time.After(2 * time.Second):
-		t.Fatal("enqueueExtractionAsync blocked >2s when semaphore was full")
-	}
-}
-
-// TestExtractionSemaphore_ConcurrentGoroutines verifies that many concurrent
-// enqueueExtractionAsync calls never exceed the semaphore cap simultaneously.
-func TestExtractionSemaphore_ConcurrentGoroutines(t *testing.T) {
-	pool := newTestNoopPool(t)
-
-	const goroutines = 100
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
-			enqueueExtractionAsync(pool, "mem_concurrent", "test-project")
-		}()
-	}
-
-	// All goroutines must complete — none must hang even under burst load.
-	doneCh := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-
-	select {
-	case <-doneCh:
-		// all completed promptly
-	case <-time.After(5 * time.Second):
-		t.Fatal("some enqueueExtractionAsync goroutines did not complete within 5s")
-	}
-}

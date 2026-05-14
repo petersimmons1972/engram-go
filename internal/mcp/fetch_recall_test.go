@@ -26,7 +26,7 @@ type recallStubFetcher struct {
 	chunks []*types.Chunk
 }
 
-func (s *recallStubFetcher) GetMemory(_ context.Context, _ string) (*types.Memory, error) {
+func (s *recallStubFetcher) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
 	return s.mem, s.memErr
 }
 
@@ -36,7 +36,7 @@ func (s *recallStubFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*
 
 // ── execFetch boundary cases not in fetch_exec_test.go ───────────────────────
 
-// TestExecFetch_GetMemoryError: GetMemory returns a non-nil error → error is
+// TestExecFetch_GetMemoryError: GetMemoryByID returns a non-nil error → error is
 // propagated unchanged (not swallowed or wrapped with different semantics).
 func TestExecFetch_GetMemoryError(t *testing.T) {
 	sentinel := errors.New("db exploded")
@@ -211,4 +211,93 @@ func TestHandleMemoryRecall_EpisodeContextInjected(t *testing.T) {
 	if res == nil {
 		t.Fatal("handleMemoryRecall returned nil result")
 	}
+}
+
+// ── Fix A: degraded.embed boolean/reason consistency (#634 fix#4) ────────────
+
+// TestDegradedMap_WhenNotDegraded_OmitsReasonKey asserts that when embedDegraded
+// is false the "reason" key is absent from the degraded map. This prevents
+// callers from seeing the inconsistent {"embed":false,"reason":"embed_timeout"}
+// combination that was produced before the fix.
+func TestDegradedMap_WhenNotDegraded_OmitsReasonKey(t *testing.T) {
+	m := degradedMap(false, "embed_timeout")
+	require.Equal(t, false, m["embed"])
+	_, hasReason := m["reason"]
+	require.False(t, hasReason, "reason key must be absent when embed is not degraded")
+}
+
+// TestDegradedMap_WhenDegraded_IncludesReasonKey asserts that when embedDegraded
+// is true the "reason" key is present and matches the supplied string.
+func TestDegradedMap_WhenDegraded_IncludesReasonKey(t *testing.T) {
+	m := degradedMap(true, "embed_timeout")
+	require.Equal(t, true, m["embed"])
+	reason, hasReason := m["reason"]
+	require.True(t, hasReason, "reason key must be present when embed is degraded")
+	require.Equal(t, "embed_timeout", reason)
+}
+
+// TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason exercises the full
+// results path of handleMemoryRecall with a healthy embedder (the noop pool
+// always succeeds). It asserts that degraded.reason is absent from the response.
+func TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "something",
+	}
+	cfg := testConfig() // EmbedderHealth returns ok=true with no reason
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	degradedRaw, hasDegraded := out["degraded"]
+	require.True(t, hasDegraded, "response must include a 'degraded' key")
+	degraded, ok := degradedRaw.(map[string]any)
+	require.True(t, ok, "degraded must be a map")
+	require.Equal(t, false, degraded["embed"])
+	_, hasReason := degraded["reason"]
+	require.False(t, hasReason, "reason must be absent when embedder is healthy (Fix A: #634 fix#4)")
+}
+
+// ── Fix B: cross-project recall→fetch (#634 primary) ─────────────────────────
+
+// crossProjectFetcher simulates a backend pool scoped to project "default"
+// serving a memory that lives in project "global". GetMemoryByID finds it
+// (no project filter); the old GetMemory call would have returned nil.
+type crossProjectFetcher struct {
+	mem    *types.Memory
+	chunks []*types.Chunk
+}
+
+func (c *crossProjectFetcher) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
+	return c.mem, nil
+}
+
+func (c *crossProjectFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error) {
+	return c.chunks, nil
+}
+
+// TestExecFetch_CrossProjectFetch_Issue634 is the regression test for the
+// primary bug in #634: memory_recall(project="global") returned handles that
+// memory_fetch(project="default") could not resolve.
+//
+// Before the fix, execFetch called f.GetMemory which filtered by the pool's
+// project; a backend scoped to "default" would return nil for a memory stored
+// under "global". After the fix, execFetch calls f.GetMemoryByID which omits
+// the project filter, so the memory is found regardless of pool scope.
+func TestExecFetch_CrossProjectFetch_Issue634(t *testing.T) {
+	mem := &types.Memory{
+		ID:      "019d8bae-eeae-7035-b2aa-0d8b764ed6c8", // UUIDv7 from the bug report
+		Project: "global",
+		Content: "Peter's writing style rules — voice and cadence",
+	}
+	// crossProjectFetcher.GetMemoryByID always returns the memory; its
+	// GetMemory counterpart (removed from the interface) would have returned nil.
+	f := &crossProjectFetcher{mem: mem}
+	out, err := execFetch(context.Background(), f, mem.ID, "full", 65536, nil)
+	require.NoError(t, err, "cross-project fetch must succeed after #634 fix")
+	require.Equal(t, mem.ID, out["id"], "returned id must match requested id")
+	require.Equal(t, mem.Content, out["content"], "full content must be present")
 }
