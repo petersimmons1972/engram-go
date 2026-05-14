@@ -18,7 +18,11 @@ import (
 // embed=false + reason="embed_timeout" combination (issue #634 fix#4).
 func degradedMap(embedDegraded bool, reason string) map[string]any {
 	if embedDegraded {
-		return map[string]any{"embed": true, "reason": reason}
+		m := map[string]any{"embed": true}
+		if reason != "" {
+			m["reason"] = reason
+		}
+		return m
 	}
 	return map[string]any{"embed": false}
 }

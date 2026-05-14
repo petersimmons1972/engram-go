@@ -61,31 +61,66 @@ curl_auth() {
     fi
 }
 
-# ── step 1: quick-recall (returns memory objects, not handles) ─────────────────
-echo "==> recall: query='$QUERY' project='$PROJECT' limit=$LIMIT" >&2
+# ── step 1: memory_recall via MCP (returns handles, same path as the orphan bug) ──
+# The orphan scenario (#634) manifests when memory_recall returns handle IDs that
+# memory_fetch cannot resolve. /quick-recall bypasses the handle path and returns
+# stored objects directly — it would not reproduce the bug. We must call the MCP
+# memory_recall tool to get handle IDs from the same index that surfaces orphans.
+echo "==> memory_recall (MCP): query='$QUERY' project='$PROJECT' limit=$LIMIT" >&2
 
-RECALL_BODY=$(printf '{"query":"%s","project":"%s","limit":%d}' \
-    "$(printf '%s' "$QUERY" | sed 's/"/\\"/g')" \
+RECALL_PAYLOAD=$(printf \
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_recall","arguments":{"project":"%s","query":"%s","limit":%d,"detail":"handle"}}}' \
     "$(printf '%s' "$PROJECT" | sed 's/"/\\"/g')" \
+    "$(printf '%s' "$QUERY" | sed 's/"/\\"/g')" \
     "$LIMIT")
 
 RECALL_RESP=$(curl_auth -X POST \
     -H "Content-Type: application/json" \
-    -d "$RECALL_BODY" \
-    "${BASE_URL}/quick-recall")
+    -H "Accept: application/json, text/event-stream" \
+    -d "$RECALL_PAYLOAD" \
+    --max-time 30 \
+    "${BASE_URL}/mcp" 2>/dev/null)
 
 if [[ -z "$RECALL_RESP" ]]; then
-    echo "ERROR: empty response from /quick-recall" >&2
+    echo "ERROR: empty response from /mcp memory_recall" >&2
     exit 2
 fi
 
-# Extract IDs from the results array.
-# /quick-recall returns {"results":[{"id":"...","summary":"..."},...]}
+# Extract handle IDs from the MCP response.
+# memory_recall returns {"handles":[{"id":"...","summary":"...","is_handle":true},...]}
+# nested inside the MCP tool result content[0].text JSON.
 IDS=$(printf '%s' "$RECALL_RESP" | python3 -c '
 import sys, json
-data = json.load(sys.stdin)
-results = data.get("results", [])
-ids = [r.get("id","") for r in results if r.get("id","")]
+
+raw = sys.stdin.read()
+ids = []
+for line in raw.splitlines():
+    line = line.strip()
+    if line.startswith("data:"):
+        line = line[5:].strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    result = obj.get("result", {})
+    for c in result.get("content", []):
+        if not isinstance(c, dict) or "text" not in c:
+            continue
+        try:
+            inner = json.loads(c["text"])
+        except Exception:
+            continue
+        for h in inner.get("handles", []):
+            hid = h.get("id", "")
+            if hid:
+                ids.append(hid)
+        # also accept flat results list (non-handle mode fallback)
+        for r in inner.get("results", []):
+            hid = r.get("id", "")
+            if hid:
+                ids.append(hid)
 print("\n".join(ids))
 ' 2>/dev/null)
 
