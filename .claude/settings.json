@@ -160,6 +160,12 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/engram-task-recall.sh",
+            "timeout": 5,
+            "statusMessage": "Recalling relevant context"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/telemetry-emit.sh",
             "timeout": 3
           }
@@ -276,5 +282,7 @@
   "showTurnDuration": true,
   "terminalProgressBarEnabled": true,
   "teammateMode": "auto",
-  "skipAutoPermissionPrompt": true
+  "remoteControlAtStartup": true,
+  "skipAutoPermissionPrompt": true,
+  "agentPushNotifEnabled": true
 }
