@@ -1,0 +1,22 @@
+# ollama-w6800 — systemd drop-in for the AMD Radeon PRO W6800 on precision
+#
+# This file is a drop-in that overrides the native ollama.service install.
+# It is NOT a standalone .service file — it must live at:
+#   /etc/systemd/system/ollama.service.d/mi50.conf   (legacy path, retained for compatibility)
+#
+# GPU mapping on precision.petersimmons.com:
+#   card0 / renderD128  — AMD Radeon PRO W6800  (gfx1030, 32 GB)  → ROCR_VISIBLE_DEVICES=0
+#   card1 / renderD129  — AMD Radeon VII / MI50 (gfx906,  16 GB)  → handled by ollama-mi50.service
+#
+# The file is named "mi50.conf" on disk for historical reasons; the service it
+# configures is the W6800. See ollama-mi50.service for the actual MI50 unit.
+#
+# Deployed path:  /etc/systemd/system/ollama.service.d/mi50.conf
+# Listening port: 11435 (W6800 native Ollama — coding/inference only)
+# Apply with:     infra/precision-host/apply.sh
+
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11435"
+Environment="ROCR_VISIBLE_DEVICES=0"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+Environment="OLLAMA_NUM_PARALLEL=8"

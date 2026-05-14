@@ -102,6 +102,24 @@ var (
 		Name: "engram_embed_circuit_transitions_total",
 		Help: "Circuit breaker state transitions",
 	}, []string{"from", "to"})
+
+	// StoreEmbedAsyncTotal counts memory_store calls that returned before embedding
+	// completed (i.e., embed was deferred to the reembed worker). This is the normal
+	// path when ENGRAM_STORE_EMBED_MODE=async (default). Monotonically increasing;
+	// a flat counter while stores are occurring indicates sync mode is enabled.
+	StoreEmbedAsyncTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_store_embed_async_total",
+		Help: "memory_store calls that deferred embedding to the reembed worker (async mode)",
+	})
+
+	// RecallEmbedTimeoutTotal counts memory_recall calls where the embed query
+	// exceeded ENGRAM_EMBED_RECALL_TIMEOUT_MS and fell back to BM25+recency.
+	// A sustained high rate indicates embed pool saturation; consider increasing
+	// ENGRAM_EMBED_RECALL_TIMEOUT_MS or scaling the embed backend.
+	RecallEmbedTimeoutTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_recall_embed_timeout_total",
+		Help: "memory_recall calls that exceeded embed timeout and fell back to BM25+recency",
+	})
 )
 
 func init() {
@@ -121,5 +139,7 @@ func init() {
 		ExtractionDropped,
 		EmbedCircuitState,
 		EmbedCircuitTransitions,
+		StoreEmbedAsyncTotal,
+		RecallEmbedTimeoutTotal,
 	)
 }

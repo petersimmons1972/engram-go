@@ -43,6 +43,30 @@ func FloatBounded(name string, def, lo, hi float64) float64 {
 	return v
 }
 
+// Int reads name as a base-10 integer. Returns def if unset/empty; warns and
+// returns def if the value is malformed.
+func Int(name string, def int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		slog.Warn(name+": invalid integer, using default", "value", raw, "default", def)
+		return def
+	}
+	return v
+}
+
+// String reads name as a string. Returns def if unset/empty.
+func String(name string, def string) string {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	return raw
+}
+
 // DurationHours reads name as a float64 number of hours and returns a
 // time.Duration. Returns def if unset/empty or if the value is malformed or
 // non-positive.

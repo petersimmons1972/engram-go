@@ -87,3 +87,38 @@ func TestDurationHours_Malformed(t *testing.T) {
 		t.Fatalf("malformed: want default %v, got %v", def, got)
 	}
 }
+
+func TestInt_Unset(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT", "")
+	if got := envconf.Int("ENGRAM_TEST_INT", 42); got != 42 {
+		t.Fatalf("unset: want 42, got %v", got)
+	}
+}
+
+func TestInt_Valid(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT", "7")
+	if got := envconf.Int("ENGRAM_TEST_INT", 42); got != 7 {
+		t.Fatalf("valid: want 7, got %v", got)
+	}
+}
+
+func TestInt_Malformed(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT", "not-a-number")
+	if got := envconf.Int("ENGRAM_TEST_INT", 99); got != 99 {
+		t.Fatalf("malformed: want default 99, got %v", got)
+	}
+}
+
+func TestString_Unset(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_STRING", "")
+	if got := envconf.String("ENGRAM_TEST_STRING", "default"); got != "default" {
+		t.Fatalf("unset: want 'default', got %q", got)
+	}
+}
+
+func TestString_Set(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_STRING", "hello")
+	if got := envconf.String("ENGRAM_TEST_STRING", "default"); got != "hello" {
+		t.Fatalf("set: want 'hello', got %q", got)
+	}
+}
