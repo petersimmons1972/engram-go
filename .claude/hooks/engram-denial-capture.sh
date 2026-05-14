@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # PostToolUse hook: capture CC's synthesized "user rejected" tool denials
 # with full context. Fires on any mcp__engram__* tool call result.
 #

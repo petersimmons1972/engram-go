@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # SessionStart hook: ensure Engram is running and MCP token is current.
 # Self-heals: starts Engram if down, syncs token, never just warns and gives up.
 # Uses atomic writes (write-then-rename) so Claude Code never reads a partial file.

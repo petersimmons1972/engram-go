@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # UserPromptSubmit hook: fast per-message Engram auth check.
 # If auth is broken: auto-runs engram-setup to refresh the token,
 # then outputs a systemMessage telling Claude to surface the /mcp step.

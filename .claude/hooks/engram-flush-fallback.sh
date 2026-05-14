@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # SessionStart hook: flush pending fallback.md entries to Engram via /quick-store.
 # Runs after engram-token-refresh.sh so the server is confirmed up and token is fresh.
 set -euo pipefail

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # SessionStart hook: inject recent Engram memories into MEMORY.md so Claude
 # starts every session with relevant context already loaded. (#378)
 #

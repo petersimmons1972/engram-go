@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # PostToolUse hook: catch Engram MCP connection failures and self-heal.
 # Fires on any mcp__engram__* tool call. Silent on success.
 # On error: writes tool input to fallback.md and injects a systemMessage.

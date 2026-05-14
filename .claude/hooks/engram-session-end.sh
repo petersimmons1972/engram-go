@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # Stop hook: record a session-end marker in Engram via /quick-store.
 # Keeps engram_episodes_ended_clean_total accurate vs reaper count.
 set -euo pipefail

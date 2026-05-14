@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # PreToolUse hook: detect Engram MCP disconnections before executing Engram tools.
 # Tracks consecutive failures and surfaces high-visibility warning to user.
 # Issue: engram-go#408

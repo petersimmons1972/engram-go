@@ -1,7 +1,8 @@
 # Claude Assistant Instructions
 
 ## Repository Scope
-- This project is **Clearwatch only**. The SIB repo is DEPRECATED — never dispatch agents, fixes, or commits to it.
+- Active project: **Clearwatch only**. The SIB repo is DEPRECATED — never dispatch agents, fixes, or commits to it.
+- Confirm target repo is active before editing, even when bugs are found in other repos.
 - Confirm target repo and storage layer before starting multi-file operations.
 
 ## Core Principles
@@ -37,6 +38,7 @@ Each step has an explicit trigger. Execute the step when its trigger fires. Do n
 | 2 | REQUEST VERIFICATION | Before starting any task that requires 3+ distinct tool calls or 2+ files touched | Write a one-paragraph restatement of what you understand the request to be. If any element is ambiguous, stop and ask one focused question before proceeding. | Skip: single-file reads, single-command answers, informational questions |
 | 3 | BUG ACCOUNTABILITY | Immediately upon discovering any bug, before continuing other work | Either (a) fix it now and file a closed GitHub Issue documenting the fix, or (b) file an open GitHub Issue and note the deferral. Never leave a bug undocumented. | Every bug |
 | 4 | BRANCH VERIFICATION | After `git push` or after any `git commit` where commit landing is load-bearing for the next step | Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding. | After every qualifying event |
+| 5 | EXPENSIVE OPERATION CHECK | Before running any benchmark, full pipeline, or deployment | Quote estimated cost and duration. Wait for explicit confirmation — "go" or "yes". Never interpret a bare number ('1', '2', etc.) as confirmation. | Every qualifying event |
 
 ## Advisory Protocol — Tiered Self-Escalation
 
@@ -80,8 +82,8 @@ Endpoint: `http://localhost:8788/mcp` · Projects: `clearwatch`, `homelab`, `eng
 | **R1 — Recall at start** | First user message of a new conversation | `memory_recall("current project status recent work", project="global")`, then recall the request topic from the relevant project. Once per conversation. |
 | **R2 — Recall before deciding** | Before proposing architecture/design, choosing between 2+ options, modifying infra (K8s/DNS/cert-manager/storage), or modifying a Clearwatch feature area | `memory_recall("<topic>", project="<project>")` |
 | **R3 — Feedback after recall** | After every `memory_recall` | `memory_feedback` with the IDs that informed the answer. If results were absent/wrong where context should exist, store a MISS entry (`memory_type="error"`, `tags=["retrieval-miss"]`). |
-| **R4 — Store after work** | Bug fix committed, decision made, pattern used 2+ times, or end of session | `memory_store` with type: `decision` (include why) · `error` (include root cause) · `pattern` · `context` (`importance=1, project="global"` for session summary). |
-| **R6 — Fallback** | Engram unreachable after 1 retry within 30s | Stage entry in `~/.claude/projects/-home-psimmons/memory/fallback.md` (format defined in that file). Flush all pending entries on reconnect. Staging only — nothing lives there permanently. |
+| **R4 — Store after work** | Bug fix committed, decision made, pattern used 2+ times, or **end of session (extract wisdom/patterns before closing)** | `memory_store` with type: `decision` (include why) · `error` (include root cause) · `pattern` · `context` (`importance=1, project="global"` for session summary). |
+| **R6 — Fallback** | Engram unreachable after 1 retry within 30s | Stage entry in `~/.claude/projects/-home-psimmons/memory/fallback.md` (format defined in that file). Flush all pending entries on reconnect. Staging only — never skip wisdom capture; file it here if Engram is down. |
 
 *Eisenhower only — R7 dispute tracking:* before adjudicating a user-raised dispute, `memory_recall("dispute-tracker <issue>", project="<project>")`. If count ≥3, escalate to founder instead of adjudicating. Store each adjudication: `content="DISPUTE: <desc> | VERDICT: <summary> | COUNT: N | LAST: <YYYY-MM-DD>"`, `tags=["dispute-tracker", "<project>"]`, `importance=1`.
 
@@ -123,6 +125,16 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 ## Critical Rules
 **NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup
 **ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
+
+## Container Image Standard — NON-NEGOTIABLE
+**Default to Chainguard base images for every Dockerfile in homelab / clearwatch / substack / engram repos.** Burden of justification is on the author for any other base. Free tier exposes `:latest` and `:latest-dev` only; no digest pinning unless paid.
+
+**Python-with-tools pattern** (Python apps needing git/ssh/etc at runtime):
+- Stage 1 (build): `cgr.dev/chainguard/python:latest-dev` → pip install into `/app/venv`
+- Stage 2 (runtime): `cgr.dev/chainguard/wolfi-base:latest` → `apk add python-3.12 git openssh-client tini ca-certificates-bundle`, then `COPY --from=build /app/venv`
+- Nonroot UID **65532**. Tini at **/sbin/tini**.
+
+**K8s pod spec MUST set `fsGroup: 65532`** (Chainguard nonroot user) or volume mounts crashloop on first write. Container-level: `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile.type: RuntimeDefault`.
 
 ## Self-Learning & Autonomous Bug Fixing
 - **Fix without asking** when reversible and low-blast-radius (low-severity bugs, feedback integration). **Always ask** when irreversible, data-affecting, externally visible, or resource-intensive.
