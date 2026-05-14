@@ -24,6 +24,13 @@
 
 set -euo pipefail
 
+# Require bash >= 4.0 for associative arrays (declare -A).
+# macOS ships bash 3.2; run under /usr/bin/env bash from Homebrew if needed.
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+  echo "ERROR: bash 4.0+ required (found ${BASH_VERSION}). On macOS: brew install bash" >&2
+  exit 1
+fi
+
 PRECISION_HOST="${PRECISION_HOST:-precision.petersimmons.com}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=false
@@ -53,8 +60,10 @@ warn()  { echo "${YLW}[WARN]${RST} $*"; }
 fail()  { echo "${RED}[FAIL]${RST} $*" >&2; }
 
 # Unit file map: local-path → remote-path
+# NOTE: ollama-w6800.service deploys to mi50.conf — legacy remote filename retained for
+# systemd unit-state compatibility. Renaming the remote path requires disabling the old
+# unit first. See infra/precision-host/README.md for the full explanation.
 declare -A UNIT_MAP
-# ollama-w6800.service is a drop-in for ollama.service (legacy filename retained)
 UNIT_MAP["${SCRIPT_DIR}/ollama-w6800.service"]="/etc/systemd/system/ollama.service.d/mi50.conf"
 UNIT_MAP["${SCRIPT_DIR}/ollama-mi50.service"]="/etc/systemd/system/ollama-mi50.service"
 

@@ -21,7 +21,7 @@ ExecStart=/usr/bin/docker run --rm \
     -e OLLAMA_KEEP_ALIVE=-1 \
     -e OLLAMA_NUM_PARALLEL=1 \
     ollama/ollama:0.6.8-rocm
-ExecStop=/usr/bin/docker stop ollama-mi50
+ExecStop=-/usr/bin/docker stop ollama-mi50
 
 [Install]
 WantedBy=default.target
