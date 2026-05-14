@@ -169,7 +169,7 @@ type exploreMemFetcher struct {
 }
 
 func (f *exploreMemFetcher) FetchMemory(ctx context.Context, _ string, id string) (*types.Memory, error) {
-	return f.backend.GetMemory(ctx, id)
+	return f.backend.GetMemoryByID(ctx, id)
 }
 
 // parseExploreScope extracts the optional scope sub-object from MCP args.
