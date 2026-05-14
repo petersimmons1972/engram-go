@@ -212,3 +212,51 @@ func TestHandleMemoryRecall_EpisodeContextInjected(t *testing.T) {
 		t.Fatal("handleMemoryRecall returned nil result")
 	}
 }
+
+// ── Fix A: degraded.embed boolean/reason consistency (#634 fix#4) ────────────
+
+// TestDegradedMap_WhenNotDegraded_OmitsReasonKey asserts that when embedDegraded
+// is false the "reason" key is absent from the degraded map. This prevents
+// callers from seeing the inconsistent {"embed":false,"reason":"embed_timeout"}
+// combination that was produced before the fix.
+func TestDegradedMap_WhenNotDegraded_OmitsReasonKey(t *testing.T) {
+	m := degradedMap(false, "embed_timeout")
+	require.Equal(t, false, m["embed"])
+	_, hasReason := m["reason"]
+	require.False(t, hasReason, "reason key must be absent when embed is not degraded")
+}
+
+// TestDegradedMap_WhenDegraded_IncludesReasonKey asserts that when embedDegraded
+// is true the "reason" key is present and matches the supplied string.
+func TestDegradedMap_WhenDegraded_IncludesReasonKey(t *testing.T) {
+	m := degradedMap(true, "embed_timeout")
+	require.Equal(t, true, m["embed"])
+	reason, hasReason := m["reason"]
+	require.True(t, hasReason, "reason key must be present when embed is degraded")
+	require.Equal(t, "embed_timeout", reason)
+}
+
+// TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason exercises the full
+// results path of handleMemoryRecall with a healthy embedder (the noop pool
+// always succeeds). It asserts that degraded.reason is absent from the response.
+func TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "something",
+	}
+	cfg := testConfig() // EmbedderHealth returns ok=true with no reason
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	degradedRaw, hasDegraded := out["degraded"]
+	require.True(t, hasDegraded, "response must include a 'degraded' key")
+	degraded, ok := degradedRaw.(map[string]any)
+	require.True(t, ok, "degraded must be a map")
+	require.Equal(t, false, degraded["embed"])
+	_, hasReason := degraded["reason"]
+	require.False(t, hasReason, "reason must be absent when embedder is healthy (Fix A: #634 fix#4)")
+}
