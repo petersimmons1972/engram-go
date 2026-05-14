@@ -4,6 +4,16 @@ All notable changes to engram-go are documented here.
 
 ---
 
+## [Unreleased] — v3.3.0
+
+### Reliability (PR #611-fix2)
+
+- **Async embed on store (architecturally enforced):** `memory_store` and `memory_store_batch` return after the DB write completes (~10ms), regardless of embed pool state. Chunks are stored with NULL embeddings and the existing reembed worker backfills them asynchronously. New Prometheus counter `engram_store_embed_async_total` tracks call volume on the async path. Rollback: set `ENGRAM_STORE_EMBED_MODE=sync` to restore inline embedding without redeploying.
+- **Configurable recall embed timeout:** The bounded timeout on the embed query during recall is now configurable via `ENGRAM_EMBED_RECALL_TIMEOUT_MS` (default: 500ms). On expiry, recall falls through to BM25+recency immediately — degraded but fast. New Prometheus counter `engram_recall_embed_timeout_total` tracks how often this fallback fires. Timeout logged at INFO, not WARN, because this is expected behavior under saturation.
+- **Observability:** Two new Prometheus counters (`engram_store_embed_async_total`, `engram_recall_embed_timeout_total`) enable operators to distinguish async-store throughput from recall-embed pressure in dashboards.
+
+---
+
 ## [Unreleased] — v3.2.0
 
 ### Security (PR #594)
