@@ -74,7 +74,7 @@ func TestRecallEmbedTimeout_ShortBudget(t *testing.T) {
 	proj := uniqueProject("embed-decouple-short-budget")
 	t.Setenv("ENGRAM_EMBED_RECALL_TIMEOUT_MS", "100")
 
-	blocker := &countingBlockingEmbedder{dims: 768}
+	blocker := &countingBlockingEmbedder{dims: 1024}
 	eng := newEngineWithEmbedderAndDSN(t, proj, blocker)
 
 	parentCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -105,7 +105,7 @@ func TestStoreEmbedMode_Sync(t *testing.T) {
 	proj := uniqueProject("embed-decouple-sync")
 	t.Setenv("ENGRAM_STORE_EMBED_MODE", "sync")
 
-	counter := &syncCountingEmbedder{dims: 4}
+	counter := &syncCountingEmbedder{dims: 1024}
 	eng := newEngineWithEmbedderAndDSN(t, proj, counter)
 
 	m := &types.Memory{
@@ -129,7 +129,7 @@ func TestStoreEmbedMode_Async(t *testing.T) {
 	proj := uniqueProject("embed-decouple-async")
 	t.Setenv("ENGRAM_STORE_EMBED_MODE", "async")
 
-	counter := &syncCountingEmbedder{dims: 4}
+	counter := &syncCountingEmbedder{dims: 1024}
 	eng := newEngineWithEmbedderAndDSN(t, proj, counter)
 
 	m := &types.Memory{
