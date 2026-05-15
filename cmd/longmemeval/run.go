@@ -21,7 +21,7 @@ var temporalInterrogativeRe = regexp.MustCompile(
 )
 
 const recallTopK = 100
-const contextTopK = 20
+const contextTopK = 40
 
 func runRun(cfg *Config) {
 	items := loadItems(cfg.DataFile)
@@ -97,11 +97,17 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 
 		entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
 		out <- entry
-		log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+		if entry.Status == "error" {
+			log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+		} else {
+			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+		}
 
 		if !cfg.NoCleanup {
 			if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
-				log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+				if !longmemeval.IsStaleSessionError(err) {
+					log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+				}
 			}
 		}
 	}

@@ -13,7 +13,8 @@ import (
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
-const generateTimeout = 180 * time.Second
+// generateTimeout is the hard cap for one OAI generation call. 1200s needed for 120B vLLM on 40-block contexts.
+const generateTimeout = 1200 * time.Second
 
 // GenerateForType generates an answer using Sonnet for all question types.
 func GenerateForType(ctx context.Context, prompt, questionType string, retries int) (string, error) {
@@ -126,17 +127,21 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	defer cancel()
 
 	type oaiMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role      string `json:"role"`
+		Content   string `json:"content"`
+		Reasoning string `json:"reasoning"`
 	}
 	reqBody, err := json.Marshal(struct {
 		Model     string       `json:"model"`
 		Messages  []oaiMessage `json:"messages"`
 		MaxTokens int          `json:"max_tokens"`
 	}{
-		Model:     model,
-		Messages:  []oaiMessage{{Role: "user", Content: prompt}},
-		MaxTokens: 256,
+		Model: model,
+		Messages: []oaiMessage{
+			{Role: "system", Content: "You are a helpful assistant. Answer the question directly and concisely. Do not show your reasoning or thinking process. Give only the final answer."},
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens: 1024,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
@@ -173,7 +178,18 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	if len(oaiResp.Choices) == 0 {
 		return "", fmt.Errorf("OAI response: no choices returned")
 	}
-	return strings.TrimSpace(oaiResp.Choices[0].Message.Content), nil
+	content := strings.TrimSpace(oaiResp.Choices[0].Message.Content)
+	if content == "" {
+		content = strings.TrimSpace(oaiResp.Choices[0].Message.Reasoning)
+	}
+	if content == "" {
+		return "", fmt.Errorf("OAI response: both content and reasoning fields are empty")
+	}
+	// Strip <think>...</think> reasoning block if present; keep only the final answer.
+	if idx := strings.LastIndex(content, "</think>"); idx != -1 {
+		content = strings.TrimSpace(content[idx+len("</think>"):])
+	}
+	return content, nil
 }
 
 // ScoreOAI is like Score but uses the OpenAI-compatible endpoint.

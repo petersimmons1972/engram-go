@@ -506,3 +506,13 @@ func sanitizeControlChars(s string) string {
 	}
 	return sb.String()
 }
+
+// IsStaleSessionError returns true when err represents an MCP session that
+// has already expired server-side. The Engram MCP server drops SSE sessions
+// after a timeout; cleanup calls on expired sessions are not an error.
+func IsStaleSessionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "invalid session id")
+}
