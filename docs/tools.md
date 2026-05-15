@@ -12,7 +12,7 @@ Three calls answer that — one to recall recent context, one targeted at the wo
 
 ## MCP Tool Profiles
 
-By default, engram exposes **20 core tools** in its MCP surface. An additional 23 maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`.
+By default, engram exposes **20 core tools** in its MCP surface. An additional 29 maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`.
 
 ### Hidden Tools (callable but not listed)
 
