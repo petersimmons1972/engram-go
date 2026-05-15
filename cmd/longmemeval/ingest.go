@@ -1,0 +1,144 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/petersimmons1972/engram/internal/longmemeval"
+)
+
+func runIngest(cfg *Config) {
+	items := loadItems(cfg.DataFile)
+	ckptPath := cfg.OutDir + "/checkpoint-ingest.jsonl"
+
+	skip, err := longmemeval.ReadSkipSet(ckptPath)
+	if err != nil {
+		log.Fatalf("read ingest checkpoint: %v", err)
+	}
+	log.Printf("ingest: %d items loaded, %d already done", len(items), len(skip))
+
+	ckptCh := make(chan longmemeval.IngestEntry, cfg.Workers*2)
+	var wgWriter sync.WaitGroup
+	wgWriter.Add(1)
+	go func() {
+		defer wgWriter.Done()
+		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+	}()
+
+	work := make(chan longmemeval.Item, len(items))
+	for _, item := range items {
+		if !skip[item.QuestionID] {
+			work <- item
+		}
+	}
+	close(work)
+
+	var wg sync.WaitGroup
+	for i := 0; i < cfg.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ingestWorker(cfg, work, ckptCh)
+		}()
+	}
+	wg.Wait()
+	close(ckptCh)
+	wgWriter.Wait()
+
+	log.Printf("ingest: complete")
+}
+
+func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmemeval.IngestEntry) {
+	ctx := context.Background()
+	restClient := longmemeval.NewRestClient(cfg.ServerURL, cfg.APIKey)
+	for item := range work {
+		entry := ingestOne(ctx, cfg, restClient, item)
+		out <- entry
+		log.Printf("ingest [%s] project=%s sessions=%d status=%s",
+			item.QuestionID, entry.Project, entry.SessionCount, entry.Status)
+	}
+}
+
+func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestClient, item longmemeval.Item) (entry longmemeval.IngestEntry) {
+	defer func() {
+		if r := recover(); r != nil {
+			entry = longmemeval.IngestEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("panic: %v", r),
+			}
+		}
+	}()
+
+	project := projectName(cfg.RunID, item.QuestionID)
+
+	// Collect non-empty sessions with their IDs.
+	type sessionEntry struct {
+		sessionID string
+		item      longmemeval.BatchItem
+	}
+	var sessions []sessionEntry
+	for i, session := range item.HaystackSessions {
+		if i >= len(item.HaystackSessionIDs) {
+			break
+		}
+		sessionID := item.HaystackSessionIDs[i]
+		content := longmemeval.SessionContent(session)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		// Prepend session date so the model can anchor relative-time questions.
+		tags := []string{"lme", "sid:" + sessionID}
+		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
+			content = "Session date: " + item.HaystackDates[i] + "\n" + content
+			tags = append(tags, "date:"+item.HaystackDates[i])
+		}
+		sessions = append(sessions, sessionEntry{
+			sessionID: sessionID,
+			item:      longmemeval.BatchItem{Content: content, Tags: tags},
+		})
+	}
+
+	memoryMap := make(map[string]string, len(sessions))
+	for i, s := range sessions {
+		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags)
+		if err != nil {
+			return longmemeval.IngestEntry{
+				QuestionID: item.QuestionID,
+				Project:    project,
+				Status:     "error",
+				Error:      fmt.Sprintf("quick-store offset %d: %v", i, err),
+			}
+		}
+		memoryMap[id] = s.sessionID
+	}
+
+	return longmemeval.IngestEntry{
+		QuestionID:   item.QuestionID,
+		Project:      project,
+		SessionCount: len(memoryMap),
+		MemoryMap:    memoryMap,
+		Status:       "done",
+	}
+}
+
+// loadItems parses the LongMemEval JSON file.
+func loadItems(path string) []longmemeval.Item {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("read data file %q: %v", path, err)
+	}
+	var items []longmemeval.Item
+	if err := json.Unmarshal(data, &items); err != nil {
+		log.Fatalf("parse data file: %v", err)
+	}
+	if len(items) == 0 {
+		log.Fatal("data file is empty")
+	}
+	return items
+}
