@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
+	"sort"
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -80,6 +83,11 @@ func TestReadOnlyToolAnnotations(t *testing.T) {
 // registered (callable via tools/call) but do not appear in the tools/list
 // response served to MCP clients. Hidden tools must stay absent so AI clients
 // don't load their descriptions into context unnecessarily.
+//
+// Correctness guarantee: this test fires a real tools/list JSON-RPC request
+// through srv.mcp.HandleMessage so the registered AfterListTools hook runs.
+// If the AddAfterListTools call in registerTools() is deleted, the hidden tools
+// will reappear in the response and this test will fail.
 func TestHiddenToolsAbsentFromList(t *testing.T) {
 	srv := &Server{
 		cfg:             Config{},
@@ -100,20 +108,75 @@ func TestHiddenToolsAbsentFromList(t *testing.T) {
 		}
 	}
 
-	// Build the filtered visible list by applying hiddenToolNames() — this
-	// mirrors what the AfterListTools hook does at runtime.
-	hidden := hiddenToolNames()
-	visibleNames := make(map[string]bool)
-	for name := range annotations {
-		if !hidden[name] {
-			visibleNames[name] = true
-		}
+	// Fire a real tools/list request through the mcp-go machinery so the
+	// AfterListTools hook executes on the actual result set. This is the
+	// load-bearing assertion: if AddAfterListTools were removed from
+	// registerTools(), the hidden tools would appear here and the test fails.
+	resp := srv.mcp.HandleMessage(context.Background(), json.RawMessage(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list"
+	}`))
+
+	jsonResp, ok := resp.(mcpgo.JSONRPCResponse)
+	if !ok {
+		t.Fatalf("tools/list response is not a JSONRPCResponse: %T", resp)
+	}
+	result, ok := jsonResp.Result.(mcpgo.ListToolsResult)
+	if !ok {
+		t.Fatalf("tools/list result is not a ListToolsResult: %T", jsonResp.Result)
 	}
 
-	// No hidden tool may appear in the visible set.
-	for name := range hidden {
+	// Build the set of visible tool names from the hook-filtered response.
+	visibleNames := make(map[string]bool, len(result.Tools))
+	for _, tool := range result.Tools {
+		visibleNames[tool.Name] = true
+	}
+
+	// No hidden tool may appear in the hook-filtered visible set.
+	for name := range hiddenToolNames() {
 		if visibleNames[name] {
-			t.Errorf("hidden tool %q appears in the visible tool list — it should be suppressed from tools/list", name)
+			t.Errorf("hidden tool %q appears in tools/list response — AfterListTools hook failed to suppress it", name)
 		}
+	}
+}
+
+// TestReadOnlyHiddenOverlapIsStable guards the known intersection of
+// readOnlyToolNames() and hiddenToolNames(). Both maps are correct in
+// isolation; this test catches accidental divergence in the overlap and
+// forces a conscious decision when the intersection changes.
+func TestReadOnlyHiddenOverlapIsStable(t *testing.T) {
+	readOnly := readOnlyToolNames()
+	hidden := hiddenToolNames()
+
+	var overlap []string
+	for name := range readOnly {
+		if hidden[name] {
+			overlap = append(overlap, name)
+		}
+	}
+	sort.Strings(overlap)
+
+	// Known stable overlap as of feat/mcp-slim-profile.
+	// When this list changes, update it deliberately — don't just fix the test.
+	want := []string{
+		"memory_aggregate",
+		"memory_audit_compare",
+		"memory_audit_list_queries",
+		"memory_audit_run",
+		"memory_diagnose",
+		"memory_embedding_eval",
+		"memory_episode_list",
+		"memory_episode_recall",
+		"memory_expand",
+		"memory_export_all",
+		"memory_ingest_status",
+		"memory_models",
+		"memory_verify",
+		"memory_weight_history",
+	}
+
+	if !reflect.DeepEqual(overlap, want) {
+		t.Errorf("readOnly∩hidden overlap changed.\ngot:  %v\nwant: %v\n\nIf intentional, update the want list above.", overlap, want)
 	}
 }

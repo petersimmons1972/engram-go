@@ -277,6 +277,10 @@ func readOnlyToolNames() map[string]bool {
 // lean for AI clients while preserving full operability for direct HTTP callers
 // and bundled skills. Maintenance tasks, ingest, audit, and embedder tools
 // are hidden by default; use the bundled skills in skills/ to invoke them.
+//
+// Some entries also appear in readOnlyToolNames() — a tool can be both
+// read-only and hidden. The AfterListTools hook in registerTools() enforces
+// the suppression from tools/list.
 func hiddenToolNames() map[string]bool {
 	return map[string]bool{
 		// Audit & weight tuning
@@ -1364,7 +1368,7 @@ func (s *Server) registerTools() {
 	// via tools/call for bundled skills and direct HTTP access.
 	hidden := hiddenToolNames()
 	s.mcp.GetHooks().AddAfterListTools(func(_ context.Context, _ any, _ *mcpgo.ListToolsRequest, result *mcpgo.ListToolsResult) {
-		filtered := result.Tools[:0]
+		filtered := result.Tools[:0] // reuse backing array; filter moves elements left, safe
 		for _, t := range result.Tools {
 			if !hidden[t.Name] {
 				filtered = append(filtered, t)
