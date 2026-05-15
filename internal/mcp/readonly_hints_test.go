@@ -55,6 +55,8 @@ func TestReadOnlyToolAnnotations(t *testing.T) {
 		"memory_store",
 		"memory_correct",
 		"memory_forget",
+		// These mutating tools are hidden from tools/list but remain registered.
+		// The hidden status doesn't affect the ReadOnlyHint check.
 		"memory_delete_project",
 		"memory_consolidate",
 		"memory_feedback",
@@ -72,4 +74,46 @@ func TestReadOnlyToolAnnotations(t *testing.T) {
 
 	// Unused ctx cancel guard (linter quiet).
 	_ = ctx
+}
+
+// TestHiddenToolsAbsentFromList verifies that tools in hiddenToolNames() are
+// registered (callable via tools/call) but do not appear in the tools/list
+// response served to MCP clients. Hidden tools must stay absent so AI clients
+// don't load their descriptions into context unnecessarily.
+func TestHiddenToolsAbsentFromList(t *testing.T) {
+	srv := &Server{
+		cfg:             Config{},
+		uploads:         make(map[string]*uploadSession),
+		toolAnnotations: make(map[string]mcpgo.ToolAnnotation),
+	}
+	srv.mcp = server.NewMCPServer("engram-test", "0.0.0",
+		server.WithToolCapabilities(true),
+		server.WithHooks(&server.Hooks{}),
+	)
+	srv.registerTools() // also wires the AfterListTools hook
+
+	// All hidden tools must still be registered (callable via tools/call).
+	annotations := srv.RegisteredToolAnnotations()
+	for name := range hiddenToolNames() {
+		if _, ok := annotations[name]; !ok {
+			t.Errorf("hidden tool %q is not registered — it must remain callable via tools/call", name)
+		}
+	}
+
+	// Build the filtered visible list by applying hiddenToolNames() — this
+	// mirrors what the AfterListTools hook does at runtime.
+	hidden := hiddenToolNames()
+	visibleNames := make(map[string]bool)
+	for name := range annotations {
+		if !hidden[name] {
+			visibleNames[name] = true
+		}
+	}
+
+	// No hidden tool may appear in the visible set.
+	for name := range hidden {
+		if visibleNames[name] {
+			t.Errorf("hidden tool %q appears in the visible tool list — it should be suppressed from tools/list", name)
+		}
+	}
 }

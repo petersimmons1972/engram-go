@@ -272,6 +272,51 @@ func readOnlyToolNames() map[string]bool {
 	}
 }
 
+// hiddenToolNames returns tools that remain registered (callable via tools/call)
+// but are suppressed from the tools/list response. This keeps the MCP surface
+// lean for AI clients while preserving full operability for direct HTTP callers
+// and bundled skills. Maintenance tasks, ingest, audit, and embedder tools
+// are hidden by default; use the bundled skills in skills/ to invoke them.
+func hiddenToolNames() map[string]bool {
+	return map[string]bool{
+		// Audit & weight tuning
+		"memory_audit_add_query":        true,
+		"memory_audit_list_queries":      true,
+		"memory_audit_deactivate_query":  true,
+		"memory_audit_run":               true,
+		"memory_audit_compare":           true,
+		"memory_weight_history":          true,
+		// Embedder management
+		"memory_migrate_embedder":        true,
+		"memory_embedding_eval":          true,
+		"memory_models":                  true,
+		// Consolidation & maintenance
+		"memory_consolidate":             true,
+		"memory_sleep":                   true,
+		"memory_summarize":               true,
+		"memory_resummarize":             true,
+		// Episode management
+		"memory_episode_start":           true,
+		"memory_episode_end":             true,
+		"memory_episode_list":            true,
+		"memory_episode_recall":          true,
+		// Ingest & export
+		"memory_ingest":                  true,
+		"memory_import_claudemd":         true,
+		"memory_ingest_document_stream":  true,
+		"memory_ingest_export":           true,
+		"memory_ingest_status":           true,
+		"memory_export_all":              true,
+		// Operational / rarely needed
+		"memory_expand":                  true,
+		"memory_adopt":                   true,
+		"memory_aggregate":               true,
+		"memory_diagnose":                true,
+		"memory_verify":                  true,
+		"memory_delete_project":          true,
+	}
+}
+
 // RegisteredToolAnnotations returns a copy of the ToolAnnotation that was
 // applied to each registered tool. Intended for tests and for the startup
 // banner. The returned map is safe to mutate.
@@ -1314,6 +1359,19 @@ func (s *Server) registerTools() {
 			"Answer a question using stored memories as context. Returns answer + numbered citations.",
 			handleMemoryAsk)
 	}
+
+	// Hide maintenance/operational tools from tools/list. They remain callable
+	// via tools/call for bundled skills and direct HTTP access.
+	hidden := hiddenToolNames()
+	s.mcp.GetHooks().AddAfterListTools(func(_ context.Context, _ any, _ *mcpgo.ListToolsRequest, result *mcpgo.ListToolsResult) {
+		filtered := result.Tools[:0]
+		for _, t := range result.Tools {
+			if !hidden[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		result.Tools = filtered
+	})
 }
 
 // handleHealth checks PostgreSQL and Ollama reachability and returns a structured
