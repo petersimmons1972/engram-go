@@ -10,6 +10,48 @@ Three calls answer that — one to recall recent context, one targeted at the wo
 
 ---
 
+## MCP Tool Profiles
+
+By default, engram exposes **20 core tools** in its MCP surface. An additional 23 maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`.
+
+### Hidden Tools (callable but not listed)
+
+These tools are best accessed via the bundled skills (see [Bundled Skills](#bundled-skills)):
+
+| Group | Tools |
+|-------|-------|
+| Audit | memory_audit_add_query, memory_audit_list_queries, memory_audit_deactivate_query, memory_audit_run, memory_audit_compare, memory_weight_history |
+| Embedder | memory_migrate_embedder, memory_embedding_eval, memory_models |
+| Consolidation | memory_consolidate, memory_sleep, memory_summarize, memory_resummarize |
+| Episodes | memory_episode_start, memory_episode_end, memory_episode_list, memory_episode_recall |
+| Ingest/Export | memory_ingest, memory_import_claudemd, memory_ingest_document_stream, memory_ingest_export, memory_ingest_status, memory_export_all |
+| Other | memory_expand, memory_adopt, memory_aggregate, memory_diagnose, memory_verify, memory_delete_project |
+
+To call a hidden tool directly via HTTP:
+
+```bash
+xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
+  "Authorization: Bearer $ENGRAM_API_KEY" \
+  jsonrpc=2.0 id:=1 method=tools/call \
+  params:='{"name":"memory_consolidate","arguments":{"project":"default"}}'
+```
+
+### Bundled Skills
+
+Install the bundled Claude Code skills for progressive disclosure of maintenance operations:
+
+```bash
+make install-skills
+```
+
+Available skills after install:
+- `/engram-consolidate` — memory consolidation and maintenance
+- `/engram-episodes` — session/episode tracking  
+- `/engram-ingest` — import/export operations
+- `/engram-diagnose` — health and analytics
+
+---
+
 ## The Session Pattern
 
 Every session has three moments where Engram pays for itself.

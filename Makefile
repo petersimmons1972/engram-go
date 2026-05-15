@@ -2,7 +2,7 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills
 
 ## Show available make targets
 help:
@@ -122,6 +122,12 @@ test-explore-soak:
 ## Pass NO_REMOTE=1 to skip SSH probes: make status NO_REMOTE=1
 status:
 	@bash infra/status.sh $(if $(NO_REMOTE),--no-remote,)
+
+## Install bundled Claude Code skills to ~/.claude/skills/
+install-skills:
+	@mkdir -p ~/.claude/skills
+	@cp -r skills/* ~/.claude/skills/
+	@echo "Installed engram skills to ~/.claude/skills/"
 
 .PHONY: eval
 ## Run retrieval evaluation harness

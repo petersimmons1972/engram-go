@@ -142,6 +142,28 @@ When you see 38 tools, you are done. The server is running, the embedding model 
 
 ---
 
+## Step 6: Optional — Install Bundled Skills
+
+Engram includes four Claude Code skills for maintenance, consolidation, and diagnostics operations. These skills wrap advanced tools and provide a user-friendly interface to operations that are powerful but rarely needed during regular sessions.
+
+To install the bundled skills:
+
+```bash
+make install-skills
+```
+
+This copies four skill directories to `~/.claude/skills/`:
+- `/engram-consolidate` — memory consolidation and decay audits
+- `/engram-episodes` — session and episode management
+- `/engram-ingest` — import and export operations
+- `/engram-diagnose` — health checks and analytics
+
+After install, the skills appear in your Claude Code command palette (type `/` to see them). See [MCP Tool Profiles](tools.md#mcp-tool-profiles) for details on what each skill does and why you might need it.
+
+For most work, you do not need these skills — the core 38 tools are sufficient. Install them if you plan to manage consolidation, ingest large document sets, or run maintenance operations.
+
+---
+
 ## Configuration Reference
 
 Most people never touch these. `make init` handles the two required values, and the defaults for everything else are sensible. But here is the full picture for when you need it:
