@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -240,10 +241,14 @@ func TestScoreOAI_HTTPError_ReturnsPartiallyCorrect(t *testing.T) {
 	}
 }
 
-// TestGenerate_RequiresClaude is skipped in short mode.
+// TestGenerate_RequiresClaude is skipped in short mode or when the `claude`
+// CLI binary is not available on PATH (e.g. on GitHub Actions runners).
 func TestGenerate_RequiresClaude(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude CLI not in PATH")
 	}
 	ctx := context.Background()
 	out, err := longmemeval.Generate(ctx, "Reply with only the word: HELLO", 1)

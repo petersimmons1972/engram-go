@@ -35,7 +35,7 @@ func WriteCheckpoint[T any](path string, ch <-chan T) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	for v := range ch {
@@ -52,7 +52,7 @@ func readJSONL[T any](path string) ([]T, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []T
 	s := bufio.NewScanner(f)
 	for s.Scan() {

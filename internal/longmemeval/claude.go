@@ -159,7 +159,7 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 		}
 		return "", fmt.Errorf("OAI request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)

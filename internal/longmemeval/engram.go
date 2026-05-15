@@ -426,7 +426,7 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			Error string `json:"error"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
 			continue
@@ -466,7 +466,7 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		IDs []string `json:"ids"`

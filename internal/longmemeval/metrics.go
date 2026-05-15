@@ -1,7 +1,5 @@
 package longmemeval
 
-import "strings"
-
 func RecallAny(retrieved []string, relevant map[string]bool, k int) float64 {
 	if len(retrieved) == 0 || len(relevant) == 0 || k <= 0 {
 		return 0
@@ -72,9 +70,5 @@ func ndcgAny(retrieved []string, relevant map[string]bool, k int) float64 {
 		}
 	}
 	return 0
-}
-
-func normalize(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
 }
 
