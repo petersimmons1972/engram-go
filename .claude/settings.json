@@ -20,6 +20,7 @@
       "mcp__claude_ai_Gmail__*",
       "mcp__claude_ai_Google_Calendar__*",
       "mcp__engram__*",
+      "mcp__agentgateway__*",
       "Agent",
       "Skill(schedule)",
       "Skill(linkedin-content)",
@@ -69,7 +70,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
   "hooks": {
     "PostToolUse": [
       {
@@ -157,12 +157,6 @@
             "command": "~/.claude/hooks/engram-auth-check.sh",
             "timeout": 5,
             "statusMessage": "Checking Engram auth"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/engram-task-recall.sh",
-            "timeout": 5,
-            "statusMessage": "Recalling relevant context"
           },
           {
             "type": "command",
@@ -254,7 +248,7 @@
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
             "timeout": 15,
-            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
+            "statusMessage": "Syncing armies profiles \u2192 ~/.claude/agents/"
           },
           {
             "type": "command",
@@ -283,6 +277,7 @@
   "terminalProgressBarEnabled": true,
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
+  "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "agentPushNotifEnabled": true
+  "model": "sonnet"
 }
