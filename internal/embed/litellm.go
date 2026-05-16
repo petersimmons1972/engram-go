@@ -368,3 +368,71 @@ func (c *LiteLLMClient) Probe(ctx context.Context) (ok bool, reason string) {
 	}
 	return false, fmt.Sprintf("embed_probe: %v", err)
 }
+
+// InfinityModelStats holds per-model GPU queue statistics from the Infinity
+// /v1/models response. These fields are Infinity-specific and absent from
+// standard OpenAI-compatible servers (zero value is safe: QueueAbsolute == 0
+// means the hung-state guard never fires on non-Infinity responses).
+type InfinityModelStats struct {
+	QueueFraction  float64 `json:"queue_fraction"`
+	QueueAbsolute  int     `json:"queue_absolute"`
+	ResultsPending int     `json:"results_pending"`
+	BatchSize      int     `json:"batch_size"`
+}
+
+// infinityModelsResponse is the JSON shape of GET /v1/models from Infinity.
+type infinityModelsResponse struct {
+	Data []struct {
+		ID    string             `json:"id"`
+		Stats InfinityModelStats `json:"stats"`
+	} `json:"data"`
+}
+
+// InfinityQueueCheck probes GET /v1/models at baseURL and detects the Infinity
+// GPU thread deadlock signature:
+//
+//	queue_fraction > 1.0  — queue is over capacity
+//	results_pending == 0  — GPU inference thread has stopped processing
+//	queue_absolute > 0    — work is enqueued (guards against zero-value structs)
+//
+// Returns (false, reason) when the hung state is detected.
+// Returns (true, "") for healthy queues and for non-Infinity servers that return
+// a standard OpenAI /v1/models payload without the Infinity "stats" field.
+func InfinityQueueCheck(ctx context.Context, httpClient *http.Client, baseURL string) (ok bool, reason string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/models", nil)
+	if err != nil {
+		return false, fmt.Sprintf("infinity_queue_check: build request: %v", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("infinity_queue_check: request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("infinity_queue_check: HTTP %d", resp.StatusCode)
+	}
+
+	var modelsResp infinityModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		// Non-Infinity server or unexpected body — treat as healthy.
+		return true, ""
+	}
+
+	for _, m := range modelsResp.Data {
+		s := m.Stats
+		// All three conditions required to avoid false positives:
+		// - QueueFraction > 1 alone can occur during normal burst load
+		// - ResultsPending == 0 with QueueFraction > 1 is the definitive hang
+		// - QueueAbsolute > 0 guards against zero-value structs (non-Infinity servers)
+		if s.QueueFraction > 1.0 && s.ResultsPending == 0 && s.QueueAbsolute > 0 {
+			return false, fmt.Sprintf(
+				"infinity_queue_check: GPU thread hung (model=%s queue_fraction=%.4f results_pending=%d queue_absolute=%d)",
+				m.ID, s.QueueFraction, s.ResultsPending, s.QueueAbsolute,
+			)
+		}
+	}
+
+	return true, ""
+}

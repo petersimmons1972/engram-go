@@ -1415,30 +1415,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		pgStatus = "ok"
 	}
 
-	// Probe LiteLLM via GET /v1/models (OpenAI-compatible, available on all deployments).
+	// Probe LiteLLM via InfinityQueueCheck: GETs /v1/models and parses Infinity
+	// queue stats to detect GPU thread deadlock (queue_fraction > 1.0,
+	// results_pending == 0). Subsumes the former status-code-only check (#649).
 	embedLiveOK := false
 	if s.cfg.LiteLLMURL != "" {
 		embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer embedCancel()
-		modelsURL := strings.TrimRight(s.cfg.LiteLLMURL, "/") + "/v1/models"
-		req, err := http.NewRequestWithContext(embedCtx, http.MethodGet, modelsURL, nil)
-		if err == nil {
-			resp, herr := http.DefaultClient.Do(req)
-			if herr != nil {
-				ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
-				slog.Warn("health: litellm probe failed", "err", herr)
-			} else {
-				_ = resp.Body.Close()
-				if resp.StatusCode >= 500 {
-					ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
-					slog.Warn("health: litellm returned server error", "status", resp.StatusCode)
-				} else {
-					embedLiveOK = true
-				}
-			}
-		} else {
+		probeOK, probeReason := embed.InfinityQueueCheck(embedCtx, http.DefaultClient, s.cfg.LiteLLMURL)
+		if !probeOK {
 			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
-			slog.Warn("health: could not build litellm probe request", "err", err)
+			slog.Warn("health: litellm probe failed", "reason", probeReason)
+		} else {
+			embedLiveOK = true
 		}
 
 		// Check the current embedding degradation status. Update the atomic flag
