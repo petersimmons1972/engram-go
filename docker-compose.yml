@@ -161,13 +161,15 @@ services:
     <<: *reembed-base
     container_name: engram-reembed-w6800
     # W6800 on precision — GPU 0, ~32 GB VRAM
+    # Use REEMBED_W6800_SUB_BATCH to override global ENGRAM_EMBED_SUB_BATCH.
+    # Default 32 (not 100) — W6800 OOMs with sub_batch=100 at concurrency≥4.
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
       - LITELLM_URL=${REEMBED_W6800_URL:-http://precision.petersimmons.com:8005}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}
-      - ENGRAM_EMBED_SUB_BATCH=${ENGRAM_EMBED_SUB_BATCH:-100}
+      - ENGRAM_EMBED_SUB_BATCH=${REEMBED_W6800_SUB_BATCH:-32}
       - ENGRAM_REEMBED_BATCH_SIZE=${ENGRAM_REEMBED_BATCH_SIZE:-2000}
       - ENGRAM_REEMBED_INTERVAL=${ENGRAM_REEMBED_INTERVAL:-10ms}
       - ENGRAM_REEMBED_CONCURRENCY_MIN=${REEMBED_W6800_CONCURRENCY_MIN:-1}
