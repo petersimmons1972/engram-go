@@ -205,11 +205,35 @@ This creates an implicit 50ms × contextTopK serial delay per question. Future o
 - Memory requirement: ~22GB VRAM (FP4 quantized)
 - With 32 concurrent workers: queue depth increases, but GPU processes 1 request at a time due to large prompt size
 
-### Initial Results
+### Final Results — Full 500-Question Run (run c3d9f1, 2026-05-16)
 
-- **Score on first 30 questions (broken config)**: ~32% correct
-- **Score after config fixes** (`enable_thinking: false`, `contextTopK=8`, `max_tokens=2048`): Specific factual answers emerging from model output
-- **Final score for full 500q run**: Pending completion
+| Question Type | n | Correct | Partial | Effective |
+|---|---|---|---|---|
+| single-session-assistant | 56 | 46 (82.1%) | 1 | **83.9%** |
+| single-session-user | 70 | 41 (58.6%) | 1 | **60.0%** |
+| knowledge-update | 78 | 35 (44.9%) | 1 | **46.2%** |
+| single-session-preference | 30 | 0 (0.0%) | 7 | **23.3%** |
+| multi-session | 133 | 25 (18.8%) | 1 | **19.5%** |
+| temporal-reasoning | 133 | 25 (18.8%) | 0 | **18.8%** |
+| **Total** | **500** | **172 (34.4%)** | **11 (2.2%)** | **36.6%** |
+
+**Broken config baseline**: ~32% — but nearly all "Not answerable" abstentions, not real recall.
+
+### Failure Mode Analysis
+
+**single-session-preference (0% exact / 23% partial)**: Model treats expressed user preferences as unanswerable. Returns "Not answerable" when context contains "I prefer X" because it expects stated facts, not conversational preferences. Fix: instruct the generation prompt that preferences inferred from conversational context are valid answers.
+
+**multi-session (19.5%) and temporal-reasoning (18.8%)**: Both require synthesising state across multiple sessions. Vector recall returns high-similarity individual chunks but 8 independent blocks cannot support "what changed between A and B" reasoning. Fix: two-pass recall with timeline-ordered chunks, or explicit "compare T1 vs T2" prompt framing.
+
+**knowledge-update (46.2%)**: Recall finds the most recent fact but model occasionally returns the outdated value. Recency not encoded in retrieval prompt.
+
+### What Works
+
+- **Direct factual recall from single sessions**: 83.9% — the core RAG loop is sound
+- Numeric quantities, names, specific items with exact matches in top-8 recall: high accuracy
+- contextTopK=8 sufficient for single-session question types
+
+
 
 ---
 
