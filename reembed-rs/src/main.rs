@@ -126,7 +126,7 @@ async fn run_batch(
     http: &HttpClient,
     cfg: &Config,
     concurrency: usize,
-) -> anyhow::Result<(usize, Duration)> {
+) -> anyhow::Result<(usize, usize, Duration)> {
     let start = std::time::Instant::now();
 
     // Claim a batch inside a transaction and commit immediately so the
@@ -150,7 +150,7 @@ async fn run_batch(
     tx.commit().await.context("commit claim tx")?;
 
     if rows.is_empty() {
-        return Ok((0, start.elapsed()));
+        return Ok((0, 0, start.elapsed()));
     }
 
     let n = rows.len();
@@ -158,6 +158,7 @@ async fn run_batch(
     tracing::debug!(count = n, concurrency, "processing batch");
 
     let sem = Arc::new(Semaphore::new(concurrency));
+    let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut handles = Vec::new();
 
     for sub_batch in rows.chunks(cfg.embed_sub_batch) {
@@ -171,6 +172,7 @@ async fn run_batch(
         let timeout = cfg.embed_timeout;
         let max_chars = cfg.max_chunk_chars;
         let chunks: Vec<PendingChunk> = sub_batch.to_vec();
+        let failed_count = failed_count.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
@@ -199,10 +201,12 @@ async fn run_batch(
             let vecs = match embed_result {
                 Err(_) => {
                     warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), "embed sub-batch timeout");
+                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
                 Ok(Err(e)) => {
                     warn!(count = chunks.len(), embed_ms = t_embed.as_millis(), err = %e, "embed sub-batch failed");
+                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
                 Ok(Ok(v)) => v,
@@ -236,14 +240,16 @@ async fn run_batch(
     }
 
     let total = start.elapsed();
+    let n_failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
     tracing::info!(
         chunks = n,
+        failed_sub_batches = n_failed,
         select_ms = t_select.as_millis(),
         total_ms = total.as_millis(),
         "batch complete"
     );
 
-    Ok((n, total))
+    Ok((n, n_failed, total))
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -325,15 +331,15 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         match run_batch(&pool, &http, &cfg, controller.current).await {
             Err(e) => {
                 error!(err = %e, "batch error");
-                // Treat batch error as high-latency to back off the semaphore.
-                controller.update(1, Duration::from_millis(cfg.latency_high_ms * 2));
+                // Treat batch error as a failure to back off immediately.
+                controller.update(1, 1, Duration::from_millis(cfg.latency_high_ms * 2));
                 backoff = (backoff * 2).min(max_backoff);
             }
-            Ok((0, _)) => {
+            Ok((0, _, _)) => {
                 backoff = (backoff * 2).min(max_backoff);
             }
-            Ok((n, elapsed)) => {
-                controller.update(n, elapsed);
+            Ok((n, n_failed, elapsed)) => {
+                controller.update(n, n_failed, elapsed);
                 if controller.current != prev_concurrency {
                     let per_chunk_ms = elapsed.as_millis() as u64 / n as u64;
                     let reason = if controller.current < prev_concurrency {
@@ -463,7 +469,7 @@ impl AdaptiveConcurrency {
         ramp_after: usize,
     ) -> Self {
         Self {
-            current: max,
+            current: min, // slow-start: earn concurrency, don't assume it
             min,
             max,
             latency_high_ms,
@@ -473,8 +479,21 @@ impl AdaptiveConcurrency {
         }
     }
 
-    pub fn update(&mut self, chunks: usize, elapsed: Duration) {
+    /// Update the concurrency level based on observed batch results.
+    ///
+    /// `failed_sub_batches` counts sub-batches that returned an error (including
+    /// HTTP 429). Any failure triggers an immediate halve regardless of latency,
+    /// preventing the controller from misreading fast 429 rejections as healthy
+    /// throughput. Recovery is gradual: `ramp_after` consecutive clean batches
+    /// are required before concurrency increments by one.
+    pub fn update(&mut self, chunks: usize, failed_sub_batches: usize, elapsed: Duration) {
         if chunks == 0 {
+            return;
+        }
+        if failed_sub_batches > 0 {
+            // Any failure (429, timeout, error) → halve immediately, reset streak.
+            self.current = (self.current / 2).max(self.min);
+            self.clean_count = 0;
             return;
         }
         let per_chunk_ms = (elapsed.as_millis() / chunks as u128) as u64;
@@ -546,94 +565,153 @@ mod adaptive_concurrency_tests {
         AdaptiveConcurrency::new(min, max, 2000, 400, 3)
     }
 
+    // ── Slow-start: begins at min, not max ────────────────────────────────────
+
     #[test]
-    fn initial_current_equals_max() {
+    fn initial_current_equals_min() {
         let c = controller(1, 8);
-        assert_eq!(c.current, 8);
+        assert_eq!(c.current, 1);
     }
+
+    // ── 429 / failure backpressure ────────────────────────────────────────────
+
+    #[test]
+    fn any_failed_sub_batches_halves_concurrency() {
+        let mut c = controller(1, 8);
+        // Ramp to 4 via successive clean batches, then hit a 429.
+        c.update(10, 0, Duration::from_millis(1_000)); // clean — ramp to 2
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 3 → 2
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000)); // → 3
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000)); // → 4
+        assert_eq!(c.current, 4);
+        // Single failed sub-batch — halve immediately regardless of latency.
+        c.update(10, 1, Duration::from_millis(30)); // 30ms looks fast but has failures
+        assert_eq!(c.current, 2);
+    }
+
+    #[test]
+    fn failures_reset_clean_count() {
+        let mut c = controller(1, 8);
+        // Two clean batches (not enough to ramp), then a failure.
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 1
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 2
+        c.update(10, 1, Duration::from_millis(30));    // failure — resets streak
+        // Two more clean batches — should NOT ramp (streak restarted).
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 1 (new streak)
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 2
+        assert_eq!(c.current, 1); // still at min, streak not complete
+    }
+
+    #[test]
+    fn failures_override_low_latency_signal() {
+        // Failures win even when per-chunk latency looks below low threshold.
+        // This is the core 429 bug: 429s return in ~10ms (below latency_low_ms=400)
+        // and used to be misread as fast success, ramping concurrency up.
+        let mut c = controller(1, 8);
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000)); // ramp: 1 → 2
+        c.update(2000, 20, Duration::from_millis(50)); // all sub-batches 429 @ ~25µs each
+        assert_eq!(c.current, 1); // halved to min, NOT ramped
+    }
+
+    #[test]
+    fn failures_floor_at_min() {
+        let mut c = controller(2, 4);
+        c.update(10, 1, Duration::from_millis(30)); // halve 2 → 1, floor at 2
+        assert_eq!(c.current, 2);
+    }
+
+    #[test]
+    fn recovery_after_failures_is_gradual() {
+        let mut c = controller(1, 8);
+        // Ramp to 4 then hit failures to drop to 2.
+        for _ in 0..9 { c.update(10, 0, Duration::from_millis(1_000)); }
+        assert_eq!(c.current, 4);
+        c.update(10, 1, Duration::from_millis(30)); // 4 → 2
+        // Recovery: needs ramp_after=3 clean batches per step.
+        c.update(10, 0, Duration::from_millis(1_000));
+        c.update(10, 0, Duration::from_millis(1_000));
+        assert_eq!(c.current, 2); // not yet
+        c.update(10, 0, Duration::from_millis(1_000)); // ramp: 2 → 3
+        assert_eq!(c.current, 3);
+    }
+
+    // ── Existing latency-based behaviour (unchanged) ──────────────────────────
 
     #[test]
     fn high_latency_halves_concurrency() {
         let mut c = controller(1, 8);
-        c.update(10, Duration::from_millis(30_000)); // 3000ms/chunk > 2000 threshold
+        // Ramp first so we have room to observe halving.
+        for _ in 0..9 { c.update(10, 0, Duration::from_millis(1_000)); }
         assert_eq!(c.current, 4);
+        c.update(10, 0, Duration::from_millis(30_000)); // 3000ms/chunk > 2000 threshold
+        assert_eq!(c.current, 2);
     }
 
     #[test]
     fn high_latency_floors_at_min() {
         let mut c = controller(3, 4);
-        c.update(10, Duration::from_millis(30_000)); // halve 4 → 2, floor at 3
+        for _ in 0..3 { c.update(10, 0, Duration::from_millis(1_000)); } // ramp: 3 → 4
+        c.update(10, 0, Duration::from_millis(30_000)); // halve 4 → 2, floor at 3
         assert_eq!(c.current, 3);
     }
 
     #[test]
     fn floor_is_respected_on_md() {
         let mut c = controller(2, 2);
-        c.update(10, Duration::from_millis(30_000)); // halve 2 → 1, floor at 2
+        c.update(10, 0, Duration::from_millis(30_000)); // halve 2 → 1, floor at 2
         assert_eq!(c.current, 2);
-    }
-
-    #[test]
-    fn low_latency_increments_clean_counter() {
-        let mut c = controller(1, 8);
-        c.update(10, Duration::from_millis(1_000)); // 100ms/chunk < 400 threshold
-        // not enough batches yet — current unchanged
-        assert_eq!(c.current, 8);
     }
 
     #[test]
     fn low_latency_does_not_ramp_before_threshold() {
         let mut c = controller(1, 8);
-        // trigger MD first so current < max and we can observe a ramp
-        c.update(10, Duration::from_millis(30_000)); // → 4
-        c.update(10, Duration::from_millis(1_000));  // clean 1
-        c.update(10, Duration::from_millis(1_000));  // clean 2 (ramp_after=3, not yet)
-        assert_eq!(c.current, 4);
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 1
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 2 (ramp_after=3, not yet)
+        assert_eq!(c.current, 1);
     }
 
     #[test]
     fn low_latency_ramps_after_threshold_and_resets_counter() {
         let mut c = controller(1, 8);
-        c.update(10, Duration::from_millis(30_000)); // MD: 8 → 4
-        c.update(10, Duration::from_millis(1_000));  // clean 1
-        c.update(10, Duration::from_millis(1_000));  // clean 2
-        c.update(10, Duration::from_millis(1_000));  // clean 3 → ramp to 5
-        assert_eq!(c.current, 5);
-        // counter reset: one more clean should NOT ramp again
-        c.update(10, Duration::from_millis(1_000));  // clean 1 (reset)
-        assert_eq!(c.current, 5);
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 1
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 2
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 3 → ramp: 1 → 2
+        assert_eq!(c.current, 2);
+        // counter reset: two more cleans should NOT ramp again
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 1 (reset)
+        c.update(10, 0, Duration::from_millis(1_000)); // clean 2
+        assert_eq!(c.current, 2);
     }
 
     #[test]
     fn dead_band_latency_leaves_state_unchanged() {
         let mut c = controller(1, 8);
-        c.update(10, Duration::from_millis(30_000)); // MD: 8 → 4
-        c.update(10, Duration::from_millis(8_000));  // 800ms/chunk — dead band [400, 2000)
+        for _ in 0..9 { c.update(10, 0, Duration::from_millis(1_000)); } // → 4
+        c.update(10, 0, Duration::from_millis(8_000)); // 800ms/chunk — dead band [400, 2000)
         assert_eq!(c.current, 4);
     }
 
     #[test]
     fn empty_batch_skips_update() {
         let mut c = controller(1, 8);
-        c.update(10, Duration::from_millis(30_000)); // MD: 8 → 4
-        c.update(0, Duration::from_millis(1_000));   // empty — no change
+        for _ in 0..9 { c.update(10, 0, Duration::from_millis(1_000)); } // → 4
+        c.update(0, 0, Duration::from_millis(1_000)); // empty — no change
         assert_eq!(c.current, 4);
     }
 
     #[test]
     fn ceiling_is_respected_on_ramp() {
         let mut c = controller(1, 4);
-        // starts at 4 (max); trigger MD then ramp back to ceiling
-        c.update(10, Duration::from_millis(30_000)); // → 2
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));  // ramp: 2 → 3
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));  // ramp: 3 → 4
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));
-        c.update(10, Duration::from_millis(1_000));  // ramp: would be 5, clamped to 4
-        assert_eq!(c.current, 4);
+        for _ in 0..9 { c.update(10, 0, Duration::from_millis(1_000)); }
+        assert_eq!(c.current, 4); // at ceiling
+        for _ in 0..3 { c.update(10, 0, Duration::from_millis(1_000)); }
+        assert_eq!(c.current, 4); // clamped
     }
 }
