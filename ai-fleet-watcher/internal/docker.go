@@ -167,7 +167,7 @@ func (d *DockerManager) Ensure(ctx context.Context, spec ModelSpec, policyVersio
 			return nil
 		}
 		slog.Info("removing stale container", "name", name)
-		d.stopRemove(ctx, name)
+		d.stopRemove(ctx, name, spec.stopTimeout())
 	} else {
 		resp.Body.Close()
 	}
@@ -244,9 +244,9 @@ func (d *DockerManager) Ensure(ctx context.Context, spec ModelSpec, policyVersio
 	return nil
 }
 
-func (d *DockerManager) Remove(ctx context.Context, modelName string) error {
+func (d *DockerManager) Remove(ctx context.Context, modelName string, stopTimeoutSec int) error {
 	name := ContainerName(modelName)
-	d.stopRemove(ctx, name)
+	d.stopRemove(ctx, name, stopTimeoutSec)
 	return nil
 }
 
@@ -272,11 +272,19 @@ func (d *DockerManager) Inspect(ctx context.Context, name string) (*ContainerIns
 	return &info, nil
 }
 
-func (d *DockerManager) stopRemove(ctx context.Context, name string) {
-	r, _ := d.do(ctx, http.MethodPost, "/containers/"+name+"/stop", nil)
-	if r != nil { r.Body.Close() }
+// stopRemove stops the container gracefully then force-removes it.
+// timeoutSec controls the SIGTERM window before Docker sends SIGKILL.
+// Use 30s for ROCm to let HIP release /dev/kfd; 10s is Docker default.
+func (d *DockerManager) stopRemove(ctx context.Context, name string, timeoutSec int) {
+	r, _ := d.do(ctx, http.MethodPost,
+		fmt.Sprintf("/containers/%s/stop?t=%d", name, timeoutSec), nil)
+	if r != nil {
+		r.Body.Close()
+	}
 	r, _ = d.do(ctx, http.MethodDelete, "/containers/"+name+"?force=true", nil)
-	if r != nil { r.Body.Close() }
+	if r != nil {
+		r.Body.Close()
+	}
 }
 
 func modelArgs(spec ModelSpec) []string {

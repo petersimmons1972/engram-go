@@ -105,6 +105,30 @@ func TestHealthConfigInfinityNoPrefix(t *testing.T) {
 	}
 }
 
+func TestModelSpecStopTimeoutDefault(t *testing.T) {
+	spec := ModelSpec{Framework: "infinity", GpuDriver: "rocm"}
+	if spec.StopTimeoutSec != 0 {
+		t.Errorf("zero-value StopTimeoutSec must be 0, got %d", spec.StopTimeoutSec)
+	}
+}
+
+func TestModelSpecStopTimeoutHelper(t *testing.T) {
+	cases := []struct {
+		sec  int
+		want int
+	}{
+		{0, 10},  // zero → Docker default (10s)
+		{30, 30}, // explicit override
+		{60, 60}, // larger override
+	}
+	for _, c := range cases {
+		spec := ModelSpec{StopTimeoutSec: c.sec}
+		if got := spec.stopTimeout(); got != c.want {
+			t.Errorf("stopTimeout() with StopTimeoutSec=%d: got %d, want %d", c.sec, got, c.want)
+		}
+	}
+}
+
 func TestInfinityURLPrefix(t *testing.T) {
 	cases := []struct {
 		args []string

@@ -19,6 +19,10 @@ type ModelSpec struct {
 	ExtraArgs  []string `json:"extraArgs,omitempty"`
 	GpuDriver  string   `json:"gpuDriver,omitempty"`  // nvidia (default) or rocm
 	RenderDevice string `json:"renderDevice,omitempty"` // e.g. /dev/dri/renderD128 (rocm only)
+	// StopTimeoutSec is seconds to wait for graceful SIGTERM before SIGKILL.
+	// 0 = use Docker default (10s). Set to 30 for ROCm containers so HIP
+	// worker threads can release /dev/kfd before SIGKILL.
+	StopTimeoutSec int `json:"stopTimeoutSec,omitempty"`
 }
 
 // ModelHash returns an 8-char hash of just this model's spec.
@@ -28,6 +32,15 @@ func ModelHash(m ModelSpec) string {
 	b, _ := json.Marshal(m)
 	sum := sha256.Sum256(b)
 	return fmt.Sprintf("%x", sum)[:8]
+}
+
+// stopTimeout returns the effective stop timeout in seconds.
+// 0 on the spec means use Docker's default (10s).
+func (m ModelSpec) stopTimeout() int {
+	if m.StopTimeoutSec > 0 {
+		return m.StopTimeoutSec
+	}
+	return 10 // Docker default
 }
 
 type GPUHostSpec struct {
@@ -90,6 +103,8 @@ type DockerClient interface {
 	EnsureNFSVolume(ctx context.Context, nfsMount string) error
 	ListManaged(ctx context.Context) ([]ContainerStatus, error)
 	Ensure(ctx context.Context, spec ModelSpec, policyVersion string) error
-	Remove(ctx context.Context, modelName string) error
+	// Remove stops the container gracefully (SIGTERM for stopTimeoutSec seconds)
+	// then force-removes it. stopTimeoutSec=0 uses Docker default (10s).
+	Remove(ctx context.Context, modelName string, stopTimeoutSec int) error
 	Inspect(ctx context.Context, name string) (*ContainerInspect, error)
 }
