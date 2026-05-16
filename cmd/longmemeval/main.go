@@ -116,6 +116,7 @@ func mcpDefaults() (url, token string) {
 			continue
 		}
 		// Strip /sse path component — the benchmark appends it in Connect().
+		// Parse properly so query params don't break the suffix check.
 		srvURL := srv.URL
 		if u, err := neturl.Parse(srvURL); err == nil {
 			u.Path = strings.TrimSuffix(u.Path, "/sse")

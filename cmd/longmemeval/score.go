@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,7 +20,7 @@ func runScore(cfg *Config) {
 		itemMap[item.QuestionID] = item
 	}
 
-	ingestEntries, err := longmemeval.ReadAllIngest(cfg.OutDir + "/checkpoint-ingest.jsonl")
+	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
 	if err != nil {
 		log.Fatalf("read ingest checkpoint: %v", err)
 	}
@@ -30,7 +31,7 @@ func runScore(cfg *Config) {
 		}
 	}
 
-	runEntries, err := longmemeval.ReadAllRun(cfg.OutDir + "/checkpoint-run.jsonl")
+	runEntries, err := longmemeval.ReadAllRun(filepath.Join(cfg.OutDir, "checkpoint-run.jsonl"))
 	if err != nil {
 		log.Fatalf("read run checkpoint: %v", err)
 	}
@@ -39,7 +40,7 @@ func runScore(cfg *Config) {
 		runMap[r.QuestionID] = r
 	}
 
-	ckptPath := cfg.OutDir + "/checkpoint-score.jsonl"
+	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-score.jsonl")
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
 	if err != nil {
 		log.Fatalf("read score checkpoint: %v", err)
@@ -112,9 +113,9 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 	var result longmemeval.ScoreResult
 	var err error
 	if cfg.LLMBaseURL != "" {
-		result, err = longmemeval.ScoreOAI(ctx, item.Question, fmt.Sprint(item.Answer), run.Hypothesis, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
+		result, err = longmemeval.ScoreOAI(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
 	} else {
-		result, err = longmemeval.Score(ctx, item.Question, fmt.Sprint(item.Answer), run.Hypothesis, cfg.Retries)
+		result, err = longmemeval.Score(ctx, item.Question, string(item.Answer), run.Hypothesis, cfg.Retries)
 	}
 	if err != nil {
 		return longmemeval.ScoreEntry{
@@ -142,12 +143,12 @@ func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap ma
 }
 
 func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
-	f, err := os.Create(cfg.OutDir + "/hypotheses.jsonl")
+	f, err := os.Create(filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
 	if err != nil {
 		log.Printf("WARN write hypotheses.jsonl: %v", err)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, s := range scores {
 		if err := enc.Encode(longmemeval.HypothesisLine{QuestionID: s.QuestionID, Hypothesis: s.Hypothesis}); err != nil {
@@ -155,16 +156,16 @@ func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 			break
 		}
 	}
-	log.Printf("wrote %s/hypotheses.jsonl", cfg.OutDir)
+	log.Printf("wrote %s", filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
 }
 
 func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
-	f, err := os.Create(cfg.OutDir + "/retrieval_log.jsonl")
+	f, err := os.Create(filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 	if err != nil {
 		log.Printf("WARN write retrieval_log.jsonl: %v", err)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	enc := json.NewEncoder(f)
 
 	for _, s := range scores {
@@ -195,7 +196,7 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 			break
 		}
 	}
-	log.Printf("wrote %s/retrieval_log.jsonl", cfg.OutDir)
+	log.Printf("wrote %s", filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 }
 
 func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
@@ -242,7 +243,7 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		log.Printf("WARN marshal score report: %v", err)
 		return
 	}
-	path := cfg.OutDir + "/score_report.json"
+	path := filepath.Join(cfg.OutDir, "score_report.json")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		log.Printf("WARN write score_report.json: %v", err)
 		return
@@ -259,7 +260,3 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		fmt.Printf("Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
 	}
 }
-
-// normalizeLabel is kept for backward compatibility with score checkpoint files
-// written by the old runner.
-func normalizeLabel(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
