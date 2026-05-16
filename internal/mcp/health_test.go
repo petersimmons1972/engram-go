@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -41,10 +40,21 @@ func newHealthServer(ollamaURL string) *Server {
 // Postgres: PgPool is nil — the handler skips the probe and reports ok.
 // Ollama: a test HTTP server returns 200 HEAD /api/tags.
 func TestHealth_BothDepsUp(t *testing.T) {
-	// Fake Ollama that accepts HEAD /api/tags.
+	// Fake Infinity server: responds to GET /v1/models with healthy queue stats.
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead && strings.HasSuffix(r.URL.Path, "/api/tags") {
-			w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"data": []map[string]any{{
+					"id": "BAAI/bge-m3",
+					"stats": map[string]any{
+						"queue_fraction":  0.10,
+						"queue_absolute":  6,
+						"results_pending": 2,
+						"batch_size":      64,
+					},
+				}},
+			})
 			return
 		}
 		http.NotFound(w, r)
@@ -192,5 +202,89 @@ func TestApplyMiddleware_SetsRequestID(t *testing.T) {
 	}
 	if len(capturedID) < 8 {
 		t.Errorf("request_id seems too short: %q", capturedID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Infinity hung-state detection tests (#649)
+// ---------------------------------------------------------------------------
+
+// TestHealth_InfinityHung verifies that when /v1/models reports the GPU thread
+// deadlock signature, handleHealth returns 503 with ollama="error".
+func TestHealth_InfinityHung(t *testing.T) {
+	infinityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"data": []map[string]any{{
+					"id": "BAAI/bge-m3",
+					"stats": map[string]any{
+						"queue_fraction":  1.00059375,
+						"queue_absolute":  32019,
+						"results_pending": 0,
+						"batch_size":      64,
+					},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer infinityServer.Close()
+
+	s := newHealthServer(infinityServer.URL)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	s.handleHealth(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for hung Infinity, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var resp healthResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Ollama != "error" {
+		t.Errorf("expected ollama=error for hung GPU thread, got %q", resp.Ollama)
+	}
+}
+
+// TestHealth_InfinityHealthyStats verifies that a healthy Infinity queue
+// (queue_fraction < 1.0, results_pending > 0) returns 200 with ollama="ok".
+func TestHealth_InfinityHealthyStats(t *testing.T) {
+	infinityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"data": []map[string]any{{
+					"id": "BAAI/bge-m3",
+					"stats": map[string]any{
+						"queue_fraction":  0.42,
+						"queue_absolute":  27,
+						"results_pending": 5,
+						"batch_size":      64,
+					},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer infinityServer.Close()
+
+	s := newHealthServer(infinityServer.URL)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	s.handleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for healthy Infinity, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var resp healthResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Ollama != "ok" {
+		t.Errorf("expected ollama=ok for healthy queue, got %q", resp.Ollama)
 	}
 }
