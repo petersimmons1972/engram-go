@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"sync"
 
@@ -20,7 +21,7 @@ var temporalInterrogativeRe = regexp.MustCompile(
 )
 
 const recallTopK = 100
-const contextTopK = 40
+const contextTopK = 8 // 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster
 
 func runRun(cfg *Config) {
 	items := loadItems(cfg.DataFile)
@@ -29,7 +30,7 @@ func runRun(cfg *Config) {
 		itemMap[item.QuestionID] = item
 	}
 
-	ingestEntries, err := longmemeval.ReadAllIngest(cfg.OutDir + "/checkpoint-ingest.jsonl")
+	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
 	if err != nil {
 		log.Fatalf("read ingest checkpoint: %v", err)
 	}
@@ -40,7 +41,7 @@ func runRun(cfg *Config) {
 		}
 	}
 
-	ckptPath := cfg.OutDir + "/checkpoint-run.jsonl"
+	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-run.jsonl")
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
 	if err != nil {
 		log.Fatalf("read run checkpoint: %v", err)
@@ -78,54 +79,35 @@ func runRun(cfg *Config) {
 	log.Printf("run: complete")
 }
 
-// runEntryLogLine formats a RunEntry into the log string emitted by runWorker.
-// It is a separate function so the format can be tested independently of a
-// live server, and so the error cause (Bug #643) is always visible in logs.
-//
-// Bug #643 fix: when status=error the hypothesis_len is always 0, which made
-// log searches useless for root-cause analysis.  The error field is now always
-// included in the log line so ops can grep for the actual failure without
-// examining per-item checkpoint files.
-func runEntryLogLine(entry longmemeval.RunEntry) string {
-	if entry.Status == "error" {
-		return fmt.Sprintf("run [%s] status=error hypothesis_len=%d error=%q",
-			entry.QuestionID, len(entry.Hypothesis), entry.Error)
-	}
-	return fmt.Sprintf("run [%s] status=%s hypothesis_len=%d",
-		entry.QuestionID, entry.Status, len(entry.Hypothesis))
-}
-
 func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry) {
 	for ingestEntry := range work {
 		ctx := context.Background()
 		item, ok := itemMap[ingestEntry.QuestionID]
 		if !ok {
-			entry := longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: "item not found in data file"}
-			out <- entry
-			log.Print(runEntryLogLine(entry))
+			out <- longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: "item not found in data file"}
 			continue
 		}
 
 		// Fresh connection per item — SSE sessions expire under long runs.
 		mcpClient, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
 		if err != nil {
-			entry := longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: fmt.Sprintf("connect: %v", err)}
-			out <- entry
-			log.Print(runEntryLogLine(entry))
+			out <- longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: fmt.Sprintf("connect: %v", err)}
 			continue
 		}
 
 		entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
 		out <- entry
-		// Bug #643 fix: log.Print the structured line which includes error= on failure.
-		log.Print(runEntryLogLine(entry))
+		if entry.Status == "error" {
+			log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+		} else {
+			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+		}
 
 		if !cfg.NoCleanup {
-			// DeleteProject handles stale-session errors internally (Bug #642):
-			// it logs at DEBUG level and returns nil so this WARN is only
-			// reached for genuine non-stale errors.
 			if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
-				log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+				if !longmemeval.IsStaleSessionError(err) {
+					log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+				}
 			}
 		}
 	}

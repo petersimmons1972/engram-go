@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -20,18 +19,6 @@ import (
 type Client struct {
 	mcp     *client.Client
 	retries int
-}
-
-// IsStaleSessionError reports whether err indicates that the MCP server no
-// longer recognises the current SSE session — typically because the server was
-// restarted between items. The check is case-insensitive and matches the
-// canonical "Invalid session ID" text that both the Engram server and the
-// mcp-go library produce (JSON-RPC code -32602).
-func IsStaleSessionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "invalid session id")
 }
 
 func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
@@ -128,8 +115,8 @@ type BatchItem struct {
 	Tags    []string
 }
 
-// StoreBatch stores up to 100 sessions in a single MCP call and returns their
-// IDs in the same order as items.
+// StoreBatch stores up to 100 sessions in a single MCP call and returns their IDs
+// in the same order as items. Uses memory_store_batch to reduce HTTP round-trips.
 func (c *Client) StoreBatch(ctx context.Context, project string, items []BatchItem) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -188,6 +175,7 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 		return nil, fmt.Errorf("parse store_batch response: %w", err)
 	}
 	if len(resp.Errors) > 0 {
+		// Server validated items and rejected them; surface up to 3 messages.
 		sample := resp.Errors
 		if len(sample) > 3 {
 			sample = sample[:3]
@@ -201,6 +189,7 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 }
 
 // Recall calls memory_recall and returns ranked memory IDs.
+// The server returns {"results":[{"memory":{"id":"..."},"score":...},...]}
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -287,6 +276,9 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
+// The project argument is required: the server-side memory_fetch handler
+// scopes by project (default "default") and will return "not found" if the
+// memory lives in a different project than the one the call targets.
 func (c *Client) FetchContent(ctx context.Context, project, id string) (string, error) {
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
@@ -334,14 +326,6 @@ func (c *Client) FetchContent(ctx context.Context, project, id string) (string, 
 }
 
 // DeleteProject calls memory_delete_project to clean up an isolation project.
-//
-// Bug #642 fix: when Engram is restarted mid-run the SSE session ID held by
-// this client is no longer valid.  Every subsequent cleanup call then returns
-// {"code":-32602,"message":"Invalid session ID"}.  Rather than logging a WARN
-// per item (which pollutes multi-hundred-item runs), we detect the stale-
-// session condition, emit a single DEBUG-level line, and return nil so the
-// caller's WARN path is bypassed.  The project data is effectively gone
-// anyway: the restart wiped the in-memory session table.
 func (c *Client) DeleteProject(ctx context.Context, project string) error {
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
@@ -350,10 +334,6 @@ func (c *Client) DeleteProject(ctx context.Context, project string) error {
 		},
 	})
 	if err != nil {
-		if IsStaleSessionError(err) {
-			log.Printf("DEBUG cleanup [%s] stale session (server restarted?) — skipping", project)
-			return nil
-		}
 		return err
 	}
 	if result.IsError {
@@ -386,8 +366,9 @@ func NewRestClient(baseURL, token string) *RestClient {
 }
 
 // QuickStore stores a single memory via POST /quick-store and returns its ID.
-// Retries with exponential backoff on 429 and 5xx (server-side pool init can
-// transiently time out when many projects are created concurrently).
+// Retries once on 5xx (server-side pool init can transiently time out when
+// many projects are created concurrently; a brief pause and retry succeeds
+// because the pool entry is warm on the second attempt).
 func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string) (string, error) {
 	body := map[string]any{
 		"content": content,
@@ -400,6 +381,7 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 	for attempt := 0; attempt < 8; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff: 1s, 2s, 4s, 8s… capped at 16s.
+			// 429s resolve quickly once the token bucket refills.
 			backoff := time.Duration(1<<min(attempt-1, 4)) * time.Second
 			select {
 			case <-time.After(backoff):
@@ -426,7 +408,7 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			Error string `json:"error"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		_ = resp.Body.Close()
+		resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
 			continue
@@ -466,7 +448,7 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	var result struct {
 		IDs []string `json:"ids"`
@@ -479,11 +461,14 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 
 // SessionContent concatenates all turns of a session into a single string,
 // preserving role labels so the retriever and generator can distinguish
-// user questions from assistant responses.
+// user questions from assistant responses. Dropping assistant turns would
+// make single-session-assistant questions unanswerable (the gold content
+// lives in the assistant's reply).
 //
 // C0/C1 control characters (except \t, \n, \r) are stripped — the server's
 // validateContent rejects them and, because memory_store_batch is all-or-
-// nothing, one offender tanks an entire 100-item batch.
+// nothing, one offender tanks an entire 100-item batch. See LongMemEval
+// session 158 of question 7e00a6cb for a real-world offender (\x0B).
 func SessionContent(turns []Turn) string {
 	var sb strings.Builder
 	for _, t := range turns {
@@ -504,8 +489,8 @@ func SessionContent(turns []Turn) string {
 	return sb.String()
 }
 
-// sanitizeControlChars removes C0 (0x00-0x1F except \t \n \r) and C1
-// (0x7F-0x9F) control characters from s.
+// sanitizeControlChars removes C0 (0x00-0x1F except \t \n \r) and C1 (0x7F-0x9F)
+// control characters from s.
 func sanitizeControlChars(s string) string {
 	var sb strings.Builder
 	sb.Grow(len(s))
@@ -522,3 +507,12 @@ func sanitizeControlChars(s string) string {
 	return sb.String()
 }
 
+// IsStaleSessionError returns true when err represents an MCP session that
+// has already expired server-side. The Engram MCP server drops SSE sessions
+// after a timeout; cleanup calls on expired sessions are not an error.
+func IsStaleSessionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "invalid session id")
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -14,7 +15,7 @@ import (
 
 func runIngest(cfg *Config) {
 	items := loadItems(cfg.DataFile)
-	ckptPath := cfg.OutDir + "/checkpoint-ingest.jsonl"
+	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl")
 
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
 	if err != nil {
@@ -59,10 +60,10 @@ func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmeme
 	for item := range work {
 		entry := ingestOne(ctx, cfg, restClient, item)
 		out <- entry
-		log.Printf("ingest [%s] project=%s sessions=%d status=%s",
-			item.QuestionID, entry.Project, entry.SessionCount, entry.Status)
+		log.Printf("ingest [%s] project=%s sessions=%d status=%s error=%q", item.QuestionID, entry.Project, entry.SessionCount, entry.Status, entry.Error)
 	}
 }
+
 
 func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestClient, item longmemeval.Item) (entry longmemeval.IngestEntry) {
 	defer func() {
