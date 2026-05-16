@@ -289,7 +289,9 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         .build()
         .context("build http client")?;
 
-    // Startup probe — log dims so we know the model is reachable.
+    // Startup probe — hard-fail if the embed endpoint is unreachable.
+    // Exiting here lets Docker/k8s restart the container with backoff, which
+    // is simpler and more reliable than internal retry loops ("let it crash").
     match embed_batch(
         &http,
         &cfg.litellm_url,
@@ -301,14 +303,19 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
     .await
     {
         Ok(v) => info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, "litellm probe ok"),
-        Err(e) => warn!(err = %e, "litellm probe failed — will retry on each batch"),
+        Err(e) => {
+            error!(err = %e, url = %cfg.litellm_url, "embed endpoint unreachable at startup — exiting so container restarts");
+            std::process::exit(1);
+        }
     }
 
-    // Pre-warm connection pool — establish concurrency_max keep-alive connections
-    // so all sub-batch tasks start with ready sockets (no TCP setup during the
-    // batch). With TOKIO_WORKER_THREADS=concurrency_max, all async tasks also
-    // get OS-thread-level parallelism, ensuring socket writes overlap in time.
-    {
+    // Pre-warm connection pool and measure actual endpoint concurrency.
+    // If the endpoint is single-threaded (e.g. Infinity ROCm), parallel warmup
+    // calls will timeout. Count successes and cap concurrency_max to what the
+    // endpoint can actually handle — preventing silent all-timeout hangs.
+    let effective_concurrency = {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let successes = Arc::new(AtomicUsize::new(0));
         let mut warmup = tokio::task::JoinSet::new();
         for _ in 0..cfg.concurrency_max {
             let h = http.clone();
@@ -316,13 +323,25 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
             let key = cfg.litellm_api_key.clone();
             let model = cfg.embed_model.clone();
             let dims = cfg.embed_dims;
+            let sc = Arc::clone(&successes);
             warmup.spawn(async move {
-                let _ = embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")]).await;
+                if embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")]).await.is_ok() {
+                    sc.fetch_add(1, Ordering::Relaxed);
+                }
             });
         }
         while warmup.join_next().await.is_some() {}
-        info!(connections = cfg.concurrency_max, "connection pool warmed");
-    }
+        let n = successes.load(Ordering::Relaxed).max(1); // always at least 1
+        if n < cfg.concurrency_max {
+            warn!(
+                configured = cfg.concurrency_max,
+                effective = n,
+                "embed endpoint handled fewer concurrent requests than configured — capping concurrency"
+            );
+        }
+        info!(connections = n, "connection pool warmed");
+        n
+    };
 
     info!(
         batch_size = cfg.batch_size,
@@ -334,7 +353,7 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let mut controller = AdaptiveConcurrency::new(
         cfg.concurrency_min,
-        cfg.concurrency_max,
+        effective_concurrency,
         cfg.latency_high_ms,
         cfg.latency_low_ms,
         cfg.ramp_after,
