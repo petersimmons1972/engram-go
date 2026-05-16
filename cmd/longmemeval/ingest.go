@@ -60,8 +60,7 @@ func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmeme
 	for item := range work {
 		entry := ingestOne(ctx, cfg, restClient, item)
 		out <- entry
-		log.Printf("ingest [%s] project=%s sessions=%d status=%s",
-			item.QuestionID, entry.Project, entry.SessionCount, entry.Status)
+		log.Printf("ingest [%s] project=%s sessions=%d status=%s error=%q", item.QuestionID, entry.Project, entry.SessionCount, entry.Status, entry.Error)
 	}
 }
 
