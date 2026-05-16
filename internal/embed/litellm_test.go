@@ -498,3 +498,23 @@ func TestInfinityQueueCheck_ServerError(t *testing.T) {
 		t.Errorf("expected reason to mention HTTP 500, got %q", reason)
 	}
 }
+
+// TestInfinityQueueCheck_HighLoadNotHung verifies that queue_fraction > 1.0
+// with non-zero results_pending is NOT flagged as hung — the GPU is still
+// processing, just under burst load. This is the false-positive guard for the
+// three-condition detection logic.
+func TestInfinityQueueCheck_HighLoadNotHung(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			encodeModelsResponse(w, "BAAI/bge-m3", 1.25, 800, 12) // over capacity but still processing
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if !ok {
+		t.Errorf("expected ok=true for high-load-but-processing queue, got ok=false reason=%q", reason)
+	}
+}
