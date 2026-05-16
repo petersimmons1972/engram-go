@@ -14,7 +14,7 @@ import (
 // claudePrintTimeout is the hard cap for one claude --print call.
 
 // generateTimeout is the hard cap for one OAI generation call. 1200s needed for 120B vLLM on 40-block contexts.
-const generateTimeout = 1200 * time.Second
+const generateTimeout = 600 * time.Second
 
 // GenerateForType generates an answer using Sonnet for all question types.
 func GenerateForType(ctx context.Context, prompt, questionType string, retries int) (string, error) {
@@ -126,22 +126,34 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 
+	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
+	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
 	type oaiMessage struct {
-		Role      string `json:"role"`
-		Content   string `json:"content"`
-		Reasoning string `json:"reasoning"`
+		Role    string `json:"role"`
+		Content string `json:"content"`
 	}
 	reqBody, err := json.Marshal(struct {
-		Model     string       `json:"model"`
-		Messages  []oaiMessage `json:"messages"`
-		MaxTokens int          `json:"max_tokens"`
+		Model              string         `json:"model"`
+		Messages           []oaiMessage   `json:"messages"`
+		MaxTokens          int            `json:"max_tokens"`
+		Temperature        float64        `json:"temperature"`
+		TopP               float64        `json:"top_p"`
+		ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 	}{
 		Model: model,
 		Messages: []oaiMessage{
-			{Role: "system", Content: "You are a helpful assistant. Answer the question directly and concisely. Do not show your reasoning or thinking process. Give only the final answer."},
+			{
+				Role:    "system",
+				Content: "You are a precise QA assistant. Answer concisely using only the provided memory context.",
+			},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens: 1024,
+		MaxTokens:   2048, // with enable_thinking=false, answers are short QA; 20480 overflowed 131k context limit
+		Temperature: 0.2,   // instruct/deterministic mode per NVIDIA model card
+		TopP:        0.95,
+		ChatTemplateKwargs: map[string]any{
+			"enable_thinking": false, // disable reasoning chain; answer goes to content not reasoning_content
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
@@ -167,9 +179,15 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)
 	}
 
+	// Response struct reads reasoning_content (vLLM GH#39103: Nemotron v3 puts answer
+	// there when reasoning parser is active), falling back to content then reasoning.
 	var oaiResp struct {
 		Choices []struct {
-			Message oaiMessage `json:"message"`
+			Message struct {
+				Content          string `json:"content"`
+				Reasoning        string `json:"reasoning"`
+				ReasoningContent string `json:"reasoning_content"`
+			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
@@ -178,12 +196,16 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	if len(oaiResp.Choices) == 0 {
 		return "", fmt.Errorf("OAI response: no choices returned")
 	}
-	content := strings.TrimSpace(oaiResp.Choices[0].Message.Content)
+	msg := oaiResp.Choices[0].Message
+	content := strings.TrimSpace(msg.ReasoningContent)
 	if content == "" {
-		content = strings.TrimSpace(oaiResp.Choices[0].Message.Reasoning)
+		content = strings.TrimSpace(msg.Content)
 	}
 	if content == "" {
-		return "", fmt.Errorf("OAI response: both content and reasoning fields are empty")
+		content = strings.TrimSpace(msg.Reasoning)
+	}
+	if content == "" {
+		return "", fmt.Errorf("OAI response: content, reasoning_content, and reasoning are all empty")
 	}
 	// Strip <think>...</think> reasoning block if present; keep only the final answer.
 	if idx := strings.LastIndex(content, "</think>"); idx != -1 {
@@ -215,7 +237,7 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. If the answer cannot be determined from the provided context, respond with exactly: I don't know.`, questionDate, ctx, questionDate, question)
+Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. If the answer is not explicitly present, provide your best inference from the strongest matching context.`, questionDate, ctx, questionDate, question)
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.

@@ -21,7 +21,7 @@ var temporalInterrogativeRe = regexp.MustCompile(
 )
 
 const recallTopK = 100
-const contextTopK = 40
+const contextTopK = 8 // 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster
 
 func runRun(cfg *Config) {
 	items := loadItems(cfg.DataFile)
