@@ -396,3 +396,105 @@ func encodeEmbeddingResponse(w http.ResponseWriter, embedding []float32) {
 	}
 	json.NewEncoder(w).Encode(resp) // nolint:errcheck
 }
+
+// ---------------------------------------------------------------------------
+// InfinityQueueCheck tests (#649)
+// ---------------------------------------------------------------------------
+
+// encodeModelsResponse writes an Infinity-style /v1/models JSON payload.
+func encodeModelsResponse(w http.ResponseWriter, modelID string, queueFraction float64, queueAbsolute, resultsPending int) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		"data": []map[string]any{{
+			"id": modelID,
+			"stats": map[string]any{
+				"queue_fraction":  queueFraction,
+				"queue_absolute":  queueAbsolute,
+				"results_pending": resultsPending,
+				"batch_size":      64,
+			},
+		}},
+	})
+}
+
+// TestInfinityQueueCheck_HealthyQueue verifies that queue_fraction < 1.0
+// with non-zero results_pending returns ok=true.
+func TestInfinityQueueCheck_HealthyQueue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			encodeModelsResponse(w, "BAAI/bge-m3", 0.42, 27, 5)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if !ok {
+		t.Errorf("expected ok=true for healthy queue, got ok=false reason=%q", reason)
+	}
+}
+
+// TestInfinityQueueCheck_HungQueue verifies that the deadlock signature
+// (queue_fraction > 1.0, results_pending == 0, queue_absolute > 0) returns
+// ok=false with a reason string that identifies the model.
+func TestInfinityQueueCheck_HungQueue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			encodeModelsResponse(w, "BAAI/bge-m3", 1.00059375, 32019, 0)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if ok {
+		t.Fatal("expected ok=false for hung queue, got ok=true")
+	}
+	if !strings.Contains(reason, "BAAI/bge-m3") {
+		t.Errorf("expected reason to contain model ID, got %q", reason)
+	}
+	if !strings.Contains(reason, "GPU thread hung") {
+		t.Errorf("expected reason to contain 'GPU thread hung', got %q", reason)
+	}
+}
+
+// TestInfinityQueueCheck_NonInfinityServer verifies that a standard OpenAI
+// /v1/models response (no "stats" field) is treated as healthy.
+func TestInfinityQueueCheck_NonInfinityServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"object": "list",
+				"data":   []map[string]any{{"id": "gpt-4", "object": "model"}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if !ok {
+		t.Errorf("expected ok=true for non-Infinity server (no stats field), got ok=false reason=%q", reason)
+	}
+}
+
+// TestInfinityQueueCheck_ServerError verifies that a 500 from /v1/models
+// returns ok=false.
+func TestInfinityQueueCheck_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if ok {
+		t.Fatal("expected ok=false for 500 response, got ok=true")
+	}
+	if !strings.Contains(reason, "500") {
+		t.Errorf("expected reason to mention HTTP 500, got %q", reason)
+	}
+}
