@@ -332,21 +332,33 @@ func rocmDeviceBinds(spec ModelSpec) []map[string]string {
 	return []map[string]string{bind("/dev/kfd"), bind(renderDev)}
 }
 
+// infinityURLPrefix extracts the --url-prefix value from ExtraArgs, or returns "".
+// Infinity may be started with --url-prefix /v1, which moves /embeddings to /v1/embeddings.
+func infinityURLPrefix(spec ModelSpec) string {
+	for i, arg := range spec.ExtraArgs {
+		if arg == "--url-prefix" && i+1 < len(spec.ExtraArgs) {
+			return spec.ExtraArgs[i+1]
+		}
+	}
+	return ""
+}
+
 // healthConfig returns the Docker Engine API HealthCheck body for the given framework.
 // Returns nil for unknown frameworks — no healthcheck is configured.
 //
 // All durations are nanoseconds (Docker Engine API requirement; time.Duration is nanoseconds).
-// Infinity uses POST /embeddings because GET /health does not exercise the GPU thread.
+// Infinity uses POST {prefix}/embeddings because GET /health does not exercise the GPU thread.
 func healthConfig(spec ModelSpec) map[string]any {
 	switch spec.Framework {
 	case "infinity":
+		prefix := infinityURLPrefix(spec)
 		return map[string]any{
 			"Test": []string{"CMD-SHELL", fmt.Sprintf(
-				`curl -sf -X POST http://localhost:%d/embeddings`+
+				`curl -sf -X POST http://localhost:%d%s/embeddings`+
 					` -H 'Content-Type: application/json'`+
 					` -d '{"model":"%s","input":["probe"]}'`+
 					` --max-time 25 | grep -q '"object":"list"'`,
-				spec.Port, spec.Repo,
+				spec.Port, prefix, spec.Repo,
 			)},
 			"Interval":    int64(60 * time.Second),
 			"Timeout":     int64(30 * time.Second),
