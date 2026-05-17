@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -198,5 +199,20 @@ func TestCheckBindInterlock(t *testing.T) {
 				t.Errorf("error %q missing %q", err.Error(), tc.wantErrSubstr)
 			}
 		})
+	}
+}
+
+// TestEngramReadyLog_IncludesVersion — #674: the startup log line must include
+// the binary version so operators can identify the running build via logs.
+// This is a string-presence test on main.go; it can run without spinning up
+// the server.
+func TestEngramReadyLog_IncludesVersion(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	want := `slog.Info("engram ready", "version", Version`
+	if !strings.Contains(string(src), want) {
+		t.Errorf("main.go missing version key in 'engram ready' slog.Info call (#674)")
 	}
 }

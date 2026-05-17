@@ -4,9 +4,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /engram ./cmd/engram
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /starter ./cmd/starter
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /engram-setup ./cmd/engram-setup
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /engram ./cmd/engram
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /starter ./cmd/starter
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /engram-setup ./cmd/engram-setup
 
 # Stage 2: minimal runtime — no shell, no OS tools, CA certs only
 # starter (the ENTRYPOINT) authenticates to Infisical, injects ENGRAM_API_KEY,

@@ -532,7 +532,7 @@ func run() error {
 			"For local development, use --host=127.0.0.1 instead. (#550)")
 	}
 
-	slog.Info("engram ready", "host", *host, "port", *port,
+	slog.Info("engram ready", "version", Version, "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 
 	err = srv.Start(ctx, *host, *port, apiKey, *baseURL)
