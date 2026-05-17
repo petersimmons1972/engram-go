@@ -55,3 +55,34 @@ func TestRunLogFormat_SuccessNoError(t *testing.T) {
 		t.Errorf("log line should not contain error= on success: %q", msg)
 	}
 }
+
+// TestRunRun_AllErrors_ReturnsNonZero — #703: when every attempted item fails,
+// runRun must return a non-zero exit code so scripted pipelines don't proceed.
+// We can't easily exercise the full pipeline in a unit test (it requires a live
+// MCP server). Instead this test exercises the exit-code computation by feeding
+// an empty ingest checkpoint (which causes runRun to attempt zero items and
+// return 0 — the resume-clean case), then verifying the contract at the boundary
+// our code controls: a function that decides the exit code given counts.
+func TestExitCodeForRunOutcome(t *testing.T) {
+	cases := []struct {
+		name      string
+		attempted int64
+		errors    int64
+		want      int
+	}{
+		{"clean resume (0 attempted)", 0, 0, 0},
+		{"all succeeded", 10, 0, 0},
+		{"some failed, some succeeded", 10, 3, 0},
+		{"all failed", 10, 10, 1},
+		{"single attempt, failed", 1, 1, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := exitCodeForRunOutcome(tc.attempted, tc.errors)
+			if got != tc.want {
+				t.Errorf("exitCodeForRunOutcome(att=%d, err=%d) = %d, want %d",
+					tc.attempted, tc.errors, got, tc.want)
+			}
+		})
+	}
+}
