@@ -1,6 +1,6 @@
 # Getting Started
 
-When you finish this page, you will have a running memory server, a working IDE connection, and 17 tools visible to every AI assistant you use (21 with `ANTHROPIC_API_KEY` set). Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while your configured embedding model downloads.
+When you finish this page, you will have a running memory server, a working IDE connection, and 17 tools visible to every AI assistant you use (21 with `ANTHROPIC_API_KEY` set). A handful of commands get you there (see below; previously this page claimed 'three' but the actual sequence is 4-6 depending on which profile you pick — #697). The whole thing takes about five minutes — slightly longer on first run while your configured embedding model downloads.
 
 ---
 

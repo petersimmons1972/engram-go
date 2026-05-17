@@ -145,6 +145,14 @@ func run() error {
 		return err
 	}
 
+	// #692: --rate-limit / ENGRAM_RATE_LIMIT is deprecated in favor of
+	// --rate-limit-rps / ENGRAM_RATE_LIMIT_RPS. Emit to stderr (visible
+	// regardless of LOG_FORMAT) so the deprecation isn't buried in JSON logs.
+	if *rateLimit != 0 {
+		fmt.Fprintln(os.Stderr, "WARNING: --rate-limit / ENGRAM_RATE_LIMIT is deprecated; use --rate-limit-rps / ENGRAM_RATE_LIMIT_RPS instead. The legacy flag still works but will be removed in a future release. (#692)")
+		slog.Warn("deprecated flag in use", "flag", "--rate-limit", "use_instead", "--rate-limit-rps", "ref", "#692")
+	}
+
 	// A-3 (#666): refuse to start with non-loopback bind + rate limiter disabled.
 	if err := checkBindInterlock(*host, *rateLimitDisable); err != nil {
 		return err

@@ -129,7 +129,9 @@ Add to `~/.config/opencode/opencode.json`. Create the file if it does not exist.
 }
 ```
 
-Copy your `ENGRAM_API_KEY` from `.env` for the header value. **Use `127.0.0.1`, not `localhost`** — Opencode validates that the connection origin matches the `endpoint` URL advertised in the SSE stream. Since Engram advertises `http://127.0.0.1:8788` (set via `ENGRAM_BASE_URL`), your client URL must match exactly. Restart Opencode after saving.
+Copy your `ENGRAM_API_KEY` from `.env` for the header value. **Use `127.0.0.1`, not `localhost`** — Opencode validates that the connection origin matches the `endpoint` URL advertised in the SSE stream. Since Engram advertises `http://127.0.0.1:8788` (set via `ENGRAM_BASE_URL`), your client URL must match exactly.
+
+**Required**: set `ENGRAM_BASE_URL=http://127.0.0.1:8788` in `.env` before starting engram-go (#700). Without it the server advertises whatever it derives from `--host` + `--port`, which may not match what Opencode expects. Restart Opencode after saving the config above.
 
 ---
 

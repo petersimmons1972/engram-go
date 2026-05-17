@@ -118,7 +118,7 @@ See `internal/mcp/tools_test.go` for examples of what adequate coverage looks li
 
 ## Coverage Gate
 
-CI enforces 60% minimum statement coverage on every PR. New files with lower coverage will fail the build.
+CI enforces 55% minimum statement coverage on every PR — a temporary lower bound (#694) while four integration tests remain `t.Skip`'d (#429). The target is 60%; new files should aim for 60%+ to keep the per-file bar above the global gate.
 
 Check locally before pushing:
 
@@ -126,7 +126,7 @@ Check locally before pushing:
 go test ./... -coverprofile=coverage.out && go tool cover -func=coverage.out
 ```
 
-60% is a floor, not a target. The safety tools rewrite (`safety.go`) demonstrates what adequate coverage looks like — read it if you are unsure what to aim for. The coverage gate exists because PR #162 shipped 20 untested functions into production. It stayed there for two weeks before anyone noticed.
+60% is the target, not a floor. The safety tools rewrite (`safety.go`) demonstrates what adequate coverage looks like — read it if you are unsure what to aim for. The coverage gate exists because PR #162 shipped 20 untested functions into production. It stayed there for two weeks before anyone noticed.
 
 ---
 

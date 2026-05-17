@@ -102,9 +102,12 @@ init:
 	    docker volume create engram_pgdata; \
 	    echo "✓ Created Docker volume engram_pgdata"; \
 	fi
-	@if ! docker volume inspect ollama_storage >/dev/null 2>&1; then \
-	    docker volume create ollama_storage; \
-	    echo "✓ Created Docker volume ollama_storage"; \
+	@# #698: the Compose file declares `ollama_storage` as an alias for the
+	@# external volume `ollama_ollama_storage`. Probe + create the external name
+	@# so what `docker volume ls` shows matches what the docs say.
+	@if ! docker volume inspect ollama_ollama_storage >/dev/null 2>&1; then \
+	    docker volume create ollama_ollama_storage; \
+	    echo "✓ Created Docker volume ollama_ollama_storage"; \
 	fi
 
 ## Verify .env contains no placeholder values before deploying.
@@ -115,7 +118,8 @@ check-env:
 	@if [ ! -f .env ] || ! grep -qsE '^POSTGRES_PASSWORD=.+' .env || ! grep -qsE '^ENGRAM_API_KEY=.+' .env; then \
 	    echo "ERROR: .env missing or has empty credentials. Run 'make init'."; exit 1; \
 	fi
-	@echo "✓ .env credentials look set"
+	@# #701: route diagnostic to stderr so `make up > /dev/null` is clean
+	@echo "✓ .env credentials look set" >&2
 
 ## Configure MCP client — fetches current bearer token and writes mcpServers.engram in ~/.claude.json
 ## Run this after: first install, container restart (if key changed), or key rotation.

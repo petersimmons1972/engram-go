@@ -46,6 +46,8 @@ func main() {
 	urlFlag := flag.String("url", "", "Override ENGRAM_URL env var")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	outputJSON := flag.Bool("output-json", false, "emit summary as JSON to stdout; send per-query progress to stderr")
+	// #690: --api-key flag for parity with longmemeval (env ENGRAM_API_KEY is the preferred form to avoid /proc/cmdline exposure)
+	apiKeyFlag := flag.String("api-key", "", "Engram API key (or set ENGRAM_API_KEY env var)")
 	flag.Parse()
 
 	if *versionFlag {
@@ -64,6 +66,9 @@ func main() {
 		serverURL = *urlFlag
 	}
 	apiKey := os.Getenv("ENGRAM_API_KEY")
+	if *apiKeyFlag != "" {
+		apiKey = *apiKeyFlag
+	}
 	provider := envOr("ENGRAM_EMBED_PROVIDER", "ollama")
 
 	// Load golden set.
