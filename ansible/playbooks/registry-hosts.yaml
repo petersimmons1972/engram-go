@@ -1,0 +1,41 @@
+---
+# Ensures registry.petersimmons.com resolves at the node level on all K8s worker
+# hosts. Required so that containerd / crictl can pull images from the internal
+# registry before any pod is scheduled and before CoreDNS is available (CoreDNS
+# handles in-cluster resolution; this handles node-level resolution used during
+# provisioning and image pre-pulls).
+#
+# Background: Tailscale split DNS was rejected because worker nodes do not run
+# tailscaled. This Ansible-managed /etc/hosts entry replaces the previous manual
+# runbook step and survives Proxmox template reprovisioning. Closes homelab-config#2.
+#
+# Inventory:  ansible/inventory/hosts.ini  (group: k8s_workers, worker131–139)
+# Group vars: ansible/group_vars/k8s_workers.yml  (registry_ip, registry_host)
+#
+# Run (all workers):
+#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml
+#
+# Run (single node):
+#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml --limit worker131.petersimmons.com
+#
+# Idempotent: safe to re-run at any time. Will not duplicate lines on nodes
+# where the manual entry already exists from prior configuration.
+#
+# Behaviour by starting state:
+#   Fresh node (no entry):              INSERT managed line at end of file
+#   Bare entry (no marker comment):     UPDATE in place, adds managed marker
+#   Commented-out entry:                NO MATCH — INSERT new managed line, comment preserved
+#   Stale IP (old entry, wrong IP):     UPDATE in place to correct IP
+#   Trailing comment (any comment):     UPDATE in place, our marker replaces theirs
+
+- name: Ensure registry.petersimmons.com resolves on K8s worker nodes
+  hosts: k8s_workers
+  become: true
+
+  tasks:
+    - name: Add registry A-record to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^\s*[0-9]{1,3}(\.[0-9]{1,3}){3}\s+registry\.petersimmons\.com(\s.*)?$'
+        line: "{{ registry_ip }} {{ registry_host }}  # managed by ansible — homelab-config#2"
+        state: present

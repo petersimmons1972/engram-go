@@ -1,0 +1,5 @@
+---
+# Registry that K8s workers pull container images from.
+# Source of truth — change here propagates to playbooks via {{ registry_ip }} and {{ registry_host }}.
+registry_ip: 192.168.0.180
+registry_host: registry.petersimmons.com
