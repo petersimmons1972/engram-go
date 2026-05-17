@@ -19,6 +19,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -886,7 +887,9 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 			}
 		}
 		if requestID == "" {
-			requestID = fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+			// #696: UUIDv4 — 122 bits of entropy, no timing-prediction window,
+			// no collision under sub-nanosecond concurrent requests (A-6 advisory).
+			requestID = uuid.NewString()
 		}
 
 		// Echo the request ID in the response header for client-side correlation (#555)

@@ -1,6 +1,7 @@
 package embed
 
 import (
+	"log/slog"
 	"errors"
 	"sync"
 	"time"
@@ -176,9 +177,29 @@ func (cb *CircuitBreaker) State() CircuitState {
 }
 
 // transitionTo changes state and calls the onStateChange callback if set.
+//
+// #676: every state transition is logged at slog.Warn (OPEN) or slog.Info
+// (HALF_OPEN, CLOSED) so operators can see in the log stream when the
+// embed circuit toggled — previously transitions were Prometheus-only and
+// silent recall degradation looked indistinguishable from normal operation.
 func (cb *CircuitBreaker) transitionTo(newState CircuitState) {
 	oldState := cb.state
 	cb.state = newState
+	if oldState != newState {
+		switch newState {
+		case StateOpen:
+			slog.Warn("embed circuit breaker OPEN — recall will degrade to BM25 until cooldown",
+				"from", oldState.String(),
+				"consecutive_opens", cb.consecutiveOpens,
+				"next_probe_at", cb.nextProbeAt.Format(time.RFC3339))
+		case StateHalfOpen:
+			slog.Info("embed circuit breaker HALF_OPEN — probing upstream",
+				"from", oldState.String())
+		case StateClosed:
+			slog.Info("embed circuit breaker CLOSED — upstream recovered",
+				"from", oldState.String())
+		}
+	}
 	if cb.onStateChange != nil {
 		// Call outside the lock to avoid deadlock
 		go cb.onStateChange(oldState, newState)

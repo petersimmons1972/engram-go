@@ -396,6 +396,8 @@ func (w *AuditWorker) runQuerySnapshot(ctx context.Context, q CanonicalQuery) (*
 		snap.Removals = setDiff(prev.MemoryIDs, ids)
 
 		// Alert when RBO drops below the configured threshold (#275).
+		// #695: also increment a Prometheus counter so this is queryable + alertable
+		// in Grafana, not just visible in the log stream.
 		if q.AlertThreshold != nil && snap.RBOVsPrev != nil && *snap.RBOVsPrev < *q.AlertThreshold {
 			slog.Error("audit: retrieval drift alert — RBO below threshold",
 				"query_id", q.ID,
@@ -404,6 +406,7 @@ func (w *AuditWorker) runQuerySnapshot(ctx context.Context, q CanonicalQuery) (*
 				"rbo_vs_prev", *snap.RBOVsPrev,
 				"alert_threshold", *q.AlertThreshold,
 			)
+			metrics.AuditDriftAlerts.WithLabelValues(q.Project).Inc()
 		}
 	}
 

@@ -116,14 +116,14 @@ func TestRequestIDGenerated(t *testing.T) {
 				http.Error(w, "no request id in context", http.StatusInternalServerError)
 				return
 			}
-			// Should be a 12-char hex string
-			if len(reqID) != 12 {
+			// #696: canonical UUIDv4 form — 36 chars including hyphens.
+			if len(reqID) != 36 {
 				http.Error(w, "request id wrong length", http.StatusInternalServerError)
 				return
 			}
 			for _, c := range reqID {
-				if !strings.ContainsRune("0123456789abcdef", c) {
-					http.Error(w, "request id not hex", http.StatusInternalServerError)
+				if !strings.ContainsRune("0123456789abcdef-", c) {
+					http.Error(w, "request id not hex-with-hyphens", http.StatusInternalServerError)
 					return
 				}
 			}

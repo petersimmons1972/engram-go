@@ -1,13 +1,23 @@
 [Unit]
 Description=Alert on instinct consolidation timer failure
 Documentation=https://github.com/petersimmons1972/engram-go/issues/556
+Documentation=https://github.com/petersimmons1972/engram-go/issues/675
 PartOf=instinct.timer
 
 [Service]
 Type=oneshot
+# Always: dump status + recent logs to the journal so the operator can see
+# what happened by inspecting `journalctl -u engram-instinct-alert`.
 ExecStart=/usr/bin/systemctl status instinct.timer
 ExecStart=/bin/journalctl -xe --no-pager -n 20 -u instinct.service
 
-# Prevent alert spam: only run when the timer is failing.
-# If the timer unit itself is unhealthy, the journal-dump above will show why.
-OnFailure=
+# #675: optionally POST the alert to a webhook (ntfy.sh, Slack incoming hook,
+# Discord webhook — anything that accepts a plain POST). Set
+# ENGRAM_ALERT_WEBHOOK in the unit's environment (e.g. via
+# /etc/default/engram-instinct-alert) to opt in. Empty value = no-op.
+EnvironmentFile=-/etc/default/engram-instinct-alert
+ExecStart=/bin/sh -c 'test -n "$ENGRAM_ALERT_WEBHOOK" && curl -fsS --max-time 10 -X POST -H "Content-Type: text/plain" --data "engram-instinct timer failed on $(hostname) at $(date -Iseconds) — check journalctl -u instinct.service" "$ENGRAM_ALERT_WEBHOOK" || true'
+
+# NOTE: This service is the OnFailure handler for instinct.timer; it should
+# not have its own OnFailure= (would create a loop). Failures here are
+# visible in `systemctl status engram-instinct-alert`.
