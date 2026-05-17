@@ -244,16 +244,35 @@ Use these exact settings to replicate the working configuration:
 ### Benchmark Launch Command
 
 ```bash
-./longmemeval \
-  -data-path ~/path/to/lme-m-dataset \
-  -engram-url http://localhost:8788 \
-  -model nemotron-3-nano-omni \
-  -context-top-k 8 \
-  -recall-top-k 100 \
-  -workers 32 \
-  -no-cleanup \
-  -checkpoint ~/benchmarks/lme-m.checkpoint
+# Stage 1: ingest the dataset into Engram (per-question isolation projects).
+./longmemeval ingest \
+  --data ~/path/to/longmemeval_m_cleaned.json \
+  --url http://localhost:8788 \
+  --workers 32 \
+  --out ~/benchmarks/lme-m \
+  --no-cleanup
+
+# Stage 2: recall + generate hypotheses per question.
+./longmemeval run \
+  --data ~/path/to/longmemeval_m_cleaned.json \
+  --url http://localhost:8788 \
+  --llm-url http://oblivion:8000/v1 \
+  --llm-model nemotron-3-nano-omni \
+  --workers 32 \
+  --out ~/benchmarks/lme-m
+
+# Stage 3: score hypotheses against gold answers.
+./longmemeval score \
+  --data ~/path/to/longmemeval_m_cleaned.json \
+  --llm-url http://oblivion:8000/v1 \
+  --llm-model nemotron-3-nano-omni \
+  --workers 16 \
+  --out ~/benchmarks/lme-m
 ```
+
+**Note on top-k tuning**: `recallTopK` (100) and `contextTopK` (8) are compile-time constants in `cmd/longmemeval/run.go:23-24` — not CLI flags. Change the source and rebuild to tune them. The 8 vs 40 choice is documented in the same file (`// 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster`).
+
+**Checkpoint files** are written to `<out>/checkpoint-ingest.jsonl`, `<out>/checkpoint-run.jsonl`, `<out>/checkpoint-score.jsonl`. Resume is automatic — re-running any stage skips question IDs already present in the checkpoint.
 
 ### vLLM Server Launch
 
@@ -316,7 +335,7 @@ SessionLimit: 470          // Typical LME dataset size
 - [ ] Pre-ingest LME dataset into Engram (or use `-no-cleanup` if already present)
 - [ ] Confirm benchmark checkpoint file is writable and not locked by another process
 - [ ] Verify MCP URL is `http://host:8788` (no `/mcp` suffix)
-- [ ] Run 10-question smoke test to verify end-to-end flow: `./longmemeval -data-path ... -worker 1 -max-questions 10`
+- [ ] Run smoke test to verify end-to-end flow: `./longmemeval ingest --data <path> --workers 1 --out /tmp/lme-smoke` then `./longmemeval run --data <path> --llm-url <url> --llm-model <model> --workers 1 --out /tmp/lme-smoke` (limit by pre-truncating the dataset to 10 questions; there is no --max-questions flag).
 - [ ] Monitor vLLM GPU memory with `nvidia-smi` in separate terminal (should stabilize at ~22GB)
 - [ ] Monitor Engram rate limit logs: `docker compose logs -f engram | grep -i rate` (should see none)
 - [ ] Check completion latency in benchmark logs — expect ~7–8 questions/minute with contextTopK=8
