@@ -8,8 +8,23 @@ BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || ech
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
+
+## Ensure the external Docker networks required by docker-compose.yml exist.
+## Idempotent: networks are created with `external: true` semantics matching the
+## compose declaration (so existing user networks are preserved). #660 fix.
+ensure-networks:
+	@docker network inspect litellm_default >/dev/null 2>&1 || { \
+		echo "creating litellm_default network..."; \
+		docker network create litellm_default; \
+	}
+	@docker network inspect ai-network >/dev/null 2>&1 || { \
+		echo "creating ai-network network..."; \
+		docker network create ai-network; \
+	}
+	@echo "✓ external networks ready"
+
 ## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
-up: check-env
+up: check-env ensure-networks
 	@if ! grep -qs '^POSTGRES_PASSWORD=' .env 2>/dev/null && [ -z "$$POSTGRES_PASSWORD" ]; then \
 	    echo "ERROR: POSTGRES_PASSWORD is not set. Run 'make init' to generate one."; \
 	    exit 1; \

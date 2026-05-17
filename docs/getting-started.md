@@ -1,6 +1,6 @@
 # Getting Started
 
-When you finish this page, you will have a running memory server, a working IDE connection, and 38 tools available to every AI assistant you use. Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while your configured embedding model downloads.
+When you finish this page, you will have a running memory server, a working IDE connection, and 17 tools visible to every AI assistant you use (21 with `ANTHROPIC_API_KEY` set). Three commands get you there. The whole thing takes about five minutes — slightly longer on first run while your configured embedding model downloads.
 
 ---
 
@@ -136,9 +136,9 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 38 tools (43 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup.
+You should see `engram` listed with 17 tools (21 if `ANTHROPIC_API_KEY` is set — four optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup. See [MCP Tool Reference](tools.md) for the full callable surface (46 default / 50 with API key, including hidden maintenance tools).
 
-When you see 38 tools, you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
+When you see 17 tools (or 21 with `ANTHROPIC_API_KEY`), you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
 
 ---
 
@@ -160,7 +160,7 @@ This copies four skill directories to `~/.claude/skills/`:
 
 After install, the skills appear in your Claude Code command palette (type `/` to see them). See [MCP Tool Profiles](tools.md#mcp-tool-profiles) for details on what each skill does and why you might need it.
 
-For most work, you do not need these skills — the core 38 tools are sufficient. Install them if you plan to manage consolidation, ingest large document sets, or run maintenance operations.
+For most work, you do not need these skills — the visible tools are sufficient. Install them if you plan to manage consolidation, ingest large document sets, or run maintenance operations.
 
 ---
 

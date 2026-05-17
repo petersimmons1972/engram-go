@@ -35,7 +35,7 @@ Verify the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 38 tools (43 if `ANTHROPIC_API_KEY` is set — five optional AI-enhanced tools activate). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand.
+You should see `engram` listed with 17 tools (21 if `ANTHROPIC_API_KEY` is set — four optional AI-enhanced tools activate). If the count is wrong, restart Claude Code — it reads MCP configs at startup, not on demand. See [MCP Tool Reference](tools.md) for the full callable surface including hidden maintenance tools.
 
 ---
 
@@ -209,7 +209,7 @@ The SSE transport holds an HTTP connection open indefinitely, and some reverse p
 You have `ENGRAM_API_KEY` set in `.env`, but the IDE is not sending it in the header. Check the IDE config and confirm the header key is exactly `Authorization` and the value starts with `Bearer ` (with a space).
 
 **Wrong number of tools (expect 38 or 43).**
-Five AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 38 tools. With it, you see 43. Set the key and restart `engram-go`:
+Four AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) only register when `ANTHROPIC_API_KEY` is set in `.env`. Without it, you see 17 tools visible in `tools/list`. With it, you see 21. (`memory_diagnose` is a hidden+unconditional tool, not AI-gated.) Set the key and restart `engram-go`:
 
 ```bash
 docker compose restart engram-go
@@ -224,4 +224,4 @@ SSE sessions are bound to the bearer token presented at connection time. After a
 ---
 
 **Previous:** [Getting Started](getting-started.md) — prerequisites, startup, and configuration reference.  
-**Next:** [Tools Reference](tools.md) — all 38 tools (43 with ANTHROPIC_API_KEY) with parameters and examples.
+**Next:** [Tools Reference](tools.md) — 17 visible tools (21 with `ANTHROPIC_API_KEY`), plus 29 hidden maintenance tools, with parameters and examples.
