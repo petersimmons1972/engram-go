@@ -27,9 +27,19 @@ environment (e.g., export INSTINCT_ENABLED=0 in ~/.bashrc).
 
 Press ENTER to accept and continue, or Ctrl-C to abort.
 DISCLOSURE
-if ! read -r 2>/dev/null; then
-    echo "ERROR: installer requires an interactive terminal for consent."
-    echo "       Re-run from a TTY, or set INSTINCT_ENABLED=0 to skip collection."
+# #681: explicit TTY check BEFORE the prompt. The previous `read -r 2>/dev/null`
+# pattern was porous — `echo "" | bash hooks/install.sh` would silently treat
+# an empty line as consent. A stdin-redirected installer cannot give informed
+# consent and must refuse.
+if [ ! -t 0 ]; then
+    echo "ERROR: installer requires an interactive terminal for consent." >&2
+    echo "       stdin is not a TTY (was something piped in?). Re-run from a TTY," >&2
+    echo "       or set INSTINCT_ENABLED=0 to skip data collection entirely." >&2
+    exit 1
+fi
+if ! read -r; then
+    # Defensive: if we have a TTY but read still fails (EOF), refuse.
+    echo "ERROR: read failed — refusing to proceed without explicit consent." >&2
     exit 1
 fi
 

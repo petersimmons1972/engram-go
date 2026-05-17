@@ -42,8 +42,13 @@ func main() {
 		force         = flag.Bool("force", false, "bypass result cache")
 		useLiveBuffer = flag.Bool("use-live-buffer", false, "use ~/.local/state/instinct/buffer.jsonl instead of fixture")
 		quiet         = flag.Bool("quiet", false, "suppress per-model progress output on stderr")
+		outputJSON    = flag.Bool("output-json", false, "emit final results JSON to stdout (suitable for pipelines; implies --quiet)")
 	)
 	flag.Parse()
+
+	if *outputJSON {
+		*quiet = true // --output-json implies --quiet so stdout carries only the JSON result
+	}
 
 	// #661 / #324: when --quiet is set, banner + progress output is silenced.
 	// The final results are written to disk regardless; --quiet only affects
@@ -239,6 +244,18 @@ func main() {
 	}
 
 	_, _ = fmt.Fprintf(bannerOut, "Done. Results cached at %s\n", *resultsPath)
+
+	// #680: when --output-json is set, also dump the results JSON to stdout so
+	// the binary can be composed into pipelines (e.g. `instinct-benchmark
+	// --output-json | jq '.[]|select(.score>0.9)'`).
+	if *outputJSON {
+		resultsBytes, err := os.ReadFile(*resultsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot read results for --output-json: %v\n", err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(resultsBytes)
+	}
 }
 
 func cacheKeyFor(base, ollamaVersion, modelName string) string {
