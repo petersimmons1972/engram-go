@@ -120,6 +120,46 @@ var (
 		Name: "engram_recall_embed_timeout_total",
 		Help: "memory_recall calls that exceeded embed timeout and fell back to BM25+recency",
 	})
+
+	// #673: pgxpool connection pool gauges. Operators need visibility into
+	// pool saturation — until now /health Ping succeeded even when the pool
+	// was fully acquired with callers blocking on Acquire.
+	DBPoolAcquiredConns = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_acquired_conns",
+		Help: "Currently-acquired connections from the shared pgxpool",
+	})
+	DBPoolIdleConns = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_idle_conns",
+		Help: "Idle connections in the shared pgxpool",
+	})
+	DBPoolTotalConns = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_total_conns",
+		Help: "Total (acquired + idle) connections in the shared pgxpool",
+	})
+	DBPoolMaxConns = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_max_conns",
+		Help: "Configured maximum connections for the shared pgxpool",
+	})
+	// AcquireCount and AcquireDuration are exposed as gauges (not counters)
+	// because we re-publish the cumulative value at each sample rather than
+	// tracking deltas — Prometheus rate() over the gauge gives the same
+	// per-second view that a counter would, without delta-tracking bugs.
+	DBPoolAcquireCount = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_acquire_count_total",
+		Help: "Cumulative number of successful pool acquires (republished each sample)",
+	})
+	DBPoolAcquireDurationSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_db_pool_acquire_duration_seconds_total",
+		Help: "Cumulative wall seconds spent blocked acquiring (republished each sample)",
+	})
+
+	// #695: retrieval-drift alert counter. Increments every time an audit
+	// snapshot's RBO-vs-previous drops below the alert threshold for a
+	// canonical query. Watch this in Prometheus; pair with a runbook entry.
+	AuditDriftAlerts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_audit_drift_alerts_total",
+		Help: "Retrieval drift alerts (RBO-vs-previous below alert_threshold) per project",
+	}, []string{"project"})
 )
 
 func init() {
@@ -141,5 +181,12 @@ func init() {
 		EmbedCircuitTransitions,
 		StoreEmbedAsyncTotal,
 		RecallEmbedTimeoutTotal,
+		DBPoolAcquiredConns,
+		DBPoolIdleConns,
+		DBPoolTotalConns,
+		DBPoolMaxConns,
+		DBPoolAcquireCount,
+		DBPoolAcquireDurationSeconds,
+		AuditDriftAlerts,
 	)
 }

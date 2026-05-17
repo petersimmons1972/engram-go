@@ -291,6 +291,10 @@ func run() error {
 	}
 	defer pgxPool.Close()
 
+	// #673: surface pgxpool saturation via Prometheus gauges. Exits when ctx
+	// is cancelled (SIGTERM handler).
+	db.StartPoolMetricsSampler(ctx, pgxPool)
+
 	retentionBackend, err := db.NewPostgresBackendWithPool(ctx, "default", pgxPool)
 	if err != nil {
 		return fmt.Errorf("retention worker backend: %w", err)

@@ -223,6 +223,70 @@ docker logs engram-reembed | grep -i "exhausted\|retries\|failed"
 
 ---
 
+## engram_db_pool_* (pgxpool saturation)
+
+**A-2 sibling / #673**. The shared pgxpool exposes six gauges sampled every 5 seconds by `db.StartPoolMetricsSampler`:
+
+- `engram_db_pool_acquired_conns` — currently in use
+- `engram_db_pool_idle_conns` — sitting idle
+- `engram_db_pool_total_conns` — acquired + idle
+- `engram_db_pool_max_conns` — configured ceiling
+- `engram_db_pool_acquire_count_total` — cumulative successful acquires
+- `engram_db_pool_acquire_duration_seconds_total` — cumulative wall-time blocked acquiring
+
+**Saturation signal**: `acquired_conns / max_conns` approaching 1.0 means callers will start blocking. The first thing to check when query latency rises.
+
+**Diagnostic**:
+```bash
+# Live gauges
+curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics   | grep '^engram_db_pool_'
+
+# Slow queries that may be holding connections
+docker exec engram-postgres psql -U engram -d engram -c   "SELECT pid, now()-query_start AS age, state, substring(query,1,80) FROM pg_stat_activity WHERE state='active' ORDER BY age DESC LIMIT 10;"
+```
+
+If `acquired_conns` is near `max_conns` for sustained periods, the pool is too small or queries are too slow. Raise `MaxConns` in `internal/db/postgres.go:configureSharedPool` or fix the slow query (Postgres Diagnostics section below).
+
+## engram_audit_drift_alerts_total
+
+**#695**. Increments every time a canonical-query snapshot's RBO-vs-previous score drops below the configured `alert_threshold`. The companion slog.Error line gives the project + query + score; the metric gives a queryable signal for Grafana alerts.
+
+**Investigate when**:
+- Counter rate increases noticeably (sustained drift across multiple snapshots)
+- A specific project's counter increments — recall ranking has shifted for that project
+
+**Likely causes**:
+- Embedding model changed (`memory_migrate_embedder` was run)
+- Adaptive weights diverged (`memory_weight_tune` adjusted ranking inputs)
+- Large bulk ingest changed the relative scoring of the audited query
+
+**Diagnostic**:
+```bash
+# Recent snapshots for a specific canonical query
+docker exec engram-postgres psql -U engram -d engram -c   "SELECT created_at, rbo_vs_prev, jaccard_at_5 FROM audit_snapshots WHERE query_id=<id> ORDER BY created_at DESC LIMIT 10;"
+```
+
+If drift is expected (post-migration), reset the baseline by deleting old snapshots for the affected queries. If unexpected, treat as a recall-quality regression and investigate via `memory_diagnose`.
+
+## Embed Circuit Breaker State Transitions
+
+**#676**. Every state transition is logged at INFO (HALF_OPEN, CLOSED) or WARN (OPEN). Search `journalctl -u engram-go` for `embed circuit breaker` to see the full transition history.
+
+The companion gauge `engram_embed_circuit_state` (0=CLOSED, 1=HALF_OPEN, 2=OPEN) gives the current state for Prometheus alerts.
+
+When OPEN: `memory_recall` degrades to BM25+recency until the next probe attempt. The log line includes `next_probe_at` so on-call knows when recovery will be tried automatically.
+
+## Reembed Worker Healthchecks
+
+**#672**. Each `engram-reembed-*` container now has a Docker HEALTHCHECK that probes Postgres reachability via `pg_isready`. `docker ps` shows healthy/unhealthy based on that probe.
+
+**What this detects**:
+- Network partition between reembed worker and engram-postgres
+- Postgres unreachable / not accepting connections
+
+**What this does NOT detect** (still — same caveat as before):
+- A deadlocked worker that holds DB connections but no longer processes chunks. For that, watch `engram_chunks_pending_reembed` (see top of this runbook).
+
 ## Entity Extraction Drops
 
 **Meaning:** When `ENGRAM_ENTITY_PROJECTS` is set and `ANTHROPIC_API_KEY` is present, entities are extracted from new memories asynchronously. If Claude API calls fail, extraction is skipped for that memory.

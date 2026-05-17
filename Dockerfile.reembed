@@ -19,12 +19,19 @@ RUN touch src/main.rs && cargo build --release
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM alpine:3
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates postgresql-client
 
 COPY --from=builder /build/target/release/engram-reembed /engram-reembed
 
 # Non-root user for least-privilege operation.
 RUN adduser -D -u 10001 engram
 USER engram
+
+# #672: Healthcheck probes DB reachability from this container — the typical
+# failure mode for a reembed worker is network partition or DB outage.
+# Does NOT detect a deadlocked worker; for that, watch the
+# engram_chunks_pending_reembed gauge in Prometheus. See docs/runbook.md.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD pg_isready -h postgres -p 5432 -U engram -d engram -q || exit 1
 
 ENTRYPOINT ["/engram-reembed"]
