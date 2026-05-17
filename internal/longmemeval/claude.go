@@ -62,7 +62,26 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 	return "", lastErr
 }
 
+// validClaudeModels is the allowlist for the --model flag passed to
+// `claude --print`. Restricting to known values prevents argv injection
+// (#678) — an LLM-hallucinated or env-controlled value containing "--" or
+// shell metacharacters cannot reach the claude binary.
+var validClaudeModels = map[string]bool{
+	"opus":   true,
+	"sonnet": true,
+	"haiku":  true,
+}
+
+// isValidClaudeModel reports whether the supplied model name is in the
+// strict allowlist (case-sensitive). #678.
+func isValidClaudeModel(model string) bool {
+	return validClaudeModels[model]
+}
+
 func runClaude(ctx context.Context, prompt, model string) (string, error) {
+	if !isValidClaudeModel(model) {
+		return "", fmt.Errorf("claude: refusing to invoke with disallowed model %q (allowed: opus, sonnet, haiku) (#678)", model)
+	}
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 	// Pass the prompt via stdin rather than argv so we don't blow past
@@ -128,33 +147,7 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 
 	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
 	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
-	type oaiMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	reqBody, err := json.Marshal(struct {
-		Model              string         `json:"model"`
-		Messages           []oaiMessage   `json:"messages"`
-		MaxTokens          int            `json:"max_tokens"`
-		Temperature        float64        `json:"temperature"`
-		TopP               float64        `json:"top_p"`
-		ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
-	}{
-		Model: model,
-		Messages: []oaiMessage{
-			{
-				Role:    "system",
-				Content: "You are a precise QA assistant. Answer concisely using only the provided memory context.",
-			},
-			{Role: "user", Content: prompt},
-		},
-		MaxTokens:   2048, // with enable_thinking=false, answers are short QA; 20480 overflowed 131k context limit
-		Temperature: 0.2,   // instruct/deterministic mode per NVIDIA model card
-		TopP:        0.95,
-		ChatTemplateKwargs: map[string]any{
-			"enable_thinking": false, // disable reasoning chain; answer goes to content not reasoning_content
-		},
-	})
+	reqBody, err := buildOAIRequestBody(model, prompt)
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
 	}
@@ -166,7 +159,7 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oaiHTTPClient.Do(req)
 	if err != nil {
 		if tctx.Err() != nil {
 			return "", fmt.Errorf("OAI request timed out after %s", generateTimeout)
@@ -291,4 +284,55 @@ func ParseScoreLabel(raw string) (label, explanation string) {
 		explanation = strings.TrimSpace(lines[1])
 	}
 	return label, explanation
+}
+
+
+// oaiMessage is one entry in an OpenAI-compatible chat completion request.
+type oaiMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// needsChatTemplateKwargs reports whether the given model accepts the
+// `chat_template_kwargs.enable_thinking` extension. Currently only vLLM
+// Nemotron models do. Other OAI endpoints (gpt-*, llama-*, qwen-*, etc.)
+// may return HTTP 400 if an unknown field is sent (#671).
+func needsChatTemplateKwargs(model string) bool {
+	return strings.Contains(strings.ToLower(model), "nemotron")
+}
+
+// buildOAIRequestBody marshals the OpenAI chat completion request body for
+// the given model + prompt. Only includes chat_template_kwargs for models
+// that understand it (currently vLLM Nemotron). Extracted from callOAI so
+// the model-gating decision is unit-testable. #671.
+func buildOAIRequestBody(model, prompt string) ([]byte, error) {
+	body := struct {
+		Model              string         `json:"model"`
+		Messages           []oaiMessage   `json:"messages"`
+		MaxTokens          int            `json:"max_tokens"`
+		Temperature        float64        `json:"temperature"`
+		TopP               float64        `json:"top_p"`
+		ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	}{
+		Model: model,
+		Messages: []oaiMessage{
+			{Role: "system", Content: "You are a precise QA assistant. Answer concisely using only the provided memory context."},
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   2048,
+		Temperature: 0.2,
+		TopP:        0.95,
+	}
+	if needsChatTemplateKwargs(model) {
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	}
+	return json.Marshal(body)
+}
+
+// oaiHTTPClient is a private *http.Client for OAI-compatible LLM endpoints.
+// Per-call context deadlines guard hangs; the explicit Timeout below is a
+// second layer of defense and ensures we never share http.DefaultClient
+// (whose Transport can be mutated by any imported package's init() — #687).
+var oaiHTTPClient = &http.Client{
+	Timeout: 15 * time.Minute, // generous: LLM generation can be slow; context deadline tightens further per call
 }

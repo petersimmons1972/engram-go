@@ -20,8 +20,18 @@ func WriteCheckpoint[T any](path string, ch <-chan T) {
 	}
 	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
+	var encodeErrs int
 	for entry := range ch {
-		_ = enc.Encode(entry)
+		if err := enc.Encode(entry); err != nil {
+			encodeErrs++
+			// Log every individual failure so on-call can identify which entry
+			// was lost. #670: previously discarded silently — silent loss of
+			// expensive LLM-call results is unacceptable.
+			log.Printf("WARN WriteCheckpoint: encode failed for entry in %s: %v", path, err)
+		}
+	}
+	if encodeErrs > 0 {
+		log.Printf("WARN WriteCheckpoint: %d entries failed to encode in %s — results may be incomplete (#670)", encodeErrs, path)
 	}
 }
 

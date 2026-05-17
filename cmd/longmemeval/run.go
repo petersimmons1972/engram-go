@@ -146,7 +146,17 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 			continue
 		}
 
-		entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
+		// #669: close the per-item SSE client so its background goroutine + HTTP
+		// connection don't accumulate over hundreds of items. Wrapped in a closure
+		// because `defer mcpClient.Close()` inside a for-range loop fires only
+		// when the function returns — we need it on each iteration. Hence the IIFE.
+		func() {
+			defer func() {
+				if cerr := mcpClient.Close(); cerr != nil {
+					log.Printf("WARN run [%s] mcpClient close: %v", item.QuestionID, cerr)
+				}
+			}()
+			entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
 		out <- entry
 		if entry.Status == "error" {
 			log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
@@ -154,13 +164,14 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
 		}
 
-		if !cfg.NoCleanup {
-			if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
-				if !longmemeval.IsStaleSessionError(err) {
-					log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+			if !cfg.NoCleanup {
+				if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
+					if !longmemeval.IsStaleSessionError(err) {
+						log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
+					}
 				}
 			}
-		}
+		}()
 	}
 }
 
