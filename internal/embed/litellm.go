@@ -11,10 +11,12 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/metrics"
+	"github.com/petersimmons1972/engram/internal/netutil"
 )
 
 // LiteLLMClient implements embed.Client against an OpenAI-compatible
@@ -29,19 +31,57 @@ type LiteLLMClient struct {
 	cb         *CircuitBreaker
 }
 
-func newLiteLLMHTTPClient() *http.Client {
+// newLiteLLMHTTPClient builds a *http.Client for the LiteLLM/olla endpoint.
+//
+// #688: DNS-rebind / SSRF guard parity with internal/embed/ollama.go. The
+// configured baseURL host is allow-listed (operator explicitly chose it).
+// On every dial we re-resolve the hostname and reject responses that point
+// to a private IP unless they resolve to the allow-listed host.
+//
+// baseURL may be empty (the function then degrades to the basic transport
+// without rebind protection — used by tests + the no-probe constructor's
+// short-lived calls).
+func newLiteLLMHTTPClient(baseURL string) *http.Client {
+	var configuredHost string
+	if baseURL != "" {
+		if u, err := url.Parse(baseURL); err == nil {
+			configuredHost = u.Hostname()
+		}
+	}
+	baseDialer := &net.Dialer{
+		Timeout:   500 * time.Millisecond,
+		KeepAlive: 30 * time.Second,
+	}
 	return &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     60 * time.Second,
-			// 500ms connect timeout: fail fast when the embed endpoint is
-			// unreachable so BM25 fallback fires before the MCP client's
-			// context expires. GPU inference timeout is governed by the
-			// per-call context (4s in RecallWithOpts), not this dialer.
-			DialContext: (&net.Dialer{
-				Timeout: 500 * time.Millisecond,
-			}).DialContext,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				// Skip the rebind guard when no baseURL is configured (test paths).
+				if configuredHost == "" {
+					return baseDialer.DialContext(ctx, network, addr)
+				}
+				// Re-resolve on every dial to prevent short-TTL rebinding from
+				// bypassing the startup IP check.
+				addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+				}
+				// Skip private-IP check for the operator-configured host.
+				if host != configuredHost {
+					for _, resolved := range addrs {
+						if netutil.IsPrivateIP(resolved) {
+							return nil, fmt.Errorf("litellm URL resolved to private IP %q (SSRF protection, closes #688)", resolved)
+						}
+					}
+				}
+				return baseDialer.DialContext(ctx, network, addr)
+			},
 		},
 	}
 }
@@ -55,7 +95,7 @@ func NewLiteLLMClient(ctx context.Context, baseURL, model, apiKey string, target
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
-		http:       newLiteLLMHTTPClient(),
+		http:       newLiteLLMHTTPClient(baseURL),
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -82,7 +122,7 @@ func NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey string, ta
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
-		http:       newLiteLLMHTTPClient(),
+		http:       newLiteLLMHTTPClient(baseURL),
 	}
 
 	if cbCfg.Enabled || cbCfg.FailureThreshold > 0 {
