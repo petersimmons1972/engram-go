@@ -1,0 +1,21 @@
+# docker-compose.lan.yml — LAN exposure override (A-3 / #666)
+#
+# By default engram-go is loopback-only. This file lifts the port to all
+# interfaces. Use only when:
+#   1. You have explicitly accepted the threat model (LAN brute-force surface).
+#   2. ENGRAM_RATE_LIMIT_DISABLE is NOT set to true in .env (the server-side
+#      interlock will refuse to start otherwise — see cmd/engram/main.go
+#      checkBindInterlock).
+#   3. The host is on a trusted network OR you have an external auth layer
+#      (Tailscale, WireGuard, reverse proxy with mTLS, etc.).
+#
+# Activate:
+#   docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+#
+# Deactivate (return to loopback-only):
+#   docker compose down && docker compose up -d
+
+services:
+  engram-go:
+    ports: !override
+      - "${ENGRAM_PORT:-8788}:8788"

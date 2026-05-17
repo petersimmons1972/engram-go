@@ -50,12 +50,15 @@ func newDeleteProjectPool(t *testing.T, stub *deleteProjectStubBackend) *EngineP
 // - "project": <name> in the result
 // - backend.DeleteProject called with the correct project name
 func TestMemoryDeleteProject_HappyPath(t *testing.T) {
+	t.Setenv("ENGRAM_ALLOW_PROJECT_DELETE", "1")
+
 	stub := &deleteProjectStubBackend{}
 	pool := newDeleteProjectPool(t, stub)
 
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project": "test-eval-01",
+		"confirm": "test-eval-01",
 	}
 
 	result, err := handleMemoryDeleteProject(context.Background(), pool, req)
@@ -87,6 +90,8 @@ func TestMemoryDeleteProject_HappyPath(t *testing.T) {
 // argument returns a Go error (not a tool-level error), which will log a WARN.
 // This is consistent with the handler design: missing required args error early.
 func TestMemoryDeleteProject_EmptyProject(t *testing.T) {
+	t.Setenv("ENGRAM_ALLOW_PROJECT_DELETE", "1")
+
 	stub := &deleteProjectStubBackend{}
 	pool := newDeleteProjectPool(t, stub)
 
@@ -110,6 +115,8 @@ func TestMemoryDeleteProject_EmptyProject(t *testing.T) {
 // regardless of whether the project existed. This is the idempotent semantic
 // expected from a delete operation.
 func TestMemoryDeleteProject_IdempotentDelete(t *testing.T) {
+	t.Setenv("ENGRAM_ALLOW_PROJECT_DELETE", "1")
+
 	stub := &deleteProjectStubBackend{}
 	pool := newDeleteProjectPool(t, stub)
 
@@ -117,6 +124,7 @@ func TestMemoryDeleteProject_IdempotentDelete(t *testing.T) {
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project": "never-existed",
+		"confirm": "never-existed",
 	}
 
 	result, err := handleMemoryDeleteProject(context.Background(), pool, req)

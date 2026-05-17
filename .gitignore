@@ -1,13 +1,17 @@
 .worktrees/
 backups/
+
+# ── Secrets — keep tight; .env.example is the ONLY env file allowed in git ────
 .env
-.env.local
+.env.*
+!.env.example
 .env.machine-identity
+*.rotation-*.bak
 infisical/infisical-bin
+
 /engram
 /engram-*
 cover.out
-.env.bak.*
 .claude/
 testdata/longmemeval/*.json
 results/

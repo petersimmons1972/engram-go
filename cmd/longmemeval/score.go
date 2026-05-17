@@ -148,7 +148,7 @@ func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 		log.Printf("WARN write hypotheses.jsonl: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	for _, s := range scores {
 		if err := enc.Encode(longmemeval.HypothesisLine{QuestionID: s.QuestionID, Hypothesis: s.Hypothesis}); err != nil {
@@ -165,7 +165,7 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 		log.Printf("WARN write retrieval_log.jsonl: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 
 	for _, s := range scores {
@@ -259,4 +259,10 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		fmt.Printf("Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
 		fmt.Printf("Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
 	}
+}
+
+// normalizeLabel canonicalises a score label: trims surrounding whitespace
+// and upper-cases the remainder. Empty input returns empty output.
+func normalizeLabel(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
 }

@@ -165,3 +165,38 @@ func TestRateLimitPrecedence(t *testing.T) {
 	// The test here is a placeholder documenting the expectation.
 	t.Log("rate-limit-rps precedence is enforced during server startup")
 }
+
+// TestCheckBindInterlock verifies the A-3 #666 startup interlock:
+// non-loopback host + rate-limit-disable must refuse to start.
+func TestCheckBindInterlock(t *testing.T) {
+	cases := []struct {
+		name             string
+		host             string
+		rateLimitDisable bool
+		wantErr          bool
+		wantErrSubstr    string
+	}{
+		{"loopback + rate limit enabled = allow", "127.0.0.1", false, false, ""},
+		{"loopback IPv6 + rate limit enabled = allow", "::1", false, false, ""},
+		{"loopback hostname + rate limit enabled = allow", "localhost", false, false, ""},
+		{"loopback + rate limit disabled = allow (legitimate single-user)", "127.0.0.1", true, false, ""},
+		{"non-loopback + rate limit enabled = allow", "0.0.0.0", false, false, ""},
+		{"non-loopback wildcard + rate limit disabled = REFUSE", "0.0.0.0", true, true, "ENGRAM_RATE_LIMIT_DISABLE"},
+		{"non-loopback LAN IP + rate limit disabled = REFUSE", "192.168.1.10", true, true, "non-loopback"},
+		{"non-loopback IPv6 + rate limit disabled = REFUSE", "::", true, true, "non-loopback"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkBindInterlock(tc.host, tc.rateLimitDisable)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected nil, got %v", err)
+			}
+			if tc.wantErr && tc.wantErrSubstr != "" && !strings.Contains(err.Error(), tc.wantErrSubstr) {
+				t.Errorf("error %q missing %q", err.Error(), tc.wantErrSubstr)
+			}
+		})
+	}
+}

@@ -133,3 +133,18 @@ install-skills:
 ## Run retrieval evaluation harness
 eval:
 	go run ./cmd/eval/main.go $(EVAL_ARGS)
+
+## Force a Postgres backup now (A-2 / #658).
+backup-now:
+	docker compose exec postgres-backup sh -c 'ts=$$(date +%Y%m%d-%H%M%S); out=/backups/engram-manual-$$ts.dump; pg_dump -h postgres -U engram -Fc engram > "$$out" && echo "✓ wrote $$out ($$(du -h $$out | cut -f1))"'
+
+## Restore-drill the most recent backup into a throwaway DB.
+backup-restore-drill:
+	@latest=$$(ls -t backups/engram-*.dump 2>/dev/null | head -1); \
+	if [ -z "$$latest" ]; then echo "no backups found in ./backups/"; exit 1; fi; \
+	echo "restoring $$latest into engram_restore_test ..."; \
+	docker compose exec postgres createdb -U engram engram_restore_test 2>/dev/null || true; \
+	docker compose exec -T postgres pg_restore -U engram -d engram_restore_test --clean --if-exists < $$latest; \
+	docker compose exec postgres psql -U engram -d engram_restore_test -c "SELECT count(*) AS restored_memories FROM memories;"; \
+	docker compose exec postgres dropdb -U engram engram_restore_test; \
+	echo "✓ restore drill passed"
