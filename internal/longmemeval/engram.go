@@ -334,6 +334,10 @@ func (c *Client) DeleteProject(ctx context.Context, project string) error {
 		},
 	})
 	if err != nil {
+		if IsStaleSessionError(err) {
+			// Bug #642: SSE session expired server-side; cleanup is moot, not an error.
+			return nil
+		}
 		return err
 	}
 	if result.IsError {

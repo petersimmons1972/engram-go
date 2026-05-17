@@ -260,3 +260,9 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		fmt.Printf("Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
 	}
 }
+
+// normalizeLabel canonicalises a score label: trims surrounding whitespace
+// and upper-cases the remainder. Empty input returns empty output.
+func normalizeLabel(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}

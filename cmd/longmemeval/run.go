@@ -182,3 +182,15 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		Status:       "done",
 	}
 }
+
+// runEntryLogLine formats a single RunEntry as a one-line log message.
+// Includes the error cause for error entries (#643 regression guard) and
+// the hypothesis length for done entries.
+func runEntryLogLine(entry longmemeval.RunEntry) string {
+	if entry.Status == "error" {
+		return fmt.Sprintf("question_id=%s status=%s error=%s",
+			entry.QuestionID, entry.Status, entry.Error)
+	}
+	return fmt.Sprintf("question_id=%s status=%s hypothesis_len=%d",
+		entry.QuestionID, entry.Status, len(entry.Hypothesis))
+}
