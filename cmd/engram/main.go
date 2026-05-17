@@ -197,6 +197,14 @@ func run() error {
 		return fmt.Errorf("ENGRAM_EMBED_MODEL or --model is required (no compile-time default)")
 	}
 
+	// #686: emit a deprecation warning when ENGRAM_OLLAMA_MODEL is set but
+	// ENGRAM_EMBED_MODEL is not. The legacy name still works (envOr fallback
+	// at the flag definition above) but new configs should use the canonical
+	// name.
+	if os.Getenv("ENGRAM_EMBED_MODEL") == "" && os.Getenv("ENGRAM_OLLAMA_MODEL") != "" {
+		slog.Warn("ENGRAM_OLLAMA_MODEL is deprecated — use ENGRAM_EMBED_MODEL instead (#686). Will continue to honor the legacy name for backward compat.")
+	}
+
 	// Warn on inconsistent embed config before spending time connecting to Ollama. (#380)
 	if warn := validateEmbedConfig(*embedModel, *embedDims); warn != "" {
 		slog.Warn("embed config warning", "detail", warn)

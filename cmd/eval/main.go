@@ -49,7 +49,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("engram-eval %s\n", Version)
+		fmt.Fprintf(os.Stderr, "engram-eval %s\n", Version)
 		os.Exit(0)
 	}
 
@@ -117,14 +117,11 @@ func main() {
 	total := len(golden)
 	var sumP, sumMRR, sumNDCG float64
 
-	// progressf writes per-query progress lines. When --output-json is set, progress
-	// goes to stderr so stdout carries only the machine-readable JSON result.
+	// progressf writes per-query progress lines to stderr in ALL modes.
+	// Progress is not data — sending it to stdout pollutes pipes regardless
+	// of --output-json. #679.
 	progressf := func(format string, args ...any) {
-		if *outputJSON {
-			fmt.Fprintf(os.Stderr, format, args...)
-		} else {
-			fmt.Printf(format, args...)
-		}
+		fmt.Fprintf(os.Stderr, format, args...)
 	}
 
 	for i, entry := range golden {
