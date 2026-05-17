@@ -34,6 +34,28 @@ TEST_DATABASE_URL=postgres://engram:PASSWORD@localhost:5432/engram go test ./int
 
 Integration tests hit a real database. Unit tests do not. Keep them clearly separated — a test that relies on database state but is not named `*Integration*` will fail silently in CI when the test database is not present.
 
+### Local Secret Guard
+
+To prevent accidental commits of `.env`, `.env.machine-identity`, or any file containing a credential-shaped value, install the pre-commit guard:
+
+```bash
+bash scripts/install-git-hooks.sh
+```
+
+This wires `scripts/check-secrets.sh` as a git `pre-commit` hook. The guard blocks staged secret-file names (`.env`, `.env.*` except `.env.example`, `.env.bak.*`, `.env.machine-identity`) and known secret content shapes (long hex `PASSWORD=`/`API_KEY=`/`SECRET=` values, Anthropic `sk-ant-` tokens). To run the guard manually:
+
+```bash
+bash scripts/check-secrets.sh
+```
+
+Verify the guard works as expected:
+
+```bash
+bash scripts/check-secrets.test.sh
+```
+
+If the guard blocks a commit you believe is safe, override with `git commit --no-verify` — but verify by hand first. This guard exists because issue #657 surfaced live credentials in the working tree.
+
 ### Rust (Re-embedder)
 
 The `reembed-rs/` directory contains the high-throughput re-embedding worker in Rust. It shares the same PostgreSQL backend but runs in its own container to isolate re-embedding concurrency from MCP request handling.
