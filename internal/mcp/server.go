@@ -228,6 +228,11 @@ type Server struct {
 	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
 	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
 	tofuGranted atomic.Bool
+	// #707: when tofuGranted was first set. Used by the same-process re-grant
+	// path: if the legitimate first request raced (e.g. engram-setup crashed
+	// mid-parse), allow another grant after 60 seconds without requiring a
+	// process restart. atomic.Int64 holds unix epoch seconds.
+	tofuGrantedAt atomic.Int64
 
 	// serverPhase tracks startup lifecycle: 0=starting, 1=warming, 2=warm.
 	// /ready returns 503 until phaseWarm is stored. Advanced by the pre-warm goroutine
@@ -742,7 +747,19 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// #707: allow re-grant after 60s. If the prior grant succeeded but
+		// the client crashed/raced before receiving the response, the operator
+		// would otherwise have to restart the process. The time window keeps
+		// the "exactly once during bootstrap" semantics within a session.
+		if isLoopbackIP(rawPeer) {
+			if s.tofuGranted.Load() {
+				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
+					s.tofuGranted.Store(false)
+				}
+			}
+		}
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
 				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
@@ -929,7 +946,7 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "unauthorized",
-				"hint":  "Bearer token mismatch — on the host machine run: cd ~/projects/engram-go && make setup  (or: go run ./cmd/engram-setup). Then run /mcp in Claude Code to reconnect.",
+				"hint":  buildBearerMismatchHint(r),
 			})
 			return
 		}
@@ -977,7 +994,19 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// #707: allow re-grant after 60s. If the prior grant succeeded but
+		// the client crashed/raced before receiving the response, the operator
+		// would otherwise have to restart the process. The time window keeps
+		// the "exactly once during bootstrap" semantics within a session.
+		if isLoopbackIP(rawPeer) {
+			if s.tofuGranted.Load() {
+				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
+					s.tofuGranted.Store(false)
+				}
+			}
+		}
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
 				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
@@ -1788,4 +1817,19 @@ func reloadRuntimeConfig(cfg *RuntimeConfig) {
 	if len(reloadedKeys) > 0 {
 		slog.Info("config reloaded via SIGHUP", "changed_keys", reloadedKeys)
 	}
+}
+
+// buildBearerMismatchHint returns a verbose, deployment-specific hint only
+// when the request originates from loopback. External callers get a generic
+// message so the server doesn't leak filesystem paths or the project name
+// to unauthenticated network clients (#704).
+func buildBearerMismatchHint(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+		return "Bearer token mismatch — on the host machine run: cd ~/projects/engram-go && make setup  (or: go run ./cmd/engram-setup). Then run /mcp in Claude Code to reconnect."
+	}
+	return "Bearer token mismatch — check your client configuration."
 }
