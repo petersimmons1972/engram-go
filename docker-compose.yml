@@ -65,7 +65,8 @@ services:
       -c max_wal_size=4GB
       -c random_page_cost=2.0
       -c effective_io_concurrency=32
-      -c synchronous_commit=off
+      -c synchronous_commit=on
+      -c wal_compression=on
     environment:
       # These variables are required and must be set via .env or shell environment
       - POSTGRES_USER=engram
@@ -79,11 +80,45 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # A-2 (#658): nightly logical backup sidecar. 14-day retention.
+  # See docs/runbook.md "Postgres Backups" for restore drill.
+  postgres-backup:
+    container_name: engram-postgres-backup
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    environment:
+      - PGPASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    entrypoint: |
+      sh -c '
+        set -eu
+        while true; do
+          ts=$$(date +%Y%m%d-%H%M%S)
+          out=/backups/engram-$$ts.dump
+          echo "[$$(date -Iseconds)] starting backup → $$out"
+          if pg_dump -h postgres -U engram -Fc engram > "$$out.tmp"; then
+            mv "$$out.tmp" "$$out"
+            echo "[$$(date -Iseconds)] backup ok ($$(du -h "$$out" | cut -f1))"
+          else
+            echo "[$$(date -Iseconds)] BACKUP FAILED" >&2
+            rm -f "$$out.tmp"
+          fi
+          find /backups -name "engram-*.dump" -mtime +14 -delete 2>/dev/null || true
+          sleep 86400
+        done
+      '
+
   engram-go:
     container_name: engram-go-app
     image: engram-go:latest
+    # A-3 (#666): loopback-only by default. For LAN exposure, use:
+    #   docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
     ports:
-      - "${ENGRAM_PORT:-8788}:8788"
+      - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     env_file:
       - path: .env
         required: false

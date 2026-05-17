@@ -319,6 +319,56 @@ If the Ollama container gets tight on memory, let `qwen3-coder:30b` fall out fir
 
 ---
 
+## Postgres Backups
+
+**A-2 / #658**. The `postgres-backup` sidecar container (defined in `docker-compose.yml`)
+takes a nightly `pg_dump -Fc` of the `engram` database to `./backups/`, with
+14-day retention. Combined with `synchronous_commit=on` on the primary, this
+covers two failure modes:
+
+- **Crash / OOM / power**: in-flight commits are durable (sync_commit=on).
+- **Operator error / logical corruption / volume loss**: the most recent
+  nightly dump is restorable.
+
+**Verify a backup exists**:
+
+```bash
+ls -la backups/engram-*.dump | tail -5
+```
+
+If no recent file, check the sidecar logs:
+
+```bash
+docker logs engram-postgres-backup --tail 30
+```
+
+**Force a backup now** (e.g. before a migration or `memory_delete_project`):
+
+```bash
+make backup-now
+```
+
+**Restore drill** — do this ONCE before trusting the backup path. Restores into
+a throwaway database; does not touch primary.
+
+```bash
+make backup-restore-drill
+```
+
+The drill creates `engram_restore_test`, restores the most recent dump, runs a
+sanity query, and drops the test DB. If it fails, your backup chain is broken
+and `synchronous_commit=on` is the only durability you actually have.
+
+**What this does NOT protect against**: logical/semantic corruption that
+propagates into the backup window before being noticed. If a bug writes garbage
+embeddings or a bad `memory_correct` overwrites a real memory, the nightly
+dumps will faithfully capture the corrupted state. Within 14 days every backup
+contains the bug. Detecting silent semantic corruption requires either WAL
+archiving with PITR (deliberately out of scope per A-2 advisory) or
+application-level audit logging of mutations.
+
+---
+
 ## Postgres Diagnostics
 
 For deeper investigation:

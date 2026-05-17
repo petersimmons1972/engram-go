@@ -351,6 +351,11 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		slog.Warn("ENGRAM_TRUST_PROXY_HEADERS is enabled — ensure a trusted reverse proxy terminates all inbound connections; direct clients can spoof X-Forwarded-For to bypass rate limiting")
 	}
 
+	// A-4 (#689): warn loudly when memory_delete_project is callable.
+	if v := os.Getenv("ENGRAM_ALLOW_PROJECT_DELETE"); v == "1" || strings.EqualFold(v, "true") {
+		slog.Warn("ENGRAM_ALLOW_PROJECT_DELETE is enabled — memory_delete_project is callable by any authenticated MCP client; restart without this env var to re-lock once your delete task is complete (#689)")
+	}
+
 	// Create embedder health probe with a 5-second cached check.
 	// The check function probes the configured LiteLLM endpoint.
 	embedderHealth := NewEmbedderHealth(func(ctx context.Context) (bool, string) {
@@ -1251,7 +1256,7 @@ func (s *Server) registerTools() {
 			handleMemoryConsolidate},
 		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
 			handleMemorySleep},
-		{"memory_delete_project", "Delete all memories and project data for an eval isolation project. Not for normal use.",
+		{"memory_delete_project", "Delete all memories and project data for a project. IRREVERSIBLE. Requires server started with ENGRAM_ALLOW_PROJECT_DELETE=1 AND a confirm argument exactly matching the project argument (#689). Not for normal use.",
 			noConfig(handleMemoryDeleteProject)},
 		// Episodes
 		{"memory_episode_start", "Start a named episode to group memories from this session",
