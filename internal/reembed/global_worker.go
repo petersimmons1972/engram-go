@@ -109,7 +109,7 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 			// empty batch, or a partial batch (queue exhausted).
 			for {
 				iterCtx, cancel := context.WithTimeout(ctx, globalBatchTimeout)
-				n, err := g.runBatch(iterCtx)
+				n, err := g.safeRunBatch(iterCtx)
 				cancel()
 				if ctx.Err() != nil {
 					return
@@ -227,4 +227,21 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) (int, error) {
 	}
 	_ = eg.Wait()
 	return len(chunks), nil
+}
+
+
+// safeRunBatch wraps runBatch with per-iteration panic recovery, mirroring
+// internal/reembed/worker.go's per-project Worker.safeRunBatch. Without this,
+// a single panicking chunk kills the goroutine and the reembed pipeline
+// silently stalls (#708).
+func (g *GlobalReembedder) safeRunBatch(ctx context.Context) (n int, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("global reembedder panic — will retry after poll interval", "panic", r)
+			metrics.WorkerPanics.WithLabelValues("global_reembed").Inc()
+			n = 0
+			err = fmt.Errorf("global reembedder panic: %v", r)
+		}
+	}()
+	return g.runBatch(ctx)
 }

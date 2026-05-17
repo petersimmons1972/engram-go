@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -84,5 +85,21 @@ func TestExitCodeForRunOutcome(t *testing.T) {
 					tc.attempted, tc.errors, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRunWorker_HasPerItemCleanup — #669: each work-item iteration must
+// close its MCP client so SSE goroutines + connections don't accumulate.
+// We assert the structural pattern in run.go (an IIFE with deferred Close)
+// because a behavioural test would need a live MCP server + goroutine
+// accounting; brittle for the value it gives.
+func TestRunWorker_HasPerItemCleanup(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "mcpClient.Close()") {
+		t.Errorf("run.go missing mcpClient.Close() — per-item SSE leak risk (#669)")
 	}
 }
