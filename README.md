@@ -62,7 +62,7 @@ For local-only, use: `docker compose -f docker-compose.local.yml up -d`
 ### Prerequisites
 
 - **Docker Engine 20.10+** and **Docker Compose 2.0+** — check with `docker --version` and `docker compose version`
-- **Go 1.25+** — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
+- **Go 1.26.3 or newer** (matches `go.mod`) — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
 - **4 GB RAM free** — Ollama keeps the embedding model in memory
 - **2 GB disk** — PostgreSQL volume + Ollama model download (both cached on restart)
 

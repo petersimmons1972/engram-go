@@ -57,10 +57,13 @@ build:
 
 ## Build Go binaries with version injection
 go-build:
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram ./cmd/engram
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-setup ./cmd/engram-setup
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-eval ./cmd/eval
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o instinct-benchmark ./cmd/benchmark
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram ./cmd/engram
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram-setup ./cmd/engram-setup
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram-eval ./cmd/eval
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o instinct-benchmark ./cmd/benchmark
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o instinct ./cmd/instinct
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o longmemeval ./cmd/longmemeval
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o starter ./cmd/starter
 
 ## Tail container logs
 logs:

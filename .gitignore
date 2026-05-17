@@ -9,8 +9,15 @@ backups/
 *.rotation-*.bak
 infisical/infisical-bin
 
+# Build artifacts at repo root (per `make go-build` target — keep this in sync)
 /engram
 /engram-*
+/instinct
+/instinct-benchmark
+/longmemeval
+/starter
+# Stale sentinel files that have appeared in the past (#699)
+/1.0
 cover.out
 .claude/
 testdata/longmemeval/*.json
@@ -22,5 +29,4 @@ results/
 __pycache__/
 *.pyc
 *.pyo
-/instinct
 reembed-rs/target/
