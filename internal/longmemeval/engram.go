@@ -189,7 +189,7 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 }
 
 // Recall calls memory_recall and returns ranked memory IDs.
-// The server returns {"results":[{"memory":{"id":"..."},"score":...},...]}
+// The server returns {"results":[{"memory":{"id":"..."},"score":...},...]} as JSON.
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -412,7 +412,7 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			Error string `json:"error"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
 			continue
@@ -452,7 +452,7 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		IDs []string `json:"ids"`

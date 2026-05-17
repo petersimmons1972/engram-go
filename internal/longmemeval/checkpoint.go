@@ -18,7 +18,7 @@ func WriteCheckpoint[T any](path string, ch <-chan T) {
 		}
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	for entry := range ch {
 		_ = enc.Encode(entry)
@@ -36,7 +36,7 @@ func ReadSkipSet(path string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
@@ -78,7 +78,7 @@ func readAll[T any](path string) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var out []T
 	scanner := bufio.NewScanner(f)

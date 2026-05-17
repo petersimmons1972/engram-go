@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"os/exec"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -144,6 +145,12 @@ func TestScoreOAI_HTTPError_ReturnsPartiallyCorrect(t *testing.T) {
 
 // TestGenerate_RequiresClaude is skipped in short mode.
 func TestGenerate_RequiresClaude(t *testing.T) {
+	// #678: the claude binary is an undocumented prerequisite for this test.
+	// In CI it is not in PATH; skip rather than fail. Locally (with claude
+	// installed) the test still exercises the real code path.
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude binary not in PATH — skipping (#678)")
+	}
 	if testing.Short() {
 		t.Skip("short mode")
 	}
