@@ -379,7 +379,10 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 		"project": project,
 		"tags":    tags,
 	}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal QuickStore body: %w", err) // #710
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 8; attempt++ {
@@ -440,7 +443,10 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 		"project": project,
 		"limit":   limit,
 	}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal QuickRecall body: %w", err) // #710
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/quick-recall", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
