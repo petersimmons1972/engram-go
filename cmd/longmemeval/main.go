@@ -8,7 +8,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -30,13 +31,51 @@ type Config struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: longmemeval <ingest|run|score|all> [flags]")
-		os.Exit(1)
-	}
-	subcommand := os.Args[1]
+	os.Exit(dispatch(os.Args, os.Stdout, os.Stderr))
+}
 
-	fs := flag.NewFlagSet(subcommand, flag.ExitOnError)
+// printUsage writes the top-level usage banner.
+func printUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "Usage: longmemeval <subcommand> [flags]")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Subcommands:")
+	_, _ = fmt.Fprintln(w, "  ingest    Load the dataset into Engram (per-question isolation projects)")
+	_, _ = fmt.Fprintln(w, "  run       Recall + generate hypotheses for each question")
+	_, _ = fmt.Fprintln(w, "  score     Score hypotheses against gold answers")
+	_, _ = fmt.Fprintln(w, "  all       Run ingest → run → score in one invocation")
+	_, _ = fmt.Fprintln(w, "  help      Print this usage and exit")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
+	_, _ = fmt.Fprintln(w, "  --data <path>           Path to longmemeval_m_cleaned.json (required for ingest/run/score/all)")
+	_, _ = fmt.Fprintln(w, "  --url <url>             Engram server URL                                 (env: ENGRAM_URL)")
+	_, _ = fmt.Fprintln(w, "  --api-key <key>         Engram API key                                    (env: ENGRAM_API_KEY)")
+	_, _ = fmt.Fprintln(w, "  --llm-url <url>         OpenAI-compatible LLM base URL                    (env: LME_LLM_URL)")
+	_, _ = fmt.Fprintln(w, "  --llm-model <name>      Model name for --llm-url                          (env: LME_LLM_MODEL)")
+	_, _ = fmt.Fprintln(w, "  --workers <n>           Parallel worker count (default 4)")
+	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
+	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
+	_, _ = fmt.Fprintln(w, "  --retries <n>           Retry count for generation + Engram calls (default 1)")
+	_, _ = fmt.Fprintln(w, "  --no-cleanup            Skip project deletion after run stage")
+}
+
+// dispatch parses args and runs the requested subcommand. Returns the process
+// exit code. Extracted from main() so it is testable without spawning a
+// subprocess. Writers are injected so tests can capture output.
+func dispatch(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 {
+		printUsage(stderr)
+		return 1
+	}
+	subcommand := args[1]
+
+	// #662: `help` is a first-class subcommand, not an unknown one.
+	if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+		printUsage(stdout)
+		return 0
+	}
+
+	fs := flag.NewFlagSet(subcommand, flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	cfg := &Config{}
 	fs.StringVar(&cfg.DataFile, "data", "", "Path to longmemeval_m_cleaned.json (required)")
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
@@ -50,12 +89,22 @@ func main() {
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
 
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		log.Fatal(err)
+	switch subcommand {
+	case "ingest", "run", "score", "all":
+		// known subcommand — fall through to flag parsing
+	default:
+		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n", subcommand)
+		printUsage(stderr)
+		return 1
 	}
 
-	if cfg.DataFile == "" && subcommand != "help" {
-		log.Fatal("--data is required")
+	if err := fs.Parse(args[2:]); err != nil {
+		return 2
+	}
+
+	if cfg.DataFile == "" {
+		_, _ = fmt.Fprintln(stderr, "--data is required")
+		return 1
 	}
 
 	if cfg.RunID == "" {
@@ -66,15 +115,16 @@ func main() {
 	case "ingest":
 		runIngest(cfg)
 	case "run":
-		runRun(cfg)
+		// #703: surface non-zero exit when runRun reports any errors.
+		if exit := runRun(cfg); exit != 0 {
+			return exit
+		}
 	case "score":
 		runScore(cfg)
 	case "all":
 		runAll(cfg)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", subcommand)
-		os.Exit(1)
 	}
+	return 0
 }
 
 func newRunID() string {

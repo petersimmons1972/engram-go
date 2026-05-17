@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"sync/atomic"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -23,7 +24,11 @@ var temporalInterrogativeRe = regexp.MustCompile(
 const recallTopK = 100
 const contextTopK = 8 // 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster
 
-func runRun(cfg *Config) {
+// runRun executes the run stage. Returns the process exit code: 0 on success,
+// 1 when zero items completed successfully out of any that were attempted
+// (#703 — total-failure guard so scripted pipelines don't proceed when every
+// recall/generate failed).
+func runRun(cfg *Config) int {
 	items := loadItems(cfg.DataFile)
 	itemMap := make(map[string]longmemeval.Item, len(items))
 	for _, item := range items {
@@ -32,7 +37,8 @@ func runRun(cfg *Config) {
 
 	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
 	if err != nil {
-		log.Fatalf("read ingest checkpoint: %v", err)
+		log.Printf("ERROR read ingest checkpoint: %v", err)
+		return 1
 	}
 	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
 	for _, e := range ingestEntries {
@@ -44,11 +50,29 @@ func runRun(cfg *Config) {
 	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-run.jsonl")
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
 	if err != nil {
-		log.Fatalf("read run checkpoint: %v", err)
+		log.Printf("ERROR read run checkpoint: %v", err)
+		return 1
 	}
 	log.Printf("run: %d ingest entries loaded, %d already done", len(ingestMap), len(skip))
 
+	// #703: track error vs success outcome counts to determine exit code.
+	var attempted, errors atomic.Int64
+
+	// Intermediate channel so we can observe outcomes before they reach the
+	// checkpoint writer, without losing the existing append semantics.
+	innerCh := make(chan longmemeval.RunEntry, cfg.Workers*2)
 	ckptCh := make(chan longmemeval.RunEntry, cfg.Workers*2)
+	go func() {
+		for entry := range innerCh {
+			attempted.Add(1)
+			if entry.Status == "error" {
+				errors.Add(1)
+			}
+			ckptCh <- entry
+		}
+		close(ckptCh)
+	}()
+
 	var wgWriter sync.WaitGroup
 	wgWriter.Add(1)
 	go func() {
@@ -69,14 +93,41 @@ func runRun(cfg *Config) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(cfg, itemMap, work, ckptCh)
+			runWorker(cfg, itemMap, work, innerCh)
 		}()
 	}
 	wg.Wait()
-	close(ckptCh)
+	close(innerCh)
 	wgWriter.Wait()
 
-	log.Printf("run: complete")
+	att := attempted.Load()
+	errs := errors.Load()
+	successes := att - errs
+	log.Printf("run: complete (attempted=%d successes=%d errors=%d)", att, successes, errs)
+
+	// Exit non-zero when at least one item was attempted but zero succeeded.
+	// Resume-only invocations where nothing was attempted (everything already
+	// in the checkpoint) report exit 0.
+	if code := exitCodeForRunOutcome(att, errs); code != 0 {
+		log.Printf("ERROR every attempted item failed; exiting non-zero (#703)")
+		return code
+	}
+	return 0
+}
+
+// exitCodeForRunOutcome decides the runRun exit code from the attempted+error
+// counts. Returns 1 when at least one item was attempted and zero succeeded;
+// returns 0 otherwise (including resume-clean runs that attempted nothing).
+// Extracted so the decision is unit-testable without spinning up a live MCP
+// server. #703.
+func exitCodeForRunOutcome(attempted, errors int64) int {
+	if attempted == 0 {
+		return 0
+	}
+	if attempted-errors == 0 {
+		return 1
+	}
+	return 0
 }
 
 func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry) {
