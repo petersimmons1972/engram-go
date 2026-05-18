@@ -62,4 +62,10 @@ type Config struct {
 	// Timeout caps each individual LLM call.  Zero means no timeout beyond
 	// what the caller's context imposes.
 	Timeout time.Duration
+
+	// Backend selects which concrete client to construct: "anthropic" or "olla".
+	// When empty, the factory falls back to the LLM_BACKEND environment variable
+	// (default "anthropic"). Setting Backend explicitly is preferred — it keeps
+	// configuration in the call chain and is race-safe under parallel tests.
+	Backend string
 }

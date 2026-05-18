@@ -39,8 +39,13 @@ func run() int {
 	// Construct LLM client. Unlike the consolidator (which is long-running and
 	// tolerates a missing backend), audit is a one-shot batch tool — failure
 	// should be loud and non-zero so cron jobs surface the problem.
-	os.Setenv("LLM_BACKEND", *llmBackend) //nolint:errcheck
-	client, err := instinctllm.NewClient(instinctllm.Config{Timeout: *timeout})
+	// Pass Backend explicitly via Config instead of setting LLM_BACKEND in the
+	// process environment — keeps configuration in the call chain and avoids
+	// race-unsafe global state under parallel tests (Blocker 3).
+	client, err := instinctllm.NewClient(instinctllm.Config{
+		Backend: *llmBackend,
+		Timeout: *timeout,
+	})
 	if err != nil {
 		slog.Error("create LLM client", "backend", *llmBackend, "err", err)
 		return 1
