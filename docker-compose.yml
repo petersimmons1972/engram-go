@@ -138,6 +138,10 @@ services:
       # IMPORTANT: MCP server does NOT run the reembed worker — that lives in the
       # engram-reembed container. Setting batch_size=0 disables it in this container.
       - ENGRAM_REEMBED_BATCH_SIZE=0
+      # Bind to all interfaces inside the container so docker-proxy can forward
+      # host 127.0.0.1:8788 → container eth0. Port mapping already restricts host
+      # access to loopback only — no security surface increase. (#666 follow-up)
+      - ENGRAM_HOST=0.0.0.0
       - ENGRAM_BASE_URL=http://127.0.0.1:${ENGRAM_PORT:-8788}
       # Optional: Claude API key enables memory_ask, memory_reason, etc.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
