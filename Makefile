@@ -2,7 +2,7 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills install-instinct
 
 ## Show available make targets
 help:
@@ -144,6 +144,13 @@ test-explore-soak:
 ## Pass NO_REMOTE=1 to skip SSH probes: make status NO_REMOTE=1
 status:
 	@bash infra/status.sh $(if $(NO_REMOTE),--no-remote,)
+
+## Build and install Phase 1 instinct binaries to ~/bin
+install-instinct:
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-consolidate ./cmd/instinct
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-audit-go ./cmd/audit
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-migrate-confidence ./cmd/instinct-migrate-confidence
+	@echo "✓ Installed: instinct-consolidate, instinct-audit-go, instinct-migrate-confidence"
 
 ## Install bundled Claude Code skills to ~/.claude/skills/
 install-skills:
