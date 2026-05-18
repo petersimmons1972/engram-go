@@ -143,7 +143,7 @@ func TestSearchEngine_Correct(t *testing.T) {
 	require.NoError(t, engine.Store(ctx, m))
 
 	newContent := "corrected"
-	updated, err := engine.Correct(ctx, m.ID, &newContent, nil, nil)
+	updated, err := engine.Correct(ctx, m.ID, &newContent, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "corrected", updated.Content)
 }
