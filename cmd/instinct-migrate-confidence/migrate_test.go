@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -347,5 +349,285 @@ func TestBackupSchema(t *testing.T) {
 				t.Errorf("line %d: missing required field %q", i, field)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestWriteReportJSON — writeReport emits valid JSON with the right schema.
+// ---------------------------------------------------------------------------
+
+func TestWriteReportJSON(t *testing.T) {
+	rpt := DetectReport{
+		ScannedAt:              "2026-01-01T00:00:00Z",
+		TotalRecords:           5,
+		CandidatesForMigration: 2,
+		ByProject: map[string]ProjectStats{
+			"clearwatch": {Scanned: 3, Candidates: 2},
+		},
+		Anomalies: []AnomalyRecord{
+			{ID: "bad1", Project: "global", Importance: -1.5, Reason: "negative value"},
+		},
+		SampleAffected: []SampleRecord{
+			{ID: "r1", Project: "clearwatch", TagSignature: "sig-abc", Importance: 7},
+		},
+	}
+
+	var stdoutBuf, stderrBuf strings.Builder
+	if err := writeReport(rpt, &stdoutBuf, &stderrBuf); err != nil {
+		t.Fatalf("writeReport() error: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(stdoutBuf.String()), &decoded); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nOutput: %s", err, stdoutBuf.String())
+	}
+	for _, field := range []string{"scanned_at", "total_records", "candidates_for_migration", "by_project", "anomalies", "sample_affected"} {
+		if _, ok := decoded[field]; !ok {
+			t.Errorf("JSON output missing field %q", field)
+		}
+	}
+	if n := decoded["total_records"].(float64); int(n) != 5 {
+		t.Errorf("total_records = %v, want 5", n)
+	}
+
+	// Stderr must have human-readable summary.
+	summary := stderrBuf.String()
+	if !strings.Contains(summary, "Total records") {
+		t.Errorf("stderr missing 'Total records': %s", summary)
+	}
+	if !strings.Contains(summary, "Candidates") {
+		t.Errorf("stderr missing 'Candidates': %s", summary)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestAnomalyReason — covers anomalyReason for all branches.
+// ---------------------------------------------------------------------------
+
+func TestAnomalyReason(t *testing.T) {
+	cases := []struct {
+		val  float64
+		want string
+	}{
+		{-1, "negative value"},
+		{11, "value exceeds maximum of 10"},
+		{5.5, "non-integer float in ambiguous range"},
+	}
+	for _, c := range cases {
+		got := anomalyReason(c.val)
+		if got != c.want {
+			t.Errorf("anomalyReason(%.1f) = %q, want %q", c.val, got, c.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSigTag — sig tag extraction edge cases.
+// ---------------------------------------------------------------------------
+
+func TestSigTag(t *testing.T) {
+	if got := sigTag([]string{"instinct", "clearwatch"}); got != "" {
+		t.Errorf("sigTag with no sig-* tag = %q, want empty", got)
+	}
+	if got := sigTag([]string{"instinct", "sig-abc123", "clearwatch"}); got != "sig-abc123" {
+		t.Errorf("sigTag = %q, want sig-abc123", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestApplyNoSleep — override rate limiter in tests so apply runs are fast.
+// (This is also implicitly tested by all apply tests succeeding quickly.)
+// ---------------------------------------------------------------------------
+
+func init() {
+	// Disable the 50ms rate-limit sleep in all tests.
+	sleepForRateLimit = func() {}
+}
+
+// ---------------------------------------------------------------------------
+// TestResolveEngram — reads endpoint/token from a temp mcp_servers.json.
+// ---------------------------------------------------------------------------
+
+func TestResolveEngram(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "mcp_servers.json")
+	cfg := `{
+		"mcpServers": {
+			"engram": {
+				"url": "http://localhost:8788/sse",
+				"headers": {"Authorization": "Bearer test-token-xyz"}
+			}
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	// Write to correct sub-path that resolveEngram expects.
+	claudeDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "mcp_servers.json"), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	base, tok := resolveEngram("", "")
+	if base != "http://localhost:8788" {
+		t.Errorf("base = %q, want http://localhost:8788", base)
+	}
+	if tok != "test-token-xyz" {
+		t.Errorf("token = %q, want test-token-xyz", tok)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestResolveEngramFlagOverride — explicit flags bypass mcp_servers.json.
+// ---------------------------------------------------------------------------
+
+func TestResolveEngramFlagOverride(t *testing.T) {
+	base, tok := resolveEngram("http://example.com", "mytoken")
+	if base != "http://example.com" {
+		t.Errorf("base = %q, want http://example.com", base)
+	}
+	if tok != "mytoken" {
+		t.Errorf("token = %q, want mytoken", tok)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestHTTPEngramQueryRecords — httptest server validates request shape and
+// returns a fixture response. Covers newHTTPEngram, doPost, queryRecords.
+// ---------------------------------------------------------------------------
+
+func TestHTTPEngramQueryRecords(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("want POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/quick-recall" {
+			t.Errorf("want /quick-recall, got %s", r.URL.Path)
+		}
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer test-tok" {
+			t.Errorf("auth header = %q, want 'Bearer test-tok'", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{
+					"id":         "m1",
+					"importance": 7.0,
+					"tags":       []string{"instinct", "sig-abc"},
+					"content":    "test pattern",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newHTTPEngram(srv.URL, "test-tok")
+	records, err := client.queryRecords(context.Background(), "clearwatch")
+	if err != nil {
+		t.Fatalf("queryRecords() error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].ID != "m1" {
+		t.Errorf("record ID = %q, want m1", records[0].ID)
+	}
+	if records[0].Importance != 7.0 {
+		t.Errorf("importance = %v, want 7.0", records[0].Importance)
+	}
+	if records[0].Project != "clearwatch" {
+		t.Errorf("project = %q, want clearwatch", records[0].Project)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestHTTPEngramCorrectRecord — validates MCP JSON-RPC call shape.
+// ---------------------------------------------------------------------------
+
+func TestHTTPEngramCorrectRecord(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			t.Errorf("want /mcp, got %s", r.URL.Path)
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"id": "m1"}})
+	}))
+	defer srv.Close()
+
+	client := newHTTPEngram(srv.URL, "test-tok")
+	if err := client.correctRecord(context.Background(), "m1", "clearwatch", 0.7); err != nil {
+		t.Fatalf("correctRecord() error: %v", err)
+	}
+	if gotBody["method"] != "tools/call" {
+		t.Errorf("method = %v, want tools/call", gotBody["method"])
+	}
+	params, _ := gotBody["params"].(map[string]any)
+	if params["name"] != "memory_correct" {
+		t.Errorf("tool name = %v, want memory_correct", params["name"])
+	}
+	args, _ := params["arguments"].(map[string]any)
+	if args["memory_id"] != "m1" {
+		t.Errorf("memory_id = %v, want m1", args["memory_id"])
+	}
+	if args["importance"] != 0.7 {
+		t.Errorf("importance = %v, want 0.7", args["importance"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestHTTPEngramFetchRecord — fetchRecord finds the right record by ID.
+// ---------------------------------------------------------------------------
+
+func TestHTTPEngramFetchRecord(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"id": "m1", "importance": 0.7, "tags": []string{"instinct", "sig-abc"}},
+				{"id": "m2", "importance": 5.0, "tags": []string{"instinct", "sig-def"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newHTTPEngram(srv.URL, "tok")
+	rec, err := client.fetchRecord(context.Background(), "m2", "homelab")
+	if err != nil {
+		t.Fatalf("fetchRecord() error: %v", err)
+	}
+	if rec.ID != "m2" {
+		t.Errorf("id = %q, want m2", rec.ID)
+	}
+	if rec.Importance != 5.0 {
+		t.Errorf("importance = %v, want 5.0", rec.Importance)
+	}
+
+	// Not found case.
+	_, err = client.fetchRecord(context.Background(), "missing", "homelab")
+	if err == nil {
+		t.Error("expected error for missing record, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestHTTPEngramHTTPError — doPost surfaces non-2xx status codes.
+// ---------------------------------------------------------------------------
+
+func TestHTTPEngramHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	client := newHTTPEngram(srv.URL, "bad-tok")
+	_, err := client.queryRecords(context.Background(), "clearwatch")
+	if err == nil {
+		t.Error("expected error for 401, got nil")
 	}
 }
