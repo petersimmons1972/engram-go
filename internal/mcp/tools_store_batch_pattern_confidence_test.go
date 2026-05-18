@@ -221,3 +221,50 @@ func TestBatchStorePatternConfidenceWrongType(t *testing.T) {
 
 	require.Empty(t, cap.stored, "no memories must be stored when batch validation fails")
 }
+
+// TestBatchStorePatternConfidenceJSONNull stores 3 items where item 2 has
+// pattern_confidence: nil (the Go representation of JSON null after
+// encoding/json unmarshals into map[string]any). The batch must succeed and
+// item 2 must be stored with NULL pattern_confidence; items 1 and 3 with their
+// respective float values.
+func TestBatchStorePatternConfidenceJSONNull(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"memories": []any{
+			map[string]any{
+				"content":            "item 1 with confidence 0.3",
+				"memory_type":        "pattern",
+				"pattern_confidence": float64(0.3),
+			},
+			map[string]any{
+				"content":            "item 2 with JSON-null confidence",
+				"memory_type":        "pattern",
+				"pattern_confidence": nil, // key present, value is JSON null
+			},
+			map[string]any{
+				"content":            "item 3 with confidence 0.9",
+				"memory_type":        "pattern",
+				"pattern_confidence": float64(0.9),
+			},
+		},
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "JSON-null pattern_confidence must not produce a batch error: %+v", res.Content)
+
+	require.Len(t, cap.stored, 3, "all 3 items must be stored when item 2 has JSON-null pattern_confidence")
+
+	require.NotNil(t, cap.stored[0].PatternConfidence, "item 1 PatternConfidence must be set")
+	require.InDelta(t, 0.3, *cap.stored[0].PatternConfidence, 1e-9, "item 1 confidence must be 0.3")
+
+	require.Nil(t, cap.stored[1].PatternConfidence,
+		"item 2 PatternConfidence must be nil (NULL) when arg value is JSON null -- must not default to 0.0")
+
+	require.NotNil(t, cap.stored[2].PatternConfidence, "item 3 PatternConfidence must be set")
+	require.InDelta(t, 0.9, *cap.stored[2].PatternConfidence, 1e-9, "item 3 confidence must be 0.9")
+}

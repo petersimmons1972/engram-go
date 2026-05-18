@@ -302,3 +302,52 @@ func TestImportanceFieldUnchangedBehavior(t *testing.T) {
 	require.Equal(t, 2, *backend.capturedImport,
 		"importance float→int truncation must remain unchanged — E1 intentionally leaves this as-is")
 }
+
+// TestMemoryStorePatternConfidenceJSONNull sends pattern_confidence: nil (the Go
+// representation of a JSON null after encoding/json unmarshals into map[string]any)
+// and asserts the key-present-but-null case is treated as absent: no validation
+// error, memory stored successfully, PatternConfidence stored as NULL (not 0.0).
+func TestMemoryStorePatternConfidenceJSONNull(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"content":            "json null confidence",
+		"memory_type":        "pattern",
+		"project":            "test",
+		"pattern_confidence": nil, // key present, value is JSON null
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "JSON-null pattern_confidence must not produce a tool error: %+v", res.Content)
+
+	require.NotEmpty(t, cap.stored, "memory must be stored when pattern_confidence is JSON null")
+	require.Nil(t, cap.stored[0].PatternConfidence,
+		"PatternConfidence must be nil (NULL) when arg value is JSON null -- must not default to 0.0")
+}
+
+// TestMemoryCorrectPatternConfidenceJSONNull sends pattern_confidence: nil (JSON null)
+// to memory_correct and asserts it is treated as "key absent": UpdateMemory is called
+// with nil patternConfidence (do-not-touch semantics), no validation error.
+func TestMemoryCorrectPatternConfidenceJSONNull(t *testing.T) {
+	backend := &pcCorrectBackend{}
+	pool := newPCCorrectPool(t, backend)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"memory_id":          types.NewMemoryID(),
+		"project":            "test",
+		"pattern_confidence": nil, // key present, value is JSON null
+	}
+
+	res, err := handleMemoryCorrect(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "JSON-null pattern_confidence must not produce a tool error: %+v", res.Content)
+
+	require.True(t, backend.capturedPCSet, "UpdateMemory must be called even when pattern_confidence is JSON null")
+	require.Nil(t, backend.capturedPC,
+		"patternConfidence must reach UpdateMemory as nil when JSON null -- 'do not touch' semantics preserved")
+}
