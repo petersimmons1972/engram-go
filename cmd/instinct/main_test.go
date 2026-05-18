@@ -530,6 +530,72 @@ func TestWriteEpisodeDoesNotDuplicateIngests(t *testing.T) {
 	}
 }
 
+// TestWriteEpisodeMultiEventDoesNotShareContext verifies that each ingest call
+// receives its own independent timeout budget. A slow mock (3s per call) with
+// N=5 events must all succeed: if a shared context were used the later events
+// would be starved after the first call consumed the budget.
+func TestWriteEpisodeMultiEventDoesNotShareContext(t *testing.T) {
+	const (
+		n           = 5
+		callDelay   = 3 * time.Second
+		minExpected = time.Duration(n) * callDelay
+	)
+
+	var ingested int
+
+	slowMock := &slowIngestEngram{
+		mockEngram: &mockEngram{},
+		delay:      callDelay,
+		ingestFn: func() {
+			ingested++
+		},
+	}
+
+	events := make([]Event, n)
+	for i := range events {
+		events[i] = Event{SessionID: "s1", ProjectID: "p1", ToolName: "Bash"}
+	}
+
+	start := time.Now()
+	// Use a context with a budget well beyond N×delay so the outer deadline
+	// never fires; only per-call timeouts (mcpCallTimeout=15s) matter here.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if err := writeEpisode(ctx, slowMock, "s1", "p1", events); err != nil {
+		t.Fatalf("writeEpisode: %v", err)
+	}
+
+	elapsed := time.Since(start)
+	if ingested != n {
+		t.Errorf("ingested %d events, want %d — some were context-canceled", ingested, n)
+	}
+	if elapsed < minExpected {
+		t.Errorf("elapsed %v < %v — calls may not have actually waited (test validity check)", elapsed, minExpected)
+	}
+}
+
+// slowIngestEngram wraps mockEngram and adds a configurable delay to ingest.
+type slowIngestEngram struct {
+	*mockEngram
+	delay    time.Duration
+	ingestFn func()
+}
+
+func (s *slowIngestEngram) ingest(ctx context.Context, e Event, p, sess string) error {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	if s.ingestFn != nil {
+		s.ingestFn()
+	}
+	return nil
+}
+
 func TestUpsertPattern_GlobalPromotion(t *testing.T) {
 	// Existing pattern at 0.7, step up to 0.9 (>= 0.8), events span 2 projects → promote globally
 	e := &mockEngram{recalled: &recallResult{id: "mem-123", confidence: 0.7}}
