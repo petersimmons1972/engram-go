@@ -276,17 +276,28 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			validErrs = append(validErrs, fmt.Sprintf("item %d: tags: %v", idx, tagErr))
 			continue
 		}
+		// Validate optional per-item pattern_confidence field — mirrors handleMemoryStore.
+		var itemPatternConfidence *float64
+		if v, ok := mmap["pattern_confidence"].(float64); ok {
+			validated, validErr := types.ValidatePatternConfidence(v)
+			if validErr != nil {
+				validErrs = append(validErrs, fmt.Sprintf("item %d: pattern_confidence: %v", idx, validErr))
+				continue
+			}
+			itemPatternConfidence = &validated
+		}
 		// Per-item episode_id wins over the batch-level default.
 		itemEpisodeID := getString(mmap, "episode_id", batchEpisodeID)
 		memories = append(memories, &types.Memory{
-			ID:          types.NewMemoryID(),
-			Content:     content,
-			MemoryType:  memType,
-			Project:     project,
-			Importance:  importance,
-			Tags:        itemTags,
-			StorageMode: "focused",
-			EpisodeID:   itemEpisodeID,
+			ID:                types.NewMemoryID(),
+			Content:           content,
+			MemoryType:        memType,
+			Project:           project,
+			Importance:        importance,
+			Tags:              itemTags,
+			StorageMode:       "focused",
+			EpisodeID:         itemEpisodeID,
+			PatternConfidence: itemPatternConfidence,
 		})
 	}
 
