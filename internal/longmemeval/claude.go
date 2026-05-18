@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -13,8 +14,8 @@ import (
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
-// generateTimeout is the hard cap for one OAI generation call. 1200s needed for 120B vLLM on 40-block contexts.
-const generateTimeout = 600 * time.Second
+// generateTimeout is the hard cap for one OAI generation call. 1800s needed for 120B vLLM on 40-block contexts.
+const generateTimeout = 1800 * time.Second
 
 // GenerateForType generates an answer using Sonnet for all question types.
 func GenerateForType(ctx context.Context, prompt, questionType string, retries int) (string, error) {
@@ -100,11 +101,30 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
 // the claude CLI. baseURL is the API root (e.g. "http://oblivion:8000/v1").
 // Retry/backoff behaviour mirrors generate().
+// OAIOptions controls generation quality parameters for OpenAI-compatible endpoints.
+// Zero values fall back to conservative defaults safe for all models.
+type OAIOptions struct {
+	// EnableThinking enables chain-of-thought reasoning for models that support it
+	// (e.g. Qwen3). Improves answer quality significantly; use higher MaxTokens.
+	// Do NOT enable for Nemotron v3 — causes HTTP 400 (vLLM GH#39103).
+	EnableThinking bool
+	// MaxTokens caps the output token budget. Default 2048 is fine for
+	// enable_thinking=false; use ≥8192 when thinking is enabled.
+	MaxTokens int
+}
+
+// GenerateOAI calls the OAI endpoint with conservative defaults (thinking off, 2048 tokens).
 func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int) (string, error) {
+	return GenerateOAIWithOpts(ctx, prompt, baseURL, model, retries, OAIOptions{})
+}
+
+// GenerateOAIWithOpts is the full-featured variant; use when you need thinking mode or
+// a larger token budget.
+func GenerateOAIWithOpts(ctx context.Context, prompt, baseURL, model string, retries int, opts OAIOptions) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAI(ctx, prompt, baseURL, model)
+		out, err := callOAI(ctx, prompt, baseURL, model, opts)
 		if err == nil {
 			return out, nil
 		}
@@ -122,9 +142,29 @@ func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int
 	return "", lastErr
 }
 
-func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error) {
+func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
+
+	maxTokens := 2048
+	if opts.MaxTokens > 0 {
+		maxTokens = opts.MaxTokens
+	}
+	// Qwen3 docs: temperature=0.6 for thinking mode, lower for non-thinking.
+	temperature := 0.2
+	if opts.EnableThinking {
+		temperature = 0.6
+	}
+
+	// Truncate prompt to last 480000 chars (~120k tokens) to avoid vLLM context overflow (status 400).
+	// We keep the END of the prompt because the question is at the end.
+	const maxPromptChars = 480_000
+	if len(prompt) > maxPromptChars {
+		slog.Warn("prompt truncated to fit context window",
+			"original_chars", len(prompt),
+			"truncated_chars", maxPromptChars)
+		prompt = prompt[len(prompt)-maxPromptChars:]
+	}
 
 	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
 	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
@@ -148,11 +188,14 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 			},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   2048, // with enable_thinking=false, answers are short QA; 20480 overflowed 131k context limit
-		Temperature: 0.2,   // instruct/deterministic mode per NVIDIA model card
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
 		TopP:        0.95,
 		ChatTemplateKwargs: map[string]any{
-			"enable_thinking": false, // disable reasoning chain; answer goes to content not reasoning_content
+			// enable_thinking=false disables reasoning chain; content field has the answer.
+			// enable_thinking=true: full chain-of-thought in reasoning_content, answer in content.
+			// Nemotron v3 does not support enable_thinking — leave false for that model.
+			"enable_thinking": opts.EnableThinking,
 		},
 	})
 	if err != nil {

@@ -17,16 +17,18 @@ import (
 
 // Config holds flags shared across all subcommands.
 type Config struct {
-	DataFile   string
-	Workers    int
-	RunID      string
-	ServerURL  string
-	APIKey     string
-	NoCleanup  bool
-	Retries    int
-	OutDir     string
-	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
-	LLMModel   string // model name for LLMBaseURL endpoint
+	DataFile       string
+	Workers        int
+	RunID          string
+	ServerURL      string
+	APIKey         string
+	NoCleanup      bool
+	Retries        int
+	OutDir         string
+	LLMBaseURL     string // OpenAI-compatible base URL; bypasses claude CLI when set
+	LLMModel       string // model name for LLMBaseURL endpoint
+	EnableThinking bool   // enable chain-of-thought for models that support it (Qwen3)
+	LLMMaxTokens   int    // output token budget; 0 → default (2048 thinking-off, 8192 thinking-on)
 }
 
 func main() {
@@ -49,6 +51,8 @@ func main() {
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
+	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		log.Fatal(err)
