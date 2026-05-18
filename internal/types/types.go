@@ -4,6 +4,8 @@
 package types
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,6 +107,30 @@ func ValidateMemoryType(s string) bool {
 // ValidateRelationType reports whether s is a valid relationship type constant.
 func ValidateRelationType(s string) bool {
 	return validRelationTypes[s]
+}
+
+// ValidatePatternConfidence validates a caller-provided float confidence value.
+// Valid range is [0.0, 1.0] inclusive. NaN and Inf are rejected.
+// Returns (f, nil) on success, (0, error) on invalid input.
+//
+// Unlike ValidateImportance (which silently clamps), this function returns an
+// error so the caller can surface the problem to the MCP client rather than
+// silently accepting an out-of-range value — silent clamping is what caused
+// the original int-truncation defect this field was created to replace.
+func ValidatePatternConfidence(f float64) (float64, error) {
+	if math.IsNaN(f) {
+		return 0, fmt.Errorf("pattern_confidence must be a number, got NaN")
+	}
+	if math.IsInf(f, 0) {
+		return 0, fmt.Errorf("pattern_confidence must be finite, got %v", f)
+	}
+	if f < 0.0 {
+		return 0, fmt.Errorf("pattern_confidence must be >= 0.0, got %v", f)
+	}
+	if f > 1.0 {
+		return 0, fmt.Errorf("pattern_confidence must be <= 1.0, got %v", f)
+	}
+	return f, nil
 }
 
 // ValidateImportance clamps n to the valid importance range [0, 4].
