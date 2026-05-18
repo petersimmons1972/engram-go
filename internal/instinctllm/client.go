@@ -1,5 +1,8 @@
-// Package llm provides a generic LLM completion interface and concrete
-// backends for Anthropic and Olla.
+// Package instinctllm provides a generic LLM completion interface and concrete
+// backends for Anthropic and Olla, used by the instinct consolidator and audit
+// binaries. It is named distinctly from internal/llm (the OpenAI-compatible
+// chat client used by summarize/consolidate) to avoid identifier collision when
+// both packages are imported together.
 //
 // # Design rationale
 //
@@ -15,8 +18,10 @@
 //     that switches backends with zero changes to callers.
 //
 // Domain logic (prompt text, JSON parsing, pattern validation) lives in
-// cmd/instinct/consolidator, not here.
-package llm
+// cmd/instinct/consolidator, not here. This package was moved from
+// cmd/instinct/llm to internal/instinctllm to fix a cross-cmd import from
+// cmd/audit.
+package instinctllm
 
 import (
 	"context"

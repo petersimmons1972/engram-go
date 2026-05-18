@@ -1,15 +1,15 @@
-package llm_test
+package instinctllm_test
 
 import (
 	"testing"
 
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // TestFactoryDefaultsAnthropic: unset LLM_BACKEND → anthropic client.
 func TestFactoryDefaultsAnthropic(t *testing.T) {
 	t.Setenv("LLM_BACKEND", "")
-	c, err := llm.NewClient(llm.Config{APIKey: "sk-fake"})
+	c, err := instinctllm.NewClient(instinctllm.Config{APIKey: "sk-fake"})
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestFactoryDefaultsAnthropic(t *testing.T) {
 // TestFactoryOllaSelected: LLM_BACKEND=olla → olla client.
 func TestFactoryOllaSelected(t *testing.T) {
 	t.Setenv("LLM_BACKEND", "olla")
-	c, err := llm.NewClient(llm.Config{Endpoint: "http://olla.example.invalid"})
+	c, err := instinctllm.NewClient(instinctllm.Config{Endpoint: "http://olla.example.invalid"})
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestFactoryOllaSelected(t *testing.T) {
 // TestFactoryRejectsUnknown: LLM_BACKEND=garbage → error.
 func TestFactoryRejectsUnknown(t *testing.T) {
 	t.Setenv("LLM_BACKEND", "garbage")
-	_, err := llm.NewClient(llm.Config{})
+	_, err := instinctllm.NewClient(instinctllm.Config{})
 	if err == nil {
 		t.Error("NewClient() should return error for unknown LLM_BACKEND")
 	}

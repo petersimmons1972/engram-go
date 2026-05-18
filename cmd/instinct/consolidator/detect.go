@@ -1,7 +1,7 @@
 // Package consolidator owns the domain logic for pattern detection: prompt
 // construction, LLM call dispatch, and response parsing/validation.
 //
-// The LLM client (transport layer) is injected via the llm.LLMClient interface
+// The LLM client (transport layer) is injected via the instinctllm.LLMClient interface
 // so backends (Anthropic, Olla) can be swapped without touching this package.
 package consolidator
 
@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // Event is one tool-use record from the PostToolUse hook buffer.
@@ -118,7 +118,7 @@ func stripMarkdownFences(text string) string {
 //     — graceful degradation so the consolidator never crashes on bad LLM output.
 //
 // Zero events short-circuits before calling the LLM.
-func Detect(ctx context.Context, client llm.LLMClient, events []Event) ([]Pattern, error) {
+func Detect(ctx context.Context, client instinctllm.LLMClient, events []Event) ([]Pattern, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}

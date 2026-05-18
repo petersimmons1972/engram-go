@@ -1,4 +1,4 @@
-package llm_test
+package instinctllm_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // goldenAnthropicResponse returns a minimal Anthropic Messages API response
@@ -17,14 +17,14 @@ func goldenAnthropicResponse(text string) string {
 	return fmt.Sprintf(`{"content":[{"type":"text","text":%q}],"usage":{"input_tokens":10,"output_tokens":50}}`, text)
 }
 
-func newAnthropicClient(t *testing.T, endpoint string) llm.LLMClient {
+func newAnthropicClient(t *testing.T, endpoint string) instinctllm.LLMClient {
 	t.Helper()
-	cfg := llm.Config{
+	cfg := instinctllm.Config{
 		APIKey:   "sk-ant-fake",
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,
 	}
-	c, err := llm.NewAnthropicClient(cfg)
+	c, err := instinctllm.NewAnthropicClient(cfg)
 	if err != nil {
 		t.Fatalf("NewAnthropicClient: %v", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // auditPrompt is the production-tuned prompt for pattern quality evaluation.
@@ -44,10 +44,10 @@ REASON: <one sentence>`
 // (prompt construction, line-by-line parsing) lives here.
 //
 // Ported from instinct-python/cmd/audit/main.go:163-219 with these changes:
-//   - client is llm.LLMClient (generic) instead of *ollama.Client (Ollama-specific)
+//   - client is instinctllm.LLMClient (generic) instead of *ollama.Client (Ollama-specific)
 //   - model parameter is dropped; model selection is handled by the LLM factory
 //   - timeout is applied via context.WithTimeout wrapping the Complete call
-func Judge(ctx context.Context, client llm.LLMClient, timeout time.Duration, m engramMemory) auditResult {
+func Judge(ctx context.Context, client instinctllm.LLMClient, timeout time.Duration, m engramMemory) auditResult {
 	ptype, domain, sig := extractTags(m.Tags)
 	content := m.Content
 	if content == "" {

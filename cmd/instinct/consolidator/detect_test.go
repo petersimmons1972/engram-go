@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
-// mockLLMClient implements llm.LLMClient for testing.
+// mockLLMClient implements instinctllm.LLMClient for testing.
 type mockLLMClient struct {
 	response string
 	err      error
@@ -33,8 +33,8 @@ func (f *failIfCalledClient) Complete(_ context.Context, _, _ string) (string, e
 }
 
 // Compile-time assertion that both mocks satisfy the interface.
-var _ llm.LLMClient = (*mockLLMClient)(nil)
-var _ llm.LLMClient = (*failIfCalledClient)(nil)
+var _ instinctllm.LLMClient = (*mockLLMClient)(nil)
+var _ instinctllm.LLMClient = (*failIfCalledClient)(nil)
 
 // TestDetectHappyPath: mock returns golden pattern JSON; Detect returns
 // parsed []Pattern.
