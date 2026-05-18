@@ -154,6 +154,68 @@ func TestSSEEngramCallToolFailsAfterContextDeadlineOnPermanentOutage(t *testing.
 	}
 }
 
+// TestWriteEpisodeRetriesAfterTransientFailure verifies fix #735:
+//  1. The outer per-event context (now mcpOperationTimeout=40s) is wide enough
+//     for retry to reach a second attempt after a transient failure.
+//  2. The episode completes successfully despite the first ingest call failing.
+//  3. Total elapsed time > mcpConnectTimeout (10s) would be ideal but makes the
+//     test slow, so we assert instead that a second call was made to the ingest
+//     tool — proving retry actually ran rather than being cancelled by a short
+//     outer deadline.
+func TestWriteEpisodeRetriesAfterTransientFailure(t *testing.T) {
+	// first client: fails the first CallTool (simulates transient SSE timeout)
+	first := &scriptedClient{
+		callErrs: []error{errors.New("context deadline exceeded")},
+	}
+	// second client (post-reconnect): succeeds
+	second := &scriptedClient{}
+
+	callCount := 0
+	e := &sseEngram{
+		c: first,
+		factory: func() (mcpClient, error) {
+			callCount++
+			return second, nil
+		},
+	}
+
+	ev := Event{
+		Timestamp:     "2026-01-01T00:00:00Z",
+		SessionID:     "sess-retry-test",
+		ProjectID:     "test-proj",
+		ToolName:      "Bash",
+		ToolInputHash: "abc123",
+		ExitStatus:    0,
+		SchemaVersion: 1,
+	}
+
+	start := time.Now()
+	err := writeEpisode(context.Background(), e, ev.SessionID, ev.ProjectID, []Event{ev})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("writeEpisode: %v", err)
+	}
+
+	// Reconnect factory must have been called at least once (retry happened).
+	if callCount == 0 {
+		t.Error("factory never called — retry did not happen; outer timeout likely still too short")
+	}
+
+	// Second client must have received at least one call (the retried ingest).
+	second.mu.Lock()
+	secondCalls := second.calls
+	second.mu.Unlock()
+	if secondCalls == 0 {
+		t.Error("second client never called — retry did not reach the new connection")
+	}
+
+	// Sanity: the test shouldn't take unreasonably long (< 5s expected in happy path).
+	if elapsed > 10*time.Second {
+		t.Logf("warning: writeEpisode took %v — longer than expected", elapsed)
+	}
+}
+
 func TestRequeueRestoresProcessedBuffer(t *testing.T) {
 	dir := t.TempDir()
 	bufferPath := filepath.Join(dir, "buffer.jsonl")
