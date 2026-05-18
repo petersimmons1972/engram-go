@@ -16,6 +16,8 @@ package mcp
 
 import (
 	"context"
+	"math"
+	"strings"
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -166,6 +168,54 @@ func TestMemoryCorrectPatternConfidenceOmitted(t *testing.T) {
 	require.True(t, backend.capturedPCSet, "UpdateMemory must be called")
 	require.Nil(t, backend.capturedPC,
 		"patternConfidence must be nil when arg is absent — nil means 'do not touch'")
+}
+
+// TestMemoryCorrectPatternConfidenceValidationError calls memory_correct with
+// out-of-range and NaN pattern_confidence values and asserts a tool-error
+// response (not a Go error). No UpdateMemory call must be made.
+func TestMemoryCorrectPatternConfidenceValidationError(t *testing.T) {
+	cases := []struct {
+		name  string
+		value float64
+		label string // substring expected in error message
+	}{
+		{"below zero", -0.5, "pattern_confidence"},
+		{"above one", 1.5, "pattern_confidence"},
+		{"NaN", math.NaN(), "pattern_confidence"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &pcCorrectBackend{}
+			pool := newPCCorrectPool(t, backend)
+
+			req := mcpgo.CallToolRequest{}
+			req.Params.Arguments = map[string]any{
+				"memory_id":          types.NewMemoryID(),
+				"project":            "test",
+				"pattern_confidence": tc.value,
+			}
+
+			res, err := handleMemoryCorrect(context.Background(), pool, req)
+			require.NoError(t, err,
+				"validation error must be returned as a tool error, not a Go error")
+			require.NotNil(t, res)
+			require.True(t, res.IsError,
+				"expected tool-error result for %s pattern_confidence %v; got IsError=false",
+				tc.name, tc.value)
+
+			// Error text must name the field.
+			require.NotEmpty(t, res.Content, "error result must have content")
+			tc2, ok := res.Content[0].(mcpgo.TextContent)
+			require.True(t, ok, "expected TextContent in error result")
+			require.True(t, strings.Contains(tc2.Text, tc.label),
+				"error message must contain %q; got: %s", tc.label, tc2.Text)
+
+			// UpdateMemory must NOT have been called when validation fails.
+			require.False(t, backend.capturedPCSet,
+				"UpdateMemory must not be called when pattern_confidence is invalid")
+		})
+	}
 }
 
 // TestImportanceFieldUnchangedBehavior is a regression test documenting that
