@@ -438,11 +438,11 @@ func (e *sseEngram) store(ctx context.Context, p Pattern, confidence float64, pr
 	content := fmt.Sprintf("%s | PROVENANCE: observed 1 time, first seen %s",
 		p.Description, time.Now().UTC().Format("2006-01-02"))
 	out, err := e.callToolWithRetry(ctx, "memory_store", map[string]any{
-		"content":     content,
-		"memory_type": "pattern",
-		"project":     projectID,
-		"importance":  confidence,
-		"tags":        []string{"instinct", p.Type, p.Domain, p.TagSignature},
+		"content":            content,
+		"memory_type":        "pattern",
+		"project":            projectID,
+		"pattern_confidence": confidence,
+		"tags":               []string{"instinct", p.Type, p.Domain, p.TagSignature},
 	})
 	if err != nil {
 		return "", err
@@ -471,8 +471,17 @@ func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) 
 		for _, t := range tags {
 			if s, ok := t.(string); ok && s == tagSignature {
 				id, _ := mem["id"].(string)
-				imp, _ := mem["importance"].(float64)
-				return &recallResult{id: id, confidence: imp}, nil
+				// Prefer pattern_confidence (float) written by E2+ instinct versions.
+				// Fall back to importance for records written before this change.
+				var conf float64
+				if pc, ok := mem["pattern_confidence"].(float64); ok {
+					conf = pc
+				} else {
+					// Legacy fallback: importance was the integer field used before E2.
+					// Stored as float64 in JSON; safe to read directly.
+					conf, _ = mem["importance"].(float64)
+				}
+				return &recallResult{id: id, confidence: conf}, nil
 			}
 		}
 	}
@@ -481,8 +490,8 @@ func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) 
 
 func (e *sseEngram) correct(ctx context.Context, memoryID string, confidence float64) error {
 	_, err := e.callToolWithRetry(ctx, "memory_correct", map[string]any{
-		"memory_id":  memoryID,
-		"importance": confidence,
+		"memory_id":          memoryID,
+		"pattern_confidence": confidence,
 	})
 	return err
 }
