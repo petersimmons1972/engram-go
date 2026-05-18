@@ -1236,7 +1236,7 @@ func (s *Server) registerTools() {
 	}
 	tools := []toolDef{
 		// Core store operations
-		{"memory_store", "Store a focused memory (<=10k chars)" + embedSuffix,
+		{"memory_store", "Store a focused memory (<=10k chars). Optional: pattern_confidence (float 0.0–1.0) for caller-provided confidence that a detected pattern is genuine." + embedSuffix,
 			handleMemoryStore},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			handleMemoryStoreDocument},
@@ -1263,7 +1263,7 @@ func (s *Server) registerTools() {
 		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
 			noConfig(handleMemoryExpand)},
 		// Mutations
-		{"memory_correct", "Update content, tags, or importance on an existing memory",
+		{"memory_correct", "Update content, tags, importance, or pattern_confidence (float 0.0–1.0) on an existing memory. Omit pattern_confidence to leave it unchanged.",
 			noConfig(handleMemoryCorrect)},
 		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
 			noConfig(handleMemoryForget)},

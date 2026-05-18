@@ -63,20 +63,30 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}
+	// Validate optional pattern_confidence field.
+	var patternConfidence *float64
+	if v, ok := args["pattern_confidence"].(float64); ok {
+		validated, validErr := types.ValidatePatternConfidence(v)
+		if validErr != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
+		}
+		patternConfidence = &validated
+	}
 	// Resolve the episode ID: explicit arg wins; fall back to context injection
 	// from the auto-episode session hook (#356).
 	episodeID := episodeIDFromContextOrArgs(ctx, args)
 	m := &types.Memory{
-		ID:          types.NewMemoryID(),
-		Content:     content,
-		MemoryType:  memType,
-		Project:     project,
-		Importance:  importance,
-		Tags:        tags,
-		Immutable:   getBool(args, "immutable", false),
-		StorageMode: "focused",
-		EpisodeID:   episodeID,
-		ValidFrom:   parseDateTag(tags),
+		ID:                types.NewMemoryID(),
+		Content:           content,
+		MemoryType:        memType,
+		Project:           project,
+		Importance:        importance,
+		Tags:              tags,
+		Immutable:         getBool(args, "immutable", false),
+		StorageMode:       "focused",
+		EpisodeID:         episodeID,
+		ValidFrom:         parseDateTag(tags),
+		PatternConfidence: patternConfidence,
 	}
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
@@ -344,13 +354,21 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		n := types.ValidateImportance(int(v))
 		importance = &n
 	}
+	var patternConfidence *float64
+	if v, ok := args["pattern_confidence"].(float64); ok {
+		validated, validErr := types.ValidatePatternConfidence(v)
+		if validErr != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
+		}
+		patternConfidence = &validated
+	}
 	correctTags, err := toStringSlice(args["tags"])
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
 	defer storeCancel()
-	updated, err := h.Engine.Correct(storeCtx, id, content, correctTags, importance)
+	updated, err := h.Engine.Correct(storeCtx, id, content, correctTags, importance, patternConfidence)
 	if err != nil {
 		return nil, err
 	}

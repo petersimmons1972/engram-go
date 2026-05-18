@@ -80,7 +80,7 @@ func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, er
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }
-func (noopBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int) (*types.Memory, error) {
+func (noopBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
 func (noopBackend) DeleteMemory(_ context.Context, _ string) (bool, error)            { return false, nil }

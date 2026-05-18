@@ -209,6 +209,13 @@ type Memory struct {
 	// InvalidationReason records why the memory was soft-deleted.
 	InvalidationReason *string `json:"invalidation_reason,omitempty"`
 
+	// PatternConfidence is the caller-provided float belief [0.0, 1.0] that a
+	// detected pattern is genuine. Set by the instinct consolidator (Track E1).
+	// nil means "no confidence data provided" — NOT the same as lowest confidence.
+	// Semantically distinct from Importance (static 0-4 priority) and
+	// DynamicImportance (engine-learned spaced-repetition score).
+	PatternConfidence *float64 `json:"pattern_confidence,omitempty"`
+
 	// DynamicImportance is the learned importance score updated via spaced repetition.
 	// Starts at (5-Importance)/3 and drifts up on positive feedback, down on decay.
 	DynamicImportance *float64 `json:"dynamic_importance,omitempty"`
