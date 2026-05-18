@@ -127,6 +127,34 @@ func TestMemoryStorePatternConfidenceOmitted(t *testing.T) {
 		"PatternConfidence must be nil when arg is omitted — must not default to 0.0")
 }
 
+// TestMemoryStorePatternConfidenceWrongType sends a non-numeric pattern_confidence
+// to memory_store and asserts a validation error.
+func TestMemoryStorePatternConfidenceWrongType(t *testing.T) {
+	pool := newStorePool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"content":            "wrong type confidence",
+		"memory_type":        "pattern",
+		"project":            "test",
+		"pattern_confidence": "not-a-number", // wrong type: string instead of float64
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err, "validation error must be returned as a tool error, not a Go error")
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "expected tool-error result for wrong-type pattern_confidence")
+
+	// Error text must name the field and indicate type mismatch.
+	require.NotEmpty(t, res.Content, "error result must have content")
+	tc, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok, "expected TextContent in error result")
+	require.True(t, strings.Contains(tc.Text, "pattern_confidence"),
+		"error message must contain field name; got: %s", tc.Text)
+	require.True(t, strings.Contains(strings.ToLower(tc.Text), "number"),
+		"error message must indicate type mismatch; got: %s", tc.Text)
+}
+
 // ── memory_correct tests ──────────────────────────────────────────────────────
 
 // TestMemoryCorrectPatternConfidence calls memory_correct with a valid
@@ -168,6 +196,40 @@ func TestMemoryCorrectPatternConfidenceOmitted(t *testing.T) {
 	require.True(t, backend.capturedPCSet, "UpdateMemory must be called")
 	require.Nil(t, backend.capturedPC,
 		"patternConfidence must be nil when arg is absent — nil means 'do not touch'")
+}
+
+// TestMemoryCorrectPatternConfidenceWrongType calls memory_correct with
+// a wrong-type pattern_confidence and asserts a validation error.
+func TestMemoryCorrectPatternConfidenceWrongType(t *testing.T) {
+	backend := &pcCorrectBackend{}
+	pool := newPCCorrectPool(t, backend)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"memory_id":          types.NewMemoryID(),
+		"project":            "test",
+		"pattern_confidence": "not-a-number", // wrong type: string instead of float64
+	}
+
+	res, err := handleMemoryCorrect(context.Background(), pool, req)
+	require.NoError(t, err,
+		"validation error must be returned as a tool error, not a Go error")
+	require.NotNil(t, res)
+	require.True(t, res.IsError,
+		"expected tool-error result for wrong-type pattern_confidence")
+
+	// Error text must name the field and indicate type mismatch.
+	require.NotEmpty(t, res.Content, "error result must have content")
+	tc, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok, "expected TextContent in error result")
+	require.True(t, strings.Contains(tc.Text, "pattern_confidence"),
+		"error message must contain field name; got: %s", tc.Text)
+	require.True(t, strings.Contains(strings.ToLower(tc.Text), "number"),
+		"error message must indicate type mismatch; got: %s", tc.Text)
+
+	// UpdateMemory must NOT have been called when validation fails.
+	require.False(t, backend.capturedPCSet,
+		"UpdateMemory must not be called when pattern_confidence is invalid")
 }
 
 // TestMemoryCorrectPatternConfidenceValidationError calls memory_correct with
