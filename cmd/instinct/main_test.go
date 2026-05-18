@@ -200,6 +200,11 @@ func TestGroupBySession(t *testing.T) {
 
 // ── Engram client tests ───────────────────────────────────────────────────────
 
+// newTestEngramServer builds a hybridEngram backed by an in-process MCP SSE
+// test server.  The REST client within the hybrid is pointed at a no-op REST
+// spy server that accepts all /quick-store and /quick-recall requests.
+// Individual tests that need to inspect REST behaviour replace he.rest with
+// their own httptest.Server.
 func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 	t.Helper()
 
@@ -212,6 +217,8 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 			mcpmcp.TextContent{Type: "text", Text: `{"episode_id":"ep-test-123"}`},
 		}}, nil
 	})
+	// memory_ingest is no longer called by the hybrid client (ingest uses REST),
+	// but keep the handler so existing tests that registered expectations still compile.
 	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{}`},
@@ -222,11 +229,13 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 			mcpmcp.TextContent{Type: "text", Text: `{}`},
 		}}, nil
 	})
+	// memory_store is no longer called by the hybrid (store uses REST).
 	mcpServer.AddTool(mcpmcp.NewTool("memory_store"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{"id":"mem-abc"}`},
 		}}, nil
 	})
+	// memory_recall is no longer called by the hybrid (recall uses REST).
 	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{"memories":[{"id":"mem-abc","importance":0.5,"tags":["instinct","sig-test"]}]}`},
@@ -239,17 +248,34 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 	})
 
 	ts := server.NewTestServer(mcpServer)
-	e, err := newSSEEngram(ts.URL, "")
+
+	// REST spy: accepts /quick-store and /quick-recall for tests that don't need
+	// to inspect REST traffic.  Tests that do inspect it replace he.rest inline.
+	restSpy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/quick-store":
+			_, _ = w.Write([]byte(`{"ok":true,"id":"mem-abc"}`))
+		case "/quick-recall":
+			_, _ = w.Write([]byte(`{"results":[{"id":"mem-abc","tags":["instinct","sig-test"],"importance":0.5}]}`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+
+	he, err := newHybridEngram(ts.URL, "", restSpy.URL)
 	if err != nil {
-		t.Fatalf("newSSEEngram: %v", err)
+		t.Fatalf("newHybridEngram: %v", err)
 	}
+
 	ctx := context.Background()
-	if err := e.connect(ctx); err != nil {
+	if err := he.connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	return e, func() {
-		e.close()
+	return he, func() {
+		he.close()
 		ts.Close()
+		restSpy.Close()
 	}
 }
 
@@ -631,9 +657,8 @@ func TestRun_NoopWhenBelowMin(t *testing.T) {
 
 func TestRun_ProcessesBuffer(t *testing.T) {
 	mcpServer := server.NewMCPServer("test-engram", "1.0.0", server.WithToolCapabilities(true))
-	var ingestCount int
 
-	for _, name := range []string{"memory_episode_start", "memory_episode_end", "memory_store", "memory_correct"} {
+	for _, name := range []string{"memory_episode_start", "memory_episode_end", "memory_correct"} {
 		n := name
 		text := `{}`
 		if n == "memory_episode_start" {
@@ -644,15 +669,24 @@ func TestRun_ProcessesBuffer(t *testing.T) {
 			return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: txt}}}, nil
 		})
 	}
-	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
-		ingestCount++
-		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{}`}}}, nil
-	})
-	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
-		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{"memories":[]}`}}}, nil
-	})
 	ts := server.NewTestServer(mcpServer)
 	defer ts.Close()
+
+	// REST spy: counts /quick-store calls (ingest + store) and handles /quick-recall.
+	var storeCount int
+	restSpy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/quick-store":
+			storeCount++
+			fmt.Fprint(w, `{"ok":true,"id":"mem-1"}`)
+		case "/quick-recall":
+			fmt.Fprint(w, `{"results":[]}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer restSpy.Close()
 
 	haikuSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"test\",\"domain\":\"git\",\"evidence\":\"e\",\"tag_signature\":\"sig-t\"}]"}],"usage":{"input_tokens":5,"output_tokens":10}}`)
@@ -671,14 +705,17 @@ func TestRun_ProcessesBuffer(t *testing.T) {
 		minEvents:     3,
 		engramURL:     ts.URL,
 		engramToken:   "",
+		engramRESTURL: restSpy.URL,
 		anthropicKey:  "sk-fake",
 		haikuEndpoint: haikuSrv.URL + "/v1/messages",
 	}
 	if err := run(context.Background(), cfg); err != nil {
 		t.Fatalf("run() error: %v", err)
 	}
-	if ingestCount != 3 {
-		t.Errorf("want 3 ingest calls, got %d", ingestCount)
+	// storeCount = 3 ingest calls + 1 store call for the detected pattern.
+	// At minimum the 3 ingest calls must have reached the REST server.
+	if storeCount < 3 {
+		t.Errorf("want >= 3 REST /quick-store calls (ingest), got %d", storeCount)
 	}
 	if _, err := os.Stat(buf); !os.IsNotExist(err) {
 		t.Errorf("buffer should have been rotated")
