@@ -117,8 +117,12 @@ func (c *anthropicClient) Complete(ctx context.Context, systemPrompt, userPrompt
 		return "", fmt.Errorf("llm/anthropic: parse response: %w", err)
 	}
 	if len(apiResp.Content) == 0 {
+		// Model returned nothing (e.g. content-filter triggered, zero output
+		// tokens) — this is a model-behaviour condition, not transport
+		// unavailability.  Return a plain error without wrapping the sentinel
+		// so callers can distinguish "backend down" from "model said nothing".
 		slog.Warn("llm/anthropic: empty content array")
-		return "", fmt.Errorf("llm/anthropic: empty content array: %w", ErrBackendUnavailable)
+		return "", fmt.Errorf("llm/anthropic: empty content array")
 	}
 
 	text := apiResp.Content[0].Text
