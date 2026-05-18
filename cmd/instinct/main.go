@@ -66,6 +66,7 @@ type config struct {
 	minEvents     int
 	engramURL     string
 	engramToken   string
+	engramRESTURL string // optional: REST base URL override; empty → derived from engramURL
 	anthropicKey  string
 	haikuEndpoint string // empty → production endpoint; injectable for tests
 }
@@ -701,10 +702,10 @@ func run(ctx context.Context, cfg config) error {
 		return fmt.Errorf("ENGRAM_BASE_URL not set")
 	}
 
-	e, err := newSSEEngram(cfg.engramURL, cfg.engramToken)
+	e, err := newHybridEngram(cfg.engramURL, cfg.engramToken, cfg.engramRESTURL)
 	if err != nil {
 		requeue(cfg.bufferPath, processedPath)
-		return fmt.Errorf("newSSEEngram: %w", err)
+		return fmt.Errorf("newHybridEngram: %w", err)
 	}
 	if err := e.connect(ctx); err != nil {
 		requeue(cfg.bufferPath, processedPath)
