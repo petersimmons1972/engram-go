@@ -2,6 +2,7 @@ package instinctllm_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,45 @@ func TestAnthropicContextCancellation(t *testing.T) {
 	err := <-done
 	if err == nil {
 		t.Error("Complete() should return error when context is cancelled")
+	}
+}
+
+// TestAnthropicEmptyContentReturnsSentinel: server returns valid JSON but with
+// an empty content array (e.g. content filter triggered, or upstream model
+// returned nothing). The client must return ErrBackendUnavailable, not a
+// confusingly-wrapped nil error. R1-S1 from adversarial review.
+func TestAnthropicEmptyContentReturnsSentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Valid JSON, but Content array is empty.
+		fmt.Fprint(w, `{"content":[],"usage":{"input_tokens":10,"output_tokens":0}}`)
+	}))
+	defer srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, want ErrBackendUnavailable on empty content array", err)
+	}
+}
+
+// TestAnthropicParseFailureIsNotSentinel: server returns malformed JSON.
+// That is a parse error, NOT backend unavailability — must NOT match the
+// sentinel (caller should surface, not skip-and-continue).
+func TestAnthropicParseFailureIsNotSentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `not valid json at all`)
+	}))
+	defer srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if err == nil {
+		t.Fatal("Complete() should return error on malformed JSON")
+	}
+	if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, parse failure must NOT be ErrBackendUnavailable", err)
 	}
 }
 

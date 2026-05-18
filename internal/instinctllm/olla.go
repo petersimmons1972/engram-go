@@ -33,10 +33,13 @@ var skipFamilies = map[string]struct{}{
 // available model that is not in the skip list, and uses that model for the
 // completion call.
 //
-// Fail-quiet semantics: if the model discovery endpoint is unreachable, returns
-// no suitable model, or the completion fails, Complete returns ("", nil) —
-// matching the Python HaikuClient's behaviour (pattern detection silently
-// disabled rather than crashing the consolidator).
+// Unavailability semantics: if the model discovery endpoint is unreachable,
+// returns no suitable model, or the completion fails, Complete returns
+// ("", error wrapping ErrBackendUnavailable). Callers decide whether to
+// skip-and-continue (consolidator: errors.Is(err, ErrBackendUnavailable) →
+// skip this batch) or surface as failure (audit: any error → exit non-zero).
+// The previous ("", nil) contract conflated unavailability with success and
+// prevented backend-agnostic callers from making correct decisions.
 type ollaClient struct {
 	host    string
 	timeout time.Duration
@@ -156,8 +159,9 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 
 	model := c.pickModel(callCtx)
 	if model == "" {
-		// No usable model — silently return empty (pattern detection disabled).
-		return "", nil
+		// No usable model — wrap sentinel so caller can distinguish "backend
+		// unavailable" from "model returned empty string".
+		return "", fmt.Errorf("llm/olla: no usable model: %w", ErrBackendUnavailable)
 	}
 
 	reqBody, err := json.Marshal(map[string]any{
@@ -182,20 +186,19 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: completion HTTP error", "err", err)
-		// Fail-quiet: Olla may be transiently unavailable.
-		return "", nil
+		return "", fmt.Errorf("llm/olla: completion transport: %w", ErrBackendUnavailable)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("llm/olla: completion non-200", "status", resp.StatusCode)
-		return "", nil
+		return "", fmt.Errorf("llm/olla: completion status %d: %w", resp.StatusCode, ErrBackendUnavailable)
 	}
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Warn("llm/olla: read completion body", "err", err)
-		return "", nil
+		return "", fmt.Errorf("llm/olla: read body: %w", ErrBackendUnavailable)
 	}
 
 	var apiResp struct {
@@ -205,9 +208,13 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(raw, &apiResp); err != nil || len(apiResp.Choices) == 0 {
+	if err := json.Unmarshal(raw, &apiResp); err != nil {
 		slog.Warn("llm/olla: parse completion response", "err", err)
-		return "", nil
+		return "", fmt.Errorf("llm/olla: parse response: %w", err)
+	}
+	if len(apiResp.Choices) == 0 {
+		slog.Warn("llm/olla: empty choices array")
+		return "", fmt.Errorf("llm/olla: empty choices: %w", ErrBackendUnavailable)
 	}
 
 	text := apiResp.Choices[0].Message.Content

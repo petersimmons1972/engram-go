@@ -25,8 +25,20 @@ package instinctllm
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrBackendUnavailable signals that an LLM backend is transiently or
+// permanently unreachable in a way callers may want to handle distinctly
+// (e.g. skip a batch silently rather than crash). Backends MUST wrap this
+// sentinel with fmt.Errorf("...: %w", ErrBackendUnavailable) so callers can
+// match it via errors.Is.
+//
+// Returning ("", nil) on transport failure is forbidden — it conflates "model
+// declined to answer" with "infrastructure broken" and prevents backend-
+// agnostic callers from making correct decisions.
+var ErrBackendUnavailable = errors.New("llm: backend unavailable")
 
 // LLMClient is a generic text completion client.
 // Callers provide a system prompt and a user prompt; the client returns the

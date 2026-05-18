@@ -8,6 +8,7 @@ package consolidator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -126,6 +127,14 @@ func Detect(ctx context.Context, client instinctllm.LLMClient, events []Event) (
 	userMsg := buildUserMessage(events)
 	raw, err := client.Complete(ctx, systemPrompt, userMsg)
 	if err != nil {
+		// Backend unavailable (no Olla model, transport failure, empty content,
+		// …) is treated as "skip this batch, don't crash" — the consolidator
+		// runs every N events and should tolerate transient infra failure.
+		// Real parse/protocol errors still propagate.
+		if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+			slog.Info("consolidator: LLM backend unavailable, skipping batch", "err", err)
+			return nil, nil
+		}
 		return nil, err
 	}
 
