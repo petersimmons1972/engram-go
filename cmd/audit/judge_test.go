@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// mockLLMClient is a test spy implementing llm.LLMClient.
+// mockLLMClient is a test spy implementing instinctllm.LLMClient.
 // It records calls and returns a fixed response or error.
 type mockLLMClient struct {
 	response    string

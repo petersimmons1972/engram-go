@@ -22,7 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -704,7 +704,7 @@ func run(ctx context.Context, cfg config) error {
 	// Build the LLM client via factory; fall back to log+skip on failure so
 	// the consolidator never crashes on a bad config — pattern detection is
 	// best-effort and the main pipeline (episode write) must not be blocked.
-	llmClient, err := llm.NewClient(llm.Config{
+	llmClient, err := instinctllm.NewClient(instinctllm.Config{
 		APIKey:   cfg.anthropicKey,
 		Endpoint: cfg.haikuEndpoint,
 		Timeout:  30 * time.Second,

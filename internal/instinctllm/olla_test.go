@@ -1,4 +1,4 @@
-package llm_test
+package instinctllm_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/cmd/instinct/llm"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // ollaModelList builds a minimal Olla /olla/models response.
@@ -92,13 +92,13 @@ func newOllaTestServer(
 	}))
 }
 
-func newOllaClient(t *testing.T, endpoint string) llm.LLMClient {
+func newOllaClient(t *testing.T, endpoint string) instinctllm.LLMClient {
 	t.Helper()
-	cfg := llm.Config{
+	cfg := instinctllm.Config{
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,
 	}
-	c, err := llm.NewOllaClient(cfg)
+	c, err := instinctllm.NewOllaClient(cfg)
 	if err != nil {
 		t.Fatalf("NewOllaClient: %v", err)
 	}
