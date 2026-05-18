@@ -65,7 +65,11 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	}
 	// Validate optional pattern_confidence field.
 	var patternConfidence *float64
-	if v, ok := args["pattern_confidence"].(float64); ok {
+	if raw, exists := args["pattern_confidence"]; exists && raw != nil {
+		v, ok := raw.(float64)
+		if !ok {
+			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
+		}
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
@@ -278,7 +282,12 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		}
 		// Validate optional per-item pattern_confidence field — mirrors handleMemoryStore.
 		var itemPatternConfidence *float64
-		if v, ok := mmap["pattern_confidence"].(float64); ok {
+		if raw, exists := mmap["pattern_confidence"]; exists && raw != nil {
+			v, ok := raw.(float64)
+			if !ok {
+				validErrs = append(validErrs, fmt.Sprintf("item %d: pattern_confidence must be a number, got %T", idx, raw))
+				continue
+			}
 			validated, validErr := types.ValidatePatternConfidence(v)
 			if validErr != nil {
 				validErrs = append(validErrs, fmt.Sprintf("item %d: pattern_confidence: %v", idx, validErr))
@@ -366,7 +375,11 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		importance = &n
 	}
 	var patternConfidence *float64
-	if v, ok := args["pattern_confidence"].(float64); ok {
+	if raw, exists := args["pattern_confidence"]; exists && raw != nil {
+		v, ok := raw.(float64)
+		if !ok {
+			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
+		}
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
