@@ -150,8 +150,11 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 }
 
 // Complete sends systemPrompt + userPrompt to Olla using the OpenAI-compatible
-// chat completions API.  If no suitable model is available, returns ("", nil)
-// (fail-quiet — matches Python HaikuClient.detect behaviour).
+// chat completions API.  If no suitable model is available it returns
+// ("", ErrBackendUnavailable) so callers can distinguish infrastructure
+// absence from an empty model response.  HTTP or JSON parse failures return a
+// non-sentinel error — these are protocol bugs that the caller should surface,
+// not treat as a missing backend.
 func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	// Per-call context with timeout so a slow Olla does not block forever.
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
