@@ -28,6 +28,12 @@ type Config struct {
 	OutDir     string
 	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
 	LLMModel   string // model name for LLMBaseURL endpoint
+
+	// score-efficient flags
+	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
+	ScorerModel     string // model name (env: LME_SCORER_MODEL)
+	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
+	ForceRescore    bool   // ignore checkpoint, re-score everything
 }
 
 func main() {
@@ -42,8 +48,9 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  ingest    Load the dataset into Engram (per-question isolation projects)")
 	_, _ = fmt.Fprintln(w, "  run       Recall + generate hypotheses for each question")
 	_, _ = fmt.Fprintln(w, "  score     Score hypotheses against gold answers")
-	_, _ = fmt.Fprintln(w, "  all       Run ingest → run → score in one invocation")
-	_, _ = fmt.Fprintln(w, "  help      Print this usage and exit")
+	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
+	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
+	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
 	_, _ = fmt.Fprintln(w, "  --data <path>           Path to longmemeval_m_cleaned.json (required for ingest/run/score/all)")
@@ -88,6 +95,28 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+
+	// score-efficient has its own flag set and early return.
+	if subcommand == "score-efficient" {
+		sefs := flag.NewFlagSet("score-efficient", flag.ExitOnError)
+		sefs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
+		sefs.IntVar(&cfg.Workers, "workers", 4, "parallel workers")
+		sefs.StringVar(&cfg.OutDir, "out", ".", "output directory")
+		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
+		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
+		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
+		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
+		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
+		_ = sefs.Parse(args[2:])
+		if cfg.DataFile == "" {
+			_, _ = fmt.Fprintln(stderr, "--data is required")
+			return 1
+		}
+		if cfg.RunID == "" {
+			cfg.RunID = newRunID()
+		}
+		return runScoreEfficient(cfg)
+	}
 
 	switch subcommand {
 	case "ingest", "run", "score", "all":
