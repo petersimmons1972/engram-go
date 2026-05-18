@@ -175,7 +175,7 @@ func TestBatchStorePatternConfidenceValidationError(t *testing.T) {
 }
 
 // TestBatchStorePatternConfidenceWrongType sends a non-numeric pattern_confidence
-// on one item and asserts the batch fails gracefully (no panic, no stored memory).
+// on one item and asserts the batch fails with a validation error.
 func TestBatchStorePatternConfidenceWrongType(t *testing.T) {
 	pool, cap := newCapturingPool(t)
 
@@ -192,16 +192,32 @@ func TestBatchStorePatternConfidenceWrongType(t *testing.T) {
 	}
 
 	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
-	// Wrong type is silently ignored (type assertion fails → nil branch) or
-	// returns a validation error. Either is acceptable; what is NOT acceptable
-	// is a panic or storing with incorrect data.
-	require.NoError(t, err, "wrong-type pattern_confidence must not produce a Go error")
+	require.NoError(t, err, "validation error must be returned as tool result, not Go error")
 	require.NotNil(t, res)
 
-	// If a memory was stored, it must have nil PatternConfidence (not corrupted data).
-	// If no memory was stored, that is also acceptable.
-	for i, m := range cap.stored {
-		require.Nil(t, m.PatternConfidence,
-			"item %d: wrong-type pattern_confidence must not be stored as non-nil; got %v", i, m.PatternConfidence)
+	// Batch result with validation errors uses the existing convention:
+	// toolResult with "errors" key (non-nil, non-empty slice).
+	body := parseBatchBody(t, res)
+	require.NotNil(t, body, "result must have parseable JSON body")
+	errs, hasErrors := body["errors"]
+	require.True(t, res.IsError || hasErrors,
+		"batch with wrong-type pattern_confidence must fail; got body: %v", body)
+
+	if hasErrors {
+		errSlice, ok := errs.([]any)
+		require.True(t, ok, "errors must be a slice")
+		combined := make([]string, 0, len(errSlice))
+		for _, e := range errSlice {
+			combined = append(combined, e.(string))
+		}
+		joined := strings.Join(combined, "\n")
+		require.Contains(t, joined, "0",
+			"error message must identify item index 0; got: %s", joined)
+		require.Contains(t, strings.ToLower(joined), "pattern_confidence",
+			"error message must name the offending field; got: %s", joined)
+		require.Contains(t, strings.ToLower(joined), "number",
+			"error message must indicate type mismatch; got: %s", joined)
 	}
+
+	require.Empty(t, cap.stored, "no memories must be stored when batch validation fails")
 }
