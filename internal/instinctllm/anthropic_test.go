@@ -93,11 +93,12 @@ func TestAnthropicContextCancellation(t *testing.T) {
 	}
 }
 
-// TestAnthropicEmptyContentReturnsSentinel: server returns valid JSON but with
-// an empty content array (e.g. content filter triggered, or upstream model
-// returned nothing). The client must return ErrBackendUnavailable, not a
-// confusingly-wrapped nil error. R1-S1 from adversarial review.
-func TestAnthropicEmptyContentReturnsSentinel(t *testing.T) {
+// TestAnthropicEmptyContentReturnsError: server returns valid JSON but with an
+// empty content array (e.g. content filter triggered, or upstream model
+// returned nothing). The client must return a non-nil error — but must NOT
+// wrap ErrBackendUnavailable, because an empty response is a model-behaviour
+// condition, not transport unavailability. Updated per re-review Fix 2.
+func TestAnthropicEmptyContentReturnsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// Valid JSON, but Content array is empty.
@@ -107,8 +108,25 @@ func TestAnthropicEmptyContentReturnsSentinel(t *testing.T) {
 
 	c := newAnthropicClient(t, srv.URL+"/v1/messages")
 	_, err := c.Complete(context.Background(), "system", "user")
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
-		t.Errorf("Complete() err = %v, want ErrBackendUnavailable on empty content array", err)
+	if err == nil {
+		t.Fatal("Complete() should return error on empty content array")
+	}
+}
+
+// TestAnthropicEmptyContentNotSentinel: empty content array must NOT wrap
+// ErrBackendUnavailable — callers need to distinguish "backend down" from
+// "model returned nothing". Re-review Fix 2.
+func TestAnthropicEmptyContentNotSentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[],"usage":{"input_tokens":10,"output_tokens":0}}`)
+	}))
+	defer srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, empty content must NOT be ErrBackendUnavailable", err)
 	}
 }
 
