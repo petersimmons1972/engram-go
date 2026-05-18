@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Bambu Studio
 Comment=3D Slicer for Bambu Lab printers
-Exec=/home/psimmons/Applications/BambuStudio-v02.07.00.55.AppImage %U
+Exec=env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt /home/psimmons/Applications/BambuStudio-v02.07.00.55.AppImage %U
 Icon=BambuStudio
 Terminal=false
 Type=Application
