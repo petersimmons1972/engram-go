@@ -112,9 +112,13 @@ func (c *anthropicClient) Complete(ctx context.Context, systemPrompt, userPrompt
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.Unmarshal(raw, &apiResp); err != nil || len(apiResp.Content) == 0 {
+	if err := json.Unmarshal(raw, &apiResp); err != nil {
 		slog.Error("llm/anthropic: parse response", "err", err)
 		return "", fmt.Errorf("llm/anthropic: parse response: %w", err)
+	}
+	if len(apiResp.Content) == 0 {
+		slog.Warn("llm/anthropic: empty content array")
+		return "", fmt.Errorf("llm/anthropic: empty content array: %w", ErrBackendUnavailable)
 	}
 
 	text := apiResp.Content[0].Text

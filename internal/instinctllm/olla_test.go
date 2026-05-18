@@ -3,6 +3,7 @@ package instinctllm_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -198,7 +199,9 @@ func TestOllaOpenAICompatRequestShape(t *testing.T) {
 }
 
 // TestOllaNoModelAvailable: model list returns no suitable model;
-// Complete returns empty string + nil error (fail-quiet, matches Python).
+// Complete returns empty string wrapped in ErrBackendUnavailable so callers
+// can decide between skip-and-continue (consolidator) and surface-as-error
+// (audit). The previous ("", nil) contract conflated this with success.
 func TestOllaNoModelAvailable(t *testing.T) {
 	models := buildOllaModelsResponse([]ollaModelEntry{
 		{id: "image-model:7b", family: "clip", caps: []string{"image-generation"}, states: []string{"available"}},
@@ -208,8 +211,8 @@ func TestOllaNoModelAvailable(t *testing.T) {
 
 	c := newOllaClient(t, srv.URL)
 	got, err := c.Complete(context.Background(), "sys", "user")
-	if err != nil {
-		t.Errorf("Complete() returned error on no-model-available, want nil: %v", err)
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, want ErrBackendUnavailable", err)
 	}
 	if got != "" {
 		t.Errorf("Complete() = %q, want empty string on no-model-available", got)
@@ -237,7 +240,7 @@ func TestOllaStripsMarkdownFences(t *testing.T) {
 }
 
 // TestOllaModelDiscoveryFailure: model list endpoint returns 500;
-// Complete returns empty string + nil error (fail-quiet).
+// Complete returns empty string wrapped in ErrBackendUnavailable.
 func TestOllaModelDiscoveryFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -246,10 +249,31 @@ func TestOllaModelDiscoveryFailure(t *testing.T) {
 
 	c := newOllaClient(t, srv.URL)
 	got, err := c.Complete(context.Background(), "sys", "user")
-	if err != nil {
-		t.Errorf("Complete() returned error on discovery failure, want nil: %v", err)
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, want ErrBackendUnavailable", err)
 	}
 	if got != "" {
 		t.Errorf("Complete() = %q, want empty string on discovery failure", got)
+	}
+}
+
+// TestOllaUnavailableIsSentinel: explicit regression guard for the unified
+// error contract. Backends must wrap ErrBackendUnavailable so callers can
+// write backend-agnostic logic via errors.Is.
+func TestOllaUnavailableIsSentinel(t *testing.T) {
+	// Point at a bogus host so the discovery request fails at the transport layer.
+	c, err := instinctllm.NewOllaClient(instinctllm.Config{
+		Endpoint: "http://127.0.0.1:1", // reserved discard port; refuses connections
+		Timeout:  500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewOllaClient(): %v", err)
+	}
+	got, err := c.Complete(context.Background(), "sys", "user")
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("Complete() err = %v, want errors.Is(..., ErrBackendUnavailable) = true", err)
+	}
+	if got != "" {
+		t.Errorf("Complete() = %q, want empty string", got)
 	}
 }
