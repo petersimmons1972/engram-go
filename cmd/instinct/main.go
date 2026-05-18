@@ -704,7 +704,13 @@ func run(ctx context.Context, cfg config) error {
 	// Build the LLM client via factory; fall back to log+skip on failure so
 	// the consolidator never crashes on a bad config — pattern detection is
 	// best-effort and the main pipeline (episode write) must not be blocked.
+	//
+	// Precedence: LLM_BACKEND env → "anthropic" default.  Backend is resolved
+	// here at the binary level and passed explicitly via Config.Backend — the
+	// same pattern cmd/audit uses — so the factory env fallback is dead code
+	// and parallel tests can't race on process environment state.
 	llmClient, err := instinctllm.NewClient(instinctllm.Config{
+		Backend:  envOr("LLM_BACKEND", "anthropic"),
 		APIKey:   cfg.anthropicKey,
 		Endpoint: cfg.haikuEndpoint,
 		Timeout:  30 * time.Second,
