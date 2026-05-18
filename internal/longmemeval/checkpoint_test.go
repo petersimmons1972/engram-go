@@ -1,6 +1,8 @@
 package longmemeval_test
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,6 +44,35 @@ func TestReadSkipSet_Missing(t *testing.T) {
 	}
 	if len(skip) != 0 {
 		t.Errorf("expected empty skip set, got %d entries", len(skip))
+	}
+}
+
+func TestReadScoredLabels(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "score-*.jsonl")
+	fmt.Fprintln(f, `{"question_id":"a","status":"done","score_label":"CORRECT"}`)
+	fmt.Fprintln(f, `{"question_id":"b","status":"done","score_label":"PARTIALLY_CORRECT"}`)
+	fmt.Fprintln(f, `{"question_id":"c","status":"error","score_label":""}`)
+	f.Close()
+	labels, err := longmemeval.ReadScoredLabels(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labels["a"] != "CORRECT" {
+		t.Errorf("want CORRECT got %q", labels["a"])
+	}
+	if labels["b"] != "PARTIALLY_CORRECT" {
+		t.Errorf("want PARTIALLY_CORRECT got %q", labels["b"])
+	}
+	if _, ok := labels["c"]; ok {
+		t.Error("error entries must not appear in labels map")
+	}
+	// non-existent file → empty map, no error
+	labels2, err2 := longmemeval.ReadScoredLabels("/tmp/does-not-exist-lme-xyz.jsonl")
+	if err2 != nil {
+		t.Fatalf("missing file must not error: %v", err2)
+	}
+	if len(labels2) != 0 {
+		t.Error("missing file must return empty map")
 	}
 }
 
