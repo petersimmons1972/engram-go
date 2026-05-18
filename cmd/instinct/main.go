@@ -265,10 +265,16 @@ type sseEngram struct {
 }
 
 const (
-	mcpConnectTimeout = 10 * time.Second
-	mcpCallTimeout    = 15 * time.Second
-	mcpRetryWindow    = 30 * time.Second
-	mcpRetryDelayBase = 200 * time.Millisecond
+	mcpConnectTimeout  = 10 * time.Second
+	mcpCallTimeout     = 15 * time.Second
+	mcpRetryWindow     = 30 * time.Second
+	mcpRetryDelayBase  = 200 * time.Millisecond
+	// mcpOperationTimeout gives each high-level operation (writeEpisode per-event,
+	// upsertPattern) the full retry window plus a reconnect buffer, ensuring at
+	// least two retry attempts can complete before the outer context expires.
+	// Previously mcpCallTimeout (15s) was used here, which cancelled before the
+	// second retry attempt in the 30s mcpRetryWindow — fix for issue #735.
+	mcpOperationTimeout = mcpRetryWindow + 10*time.Second // 40s
 )
 
 func newSSEEngram(baseURL, token string) (*sseEngram, error) {
@@ -375,11 +381,17 @@ func (e *sseEngram) callToolWithRetry(ctx context.Context, name string, args map
 }
 
 // callTool calls an MCP tool and returns the first text content as a parsed map.
+// e.c is snapshotted under e.mu before the call so that a concurrent reconnect()
+// cannot replace the pointer mid-flight (data race fix for issue #735).
 func (e *sseEngram) callTool(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	e.mu.Lock()
+	client := e.c
+	e.mu.Unlock()
+
 	req := mcp.CallToolRequest{}
 	req.Params.Name = name
 	req.Params.Arguments = args
-	result, err := e.c.CallTool(ctx, req)
+	result, err := client.CallTool(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
@@ -702,7 +714,7 @@ func run(ctx context.Context, cfg config) error {
 
 	groups := groupBySession(events)
 	for key, group := range groups {
-		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		opCtx, cancel := context.WithTimeout(ctx, mcpOperationTimeout)
 		err := writeEpisode(opCtx, e, key.sessionID, key.projectID, group)
 		cancel()
 		if err != nil {
@@ -738,7 +750,7 @@ func run(ctx context.Context, cfg config) error {
 	}
 	slog.Info("instinct: detected patterns", "count", len(patterns))
 	for _, p := range patterns {
-		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		opCtx, cancel := context.WithTimeout(ctx, mcpOperationTimeout)
 		upsertPattern(opCtx, e, p, events)
 		cancel()
 	}
@@ -755,8 +767,9 @@ func writeEpisode(ctx context.Context, e engramAPI, sessionID, projectID string,
 	for _, ev := range events {
 		// Each event gets its own independent timeout budget so that a slow
 		// or retried first call does not starve subsequent events by depleting
-		// a shared context deadline.
-		evCtx, evCancel := context.WithTimeout(ctx, mcpCallTimeout)
+		// a shared context deadline. Use mcpOperationTimeout (40s) so the full
+		// retry window can run before this per-event context expires (#735).
+		evCtx, evCancel := context.WithTimeout(ctx, mcpOperationTimeout)
 		ingestErr := e.ingest(evCtx, ev, projectID, sessionID)
 		evCancel()
 		if ingestErr != nil {
