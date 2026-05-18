@@ -1244,7 +1244,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
-		{"memory_store_batch", "Store multiple memories in one call" + embedSuffix,
+		{"memory_store_batch", "Store multiple memories in one call. Each item supports the same optional fields as memory_store, including pattern_confidence (float 0.0–1.0) for per-item caller-provided confidence. If any item fails validation the entire batch is rejected." + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
 		{"memory_recall", "Recall memories by semantic + full-text query" + embedSuffix,
