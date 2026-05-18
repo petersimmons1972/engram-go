@@ -1,4 +1,4 @@
-// Package audit queries Engram for instinct-detected patterns and evaluates
+// instinct-audit-go queries Engram for instinct-detected patterns and evaluates
 // each one using a configured LLM backend. Outputs a JSON report to stdout.
 //
 // Usage: instinct-audit-go [flags]
@@ -7,7 +7,7 @@
 //	-timeout dur         Per-inference timeout (default 60s)
 //	-engram string       Engram base URL (overrides config)
 //	-token string        Engram Bearer token (overrides config)
-package audit
+package main
 
 import "time"
 
