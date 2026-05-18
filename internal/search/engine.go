@@ -728,6 +728,8 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		switch detail {
 		case "id_only":
+			// Intentionally minimal: only the ID is returned. All other fields
+			// (Content, PatternConfidence, Tags, etc.) are stripped by design.
 			result.Memory = &types.Memory{ID: m.ID}
 		case "summary":
 			if m.Summary != nil {
