@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
+	"github.com/petersimmons1972/engram/cmd/instinct/llm"
 )
 
 func TestLoadConfig_EnvVars(t *testing.T) {
@@ -309,17 +313,37 @@ func TestEngramClient_Correct(t *testing.T) {
 	}
 }
 
-// ── Haiku client tests ────────────────────────────────────────────────────────
+// ── Detect pipeline tests (replaces former callHaiku tests) ──────────────────
+//
+// These are integration tests of the full llm.AnthropicClient → consolidator.Detect
+// path, run from the main package to exercise the wiring.
 
-func TestCallHaiku_ValidPatterns(t *testing.T) {
+func newTestAnthropicClient(t *testing.T, endpoint string) llm.LLMClient {
+	t.Helper()
+	c, err := llm.NewAnthropicClient(llm.Config{
+		APIKey:   "sk-ant-fake",
+		Endpoint: endpoint,
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewAnthropicClient: %v", err)
+	}
+	return c
+}
+
+func TestDetectPipeline_ValidPatterns(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"User runs tests after edits\",\"domain\":\"testing\",\"evidence\":\"edit then test 3x\",\"tag_signature\":\"sig-edit-test\"}]"}],"usage":{"input_tokens":10,"output_tokens":50}}`)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Edit", ToolOutputSummary: "saved", ExitStatus: 0}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Edit", ToolOutputSummary: "saved", ExitStatus: 0}}
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 1 {
 		t.Fatalf("want 1 pattern, got %d", len(patterns))
 	}
@@ -328,15 +352,19 @@ func TestCallHaiku_ValidPatterns(t *testing.T) {
 	}
 }
 
-func TestCallHaiku_SkipsInvalidPatterns(t *testing.T) {
+func TestDetectPipeline_SkipsInvalidPatterns(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"ok\",\"domain\":\"git\",\"evidence\":\"x\",\"tag_signature\":\"sig-ok\"},{\"type\":\"correction\",\"description\":\"bad\",\"domain\":\"bash\",\"evidence\":\"y\"}]"}],"usage":{"input_tokens":5,"output_tokens":20}}`)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Bash", ToolOutputSummary: "err", ExitStatus: 1}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "err", ExitStatus: 1}}
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 1 {
 		t.Fatalf("want 1 valid pattern (invalid skipped), got %d", len(patterns))
 	}
@@ -345,26 +373,32 @@ func TestCallHaiku_SkipsInvalidPatterns(t *testing.T) {
 	}
 }
 
-func TestCallHaiku_APIError(t *testing.T) {
+func TestDetectPipeline_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
-	if len(patterns) != 0 {
-		t.Errorf("want 0 patterns on API error, got %d", len(patterns))
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
+	// On 500, AnthropicClient returns error; Detect propagates it; pipeline logs and skips.
+	_, err := consolidator.Detect(context.Background(), c, events)
+	if err == nil {
+		t.Error("Detect() should propagate Anthropic 500 as error")
 	}
 }
 
-func TestCallHaiku_EmptyResponse(t *testing.T) {
+func TestDetectPipeline_EmptyResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[]"}],"usage":{"input_tokens":5,"output_tokens":2}}`)
 	}))
 	defer srv.Close()
 
-	patterns := callHaiku(context.Background(), "sk-ant-fake", []Event{}, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	patterns, err := consolidator.Detect(context.Background(), c, []consolidator.Event{{ToolName: "Bash"}})
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 0 {
 		t.Errorf("want 0 patterns for empty response, got %d", len(patterns))
 	}
