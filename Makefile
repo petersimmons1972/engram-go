@@ -149,8 +149,7 @@ status:
 install-instinct:
 	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-consolidate ./cmd/instinct
 	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-audit-go ./cmd/audit
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-migrate-confidence ./cmd/instinct-migrate-confidence
-	@echo "✓ Installed: instinct-consolidate, instinct-audit-go, instinct-migrate-confidence"
+	@echo "✓ Installed: instinct-consolidate, instinct-audit-go"
 
 ## Install bundled Claude Code skills to ~/.claude/skills/
 install-skills:
