@@ -753,8 +753,14 @@ func writeEpisode(ctx context.Context, e engramAPI, sessionID, projectID string,
 		return fmt.Errorf("episodeStart: %w", err)
 	}
 	for _, ev := range events {
-		if err := e.ingest(ctx, ev, projectID, sessionID); err != nil {
-			slog.Warn("instinct: ingest failed", "tool", ev.ToolName, "err", err)
+		// Each event gets its own independent timeout budget so that a slow
+		// or retried first call does not starve subsequent events by depleting
+		// a shared context deadline.
+		evCtx, evCancel := context.WithTimeout(ctx, mcpCallTimeout)
+		ingestErr := e.ingest(evCtx, ev, projectID, sessionID)
+		evCancel()
+		if ingestErr != nil {
+			slog.Warn("instinct: ingest failed", "tool", ev.ToolName, "err", ingestErr)
 		}
 	}
 	if epID != "" {
