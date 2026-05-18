@@ -127,22 +127,27 @@ func TestJudgeMalformedResponse(t *testing.T) {
 }
 
 func TestJudgeContextTimeout(t *testing.T) {
-	// Use a very short timeout so it fires before the mock can respond.
+	// Cancel the context BEFORE calling Judge so Complete observes ctx.Err()
+	// and returns an error. The mock already checks ctx.Err() at the top of
+	// Complete (judge_test.go:23-25); this test relies on that check.
+	//
+	// R2 finding (adversarial review): the previous assertion accepted both
+	// "ERROR" and "KEEP" as valid outcomes, so cancellation handling could
+	// regress to "ignored cancellation, returned wellFormedVerdict" and the
+	// test would still pass. Tightened to ERROR only — KEEP here is a bug.
 	client := &mockLLMClient{
 		response: wellFormedVerdict("KEEP"),
-		// We'll cancel the context before the call to simulate timeout.
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
-	// Yield so the timeout fires.
-	time.Sleep(1 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // ensure ctx.Err() is non-nil before the call
 
 	m := engramMemory{ID: "timeout-id", Tags: []string{"instinct", "sig-t"}}
-	// Judge should handle context cancellation without panic.
 	res := Judge(ctx, client, 60*time.Second, m)
-	// Either an error verdict or the context error shows up in Reason.
-	if res.Verdict != "ERROR" && res.Verdict != "KEEP" {
-		t.Errorf("unexpected verdict on cancelled ctx: %s", res.Verdict)
+	if res.Verdict != "ERROR" {
+		t.Errorf("Judge verdict on cancelled ctx = %q, want %q", res.Verdict, "ERROR")
+	}
+	if res.Reason == "" {
+		t.Error("Judge reason on cancelled ctx is empty; should contain ctx error string")
 	}
 }
 
