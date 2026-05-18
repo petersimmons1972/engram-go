@@ -2,11 +2,12 @@ package longmemeval_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -142,6 +143,30 @@ func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
 	}
 	if result.Label != "SCORE_ERROR" {
 		t.Errorf("label = %q, want SCORE_ERROR on HTTP error (not PARTIALLY_CORRECT — #753)", result.Label)
+	}
+}
+
+func TestBuildScoringRequestBody(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		MaxTokens   int     `json:"max_tokens"`
+		Temperature float64 `json:"temperature"`
+		Model       string  `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 100 {
+		t.Errorf("want max_tokens=100 got %d", req.MaxTokens)
+	}
+	if req.Temperature != 0 {
+		t.Errorf("want temperature=0 got %f", req.Temperature)
+	}
+	if req.Model != "mymodel" {
+		t.Errorf("want mymodel got %s", req.Model)
 	}
 }
 

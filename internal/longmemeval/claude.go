@@ -26,10 +26,11 @@ func GenerateForType(ctx context.Context, prompt, questionType string, retries i
 	return generate(ctx, prompt, "sonnet", retries)
 }
 
-// Generate calls `claude --print prompt` using Opus and returns trimmed stdout.
+// Generate calls `claude --print prompt` using Sonnet and returns trimmed stdout.
 // retries is the number of additional attempts on failure (0 = try once).
 // On failure a backoff sleep (30s, 60s, 120s) is inserted between attempts
 // so transient API rate limits have a chance to clear before retrying.
+// Patched 2026-05-18: pass-3 tier uses Opus on items Sonnet couldn't crack.
 func Generate(ctx context.Context, prompt string, retries int) (string, error) {
 	return generate(ctx, prompt, "opus", retries)
 }
@@ -224,6 +225,100 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	return content, nil
 }
 
+// BuildScoringRequestBody returns an OAI request body optimised for label classification.
+// max_tokens=100 (scoring output ~30-50 tokens), temperature=0 (deterministic).
+// Exported so the test package can inspect the marshalled fields.
+func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
+	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+}
+
+// buildScoringRequestBody is the unexported implementation used internally.
+func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
+	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
+	body := struct {
+		Model       string       `json:"model"`
+		Messages    []oaiMessage `json:"messages"`
+		MaxTokens   int          `json:"max_tokens"`
+		Temperature float64      `json:"temperature"`
+	}{
+		Model: model,
+		Messages: []oaiMessage{
+			{Role: "system", Content: "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2."},
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   100,
+		Temperature: 0,
+	}
+	return json.Marshal(body)
+}
+
+// ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
+// (max_tokens=100, temperature=0) for efficient local-model scoring.
+func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
+	var lastErr error
+	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
+	for attempt := 0; attempt <= retries; attempt++ {
+		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model)
+		if err == nil {
+			label, explanation := ParseScoreLabel(out)
+			return ScoreResult{Label: label, Explanation: explanation}, nil
+		}
+		lastErr = err
+		if attempt >= retries {
+			break
+		}
+		wait := backoffs[attempt%len(backoffs)]
+		select {
+		case <-ctx.Done():
+			return ScoreResult{Label: "PARTIALLY_CORRECT"}, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return ScoreResult{Label: "PARTIALLY_CORRECT"}, lastErr
+}
+
+func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string) (string, error) {
+	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
+	defer cancel()
+	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+	if err != nil {
+		return "", fmt.Errorf("marshal scoring request: %w", err)
+	}
+	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(tctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("create scoring request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := oaiHTTPClient.Do(req)
+	if err != nil {
+		if tctx.Err() != nil {
+			return "", fmt.Errorf("scoring request timed out")
+		}
+		return "", fmt.Errorf("scoring request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("scoring request: HTTP %d", resp.StatusCode)
+	}
+	var oaiResp struct {
+		Choices []struct {
+			Message struct{ Content string `json:"content"` } `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
+		return "", fmt.Errorf("decode scoring response: %w", err)
+	}
+	if len(oaiResp.Choices) == 0 {
+		return "", fmt.Errorf("scoring response: no choices")
+	}
+	content := strings.TrimSpace(oaiResp.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("scoring response: empty content")
+	}
+	return content, nil
+}
+
 // ScoreOAI is like Score but uses the OpenAI-compatible endpoint.
 func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
@@ -276,10 +371,10 @@ type ScoreResult struct {
 }
 
 // Score calls claude --print with the judge prompt and parses the result.
-// Uses Haiku — classifying CORRECT/INCORRECT is a simple comparison task.
+// Uses Sonnet for scoring (Haiku too strict on long-context QA — LME v9 2026-05-18).
 func Score(ctx context.Context, question, referenceAnswer, hypothesis string, retries int) (ScoreResult, error) {
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
-	out, err := GenerateHaiku(ctx, prompt, retries)
+	out, err := GenerateSonnet(ctx, prompt, retries)
 	if err != nil {
 		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
