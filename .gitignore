@@ -19,4 +19,5 @@ __pycache__/
 *.pyc
 *.pyo
 /instinct
+/longmemeval
 reembed-rs/target/
