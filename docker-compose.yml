@@ -125,7 +125,7 @@ services:
       - path: .env.machine-identity
         required: true
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
       # OpenAI-compatible upstream (olla load balancer; LiteLLM container retired 2026-05-05)
       - LITELLM_URL=${LITELLM_URL:-http://olla:40114/olla/openai}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
@@ -182,7 +182,7 @@ services:
     container_name: engram-reembed-7900xt
     # E.g. RX 7900 XT — 896 GB/s, ~15,600 chunks/min on the operator's hardware
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
       - LITELLM_URL=${REEMBED_7900XT_URL:-http://172.23.0.1:8004}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
@@ -204,7 +204,7 @@ services:
     # Use REEMBED_W6800_SUB_BATCH to override global ENGRAM_EMBED_SUB_BATCH.
     # Default 32 (not 100) — W6800 OOMs with sub_batch=100 at concurrency≥4.
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
       # #668: default placeholder — set REEMBED_W6800_URL in .env to your real W6800 host
       - LITELLM_URL=${REEMBED_W6800_URL:-http://example.invalid:8005}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
