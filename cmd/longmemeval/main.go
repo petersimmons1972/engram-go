@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
 // Config holds flags shared across all subcommands.
@@ -32,11 +34,16 @@ type Config struct {
 	// score-efficient flags
 	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
+	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
 
 	// score-batch flags
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
+
+	// generation flags
+	GenerationModel  string // claude model alias for answer generation (default "sonnet")
+	ContextTopKBump  bool   // raise all contextTopK categories to 15 when true
 }
 
 func main() {
@@ -99,6 +106,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
+	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {
@@ -109,6 +118,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
 		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
+		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		_ = sefs.Parse(args[2:])
@@ -157,6 +167,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
+		return 1
+	}
+
+	validGenerationModels := map[string]bool{"opus": true, "sonnet": true, "haiku": true}
+	if !validGenerationModels[cfg.GenerationModel] {
+		_, _ = fmt.Fprintf(stderr, "--generation-model %q is not allowed; must be one of: opus, sonnet, haiku\n", cfg.GenerationModel)
 		return 1
 	}
 

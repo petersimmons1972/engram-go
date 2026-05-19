@@ -35,6 +35,16 @@ func ContextTopKForType(questionType string) int {
 	}
 }
 
+// ContextTopKForTypeWithBump is like ContextTopKForType but raises all
+// categories to 15 when bump is true — equalising single-session types with
+// multi-session types for broader-retrieval reruns.
+func ContextTopKForTypeWithBump(questionType string, bump bool) int {
+	if bump {
+		return 15
+	}
+	return ContextTopKForType(questionType)
+}
+
 // temporalGenerationPrompt returns a step-by-step date-arithmetic prompt
 // for temporal-reasoning questions, explicitly forbidding event invention.
 func temporalGenerationPrompt(question, questionDate string, contextBlocks []string) string {

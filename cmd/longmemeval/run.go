@@ -207,7 +207,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	// Fetch content for top contextTopK memories.
-	contextLimit := longmemeval.ContextTopKForType(item.QuestionType)
+	contextLimit := longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
 	if contextLimit > len(retrievedIDs) {
 		contextLimit = len(retrievedIDs)
 	}
@@ -228,7 +228,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if cfg.LLMBaseURL != "" {
 		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
 	} else {
-		hypothesis, err = longmemeval.Generate(ctx, prompt, cfg.Retries)
+		hypothesis, err = longmemeval.GenerateForModel(ctx, prompt, cfg.GenerationModel, cfg.Retries)
 	}
 	if err != nil {
 		return longmemeval.RunEntry{

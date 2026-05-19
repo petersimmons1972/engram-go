@@ -43,6 +43,19 @@ func GenerateHaiku(ctx context.Context, prompt string, retries int) (string, err
 	return generate(ctx, prompt, "haiku", retries)
 }
 
+// GenerateOpus is like Generate but uses Opus — highest-capability model,
+// suitable for complex multi-session and temporal-reasoning questions.
+func GenerateOpus(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "opus", retries)
+}
+
+// GenerateForModel calls generate with the given model alias. model must be
+// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
+// unknown value causes generate → runClaude to return an error immediately.
+func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
+	return generate(ctx, prompt, model, retries)
+}
+
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -210,15 +223,24 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	return content, nil
 }
 
-// BuildScoringRequestBody returns an OAI request body optimised for label classification.
-// max_tokens=100 (scoring output ~30-50 tokens), temperature=0 (deterministic).
+// DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
+// 2048 gives the model room to produce its label and a full explanation even
+// after reasoning tokens, preventing truncation from stripping the label.
+const DefaultScorerMaxTokens = 2048
+
+// BuildScoringRequestBody returns an OAI request body for label classification.
+// maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
+// unless you have a specific reason to reduce it.
 // Exported so the test package can inspect the marshalled fields.
-func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
-	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 }
 
 // buildScoringRequestBody is the unexported implementation used internally.
-func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
+func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	if maxTokens <= 0 {
+		maxTokens = DefaultScorerMaxTokens
+	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	body := struct {
 		Model       string       `json:"model"`
@@ -228,22 +250,23 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 	}{
 		Model: model,
 		Messages: []oaiMessage{
-			{Role: "system", Content: "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2."},
+			{Role: "system", Content: "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   100,
+		MaxTokens:   maxTokens,
 		Temperature: 0,
 	}
 	return json.Marshal(body)
 }
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
-// (max_tokens=100, temperature=0) for efficient local-model scoring.
-func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
+// (maxTokens, temperature=0) for efficient local-model scoring.
+// maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
+func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int) (ScoreResult, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model)
+		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model, maxTokens)
 		if err == nil {
 			label, explanation := ParseScoreLabel(out)
 			return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -255,17 +278,17 @@ func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesi
 		wait := backoffs[attempt%len(backoffs)]
 		select {
 		case <-ctx.Done():
-			return ScoreResult{Label: "PARTIALLY_CORRECT"}, ctx.Err()
+			return ScoreResult{Label: "SCORE_ERROR"}, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
-	return ScoreResult{Label: "PARTIALLY_CORRECT"}, lastErr
+	return ScoreResult{Label: "SCORE_ERROR"}, lastErr
 }
 
-func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string) (string, error) {
+func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, maxTokens int) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
-	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 	if err != nil {
 		return "", fmt.Errorf("marshal scoring request: %w", err)
 	}
@@ -309,7 +332,7 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateOAI(ctx, prompt, baseURL, model, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -356,21 +379,22 @@ Answer in one sentence using only the facts directly required by the question. D
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.
+// Label is requested on the FIRST LINE so that truncation cannot strip it.
 func ScoringPrompt(question, referenceAnswer, hypothesis string) string {
-	return fmt.Sprintf(`You are judging whether a generated answer correctly answers a question about conversation history.
+	return fmt.Sprintf(`You are grading a hypothesis against a gold answer. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then on the NEXT LINE explain your reasoning in 1-3 sentences.
+
+Definitions:
+- CORRECT: hypothesis contains all key facts from the gold answer with no contradictions. Extra correct context is fine.
+- PARTIALLY_CORRECT: some key facts present, others missing or hedged; partial overlap with gold.
+- INCORRECT: key facts wrong, contradicted, or completely absent (even if topically related).
 
 Question: %s
 
-Reference answer: %s
+Gold answer: %s
 
-Generated answer: %s
+Hypothesis: %s
 
-Is the generated answer correct? Reply with exactly one of these labels on the first line:
-CORRECT
-PARTIALLY_CORRECT
-INCORRECT
-
-Then on the second line, briefly explain why (one sentence).`, question, referenceAnswer, hypothesis)
+Judgment (one word on first line):`, question, referenceAnswer, hypothesis)
 }
 
 // ScoreResult holds the parsed output of the judge prompt.
@@ -385,27 +409,72 @@ func Score(ctx context.Context, question, referenceAnswer, hypothesis string, re
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateSonnet(ctx, prompt, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+// validLabels is the ordered set of recognised score labels.
+var validLabels = []string{"CORRECT", "PARTIALLY_CORRECT", "INCORRECT"}
+
 // ParseScoreLabel extracts the label and explanation from raw judge output.
-// Returns PARTIALLY_CORRECT as default if the label is unrecognised.
+//
+// Strategy:
+//  1. Read the first non-empty line; match case-insensitively against the
+//     three valid labels.
+//  2. If no match on the first line, scan every line for the first occurrence
+//     of any valid label (handles preamble / COT output).
+//  3. If still no match, return SCORE_ERROR — never default to PARTIALLY_CORRECT,
+//     which was masking truncation failures.
 func ParseScoreLabel(raw string) (label, explanation string) {
-	lines := strings.SplitN(strings.TrimSpace(raw), "\n", 2)
-	first := strings.ToUpper(strings.TrimSpace(lines[0]))
-	switch first {
-	case "CORRECT", "PARTIALLY_CORRECT", "INCORRECT":
-		label = first
-	default:
-		label = "PARTIALLY_CORRECT"
+	allLines := strings.Split(strings.TrimSpace(raw), "\n")
+
+	// Pass 1: first non-empty line.
+	firstLineIdx := -1
+	for i, l := range allLines {
+		if strings.TrimSpace(l) != "" {
+			firstLineIdx = i
+			first := strings.ToUpper(strings.TrimSpace(l))
+			for _, v := range validLabels {
+				if first == v {
+					label = v
+					if i+1 < len(allLines) {
+						explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+					}
+					return label, explanation
+				}
+			}
+			break
+		}
 	}
-	if len(lines) > 1 {
-		explanation = strings.TrimSpace(lines[1])
+
+	// Pass 2: scan all lines for first label occurrence.
+	for i, l := range allLines {
+		upper := strings.ToUpper(strings.TrimSpace(l))
+		for _, v := range validLabels {
+			if upper == v {
+				label = v
+				// Explanation is whatever follows on subsequent lines.
+				if i+1 < len(allLines) {
+					explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+				}
+				// Also capture any pre-label text as part of explanation if first line had content.
+				if firstLineIdx >= 0 && firstLineIdx != i {
+					pre := strings.TrimSpace(strings.Join(allLines[firstLineIdx:i], "\n"))
+					if pre != "" && explanation != "" {
+						explanation = pre + "\n" + explanation
+					} else if pre != "" {
+						explanation = pre
+					}
+				}
+				return label, explanation
+			}
+		}
 	}
-	return label, explanation
+
+	// Pass 3: no label found — explicit error, not a silent PARTIALLY_CORRECT.
+	return "SCORE_ERROR", strings.TrimSpace(raw)
 }
 
 
@@ -491,7 +560,7 @@ type BatchScoringItem struct {
 // apiKey must be non-empty. model is the Anthropic model ID (e.g.
 // "claude-haiku-4-5"). On batch creation failure the error is returned and
 // the caller may fall back to per-item scoring. Items with errored results
-// receive PARTIALLY_CORRECT as the default label.
+// receive SCORE_ERROR — never PARTIALLY_CORRECT, which would mask infrastructure failures.
 //
 // Poll loop: starts at 2 s backoff, doubles each iteration, caps at 30 s.
 // Terminal state is "ended" only — "canceling" is NOT terminal.
@@ -533,8 +602,8 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			CustomID: item.QuestionID,
 			Params: anthropicParams{
 				Model:     model,
-				MaxTokens: 100,
-				System:    "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2.",
+				MaxTokens: DefaultScorerMaxTokens,
+				System:    "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line.",
 				Messages: []anthropicMessage{
 					{Role: "user", Content: []anthropicContent{{Type: "text", Text: prompt}}},
 				},
@@ -680,12 +749,13 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			continue
 		}
 		if rl.Result.Type != "succeeded" {
-			// errored or expired items default to PARTIALLY_CORRECT.
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT", Explanation: rl.Result.Error.Message}
+			// errored or expired items are explicitly flagged — never silently
+			// default to PARTIALLY_CORRECT, which would mask infrastructure failures.
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: rl.Result.Error.Message}
 			continue
 		}
 		if len(rl.Result.Message.Content) == 0 {
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT"}
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: "empty content"}
 			continue
 		}
 		text := rl.Result.Message.Content[0].Text
