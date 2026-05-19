@@ -310,6 +310,38 @@ func TestScoreBatch_emptyItems(t *testing.T) {
 	}
 }
 
+func TestGenerationPrompt_PreferenceType_DescribesPreference(t *testing.T) {
+	// single-session-preference prompts must instruct the model to describe the
+	// user's preference, not answer the question directly. The v9 run scored 0/30
+	// because the generic prompt caused the model to answer "here are resources..."
+	// instead of "the user would prefer resources tailored to X...".
+	prompt := longmemeval.GenerationPromptForType(
+		"Can you recommend some resources where I can learn more about video editing?",
+		"single-session-preference",
+		"2024-03-15",
+		[]string{"Session date: 2024-03-10\nUser asked about advanced Adobe Premiere Pro color grading settings."},
+	)
+	if !strings.Contains(strings.ToLower(prompt), "prefer") {
+		t.Errorf("preference prompt must contain 'prefer' to orient model toward preference description, got:\n%s", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "answer in one sentence") {
+		t.Errorf("preference prompt must NOT use generic 'answer in one sentence' instruction — that causes literal-answer hallucination")
+	}
+}
+
+func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
+	// Non-preference types must still use the original generic prompt.
+	prompt := longmemeval.GenerationPromptForType(
+		"When did the user buy their camera?",
+		"single-session-user",
+		"2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."},
+	)
+	if !strings.Contains(strings.ToLower(prompt), "answer in one sentence") {
+		t.Errorf("non-preference prompt must retain 'answer in one sentence' instruction, got:\n%s", prompt)
+	}
+}
+
 // TestGenerate_RequiresClaude is skipped in short mode.
 func TestGenerate_RequiresClaude(t *testing.T) {
 	// #678: the claude binary is an undocumented prerequisite for this test.

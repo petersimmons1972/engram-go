@@ -332,6 +332,28 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+
+// GenerationPromptForType builds a generation prompt tailored to the question type.
+// For single-session-preference questions the model is instructed to describe the
+// user's preferences rather than answer the question directly — answering directly
+// was the root cause of 0/30 on that category in v9 (engram-go#741 follow-up).
+func GenerationPromptForType(question, questionType, questionDate string, contextBlocks []string) string {
+	if questionType == "single-session-preference" {
+		ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+		return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`, questionDate, ctx, questionDate, question)
+	}
+	return GenerationPrompt(question, questionDate, contextBlocks)
+}
+
 // GenerationPrompt builds the prompt for answer generation.
 func GenerationPrompt(question, questionDate string, contextBlocks []string) string {
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
