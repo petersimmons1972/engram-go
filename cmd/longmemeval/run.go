@@ -235,6 +235,18 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	// --max-block-chars: truncate each block so the assembled prompt stays within
+	// the model's max_model_len. Applied before chrono-sort so truncation is
+	// independent of ordering. Required when --context-topk is large (e.g. 100)
+	// and the vLLM endpoint has a modest context window (e.g. 131072 tokens).
+	if cfg.MaxBlockChars > 0 {
+		for i, block := range contextBlocks {
+			if len(block) > cfg.MaxBlockChars {
+				contextBlocks[i] = block[:cfg.MaxBlockChars]
+			}
+		}
+	}
+
 	// --chrono-sort: sort blocks by Session date ascending before prompt assembly.
 	if cfg.ChronoSort {
 		contextBlocks = sortBlocksChronologically(contextBlocks)

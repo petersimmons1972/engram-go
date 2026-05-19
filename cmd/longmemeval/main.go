@@ -50,6 +50,7 @@ type Config struct {
 	ContextTopKOverride  int  // explicit context topK; 0 = per-type default
 	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
+	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
 }
 
 func main() {
@@ -118,6 +119,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
+	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {

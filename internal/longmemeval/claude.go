@@ -7,11 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// debugOAIRequests gates verbose request/response logging for OAI calls.
+// Set LME_DEBUG_REQUESTS=1 to enable. Logs request body size and full response
+// body on non-200, so 400 errors include the vLLM error detail.
+var debugOAIRequests = os.Getenv("LME_DEBUG_REQUESTS") == "1"
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
@@ -174,6 +181,9 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 		return "", fmt.Errorf("create OAI request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if debugOAIRequests {
+		log.Printf("DEBUG callOAI: url=%s request_body_bytes=%d", url, len(reqBody))
+	}
 
 	resp, err := oaiHTTPClient.Do(req)
 	if err != nil {
@@ -185,6 +195,11 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if debugOAIRequests {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("DEBUG callOAI: status=%d request_body_bytes=%d response_body=%s",
+				resp.StatusCode, len(reqBody), strings.TrimSpace(string(body)))
+		}
 		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)
 	}
 
