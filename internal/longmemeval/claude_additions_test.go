@@ -99,6 +99,64 @@ func TestGenerateOpus_InvalidModel_NotTriggered(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// H2 — topic-seeded PreferenceRecallQuery
+// ---------------------------------------------------------------------------
+
+func TestPreferenceRecallQuery_TopicExtraction(t *testing.T) {
+	cases := []struct {
+		question    string
+		wantContain string // substring the query must contain
+		wantAbsent  string // substring that must NOT appear (optional — leave empty to skip)
+		desc        string
+	}{
+		{
+			question:    "Can you recommend some recent publications or conferences that I might find interesting?",
+			wantContain: "publications",
+			wantAbsent:  "like dislike use avoid",
+			desc:        "generic publication question: topic noun surfaced, generic suffix removed",
+		},
+		{
+			question:    "What's my preferred coffee brewing method?",
+			wantContain: "coffee brewing method",
+			wantAbsent:  "like dislike use avoid",
+			desc:        "preferred coffee: domain noun-phrase used as seed",
+		},
+		{
+			question:    "Can you recommend a hotel for Miami?",
+			wantContain: "hotel",
+			desc:        "hotel recommendation: hotel noun in query",
+		},
+		{
+			question:    "What do I like to cook for dinner?",
+			wantContain: "cook",
+			desc:        "like-to-cook question: content word extracted",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			got := longmemeval.PreferenceRecallQuery(c.question)
+			if !strings.Contains(got, c.wantContain) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q; want it to contain %q", c.question, got, c.wantContain)
+			}
+			if c.wantAbsent != "" && strings.Contains(got, c.wantAbsent) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q; must NOT contain %q", c.question, got, c.wantAbsent)
+			}
+		})
+	}
+}
+
+// TestPreferenceRecallQuery_Fallback verifies that when extraction yields
+// nothing useful the function falls back to the legacy behaviour (does not panic
+// and returns a non-empty string starting with "user preference").
+func TestPreferenceRecallQuery_Fallback(t *testing.T) {
+	// A question with only stop-words after stripping → falls back to legacy.
+	got := longmemeval.PreferenceRecallQuery("")
+	if got == "" {
+		t.Error("PreferenceRecallQuery(\"\") must not return empty string")
+	}
+}
+
 // TestContextTopKForTypeWithBump_MatchesBase verifies that bump=false is a
 // no-op relative to ContextTopKForType for every known question type.
 func TestContextTopKForTypeWithBump_MatchesBase(t *testing.T) {
