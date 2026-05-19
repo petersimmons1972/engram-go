@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -165,6 +166,145 @@ func TestBuildScoringRequestBody(t *testing.T) {
 	}
 	if req.Model != "mymodel" {
 		t.Errorf("want mymodel got %s", req.Model)
+	}
+}
+
+// --- ScoreBatch tests ---
+
+// batchTestServer builds an httptest.Server that handles the three Anthropic
+// batch endpoints. pollResponses is a slice of processing_status values
+// returned on sequential GET /v1/messages/batches/{id} calls; the last value
+// must be "ended". resultsNDJSON is the raw NDJSON to return from the results
+// endpoint.
+func batchTestServer(t *testing.T, pollResponses []string, resultsNDJSON string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var pollCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages/batches":
+			// Verify required headers.
+			if r.Header.Get("x-api-key") == "" {
+				t.Errorf("missing x-api-key header")
+			}
+			if r.Header.Get("anthropic-beta") != "message-batches-2024-09-24" {
+				t.Errorf("missing/wrong anthropic-beta header: %s", r.Header.Get("anthropic-beta"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"batch_test123","processing_status":"in_progress"}`)
+
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/results"):
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, resultsNDJSON)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/v1/messages/batches/"):
+			idx := int(pollCount.Add(1)) - 1
+			status := pollResponses[idx%len(pollResponses)]
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"batch_test123","processing_status":"%s"}`, status)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	return srv, &pollCount
+}
+
+func TestScoreBatch_happyPath(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"CORRECT\nMatches exactly."}]}}}` + "\n" +
+		`{"custom_id":"q2","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"INCORRECT\nDoes not match."}]}}}` + "\n"
+
+	srv, _ := batchTestServer(t, []string{"ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q1?", ReferenceAnswer: "A1", Hypothesis: "A1"},
+		{QuestionID: "q2", Question: "Q2?", ReferenceAnswer: "A2", Hypothesis: "wrong"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch: %v", err)
+	}
+	if results["q1"].Label != "CORRECT" {
+		t.Errorf("q1 label = %q, want CORRECT", results["q1"].Label)
+	}
+	if results["q2"].Label != "INCORRECT" {
+		t.Errorf("q2 label = %q, want INCORRECT", results["q2"].Label)
+	}
+	if !strings.Contains(results["q1"].Explanation, "Matches") {
+		t.Errorf("q1 explanation = %q, expected to contain 'Matches'", results["q1"].Explanation)
+	}
+}
+
+func TestScoreBatch_pollsUntilEnded(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"CORRECT\nGood."}]}}}` + "\n"
+
+	// First two polls return "in_progress", third returns "ended".
+	srv, pollCount := batchTestServer(t, []string{"in_progress", "in_progress", "ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q?", ReferenceAnswer: "A", Hypothesis: "A"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch: %v", err)
+	}
+	if results["q1"].Label != "CORRECT" {
+		t.Errorf("q1 label = %q, want CORRECT", results["q1"].Label)
+	}
+	// Expect exactly 3 poll calls (in_progress, in_progress, ended).
+	if n := pollCount.Load(); n != 3 {
+		t.Errorf("poll count = %d, want 3", n)
+	}
+}
+
+func TestScoreBatch_handlesErroredItem(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"errored","error":{"type":"server_error","message":"timeout"}}}` + "\n"
+
+	srv, _ := batchTestServer(t, []string{"ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q?", ReferenceAnswer: "A", Hypothesis: "B"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch returned error, want nil: %v", err)
+	}
+	if results["q1"].Label != "PARTIALLY_CORRECT" {
+		t.Errorf("errored item label = %q, want PARTIALLY_CORRECT", results["q1"].Label)
+	}
+}
+
+func TestScoreBatch_emptyAPIKey(t *testing.T) {
+	ctx := context.Background()
+	_, err := longmemeval.ScoreBatch(ctx, []longmemeval.BatchScoringItem{{QuestionID: "q1"}}, "", "model")
+	if err == nil {
+		t.Error("expected error for empty apiKey, got nil")
+	}
+}
+
+func TestScoreBatch_emptyItems(t *testing.T) {
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, nil, "key", "model")
+	if err != nil {
+		t.Fatalf("ScoreBatch(nil items): %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty map for no items, got %d entries", len(results))
 	}
 }
 

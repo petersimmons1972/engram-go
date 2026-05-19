@@ -34,6 +34,9 @@ type Config struct {
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
+
+	// score-batch flags
+	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
 }
 
 func main() {
@@ -50,6 +53,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  score     Score hypotheses against gold answers")
 	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
 	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
+	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
@@ -116,6 +120,26 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			cfg.RunID = newRunID()
 		}
 		return runScoreEfficient(cfg)
+	}
+
+	// score-batch has its own flag set and early return.
+	if subcommand == "score-batch" {
+		sbfs := flag.NewFlagSet("score-batch", flag.ExitOnError)
+		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
+		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
+		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
+		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
+		sbfs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
+		sbfs.StringVar(&cfg.ScorerBatchAPIKey, "api-key-anthropic", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key (env: ANTHROPIC_API_KEY)")
+		_ = sbfs.Parse(args[2:])
+		if cfg.DataFile == "" {
+			_, _ = fmt.Fprintln(stderr, "--data is required")
+			return 1
+		}
+		if cfg.RunID == "" {
+			cfg.RunID = newRunID()
+		}
+		return runScoreBatch(cfg)
 	}
 
 	switch subcommand {

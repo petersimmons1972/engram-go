@@ -1,10 +1,12 @@
 package longmemeval
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -430,4 +432,253 @@ func buildOAIRequestBody(model, prompt string) ([]byte, error) {
 // (whose Transport can be mutated by any imported package's init() — #687).
 var oaiHTTPClient = &http.Client{
 	Timeout: 15 * time.Minute, // generous: LLM generation can be slow; context deadline tightens further per call
+}
+
+// anthropicBatchClient is a dedicated *http.Client for the Anthropic Message
+// Batches API. Kept separate from oaiHTTPClient so the generous 20-minute
+// timeout does not interfere with OAI scoring calls, and to make test
+// injection straightforward. The poll loop for batch completion can take up
+// to ~15 minutes on a 500-item batch.
+var anthropicBatchClient = &http.Client{
+	Timeout: 20 * time.Minute,
+}
+
+// anthropicBaseURL is the Anthropic API root. Overridable in tests via
+// SetAnthropicBaseURL.
+var anthropicBaseURL = "https://api.anthropic.com"
+
+// SetAnthropicBaseURL overrides the Anthropic API base URL. Intended for use
+// in tests that stand up an httptest.Server. Call with the real URL to restore
+// production behaviour after each test.
+func SetAnthropicBaseURL(url string) {
+	anthropicBaseURL = url
+}
+
+// BatchScoringItem is one item to score in a batch request.
+type BatchScoringItem struct {
+	QuestionID      string
+	Question        string
+	ReferenceAnswer string
+	Hypothesis      string
+}
+
+// ScoreBatch scores all items in a single Anthropic Message Batches API call.
+// apiKey must be non-empty. model is the Anthropic model ID (e.g.
+// "claude-haiku-4-5"). On batch creation failure the error is returned and
+// the caller may fall back to per-item scoring. Items with errored results
+// receive PARTIALLY_CORRECT as the default label.
+//
+// Poll loop: starts at 2 s backoff, doubles each iteration, caps at 30 s.
+// Terminal state is "ended" only — "canceling" is NOT terminal.
+//
+// NDJSON result streaming uses bufio.Scanner (line-buffered); the full body
+// is never held in memory.
+func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model string) (map[string]ScoreResult, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("ScoreBatch: apiKey is required")
+	}
+	if len(items) == 0 {
+		return map[string]ScoreResult{}, nil
+	}
+
+	// --- Step 1: build batch create request ---
+	type anthropicContent struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type anthropicMessage struct {
+		Role    string             `json:"role"`
+		Content []anthropicContent `json:"content"`
+	}
+	type anthropicParams struct {
+		Model     string             `json:"model"`
+		MaxTokens int                `json:"max_tokens"`
+		System    string             `json:"system"`
+		Messages  []anthropicMessage `json:"messages"`
+	}
+	type batchRequest struct {
+		CustomID string          `json:"custom_id"`
+		Params   anthropicParams `json:"params"`
+	}
+
+	batchReqs := make([]batchRequest, len(items))
+	for i, item := range items {
+		prompt := ScoringPrompt(item.Question, item.ReferenceAnswer, item.Hypothesis)
+		batchReqs[i] = batchRequest{
+			CustomID: item.QuestionID,
+			Params: anthropicParams{
+				Model:     model,
+				MaxTokens: 100,
+				System:    "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2.",
+				Messages: []anthropicMessage{
+					{Role: "user", Content: []anthropicContent{{Type: "text", Text: prompt}}},
+				},
+			},
+		}
+	}
+
+	createBody := struct {
+		Requests []batchRequest `json:"requests"`
+	}{Requests: batchReqs}
+
+	createJSON, err := json.Marshal(createBody)
+	if err != nil {
+		return nil, fmt.Errorf("ScoreBatch: marshal create request: %w", err)
+	}
+
+	createURL := anthropicBaseURL + "/v1/messages/batches"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(createJSON))
+	if err != nil {
+		return nil, fmt.Errorf("ScoreBatch: create request: %w", err)
+	}
+	setAnthropicHeaders(req, apiKey)
+
+	resp, err := anthropicBatchClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ScoreBatch: POST batches: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("ScoreBatch: POST batches: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var createResp struct {
+		ID               string `json:"id"`
+		ProcessingStatus string `json:"processing_status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		return nil, fmt.Errorf("ScoreBatch: decode create response: %w", err)
+	}
+	batchID := createResp.ID
+
+	// --- Step 2: poll until processing_status == "ended" ---
+	pollURL := anthropicBaseURL + "/v1/messages/batches/" + batchID
+	backoff := 2 * time.Second
+	const maxBackoff = 30 * time.Second
+	for {
+		// Check context cancellation before sleeping.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		pollReq, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("ScoreBatch: poll request: %w", err)
+		}
+		setAnthropicHeaders(pollReq, apiKey)
+
+		pollResp, err := anthropicBatchClient.Do(pollReq)
+		if err != nil {
+			return nil, fmt.Errorf("ScoreBatch: poll GET: %w", err)
+		}
+
+		var status struct {
+			ProcessingStatus string `json:"processing_status"`
+		}
+		decErr := json.NewDecoder(pollResp.Body).Decode(&status)
+		_ = pollResp.Body.Close()
+		if decErr != nil {
+			return nil, fmt.Errorf("ScoreBatch: decode poll response: %w", decErr)
+		}
+
+		if status.ProcessingStatus == "ended" {
+			break
+		}
+		// "in_progress" and "canceling" are non-terminal; keep polling.
+		// Double the backoff, cap at maxBackoff.
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+
+	// --- Step 3: stream NDJSON results ---
+	resultsURL := anthropicBaseURL + "/v1/messages/batches/" + batchID + "/results"
+	resultsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resultsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ScoreBatch: results request: %w", err)
+	}
+	setAnthropicHeaders(resultsReq, apiKey)
+
+	resultsResp, err := anthropicBatchClient.Do(resultsReq)
+	if err != nil {
+		return nil, fmt.Errorf("ScoreBatch: GET results: %w", err)
+	}
+	defer func() { _ = resultsResp.Body.Close() }()
+
+	if resultsResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resultsResp.Body, 1024))
+		return nil, fmt.Errorf("ScoreBatch: GET results: HTTP %d: %s", resultsResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Parse NDJSON line-by-line using bufio.Scanner.
+	type resultContent struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type resultMessage struct {
+		Content []resultContent `json:"content"`
+	}
+	type resultSuccess struct {
+		Type    string        `json:"type"`
+		Message resultMessage `json:"message"`
+	}
+	type resultErrorDetail struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	type resultLine struct {
+		CustomID string `json:"custom_id"`
+		Result   struct {
+			Type    string            `json:"type"`
+			Message resultMessage     `json:"message"`
+			Error   resultErrorDetail `json:"error"`
+		} `json:"result"`
+	}
+
+	out := make(map[string]ScoreResult, len(items))
+	scanner := bufio.NewScanner(resultsResp.Body)
+	// Each line is one NDJSON object; size up the buffer for long explanations.
+	scanner.Buffer(make([]byte, 256*1024), 256*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var rl resultLine
+		if err := json.Unmarshal(line, &rl); err != nil {
+			// Skip malformed lines — log but don't abort.
+			continue
+		}
+		if rl.Result.Type != "succeeded" {
+			// errored or expired items default to PARTIALLY_CORRECT.
+			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT", Explanation: rl.Result.Error.Message}
+			continue
+		}
+		if len(rl.Result.Message.Content) == 0 {
+			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT"}
+			continue
+		}
+		text := rl.Result.Message.Content[0].Text
+		label, explanation := ParseScoreLabel(text)
+		out[rl.CustomID] = ScoreResult{Label: label, Explanation: explanation}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ScoreBatch: scan NDJSON results: %w", err)
+	}
+
+	return out, nil
+}
+
+// setAnthropicHeaders attaches the required headers for all Anthropic API calls,
+// including the message-batches beta header.
+func setAnthropicHeaders(req *http.Request, apiKey string) {
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "message-batches-2024-09-24")
+	req.Header.Set("Content-Type", "application/json")
 }
