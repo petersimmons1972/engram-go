@@ -32,3 +32,23 @@ func resetWeightConfigForTesting() {
 	weightConfigOnce = sync.Once{}
 	resolvedWeights = weightConfig{}
 }
+
+// resetTemporalWeightConfigForTesting resets the sync.Once for score.go's
+// temporal weight configuration so the next call to TemporalWeights() re-reads
+// the environment.
+//
+// Test-only: not for production use.
+func resetTemporalWeightConfigForTesting() {
+	temporalWeightConfigOnce = sync.Once{}
+	resolvedTemporalWeights = temporalWeightConfig{}
+}
+
+// resetKUWeightConfigForTesting resets the sync.Once for score.go's
+// knowledge-update weight configuration so the next call to
+// KnowledgeUpdateWeights() re-reads the environment.
+//
+// Test-only: not for production use.
+func resetKUWeightConfigForTesting() {
+	kuWeightConfigOnce = sync.Once{}
+	resolvedKUWeights = kuWeightConfig{}
+}
