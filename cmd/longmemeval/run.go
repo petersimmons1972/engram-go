@@ -6,8 +6,11 @@ import (
 	"log"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -21,7 +24,7 @@ var temporalInterrogativeRe = regexp.MustCompile(
 		`|on what (date|day) )`,
 )
 
-const recallTopK = 100
+// contextTopK is kept for documentation; actual limit comes from cfg or ContextTopKForTypeWithBump.
 const contextTopK = 8 // 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster
 
 // runRun executes the run stage. Returns the process exit code: 0 on success,
@@ -188,16 +191,19 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
+	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := item.Question
-	if item.QuestionType == "temporal-reasoning" {
-		recallQuery = temporalInterrogativeRe.ReplaceAllString(recallQuery, "")
-		if recallQuery == "" {
-			recallQuery = item.Question
+	if !cfg.DisableQueryRewrite {
+		if item.QuestionType == "temporal-reasoning" {
+			recallQuery = temporalInterrogativeRe.ReplaceAllString(recallQuery, "")
+			if recallQuery == "" {
+				recallQuery = item.Question
+			}
+		} else if item.QuestionType == "single-session-preference" {
+			recallQuery = longmemeval.PreferenceRecallQuery(item.Question)
 		}
-	} else if item.QuestionType == "single-session-preference" {
-		recallQuery = longmemeval.PreferenceRecallQuery(item.Question)
 	}
-	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, recallTopK)
+	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, cfg.RecallTopK)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID: item.QuestionID,
@@ -206,8 +212,14 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
-	// Fetch content for top contextTopK memories.
-	contextLimit := longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
+	// Fetch content for top contextLimit memories.
+	// --context-topk overrides per-type default; 0 means use per-type default.
+	var contextLimit int
+	if cfg.ContextTopKOverride > 0 {
+		contextLimit = cfg.ContextTopKOverride
+	} else {
+		contextLimit = longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
+	}
 	if contextLimit > len(retrievedIDs) {
 		contextLimit = len(retrievedIDs)
 	}
@@ -221,6 +233,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		if content != "" {
 			contextBlocks = append(contextBlocks, content)
 		}
+	}
+
+	// --chrono-sort: sort blocks by Session date ascending before prompt assembly.
+	if cfg.ChronoSort {
+		contextBlocks = sortBlocksChronologically(contextBlocks)
 	}
 
 	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
@@ -257,4 +274,32 @@ func runEntryLogLine(entry longmemeval.RunEntry) string {
 	}
 	return fmt.Sprintf("question_id=%s status=%s hypothesis_len=%d",
 		entry.QuestionID, entry.Status, len(entry.Hypothesis))
+}
+
+// sessionDateRe matches the first "Session date: YYYY-MM-DD" line in a block.
+var sessionDateRe = regexp.MustCompile(`(?m)^Session date:\s*(\d{4}-\d{2}-\d{2})`)
+
+// blockDate extracts the Session date from the first matching line of a memory
+// block. Returns time.Time{} (zero value / 1970) if no date is found.
+func blockDate(block string) time.Time {
+	m := sessionDateRe.FindStringSubmatch(block)
+	if m == nil {
+		return time.Time{}
+	}
+	t, err := time.Parse("2006-01-02", strings.TrimSpace(m[1]))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// sortBlocksChronologically returns a copy of blocks sorted by Session date
+// ascending. Blocks with no parseable date sort first (treated as 1970-01-01).
+func sortBlocksChronologically(blocks []string) []string {
+	out := make([]string, len(blocks))
+	copy(out, blocks)
+	sort.SliceStable(out, func(i, j int) bool {
+		return blockDate(out[i]).Before(blockDate(out[j]))
+	})
+	return out
 }

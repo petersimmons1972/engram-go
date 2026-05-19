@@ -44,6 +44,12 @@ type Config struct {
 	// generation flags
 	GenerationModel  string // claude model alias for answer generation (default "sonnet")
 	ContextTopKBump  bool   // raise all contextTopK categories to 15 when true
+
+	// retrieval ablation flags
+	RecallTopK           int  // memories recalled before context trim (default 100)
+	ContextTopKOverride  int  // explicit context topK; 0 = per-type default
+	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
+	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
 }
 
 func main() {
@@ -108,6 +114,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
+	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
+	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
+	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
+	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {
@@ -173,6 +183,15 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	validGenerationModels := map[string]bool{"opus": true, "sonnet": true, "haiku": true}
 	if !validGenerationModels[cfg.GenerationModel] {
 		_, _ = fmt.Fprintf(stderr, "--generation-model %q is not allowed; must be one of: opus, sonnet, haiku\n", cfg.GenerationModel)
+		return 1
+	}
+
+	if cfg.RecallTopK <= 0 || cfg.RecallTopK > 500 {
+		_, _ = fmt.Fprintf(stderr, "--recall-topk %d is out of range; must be 1–500\n", cfg.RecallTopK)
+		return 1
+	}
+	if cfg.ContextTopKOverride < 0 || cfg.ContextTopKOverride > cfg.RecallTopK {
+		_, _ = fmt.Fprintf(stderr, "--context-topk %d is out of range; must be 0–%d (recall-topk)\n", cfg.ContextTopKOverride, cfg.RecallTopK)
 		return 1
 	}
 
