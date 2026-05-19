@@ -46,6 +46,40 @@ func TestParseScoreLabel_Explanation(t *testing.T) {
 	}
 }
 
+// TestParseScoreLabel_Truncation verifies that a response truncated mid-rationale
+// with no label returns SCORE_ERROR rather than a silent PARTIALLY_CORRECT.
+func TestParseScoreLabel_Truncation(t *testing.T) {
+	truncated := "The hypothesis mentions the correct city but omits the date, which is an important"
+	label, raw := longmemeval.ParseScoreLabel(truncated)
+	if label != "SCORE_ERROR" {
+		t.Errorf("truncated response: label = %q, want SCORE_ERROR", label)
+	}
+	if raw == "" {
+		t.Error("truncated response: expected raw text in explanation, got empty string")
+	}
+}
+
+// TestParseScoreLabel_LabelInBody verifies that when the first line has preamble
+// but a valid label appears on a later line, the parser finds and returns it.
+func TestParseScoreLabel_LabelInBody(t *testing.T) {
+	preamble := "Let me think about this carefully.\nINCORRECT\nThe hypothesis contradicts the gold answer."
+	label, _ := longmemeval.ParseScoreLabel(preamble)
+	if label != "INCORRECT" {
+		t.Errorf("preamble+label: label = %q, want INCORRECT", label)
+	}
+}
+
+// TestParseScoreLabel_MultipleLabels verifies that when multiple labels appear
+// in a response the FIRST one is returned (not the last, not PARTIALLY_CORRECT).
+func TestParseScoreLabel_MultipleLabels(t *testing.T) {
+	// Model outputs preamble, then contradicts itself — first label wins.
+	ambiguous := "Some context here.\nCORRECT\nBut wait, actually INCORRECT because of X."
+	label, _ := longmemeval.ParseScoreLabel(ambiguous)
+	if label != "CORRECT" {
+		t.Errorf("ambiguous multi-label: label = %q, want CORRECT (first found)", label)
+	}
+}
+
 func TestGenerateOAI_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -148,7 +182,7 @@ func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
 }
 
 func TestBuildScoringRequestBody(t *testing.T) {
-	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A")
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,14 +194,30 @@ func TestBuildScoringRequestBody(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.MaxTokens != 100 {
-		t.Errorf("want max_tokens=100 got %d", req.MaxTokens)
+	if req.MaxTokens != longmemeval.DefaultScorerMaxTokens {
+		t.Errorf("want max_tokens=%d got %d", longmemeval.DefaultScorerMaxTokens, req.MaxTokens)
 	}
 	if req.Temperature != 0 {
 		t.Errorf("want temperature=0 got %f", req.Temperature)
 	}
 	if req.Model != "mymodel" {
 		t.Errorf("want mymodel got %s", req.Model)
+	}
+}
+
+func TestBuildScoringRequestBody_CustomMaxTokens(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 512 {
+		t.Errorf("want max_tokens=512 got %d", req.MaxTokens)
 	}
 }
 
@@ -286,8 +336,8 @@ func TestScoreBatch_handlesErroredItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScoreBatch returned error, want nil: %v", err)
 	}
-	if results["q1"].Label != "PARTIALLY_CORRECT" {
-		t.Errorf("errored item label = %q, want PARTIALLY_CORRECT", results["q1"].Label)
+	if results["q1"].Label != "SCORE_ERROR" {
+		t.Errorf("errored item label = %q, want SCORE_ERROR", results["q1"].Label)
 	}
 }
 

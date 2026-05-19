@@ -48,6 +48,19 @@ func GenerateHaiku(ctx context.Context, prompt string, retries int) (string, err
 	return generate(ctx, prompt, "haiku", retries)
 }
 
+// GenerateOpus is like Generate but uses Opus — highest-capability model,
+// suitable for complex multi-session and temporal-reasoning questions.
+func GenerateOpus(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "opus", retries)
+}
+
+// GenerateForModel calls generate with the given model alias. model must be
+// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
+// unknown value causes generate → runClaude to return an error immediately.
+func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
+	return generate(ctx, prompt, model, retries)
+}
+
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -227,15 +240,24 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	return content, nil
 }
 
-// BuildScoringRequestBody returns an OAI request body optimised for label classification.
-// max_tokens=100 (scoring output ~30-50 tokens), temperature=0 (deterministic).
+// DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
+// 2048 gives the model room to produce its label and a full explanation even
+// after reasoning tokens, preventing truncation from stripping the label.
+const DefaultScorerMaxTokens = 2048
+
+// BuildScoringRequestBody returns an OAI request body for label classification.
+// maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
+// unless you have a specific reason to reduce it.
 // Exported so the test package can inspect the marshalled fields.
-func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
-	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 }
 
 // buildScoringRequestBody is the unexported implementation used internally.
-func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
+func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	if maxTokens <= 0 {
+		maxTokens = DefaultScorerMaxTokens
+	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	body := struct {
 		Model       string       `json:"model"`
@@ -245,22 +267,23 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 	}{
 		Model: model,
 		Messages: []oaiMessage{
-			{Role: "system", Content: "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2."},
+			{Role: "system", Content: "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   100,
+		MaxTokens:   maxTokens,
 		Temperature: 0,
 	}
 	return json.Marshal(body)
 }
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
-// (max_tokens=100, temperature=0) for efficient local-model scoring.
-func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
+// (maxTokens, temperature=0) for efficient local-model scoring.
+// maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
+func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int) (ScoreResult, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model)
+		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model, maxTokens)
 		if err == nil {
 			label, explanation := ParseScoreLabel(out)
 			return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -272,17 +295,17 @@ func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesi
 		wait := backoffs[attempt%len(backoffs)]
 		select {
 		case <-ctx.Done():
-			return ScoreResult{Label: "PARTIALLY_CORRECT"}, ctx.Err()
+			return ScoreResult{Label: "SCORE_ERROR"}, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
-	return ScoreResult{Label: "PARTIALLY_CORRECT"}, lastErr
+	return ScoreResult{Label: "SCORE_ERROR"}, lastErr
 }
 
-func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string) (string, error) {
+func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, maxTokens int) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
-	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 	if err != nil {
 		return "", fmt.Errorf("marshal scoring request: %w", err)
 	}
@@ -554,7 +577,7 @@ type BatchScoringItem struct {
 // apiKey must be non-empty. model is the Anthropic model ID (e.g.
 // "claude-haiku-4-5"). On batch creation failure the error is returned and
 // the caller may fall back to per-item scoring. Items with errored results
-// receive PARTIALLY_CORRECT as the default label.
+// receive SCORE_ERROR — never PARTIALLY_CORRECT, which would mask infrastructure failures.
 //
 // Poll loop: starts at 2 s backoff, doubles each iteration, caps at 30 s.
 // Terminal state is "ended" only — "canceling" is NOT terminal.
@@ -596,8 +619,8 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			CustomID: item.QuestionID,
 			Params: anthropicParams{
 				Model:     model,
-				MaxTokens: 100,
-				System:    "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2.",
+				MaxTokens: DefaultScorerMaxTokens,
+				System:    "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line.",
 				Messages: []anthropicMessage{
 					{Role: "user", Content: []anthropicContent{{Type: "text", Text: prompt}}},
 				},
@@ -743,12 +766,13 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			continue
 		}
 		if rl.Result.Type != "succeeded" {
-			// errored or expired items default to PARTIALLY_CORRECT.
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT", Explanation: rl.Result.Error.Message}
+			// errored or expired items are explicitly flagged — never silently
+			// default to PARTIALLY_CORRECT, which would mask infrastructure failures.
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: rl.Result.Error.Message}
 			continue
 		}
 		if len(rl.Result.Message.Content) == 0 {
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT"}
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: "empty content"}
 			continue
 		}
 		text := rl.Result.Message.Content[0].Text
