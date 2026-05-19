@@ -338,6 +338,9 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 // user's preferences rather than answer the question directly — answering directly
 // was the root cause of 0/30 on that category in v9 (engram-go#741 follow-up).
 func GenerationPromptForType(question, questionType, questionDate string, contextBlocks []string) string {
+	if questionType == "temporal-reasoning" {
+		return temporalGenerationPrompt(question, questionDate, contextBlocks)
+	}
 	if questionType == "single-session-preference" {
 		ctx := strings.Join(contextBlocks, "\n\n---\n\n")
 		return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
