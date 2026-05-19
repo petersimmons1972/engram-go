@@ -221,7 +221,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
-	prompt := longmemeval.GenerationPrompt(item.Question, item.QuestionDate, contextBlocks)
+	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {
 		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
