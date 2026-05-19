@@ -408,7 +408,7 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. If the answer is not explicitly present, provide your best inference from the strongest matching context.`, questionDate, ctx, questionDate, question)
+When the question asks "how many", "how often", "how much total", or similar quantitative aggregation, enumerate each relevant event from the context before stating the total. If no relevant events appear in the context, answer 0. For all other questions: answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing.`, questionDate, ctx, questionDate, question)
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.

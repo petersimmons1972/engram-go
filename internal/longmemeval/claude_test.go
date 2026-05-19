@@ -463,6 +463,11 @@ func TestParseScoreLabel_ScoreErrorPropagation(t *testing.T) {
 }
 
 func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
+	// H2 update: the new query format is "user interested in <topic> experience
+	// knowledge background" — the old "prefer … like dislike use avoid" suffix
+	// was replaced because it causes topic-specificity collapse (research-notes
+	// Section 3 H2). Tests now verify topic content is present and original verb
+	// phrases are absent.
 	cases := []struct {
 		question        string
 		wantContains    []string
@@ -470,17 +475,17 @@ func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
 	}{
 		{
 			question:        "Can you recommend some resources where I can learn more about video editing?",
-			wantContains:    []string{"prefer", "video editing"},
+			wantContains:    []string{"video editing"},
 			wantNotContains: []string{"recommend"},
 		},
 		{
 			question:        "Can you suggest some accessories that would complement my current photography setup?",
-			wantContains:    []string{"prefer", "photography"},
+			wantContains:    []string{"photography"},
 			wantNotContains: []string{"suggest"},
 		},
 		{
 			question:        "Can you recommend a hotel for my upcoming trip to Miami?",
-			wantContains:    []string{"prefer", "hotel", "Miami"},
+			wantContains:    []string{"hotel", "Miami"},
 			wantNotContains: []string{"recommend"},
 		},
 	}
@@ -534,5 +539,51 @@ func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
 		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H1 — arithmetic/counting instruction in GenerationPrompt
+// ---------------------------------------------------------------------------
+
+// TestGenerationPrompt_CountingInstruction verifies that GenerationPrompt
+// contains the enumeration-before-total instruction for counting questions.
+func TestGenerationPrompt_CountingInstruction(t *testing.T) {
+	cases := []struct {
+		name    string
+		trigger string // substring that must appear in the prompt
+	}{
+		{"how many trigger phrase", "how many"},
+		{"how often trigger phrase", "how often"},
+		{"how much total trigger phrase", "how much total"},
+		{"enumerate instruction present", "enumerate each relevant event"},
+		{"zero fallback instruction present", "answer 0"},
+	}
+	prompt := longmemeval.GenerationPrompt("How many times did I visit the gym?", "2024-05-01", []string{"block 1", "block 2"})
+	for _, c := range cases {
+		if !strings.Contains(prompt, c.trigger) {
+			t.Errorf("%s: string %q not found in GenerationPrompt output", c.name, c.trigger)
+		}
+	}
+}
+
+// TestGenerationPrompt_NoBestInferenceForAllQuestions verifies that the
+// unconditional "provide your best inference" clause has been removed.
+// (The researcher identified this as actively harmful for counting questions.)
+func TestGenerationPrompt_NoBestInferenceForAllQuestions(t *testing.T) {
+	prompt := longmemeval.GenerationPrompt("How many books did I read?", "2024-05-01", []string{"block"})
+	if strings.Contains(prompt, "best inference") {
+		t.Errorf("GenerationPrompt must not contain unconditional 'best inference' clause; found it in:\n%s", prompt)
+	}
+}
+
+// TestGenerationPrompt_NonCountingStructurePreserved verifies that the
+// one-sentence / minimal-framing instructions survive for non-counting questions.
+func TestGenerationPrompt_NonCountingStructurePreserved(t *testing.T) {
+	prompt := longmemeval.GenerationPrompt("What is my favourite restaurant?", "2024-05-01", []string{"block"})
+	for _, must := range []string{"one sentence", "Do not restate", "minimal framing"} {
+		if !strings.Contains(prompt, must) {
+			t.Errorf("non-counting structure: expected %q in prompt; got:\n%s", must, prompt)
+		}
 	}
 }
