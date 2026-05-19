@@ -360,3 +360,78 @@ func TestGenerate_RequiresClaude(t *testing.T) {
 		t.Error("Generate returned empty output")
 	}
 }
+
+func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
+	cases := []struct {
+		question        string
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			question:        "Can you recommend some resources where I can learn more about video editing?",
+			wantContains:    []string{"prefer", "video editing"},
+			wantNotContains: []string{"recommend"},
+		},
+		{
+			question:        "Can you suggest some accessories that would complement my current photography setup?",
+			wantContains:    []string{"prefer", "photography"},
+			wantNotContains: []string{"suggest"},
+		},
+		{
+			question:        "Can you recommend a hotel for my upcoming trip to Miami?",
+			wantContains:    []string{"prefer", "hotel", "Miami"},
+			wantNotContains: []string{"recommend"},
+		},
+	}
+	for _, c := range cases {
+		q := longmemeval.PreferenceRecallQuery(c.question)
+		for _, want := range c.wantContains {
+			if !strings.Contains(strings.ToLower(q), strings.ToLower(want)) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q, missing %q", c.question, q, want)
+			}
+		}
+		for _, skip := range c.wantNotContains {
+			if strings.Contains(strings.ToLower(q), strings.ToLower(skip)) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q, should NOT contain %q", c.question, q, skip)
+			}
+		}
+	}
+}
+
+func TestContextTopKForType(t *testing.T) {
+	cases := []struct {
+		qtype   string
+		wantMin int
+	}{
+		{"multi-session", 15},
+		{"temporal-reasoning", 15},
+		{"single-session-user", 8},
+		{"single-session-assistant", 8},
+		{"knowledge-update", 8},
+		{"single-session-preference", 8},
+	}
+	for _, c := range cases {
+		got := longmemeval.ContextTopKForType(c.qtype)
+		if got < c.wantMin {
+			t.Errorf("ContextTopKForType(%q) = %d, want >= %d", c.qtype, got, c.wantMin)
+		}
+	}
+}
+
+func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
+	prompt := longmemeval.GenerationPromptForType(
+		"How many weeks ago did I attend the baking class?",
+		"temporal-reasoning",
+		"2024-03-15",
+		[]string{"Session date: 2024-02-22\nUser attended a baking class at a local culinary school."},
+	)
+	if !strings.Contains(prompt, "step") && !strings.Contains(prompt, "Step") {
+		t.Errorf("temporal prompt must include step-by-step arithmetic guidance, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "2024-03-15") {
+		t.Errorf("temporal prompt must include question date for arithmetic, got:\n%s", prompt)
+	}
+	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
+		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
+	}
+}

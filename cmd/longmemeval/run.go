@@ -194,6 +194,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		if recallQuery == "" {
 			recallQuery = item.Question
 		}
+	} else if item.QuestionType == "single-session-preference" {
+		recallQuery = longmemeval.PreferenceRecallQuery(item.Question)
 	}
 	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, recallTopK)
 	if err != nil {
@@ -205,7 +207,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	// Fetch content for top contextTopK memories.
-	contextLimit := contextTopK
+	contextLimit := longmemeval.ContextTopKForType(item.QuestionType)
 	if contextLimit > len(retrievedIDs) {
 		contextLimit = len(retrievedIDs)
 	}
