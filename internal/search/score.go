@@ -44,6 +44,40 @@ var (
 	resolvedDecay   decayConfig
 )
 
+// weightConfig holds the resolved env-var knobs for composite scoring weights.
+// It is populated exactly once via weightConfigOnce.
+type weightConfig struct {
+	vector    float64 // ENGRAM_W_COSINE;     default weightVector
+	bm25      float64 // ENGRAM_W_BM25;       default weightBM25
+	recency   float64 // ENGRAM_W_RECENCY;    default weightRecency
+	precision float64 // ENGRAM_W_PRECISION;  default weightPrecision
+}
+
+var (
+	weightConfigOnce sync.Once
+	resolvedWeights  weightConfig
+)
+
+// loadWeightConfig reads ENGRAM_W_COSINE, ENGRAM_W_BM25, ENGRAM_W_RECENCY,
+// and ENGRAM_W_PRECISION. Each is independently optional: unset variables fall
+// back to the compile-time constants. Values outside [0.0, 1.0] are rejected
+// with a warning and the constant default is used instead. The function never
+// panics — a bad env var degrades gracefully.
+func loadWeightConfig() {
+	resolvedWeights = weightConfig{
+		vector:    envconf.FloatBounded("ENGRAM_W_COSINE", weightVector, 0.0, 1.0),
+		bm25:      envconf.FloatBounded("ENGRAM_W_BM25", weightBM25, 0.0, 1.0),
+		recency:   envconf.FloatBounded("ENGRAM_W_RECENCY", weightRecency, 0.0, 1.0),
+		precision: envconf.FloatBounded("ENGRAM_W_PRECISION", weightPrecision, 0.0, 1.0),
+	}
+}
+
+// weightCfg returns the resolved weight configuration, loading it on first call.
+func weightCfg() weightConfig {
+	weightConfigOnce.Do(loadWeightConfig)
+	return resolvedWeights
+}
+
 // ResetDecayConfigForTesting resets the decay config sync.Once so tests can inject different env var values.
 func ResetDecayConfigForTesting() {
 	decayConfigOnce = sync.Once{}
@@ -91,13 +125,18 @@ type Weights struct {
 	Precision float64
 }
 
-// DefaultWeights returns the compile-time weight constants.
+// DefaultWeights returns the effective composite scoring weights.
+// Values are read once from ENGRAM_W_COSINE, ENGRAM_W_BM25, ENGRAM_W_RECENCY,
+// and ENGRAM_W_PRECISION; each falls back to the compile-time constant when the
+// variable is absent or invalid.  The resolved values are cached via sync.Once
+// so callers pay no per-query overhead.
 func DefaultWeights() Weights {
+	cfg := weightCfg()
 	return Weights{
-		Vector:    weightVector,
-		BM25:      weightBM25,
-		Recency:   weightRecency,
-		Precision: weightPrecision,
+		Vector:    cfg.vector,
+		BM25:      cfg.bm25,
+		Recency:   cfg.recency,
+		Precision: cfg.precision,
 	}
 }
 
