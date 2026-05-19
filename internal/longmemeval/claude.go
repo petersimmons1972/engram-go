@@ -30,9 +30,9 @@ func GenerateForType(ctx context.Context, prompt, questionType string, retries i
 // retries is the number of additional attempts on failure (0 = try once).
 // On failure a backoff sleep (30s, 60s, 120s) is inserted between attempts
 // so transient API rate limits have a chance to clear before retrying.
-// Patched 2026-05-18: pass-3 tier uses Opus on items Sonnet couldn't crack.
+// 2026-05-18: batch re-run of 102 errored items — Sonnet (rate-limit-safe).
 func Generate(ctx context.Context, prompt string, retries int) (string, error) {
-	return generate(ctx, prompt, "opus", retries)
+	return generate(ctx, prompt, "sonnet", retries)
 }
 
 // GenerateSonnet is like Generate but uses Sonnet.
