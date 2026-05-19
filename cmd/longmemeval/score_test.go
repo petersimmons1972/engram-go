@@ -9,6 +9,46 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+func TestWriteScoreReport_DeduplicatesByQuestionID(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "dedup-test"}
+
+	// q1 appears twice: old=INCORRECT, new=CORRECT — last-write-wins.
+	// q2 appears once: CORRECT.
+	// Total unique questions = 2, both CORRECT.
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+
+	overall, ok := report["overall"].(map[string]any)
+	if !ok {
+		t.Fatalf("overall not a map: %v", report["overall"])
+	}
+
+	gotTotal := int(overall["total"].(float64))
+	gotCorrect := int(overall["correct"].(float64))
+
+	if gotTotal != 2 {
+		t.Errorf("overall.total = %d, want 2 (deduplicated)", gotTotal)
+	}
+	if gotCorrect != 2 {
+		t.Errorf("overall.correct = %d, want 2 (last-write-wins for q1)", gotCorrect)
+	}
+}
+
 func TestWriteScoreReport_Basic(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir, RunID: "test-run"}

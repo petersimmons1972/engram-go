@@ -206,10 +206,16 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		Incorrect        int `json:"incorrect"`
 		Total            int `json:"total"`
 	}
+	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
+	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
+	for _, s := range scores {
+		deduped[s.QuestionID] = s
+	}
+
 	overall := &byType{}
 	byQType := make(map[string]*byType)
 
-	for _, s := range scores {
+	for _, s := range deduped {
 		if s.Status != "done" {
 			continue
 		}
@@ -235,7 +241,7 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		"overall":      overall,
 		"by_type":      byQType,
 		"run_id":       cfg.RunID,
-		"total_scored": len(scores),
+		"total_scored": len(deduped),
 	}
 
 	data, err := json.MarshalIndent(report, "", "  ")
