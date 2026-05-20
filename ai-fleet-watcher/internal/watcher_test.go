@@ -9,11 +9,12 @@ import (
 
 // fakeDocker is a test double for DockerClient.
 type fakeDocker struct {
-	mu         sync.Mutex
-	containers []ContainerStatus
-	inspects   map[string]*ContainerInspect // keyed by container name
-	removes    []string
-	ensures    []string
+	mu             sync.Mutex
+	containers     []ContainerStatus
+	inspects       map[string]*ContainerInspect // keyed by container name
+	removes        []string
+	removeTimeouts []int // stopTimeoutSec passed to each Remove call
+	ensures        []string
 }
 
 func (f *fakeDocker) EnsureNFSVolume(_ context.Context, _ string) error { return nil }
@@ -31,10 +32,11 @@ func (f *fakeDocker) Ensure(_ context.Context, spec ModelSpec, _ string) error {
 	return nil
 }
 
-func (f *fakeDocker) Remove(_ context.Context, modelName string) error {
+func (f *fakeDocker) Remove(_ context.Context, modelName string, stopTimeoutSec int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removes = append(f.removes, ContainerName(modelName))
+	f.removeTimeouts = append(f.removeTimeouts, stopTimeoutSec)
 	return nil
 }
 
@@ -162,5 +164,37 @@ func TestCheckHealthSkipsContainerWithNoHealthcheck(t *testing.T) {
 
 	if len(fd.removes) != 0 {
 		t.Error("should not restart container with no healthcheck configured")
+	}
+}
+
+func TestCheckHealthUsesROCmStopTimeout(t *testing.T) {
+	fd := &fakeDocker{
+		containers: []ContainerStatus{{Name: "ai-fleet-embed", Running: true}},
+		inspects:   map[string]*ContainerInspect{"ai-fleet-embed": unhealthyInspect()},
+	}
+	w := &Watcher{
+		hostname:       "test-host",
+		controllerURL:  "http://localhost:0",
+		docker:         fd,
+		pollInterval:   time.Hour,
+		reportInterval: time.Hour,
+		restartRecords: make(map[string]restartRecord),
+		degraded:       make(map[string]time.Time),
+		specsByName: map[string]ModelSpec{
+			"embed": {
+				Name:           "embed",
+				Framework:      "infinity",
+				Port:           8001,
+				Repo:           "BAAI/bge-m3",
+				Image:          "michaelf34/infinity:latest-rocm",
+				GpuDriver:      "rocm",
+				StopTimeoutSec: 30,
+			},
+		},
+	}
+	w.checkHealth(context.Background())
+
+	if len(fd.removeTimeouts) != 1 || fd.removeTimeouts[0] != 30 {
+		t.Errorf("checkHealth must pass StopTimeoutSec=30 to Remove for ROCm, got timeouts=%v", fd.removeTimeouts)
 	}
 }

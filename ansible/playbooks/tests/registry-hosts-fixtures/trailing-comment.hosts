@@ -1,0 +1,4 @@
+127.0.0.1   localhost
+127.0.1.1   worker131.petersimmons.com worker131
+192.168.0.180 registry.petersimmons.com  # docker pull host
+::1     localhost ip6-localhost ip6-loopback

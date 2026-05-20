@@ -113,7 +113,7 @@ func (w *Watcher) applyPolicy(ctx context.Context, policy *Policy) {
 		modelName := c.Name[len("ai-fleet-"):] // strip prefix
 		if _, ok := desired[modelName]; !ok {
 			slog.Info("removing container not in policy", "name", c.Name)
-			if err := w.docker.Remove(ctx, modelName); err != nil {
+			if err := w.docker.Remove(ctx, modelName, 0); err != nil { // evicted: use Docker default
 				slog.Error("remove container", "name", c.Name, "err", err)
 			}
 		}
@@ -171,7 +171,7 @@ func (w *Watcher) checkHealth(ctx context.Context) {
 			slog.Warn("checkHealth: no spec for container — cannot restart", "name", c.Name)
 			continue
 		}
-		if err := w.docker.Remove(ctx, modelName); err != nil {
+		if err := w.docker.Remove(ctx, modelName, spec.StopTimeoutSec); err != nil { // graceful for ROCm
 			slog.Error("checkHealth: remove failed", "name", c.Name, "err", err)
 		}
 		if err := w.docker.Ensure(ctx, spec, ModelHash(spec)); err != nil {
