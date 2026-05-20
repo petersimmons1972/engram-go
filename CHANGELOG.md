@@ -6,6 +6,16 @@ All notable changes to engram-go are documented here.
 
 ## [Unreleased] — v3.3.0
 
+### LME scratch-project TTL (PR #754)
+
+- **`project_ttl` sidecar table (migration 022):** Stores `created_at` and `expires_at` per project without altering the first-class `memories.project` column. `NULL expires_at` means durable (no expiry).
+- **`--scratch-ttl <duration>` flag (default 168h / 7 days):** Applied to each `lme-*` project at ingest time. Requires `--database-url` to write the `project_ttl` row; failure downgrades to a WARN and leaves the project durable.
+- **`longmemeval prune` subcommand:** Sweeps expired `lme-*` projects via `project_ttl.expires_at < now`, then calls `memory_delete_project` over MCP for each. Supports `--dry-run`, `--limit`, `--prefix`, and `--older-than`. Intended to run as a K8s CronJob (`deploy/lme-prune-cronjob.yaml`).
+- **`Backend` interface:** `SetProjectTTL` and `ListExpiredProjects` added. All test fakes updated.
+- **Operator backfill:** Existing `lme-*` projects with `NULL expires_at` can be stamped via `UPDATE project_ttl SET expires_at = created_at + INTERVAL '7 days' WHERE project LIKE 'lme-%' AND expires_at IS NULL`. See `docs/lme-benchmark-learnings.md §Operator: scratch retention`.
+
+---
+
 ### Reliability (PR #808 — backend-lock hardening)
 
 - **`--exclusive-backend` contention guard (default true):** Prevents two concurrent `lme run` invocations from sharing the same vLLM endpoint and producing contaminated results. A PID-liveness lock file is written to `<lock-dir>/backend-<sha256(url)[:12]>.lock`.

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -65,6 +66,15 @@ type Config struct {
 	// #749: contention guard
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
+
+	// #754: scratch TTL. Applied at ingest time to project_ttl.expires_at so
+	// the `prune` subcommand can sweep expired lme-* projects later. Zero
+	// means "use the package default (168h / 7 days)".
+	ScratchTTL time.Duration
+
+	// DatabaseURL is consulted by ingest to write project_ttl rows. Falls back
+	// to env DATABASE_URL.
+	DatabaseURL string
 }
 
 func main() {
@@ -82,6 +92,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
 	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
 	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
+	_, _ = fmt.Fprintln(w, "  prune           Delete expired lme-* scratch projects (TTL sweep, #754)")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
@@ -161,6 +172,16 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	cfg.ExclusiveBackend = true // default on
 	fs.BoolVar(&noExclusiveBackend, "no-exclusive-backend", false, "disable the backend lock; use when you accept result contamination from parallel runs")
 	fs.StringVar(&cfg.BackendLockDir, "backend-lock-dir", "", "override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)")
+	// #754: TTL stamped on per-question scratch projects at ingest time. The
+	// prune subcommand sweeps anything older than this.
+	fs.DurationVar(&cfg.ScratchTTL, "scratch-ttl", defaultScratchTTL(), "TTL applied to ephemeral lme-* projects at ingest time (e.g. 168h = 7 days); 0 = durable, no expiry")
+	fs.StringVar(&cfg.DatabaseURL, "database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN; required when --scratch-ttl > 0 so ingest can write project_ttl rows")
+
+	// prune has its own flag set and early return — it does not share the
+	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
+	if subcommand == "prune" {
+		return dispatchPrune(args[2:], stdout, stderr)
+	}
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {
@@ -208,6 +229,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	switch subcommand {
 	case "ingest", "run", "score", "all":
 		// known subcommand — fall through to flag parsing
+	case "prune":
+		// handled above; dispatch never reaches here for prune
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n", subcommand)
 		printUsage(stderr)
