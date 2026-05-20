@@ -70,6 +70,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		if !ok {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
 		}
+		// Error (not clamp) is intentional — see ValidatePatternConfidence godoc.
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
@@ -384,6 +385,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		if !ok {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
 		}
+		// Error (not clamp) is intentional — see ValidatePatternConfidence godoc.
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
