@@ -6,13 +6,29 @@ package search_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newEngineWithDims creates a test engine backed by a real Postgres backend
+// using the given embedding dimension. The backend is registered for cleanup.
+// Skips the test if TEST_DATABASE_URL is not set (via testDSN).
+func newEngineWithDims(t *testing.T, proj string, dims int) *search.SearchEngine {
+	t.Helper()
+	ctx := context.Background()
+	backend, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+	return search.New(ctx, backend, &fakeClient{dims: dims}, proj,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+}
 
 // ── Scoring unit tests ────────────────────────────────────────────────────────
 
@@ -147,4 +163,45 @@ func TestRetrievalTracking_PrecisionUpdated(t *testing.T) {
 		"retrieval_precision must be computed once times_retrieved >= 5")
 	assert.InDelta(t, 1.0, *after.RetrievalPrecision, 0.05,
 		"always-useful memory must have precision near 1.0")
+}
+
+// TestRecallWithEvent_ReturnsErrorOnDimMismatch verifies that RecallWithEvent
+// returns a structured embed.PermanentError when the current embedder dimension
+// differs from the dimension stored in project metadata.
+//
+// Regression guard for #767: the store path had checkEmbedderMeta but the
+// recall path did not, so dim mismatches at recall time produced silent nil
+// results instead of the typed error callers need to surface actionable
+// remediation advice.
+func TestRecallWithEvent_ReturnsErrorOnDimMismatch(t *testing.T) {
+	ctx := context.Background()
+	proj := uniqueProject("test-recall-dim-mismatch")
+
+	// Phase 1: store a memory with a 1024-dim engine to seed project metadata.
+	engine1024 := newEngineWithDims(t, proj, 1024)
+	t.Cleanup(func() { engine1024.Close() })
+	m := &types.Memory{
+		Content:     "dim mismatch recall test memory",
+		MemoryType:  types.MemoryTypeDecision,
+		Project:     proj,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine1024.Store(ctx, m))
+
+	// Phase 2: attempt recall with a 768-dim engine — must return a clear error,
+	// not silent empty results that would corrupt retrieval precision metrics.
+	engine768 := newEngineWithDims(t, proj, 768)
+	t.Cleanup(func() { engine768.Close() })
+	_, _, err := engine768.RecallWithEvent(ctx, "dim mismatch recall test memory", 5, "normal")
+	require.Error(t, err, "RecallWithEvent with dim mismatch must return an error")
+
+	// Assert on the structured embed.PermanentError — Stored and Current must
+	// reflect the dimensional mismatch (not just an opaque string error).
+	var permErr *embed.PermanentError
+	require.True(t, errors.As(err, &permErr),
+		"error must be an *embed.PermanentError (got: %v)", err)
+	assert.NotEqual(t, permErr.Stored, permErr.Current,
+		"PermanentError must record the dim mismatch in Stored vs Current (stored=%q current=%q)",
+		permErr.Stored, permErr.Current)
 }
