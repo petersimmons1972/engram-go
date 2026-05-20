@@ -3,11 +3,13 @@ package mcp
 import (
 	"testing"
 	"time"
+
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 func TestParseDateTag_Valid(t *testing.T) {
 	tags := []string{"lme", "sid:abc123", "date:2023-06-15"}
-	got := parseDateTag(tags)
+	got := types.ParseDateTag(tags)
 	if got == nil {
 		t.Fatal("parseDateTag returned nil, want 2023-06-15")
 	}
@@ -19,30 +21,30 @@ func TestParseDateTag_Valid(t *testing.T) {
 
 func TestParseDateTag_Invalid(t *testing.T) {
 	tags := []string{"lme", "date:not-a-date"}
-	got := parseDateTag(tags)
+	got := types.ParseDateTag(tags)
 	if got != nil {
-		t.Errorf("parseDateTag(%q) = %v, want nil for invalid date", tags, got)
+		t.Errorf("types.ParseDateTag(%q) = %v, want nil for invalid date", tags, got)
 	}
 }
 
 func TestParseDateTag_NonePresent(t *testing.T) {
 	tags := []string{"lme", "sid:abc", "project:foo"}
-	got := parseDateTag(tags)
+	got := types.ParseDateTag(tags)
 	if got != nil {
 		t.Errorf("parseDateTag with no date: tag = %v, want nil", got)
 	}
 }
 
 func TestParseDateTag_EmptyTags(t *testing.T) {
-	got := parseDateTag(nil)
+	got := types.ParseDateTag(nil)
 	if got != nil {
-		t.Errorf("parseDateTag(nil) = %v, want nil", got)
+		t.Errorf("types.ParseDateTag(nil) = %v, want nil", got)
 	}
 }
 
 func TestParseDateTag_FirstWins(t *testing.T) {
 	tags := []string{"date:2022-01-01", "date:2024-12-31"}
-	got := parseDateTag(tags)
+	got := types.ParseDateTag(tags)
 	if got == nil {
 		t.Fatal("parseDateTag returned nil")
 	}
@@ -65,13 +67,13 @@ func TestParseDateTag_LongMemEvalFormat(t *testing.T) {
 		{"date:2024/01/01 (Mon) 09:00", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
 	}
 	for _, tc := range cases {
-		got := parseDateTag([]string{tc.tag})
+		got := types.ParseDateTag([]string{tc.tag})
 		if got == nil {
-			t.Errorf("parseDateTag(%q) = nil, want %v", tc.tag, tc.want)
+			t.Errorf("types.ParseDateTag(%q) = nil, want %v", tc.tag, tc.want)
 			continue
 		}
 		if !got.Equal(tc.want) {
-			t.Errorf("parseDateTag(%q) = %v, want %v", tc.tag, *got, tc.want)
+			t.Errorf("types.ParseDateTag(%q) = %v, want %v", tc.tag, *got, tc.want)
 		}
 	}
 }
