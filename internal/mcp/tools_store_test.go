@@ -83,6 +83,81 @@ func TestMemoryStoreBatch_PersistsImmutable(t *testing.T) {
 	require.True(t, cap.stored[0].Immutable, "Immutable must be true — see issue #764")
 }
 
+// ── #782: memory_store_batch Immutable does not reach DB column ───────────────
+
+// TestMemoryStoreBatch_ImmutableForwardedToDBAll verifies that when ALL items in
+// a batch have immutable=true, every stored memory reaches the capturing-backend
+// layer (i.e., StoreMemoryTx) with Immutable=true — regression guard for #782.
+// This is the "bulk-store path forwards Immutable to the DB column" check.
+func TestMemoryStoreBatch_ImmutableForwardedToDBAll(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"memories": []any{
+			map[string]any{
+				"content":   "immutable item alpha",
+				"immutable": true,
+			},
+			map[string]any{
+				"content":   "immutable item beta",
+				"immutable": true,
+			},
+		},
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.Len(t, cap.stored, 2, "exactly 2 memories must be stored")
+	require.True(t, cap.stored[0].Immutable,
+		"item 0: Immutable must reach DB layer as true — see issue #782")
+	require.True(t, cap.stored[1].Immutable,
+		"item 1: Immutable must reach DB layer as true — see issue #782")
+}
+
+// TestMemoryStoreBatch_ImmutableMixedNoCrossContamination verifies that when a
+// batch has a mix of immutable and mutable items, only the items with
+// immutable=true arrive at the DB layer as Immutable=true, and mutable items
+// are not promoted — regression guard for #764 and #782.
+func TestMemoryStoreBatch_ImmutableMixedNoCrossContamination(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"memories": []any{
+			map[string]any{
+				"content":   "mutable item",
+				"immutable": false,
+			},
+			map[string]any{
+				"content":   "immutable item",
+				"immutable": true,
+			},
+			map[string]any{
+				"content": "default-mutable item (no flag)",
+			},
+		},
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.Len(t, cap.stored, 3, "exactly 3 memories must be stored")
+	require.False(t, cap.stored[0].Immutable,
+		"item 0 (immutable=false): must not be marked immutable at DB layer")
+	require.True(t, cap.stored[1].Immutable,
+		"item 1 (immutable=true): must be marked immutable at DB layer — see issue #764/#782")
+	require.False(t, cap.stored[2].Immutable,
+		"item 2 (no flag): must default to mutable at DB layer — no cross-contamination from item 1")
+}
+
 // ── #763: memory_store_document drops valid_from and episode_id ───────────────
 
 // documentCapturingBackend extends storeCapableBackend to record the memory
