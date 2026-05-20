@@ -396,6 +396,38 @@ Do NOT answer the question directly. Instead, describe what the user would prefe
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
 
+// GenerationPromptForTypeWithTemporalAug is like GenerationPromptForType but
+// applies the Exp-14 H-M5+H-M1 combined prompt augmentation for
+// temporal-reasoning questions when temporalPromptAug is true.
+//   - H-M5 (chrono-sort forcing): for ordering questions, instructs the model
+//     to list all relevant events in chronological order before answering.
+//   - H-M1 (entity enumeration): for entity-ambiguous questions with a
+//     relative-time anchor, instructs the model to enumerate all events of
+//     the target type before committing to the most temporally precise one.
+//
+// For all other question types, or when temporalPromptAug is false, the
+// standard GenerationPromptForType output is returned unchanged.
+// Activated by --temporal-prompt-aug (Config.TemporalPromptAug). Off by default.
+func GenerationPromptForTypeWithTemporalAug(question, questionType, questionDate string, contextBlocks []string, temporalPromptAug bool) string {
+	if temporalPromptAug && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithAug(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptForTypeWithDateInjection is like GenerationPromptForType but
+// applies the H16 date-injection variant for temporal-reasoning questions.
+// When injectQuestionDate is true and the question type is "temporal-reasoning",
+// the prompt is prepended with "Today's date is: {questionDate}" so relative-time
+// anchors resolve unambiguously. For all other question types the flag is a no-op
+// and the standard prompt is returned unchanged.
+func GenerationPromptForTypeWithDateInjection(question, questionType, questionDate string, contextBlocks []string, injectQuestionDate bool) string {
+	if injectQuestionDate && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithDateInjection(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
 // GenerationPrompt builds the prompt for answer generation.
 func GenerationPrompt(question, questionDate string, contextBlocks []string) string {
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")

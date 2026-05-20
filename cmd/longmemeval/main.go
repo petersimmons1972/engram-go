@@ -51,6 +51,15 @@ type Config struct {
 	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+
+	// H16: question_date injection
+	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
+
+	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
+	TemporalPromptAug bool // inject H-M5 ordering instruction and H-M1 entity enumeration step into temporal-reasoning prompts (default off)
+
+	// H15: paraphrased multi-pass BM25 union
+	QueryParaphrasePasses int // Haiku paraphrase variants to generate per query; union retrieved IDs (default 0 = off)
 }
 
 func main() {
@@ -120,6 +129,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	// H16
+	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "H16: prepend 'Today's date is: {question_date}' to temporal-reasoning prompts to anchor relative-time references (default off)")
+	// Exp-14: H-M5 + H-M1
+	fs.BoolVar(&cfg.TemporalPromptAug, "temporal-prompt-aug", false, "Exp-14: inject H-M5 chrono-sort forcing + H-M1 entity enumeration step into temporal-reasoning generation prompts (default off)")
+	// H15: paraphrased multi-pass BM25 union
+	fs.IntVar(&cfg.QueryParaphrasePasses, "query-paraphrase-passes", 0, "H15: number of Haiku-generated query paraphrases to run and union with primary recall (default 0 = off)")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {

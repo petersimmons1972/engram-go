@@ -163,3 +163,44 @@ func TestDisableQueryRewrite_StructuralGuard(t *testing.T) {
 		t.Error("run.go missing cfg.DisableQueryRewrite gate — rewrite bypass flag not wired")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// H15 — paraphrase union structural guards
+// ---------------------------------------------------------------------------
+
+// TestQueryParaphrasePassesFlag_StructuralGuard verifies that run.go gates the
+// paraphrase-union logic on cfg.QueryParaphrasePasses and calls both
+// GenerateParaphrases and DeduplicateIDs — the core H15 union mechanism.
+func TestQueryParaphrasePassesFlag_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	checks := []struct {
+		substr string
+		label  string
+	}{
+		{"cfg.QueryParaphrasePasses", "H15 flag gate"},
+		{"GenerateParaphrases", "H15 paraphrase call"},
+		{"DeduplicateIDs", "H15 dedup union"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.substr) {
+			t.Errorf("run.go missing %s (%q)", c.label, c.substr)
+		}
+	}
+}
+
+// TestQueryParaphrasePassesFlag_DefaultZero verifies that the Config field
+// defaults to 0 (off) so existing runs are unaffected.
+func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	// The flag registration must use default value 0.
+	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
+		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	}
+}

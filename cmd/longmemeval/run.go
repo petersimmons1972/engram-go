@@ -212,6 +212,29 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	// H15: paraphrased multi-pass BM25 union.
+	// When --query-paraphrase-passes N > 0, ask Haiku to generate N paraphrase
+	// variants of the recall query, run a separate Recall for each variant, then
+	// union all retrieved IDs (deduped, primary-pass order preserved first).
+	// On paraphrase or recall errors we log a warning and continue with the IDs
+	// collected so far — a partial union is strictly better than no union.
+	if cfg.QueryParaphrasePasses > 0 {
+		paraphrases, pErr := longmemeval.GenerateParaphrases(ctx, recallQuery, cfg.QueryParaphrasePasses, cfg.Retries)
+		if pErr != nil {
+			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
+		} else {
+			for _, pq := range paraphrases {
+				pIDs, pErr := mcpClient.Recall(ctx, ingest.Project, pq, cfg.RecallTopK)
+				if pErr != nil {
+					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
+					continue
+				}
+				retrievedIDs = append(retrievedIDs, pIDs...)
+			}
+			retrievedIDs = longmemeval.DeduplicateIDs(retrievedIDs)
+		}
+	}
+
 	// Fetch content for top contextLimit memories.
 	// --context-topk overrides per-type default; 0 means use per-type default.
 	var contextLimit int
@@ -252,7 +275,14 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = sortBlocksChronologically(contextBlocks)
 	}
 
-	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
+	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
+	// the two are mutually exclusive. When both are set, aug wins.
+	var prompt string
+	if cfg.TemporalPromptAug {
+		prompt = longmemeval.GenerationPromptForTypeWithTemporalAug(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	} else {
+		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, cfg.InjectQuestionDate)
+	}
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {
 		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
