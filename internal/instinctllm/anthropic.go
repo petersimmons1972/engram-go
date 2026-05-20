@@ -93,17 +93,20 @@ func (c *anthropicClient) Complete(ctx context.Context, systemPrompt, userPrompt
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("llm/anthropic: HTTP: %w", err)
+		slog.Warn("llm/anthropic: transport error", "err", err)
+		return "", fmt.Errorf("llm/anthropic: transport: %w", ErrBackendUnavailable)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm/anthropic: non-200 status: %d", resp.StatusCode)
+		slog.Warn("llm/anthropic: non-200 status", "status", resp.StatusCode)
+		return "", fmt.Errorf("llm/anthropic: status %d: %w", resp.StatusCode, ErrBackendUnavailable)
 	}
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("llm/anthropic: read body: %w", err)
+		slog.Warn("llm/anthropic: read body", "err", err)
+		return "", fmt.Errorf("llm/anthropic: read body: %w", ErrBackendUnavailable)
 	}
 
 	var apiResp struct {
