@@ -208,3 +208,44 @@ func TestRetrievalTracking_DimMismatch(t *testing.T) {
 		"PermanentError must record the dim mismatch in Stored vs Current (stored=%q current=%q)",
 		permErr.Stored, permErr.Current)
 }
+
+// TestRecallWithinMemory_EmbedderMetaGuard is a regression test for issue #788.
+// It verifies that RecallWithinMemory rejects calls when the current embedder
+// name does not match what was stored — the same guard already wired into
+// RecallWithOpts and StoreBatch via checkEmbedderMeta.
+func TestRecallWithinMemory_EmbedderMetaGuard(t *testing.T) {
+	ctx := context.Background()
+	proj := uniqueProject("test-rwm-embedder-meta")
+
+	// Store a memory using an engine named "fake" (fakeClient.Name() == "fake").
+	engine1 := newTestEngine(t, proj)
+	t.Cleanup(func() { engine1.Close() })
+	m := &types.Memory{
+		Content:     "embedder meta guard test memory",
+		MemoryType:  types.MemoryTypeDecision,
+		Project:     proj,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine1.Store(ctx, m))
+
+	// Attempt RecallWithinMemory using a different embedder name — must return
+	// an *embed.PermanentError, not silently return mismatched vectors.
+	otherClient := &fakeClientWithName{dims: 768, name: "other-embedder"}
+	backend2, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend2.Close() })
+	engine2 := search.New(ctx, backend2, otherClient, proj,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+	t.Cleanup(func() { engine2.Close() })
+
+	_, err = engine2.RecallWithinMemory(ctx, "embedder meta guard test memory", m.ID, 5, "summary")
+	require.Error(t, err, "RecallWithinMemory must return error when embedder name mismatches stored metadata")
+
+	var permErr *embed.PermanentError
+	require.True(t, errors.As(err, &permErr),
+		"error must be an *embed.PermanentError (got: %v)", err)
+	assert.NotEqual(t, permErr.Stored, permErr.Current,
+		"PermanentError must record the embedder mismatch in Stored vs Current (stored=%q current=%q)",
+		permErr.Stored, permErr.Current)
+}
