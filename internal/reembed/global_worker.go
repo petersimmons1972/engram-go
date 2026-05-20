@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,18 +20,26 @@ const globalBatchTimeout = 5 * time.Minute
 const globalEmbedTimeout = 15 * time.Second
 const globalConcurrency = 8
 
+// consecutiveErrorThreshold is the number of consecutive batch errors after
+// which the worker calls pool.Reset() to drop stale connections and logs a
+// watchdog warning. This is the primary recovery mechanism for issue #645:
+// after a Postgres restart all pool connections become stale; pool.Reset()
+// forces the pool to establish fresh connections on the next Acquire() call.
+const consecutiveErrorThreshold = 3
+
 // GlobalReembedder processes unembedded chunks across ALL projects from a
 // single goroutine that is lifecycle-independent of any EnginePool entry.
 // It uses FOR UPDATE SKIP LOCKED so multiple server instances can safely
 // run concurrent GlobalReembedders against the same database (#359).
 type GlobalReembedder struct {
-	pool      *pgxpool.Pool
-	embedder  embed.Client
-	batchSize int
-	interval  time.Duration
-	startOnce sync.Once
-	done      chan struct{}
-	notify    chan struct{}
+	pool             *pgxpool.Pool
+	embedder         embed.Client
+	batchSize        int
+	interval         time.Duration
+	startOnce        sync.Once
+	done             chan struct{}
+	notify           chan struct{}
+	consecutiveErrors atomic.Int64 // counts consecutive batch errors; resets on success
 }
 
 // pendingChunk holds the minimal fields needed to embed and update a chunk.
@@ -82,6 +91,13 @@ func (g *GlobalReembedder) Notify() {
 	}
 }
 
+// ConsecutiveErrors returns the current count of consecutive batch errors.
+// It resets to zero after any successful batch (including an empty-queue result).
+// Exposed for integration tests that verify recovery after a Postgres restart.
+func (g *GlobalReembedder) ConsecutiveErrors() int64 {
+	return g.consecutiveErrors.Load()
+}
+
 func (g *GlobalReembedder) run(ctx context.Context) {
 	defer close(g.done)
 	slog.Info("global reembedder started", "batch_size", g.batchSize, "interval", g.interval)
@@ -115,10 +131,26 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 					return
 				}
 				if err != nil {
-					slog.Warn("global reembedder batch error", "err", err)
+					consecutive := g.consecutiveErrors.Add(1)
+					slog.Warn("global reembedder batch error",
+						"err", err,
+						"consecutive_errors", consecutive)
 					metrics.WorkerErrors.WithLabelValues("global_reembed").Inc()
+					// After consecutiveErrorThreshold failures the pool likely
+					// holds only stale connections from before a Postgres restart.
+					// pool.Reset() closes all idle connections and marks checked-out
+					// ones for close-on-return, forcing fresh connections on the
+					// next Acquire() call. This is the primary recovery path for
+					// issue #645 (silent hang after 15s Postgres outage).
+					if consecutive >= consecutiveErrorThreshold {
+						slog.Warn("global reembedder: resetting pool after repeated errors — possible Postgres restart",
+							"consecutive_errors", consecutive)
+						g.pool.Reset()
+					}
 					break
 				}
+				// Successful iteration: reset consecutive-error counter.
+				g.consecutiveErrors.Store(0)
 				if n == 0 {
 					// Queue is empty — back off exponentially.
 					backoff = min(backoff*2, maxBackoff)

@@ -79,7 +79,6 @@ var errNoEngram = errors.New(
 	"Engram credentials not found: set ENGRAM_URL and ENGRAM_TOKEN env vars, " +
 		"or pass -engram and -token flags",
 )
-
 // resolveEngram returns the Engram base URL and bearer token to use.
 //
 // Resolution order (first fully-populated pair wins):
