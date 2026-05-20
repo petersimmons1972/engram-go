@@ -51,6 +51,9 @@ type Config struct {
 	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+
+	// H15: dual-query preference recall
+	DualPreferenceRecall bool // run a second subject-anchor recall for preference questions and union results
 }
 
 func main() {
@@ -120,6 +123,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	// H15
+	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", false, "H15: run a second subject-anchor recall for preference questions and union both result sets (default off)")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {

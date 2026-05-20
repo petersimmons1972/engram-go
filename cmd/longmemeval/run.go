@@ -204,6 +204,21 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, cfg.RecallTopK)
+	if err == nil && cfg.DualPreferenceRecall && item.QuestionType == "single-session-preference" {
+		// H15: run a second recall using the subject-anchor query and union.
+		// Each leg uses topK=50 so the union stays within cfg.RecallTopK.
+		anchorTopK := cfg.RecallTopK / 2
+		if anchorTopK < 1 {
+			anchorTopK = 1
+		}
+		anchor := longmemeval.ExtractSubjectAnchor(item.Question)
+		anchorIDs, anchorErr := mcpClient.Recall(ctx, ingest.Project, anchor, anchorTopK)
+		if anchorErr == nil {
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
+		} else {
+			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
+		}
+	}
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID: item.QuestionID,

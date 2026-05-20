@@ -6,6 +6,74 @@ import (
 	"strings"
 )
 
+// ---------------------------------------------------------------------------
+// H15 — Dual-query preference recall helpers
+// ---------------------------------------------------------------------------
+
+// preferenceStopWords is a small set of English function words that carry no
+// domain signal. We strip these when building a subject anchor so the remaining
+// tokens are more likely to match the gold preference session via BM25.
+var preferenceStopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "for": true, "on": true,
+	"in": true, "of": true, "to": true, "and": true, "or": true,
+	"i": true, "me": true, "my": true, "you": true, "your": true,
+	"do": true, "is": true, "are": true, "some": true, "any": true,
+	"can": true, "could": true, "would": true, "should": true,
+	"what": true, "which": true, "how": true, "when": true, "where": true,
+}
+
+// ExtractSubjectAnchor builds a domain-specific recall query from the object
+// noun-phrase of a preference question. It strips the recommendation verb phrase
+// via preferenceStripRe, then tokenises by whitespace, removes stop-words, and
+// joins the remaining tokens.
+//
+// If all tokens are stop-words (fully generic question such as "What do I like?")
+// it falls back to the full stripped remainder so the anchor is never empty.
+func ExtractSubjectAnchor(question string) string {
+	stripped := preferenceStripRe.ReplaceAllString(question, "")
+	if stripped == "" {
+		stripped = question
+	}
+	// Remove trailing punctuation from the stripped string.
+	stripped = strings.TrimRight(stripped, "?!.,;:")
+
+	tokens := strings.Fields(stripped)
+	var keep []string
+	for _, tok := range tokens {
+		lower := strings.ToLower(tok)
+		lower = strings.TrimRight(lower, "?!.,;:")
+		if !preferenceStopWords[lower] {
+			keep = append(keep, tok)
+		}
+	}
+	if len(keep) == 0 {
+		// Fallback: return the fully stripped string so anchor is always non-empty.
+		return stripped
+	}
+	return strings.Join(keep, " ")
+}
+
+// UnionMemoryIDs merges primary and secondary ID slices, preserving order and
+// deduplicating by memory ID. Primary IDs appear first; secondary IDs that are
+// not already in primary are appended in their original order.
+func UnionMemoryIDs(primary, secondary []string) []string {
+	seen := make(map[string]bool, len(primary))
+	result := make([]string, 0, len(primary)+len(secondary))
+	for _, id := range primary {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	for _, id := range secondary {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
 // preferenceStripRe strips the opening recommendation verb phrase from a question.
 // e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?"
 var preferenceStripRe = regexp.MustCompile(
