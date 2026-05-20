@@ -55,6 +55,21 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets (infisical)
+        uses: infisical/secrets-scan-action@v2
+        with:
+          # Fail if any high-entropy or pattern-matched secret is found tracked in git
+          scanType: git
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
