@@ -164,12 +164,14 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
 		}
 
-			if !cfg.NoCleanup {
+			if shouldCleanupProject(cfg, ingestEntry.Project) {
 				if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
 					if !longmemeval.IsStaleSessionError(err) {
 						log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
 					}
 				}
+			} else {
+				log.Printf("INFO cleanup-policy=auto: preserving project %s (not created by this run); pass --cleanup-policy=always to override", ingestEntry.Project)
 			}
 		}()
 	}

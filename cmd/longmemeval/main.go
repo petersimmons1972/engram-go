@@ -25,7 +25,8 @@ type Config struct {
 	RunID      string
 	ServerURL  string
 	APIKey     string
-	NoCleanup  bool
+	NoCleanup     bool          // Deprecated: use CleanupPolicy=never
+	CleanupPolicy CleanupPolicy // "auto" | "always" | "never" (default: auto)
 	Retries    int
 	OutDir     string
 	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
@@ -89,7 +90,11 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
 	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
 	_, _ = fmt.Fprintln(w, "  --retries <n>           Retry count for generation + Engram calls (default 1)")
-	_, _ = fmt.Fprintln(w, "  --no-cleanup            Skip project deletion after run stage")
+	_, _ = fmt.Fprintln(w, "  --cleanup-policy <val>  Project cleanup after run: auto (default), always, never")
+	_, _ = fmt.Fprintln(w, "                          auto: delete only projects created by this run invocation")
+	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
+	_, _ = fmt.Fprintln(w, "                          never: preserve all projects (use if reusing data in a follow-up experiment)")
+	_, _ = fmt.Fprintln(w, "  --no-cleanup            DEPRECATED: alias for --cleanup-policy=never")
 }
 
 // dispatch parses args and runs the requested subcommand. Returns the process
@@ -117,7 +122,11 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	defaultURL, defaultKey := mcpDefaults()
 	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
 	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
-	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Skip Engram project deletion after run stage")
+	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
+	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
+	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
+	// Deprecated: --no-cleanup is an alias for --cleanup-policy=never. Emits a deprecation WARN at parse time.
+	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "DEPRECATED: use --cleanup-policy=never instead")
 	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for generation and Engram calls")
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
@@ -190,6 +199,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
+	}
+
+	// #751: --no-cleanup is deprecated; coerce to CleanupPolicyNever and warn.
+	if cfg.NoCleanup {
+		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
+		cfg.CleanupPolicy = CleanupPolicyNever
 	}
 
 	if cfg.DataFile == "" {

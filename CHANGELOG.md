@@ -6,6 +6,16 @@ All notable changes to engram-go are documented here.
 
 ## [Unreleased] — v3.3.0
 
+### Bug Fix — lme cleanup-policy (#751)
+
+- **`--cleanup-policy` enum (default: `auto`):** The `lme run` stage now ships a three-value cleanup policy instead of the old unconditional delete. `auto` (new default) deletes only projects whose name matches the `lme-{runID}-*` prefix created by the current invocation; externally ingested or cache-reused projects are preserved. `always` restores the pre-fix unconditional-delete behavior. `never` preserves everything (useful for cross-experiment reuse such as Exp 10 → Exp 13).
+- **`--no-cleanup` deprecated:** The old boolean flag remains registered for backward compatibility and is silently coerced to `--cleanup-policy=never`. A `WARN: --no-cleanup is deprecated` message is emitted to stderr on use.
+- **Migration note:** Existing camp pipeline scripts that relied on `--no-cleanup` continue to work unchanged. Scripts that want the old unconditional-delete behavior must pass `--cleanup-policy=always` explicitly going forward.
+
+---
+
+## [Unreleased] — v3.3.0
+
 ### Reliability (PR #611-fix2)
 
 - **Async embed on store (architecturally enforced):** `memory_store` and `memory_store_batch` return after the DB write completes (~10ms), regardless of embed pool state. Chunks are stored with NULL embeddings and the existing reembed worker backfills them asynchronously. New Prometheus counter `engram_store_embed_async_total` tracks call volume on the async path. Rollback: set `ENGRAM_STORE_EMBED_MODE=sync` to restore inline embedding without redeploying.
