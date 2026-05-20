@@ -16,6 +16,8 @@ infisical/infisical-bin
 /instinct-benchmark
 /longmemeval
 /starter
+# Compiled binaries in bin/ (built by `go build -o bin/...`)
+/bin/longmemeval
 # Stale sentinel files that have appeared in the past (#699)
 /1.0
 cover.out

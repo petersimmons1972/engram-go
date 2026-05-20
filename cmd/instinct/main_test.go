@@ -407,10 +407,15 @@ func TestDetectPipeline_APIError(t *testing.T) {
 
 	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
 	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
-	// On 500, AnthropicClient returns error; Detect propagates it; pipeline logs and skips.
-	_, err := consolidator.Detect(context.Background(), c, events)
-	if err == nil {
-		t.Error("Detect() should propagate Anthropic 500 as error")
+	// After #772, Anthropic 500 wraps ErrBackendUnavailable. The consolidator
+	// treats ErrBackendUnavailable as a graceful skip (nil, nil) — transient
+	// infra failure should not crash the pipeline. Assert no error returned.
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Errorf("Detect() should gracefully skip on Anthropic 500 (ErrBackendUnavailable), got: %v", err)
+	}
+	if len(patterns) != 0 {
+		t.Errorf("Detect() should return empty patterns on 500, got: %v", patterns)
 	}
 }
 
