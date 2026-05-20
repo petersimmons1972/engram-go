@@ -6,7 +6,6 @@ package types
 import (
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -406,31 +405,3 @@ type AggregateRow struct {
 	Newest time.Time `json:"newest"`
 }
 
-// ParseDateTag scans tags for a "date:<value>" entry and returns the parsed
-// UTC time (date portion only), or nil if no valid date tag is found.
-// The first matching tag wins. Supported formats:
-//
-//   - "2006-01-02"                — ISO date
-//   - "2006/01/02 (Mon) 15:04"   — LongMemEval haystack date format
-//
-// This is the canonical implementation; the mcp package delegates to it so
-// that the same logic is available to the db layer (e.g., UpdateMemory tag
-// recalculation) without a circular import.
-func ParseDateTag(tags []string) *time.Time {
-	layouts := []string{"2006-01-02", "2006/01/02 (Mon) 15:04"}
-	for _, tag := range tags {
-		val, ok := strings.CutPrefix(tag, "date:")
-		if !ok {
-			continue
-		}
-		for _, layout := range layouts {
-			t, err := time.Parse(layout, val)
-			if err != nil {
-				continue
-			}
-			t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-			return &t
-		}
-	}
-	return nil
-}

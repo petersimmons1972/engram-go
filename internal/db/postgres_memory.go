@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/petersimmons1972/engram/internal/parse"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -212,7 +213,7 @@ func (b *PostgresBackend) UpdateMemory(
 		// tags are provided. ParseDateTag returns nil when no date: tag exists, which
 		// clears valid_from to NULL. To preserve an existing valid_from, omit the tags
 		// argument entirely (see docs/tools.md#memory_correct).
-		m.ValidFrom = types.ParseDateTag(tags)
+		m.ValidFrom = parse.ParseDateTag(tags)
 	}
 	if importance != nil {
 		m.Importance = *importance

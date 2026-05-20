@@ -20,6 +20,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/parse"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
@@ -290,7 +291,7 @@ func (b *validFromCorrectBackend) UpdateMemory(_ context.Context, id string, _ *
 		Content:   "updated",
 		Project:   "test",
 		Tags:      tags,
-		ValidFrom: types.ParseDateTag(tags), // simulate what the real DB impl does
+		ValidFrom: parse.ParseDateTag(tags), // simulate what the real DB impl does
 	}, nil
 }
 
@@ -324,7 +325,7 @@ func (b *validFromCorrectBackendV2) UpdateMemory(_ context.Context, id string, _
 	// date: tags on every UpdateMemory call where tags are provided.
 	var vf *time.Time
 	if tags != nil {
-		vf = types.ParseDateTag(tags)
+		vf = parse.ParseDateTag(tags)
 	} else {
 		vf = b.initialValidFrom
 	}
@@ -386,7 +387,7 @@ func TestMemoryCorrect_RecalculatesValidFromOnTagChange(t *testing.T) {
 	_ = tc
 	// The in-memory simulation sets ValidFrom via ParseDateTag; the simulated
 	// backend returns a memory with the correct value — verify via back state.
-	gotVF := types.ParseDateTag(back.capturedTags)
+	gotVF := parse.ParseDateTag(back.capturedTags)
 	require.NotNil(t, gotVF, "ParseDateTag on updated tags must return non-nil")
 	require.True(t, gotVF.Equal(want), "recalculated ValidFrom must be 2024-12-31, got %s", gotVF)
 }
@@ -447,7 +448,7 @@ func TestMemoryCorrect_DateTag_CorrectUpdatesValidFrom(t *testing.T) {
 	require.False(t, res.IsError)
 
 	require.True(t, back.called, "UpdateMemory must be called")
-	gotVF := types.ParseDateTag(back.capturedTags)
+	gotVF := parse.ParseDateTag(back.capturedTags)
 	require.NotNil(t, gotVF, "ParseDateTag on updated tags must return non-nil")
 	require.True(t, gotVF.Equal(want),
 		"valid_from must be 2024-04-15 after correct with date: tag, got %s", gotVF)
@@ -476,7 +477,7 @@ func TestMemoryCorrect_EmptyTags_ClearsValidFrom(t *testing.T) {
 	require.True(t, back.called, "UpdateMemory must be called")
 	// An empty tags slice means no date: tag → valid_from is recalculated as NULL.
 	// The backend simulation returns nil ValidFrom when tags is non-nil but has no date:.
-	gotVF := types.ParseDateTag(back.capturedTags)
+	gotVF := parse.ParseDateTag(back.capturedTags)
 	require.Nil(t, gotVF,
 		"valid_from must be NULL when tags:[] clears all date: tags")
 }
@@ -607,7 +608,7 @@ func TestMemoryCorrect_MCP_EmptyTagsClearsValidFrom(t *testing.T) {
 	require.Empty(t, back.capturedTags,
 		`"tags":[] must pass empty (not nil) slice, causing valid_from to be cleared (B1)`)
 	// Confirm valid_from would be NULL under the real DB impl.
-	gotVF := types.ParseDateTag(back.capturedTags)
+	gotVF := parse.ParseDateTag(back.capturedTags)
 	require.Nil(t, gotVF,
 		"empty tags must yield nil valid_from (cleared to NULL in Postgres) (B1)")
 }
@@ -627,7 +628,7 @@ func (b *historyTrackingBackend) UpdateMemory(_ context.Context, id string, cont
 	if b.versions == nil {
 		b.versions = make(map[string][]*types.MemoryVersion)
 	}
-	vf := types.ParseDateTag(tags)
+	vf := parse.ParseDateTag(tags)
 	// Snapshot the state of this update as a new version (mirrors versionMemoryTx behaviour).
 	v := &types.MemoryVersion{
 		ID:         fmt.Sprintf("ver-%d", len(b.versions[id])+1),
