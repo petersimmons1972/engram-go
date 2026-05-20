@@ -1,16 +1,19 @@
 ---
 name: project-harness-port
-description: New project porting selected ideas from rocklambros/harness-engineering into local Claude Code setup; three sub-projects, GitHub private repo
+description: Port of selected ideas from rocklambros/harness-engineering into local Claude Code setup; three sub-projects; JOURNEY.md and untangle detour landed 2026-05-20
 metadata:
   type: project
-originSessionId: harness-port-2026-05-19
+originSessionId: home-dir-untangle-2026-05-20
 ---
-**Fact:** Created 2026-05-19. Repo at `~/projects/harness-port/`, pushed to private GitHub repo `petersimmons1972/harness-port`. Three sub-projects decomposed:
+**State (2026-05-20).** Repo at `~/projects/harness-port/`, pushed to private GitHub `petersimmons1972/harness-port`. `main` at `b60674f`. Three sub-projects + one detour completed:
 
-- **Project A — Process layer refactor.** QC.1-QC.7 + AP.1-AP.12 (gaps AP.3/AP.10) + ADV.1-ADV.5 vocabulary, commit rationale template, removal-test pass, two principle docs in `~/docs/` symlinked from harness-port, commit-msg validator + line-budget linter + tested uninstall. Spec at `docs/superpowers/specs/2026-05-19-project-a-process-layer-design.md` (commit 98f2ea1). Plan at `docs/superpowers/plans/2026-05-19-project-a-process-layer-plan.md` (commit 2ba50fa). 8 stages, 42 TDD test cases across 4 bats suites. NOT YET EXECUTED.
-- **Project B — Hooks migration.** Deferred. Move Pre-Flight Steps 1 & 4 to deterministic hooks; Semgrep PostToolUse on Write/Edit feeding findings back in-session.
-- **Project C — Cache & context audit.** Deferred. Audit Anthropic SDK callers (Engram clients, agent dispatch, Cassandre) for explicit `cache_control.ttl="1h"`. Count CLAUDE.md hierarchy total.
+- **Project A — Process layer refactor.** SPEC at `docs/superpowers/specs/2026-05-19-project-a-process-layer-design.md` (98f2ea1). PLAN at `docs/superpowers/plans/2026-05-19-project-a-process-layer-plan.md` (2ba50fa). 8 stages, 42 TDD test cases. **NOT YET EXECUTED.**
+- **Project B — Hooks migration.** Deferred.
+- **Project C — Cache & context audit.** Deferred.
+- **Detour 2026-05-20 — Home-dir untangle.** Plan at `~/.claude/plans/write-up-the-plan-lexical-eich.md`. Executed cleanly: merged github (with -X ours for a duplicate commit from another machine), removed trunas remote, filed audit issue. JOURNEY.md anchors the reasoning trail. See [[feedback-tdd-invariants-for-git-ops]] for the framework that worked.
 
-**Why:** Reading rocklambros's harness-engineering surfaced 8 portable ideas. One mixed project would tangle advisory edits, hook engineering, and SDK audits. Decomposition keeps each sub-project shaped for one spec → one plan → one implementation cycle.
+**Open issues on the repo:** #1 (audit + possibly delete legacy bare repo at /mnt/public/git-repos/home.git).
 
-**How to apply:** When asked about harness-port work, check current state in [[reference-harness-port-locations]]. Sub-project A must ship before B (defines vocabulary B cites). C is parallel-eligible with B. Cross-reference [[reference-rocklambros-harness-engineering]] for source material.
+**Vocabulary that lands when Project A executes:** QC.1-QC.7, AP.1-AP.12 (gaps at AP.3 + AP.10), ADV.1-ADV.5 renamed from existing A1-A5.
+
+**How to apply:** When asked about harness-port work, default state is "Project A planned + ready, untangle detour done." Cross-reference [[reference-rocklambros-harness-engineering]] for source material.
