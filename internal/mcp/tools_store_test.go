@@ -12,6 +12,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -296,17 +297,16 @@ func newValidFromCorrectPool(t *testing.T, back *validFromCorrectBackend) *Engin
 // advisory assertion (d): omitting tags must leave valid_from untouched.
 type validFromCorrectBackendV2 struct {
 	noopBackend
-	capturedTags    []string
-	tagsArgPresent  bool   // true when tags key appeared in the request
-	called          bool
+	capturedTags     []string
+	called           bool
 	initialValidFrom *time.Time // what the "existing" memory has before correction
 }
 
 func (b *validFromCorrectBackendV2) UpdateMemory(_ context.Context, id string, _ *string, tags []string, _ *int, _ *float64) (*types.Memory, error) {
 	b.called = true
 	b.capturedTags = tags
-	// Simulate what the real DB impl does under Path α:
-	// always recalculate valid_from from tags when tags arg present.
+	// Simulate what the real DB impl does: valid_from is recalculated from
+	// date: tags on every UpdateMemory call where tags are provided.
 	var vf *time.Time
 	if tags != nil {
 		vf = types.ParseDateTag(tags)
@@ -376,10 +376,10 @@ func TestMemoryCorrect_RecalculatesValidFromOnTagChange(t *testing.T) {
 	require.True(t, gotVF.Equal(want), "recalculated ValidFrom must be 2024-12-31, got %s", gotVF)
 }
 
-// ── Advisory Path α: five assertions for #765 full fix ───────────────────────
+// ── Five assertions for #765 full fix ────────────────────────────────────────
 //
-// These tests implement the five advisory assertions for the "always recalculate
-// valid_from from tags when tags arg present" policy (Path α):
+// These tests implement the five assertions for the "valid_from is recalculated
+// from date: tags on every UpdateMemory call where tags are provided" policy:
 //
 //   a. Store with tags:["date:2024-03-20"] → valid_from == 2024-03-20
 //   b. Correct with tags:["date:2024-04-15"] → valid_from == 2024-04-15
@@ -439,8 +439,8 @@ func TestMemoryCorrect_PathAlpha_B_CorrectWithDateTag(t *testing.T) {
 }
 
 // TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom verifies that
-// correcting with tags:[] clears valid_from to NULL (assertion c — Path α
-// "always recalculate" policy, overrides old "only promote, never nullify").
+// correcting with tags:[] clears valid_from to NULL (assertion c —
+// valid_from is recalculated from tags; empty set means no date: tag → NULL).
 func TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom(t *testing.T) {
 	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
 	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
@@ -459,11 +459,11 @@ func TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom(t *testing.T) {
 	require.False(t, res.IsError)
 
 	require.True(t, back.called, "UpdateMemory must be called")
-	// Under Path α, an empty tags slice means no date: tag → valid_from = NULL.
+	// An empty tags slice means no date: tag → valid_from is recalculated as NULL.
 	// The backend simulation returns nil ValidFrom when tags is non-nil but has no date:.
 	gotVF := types.ParseDateTag(back.capturedTags)
 	require.Nil(t, gotVF,
-		"valid_from must be NULL when tags:[] clears all date: tags (assertion c — Path α)")
+		"valid_from must be NULL when tags:[] clears all date: tags (assertion c)")
 }
 
 // TestMemoryCorrect_PathAlpha_D_OmitTagsLeavesValidFromUnchanged verifies that
@@ -490,6 +490,111 @@ func TestMemoryCorrect_PathAlpha_D_OmitTagsLeavesValidFromUnchanged(t *testing.T
 	// When tags arg is absent, capturedTags is nil → backend preserves initialValidFrom.
 	require.Nil(t, back.capturedTags,
 		"tags must be nil (not empty slice) when tags arg omitted (assertion d)")
+}
+
+// ── B1: MCP JSON-deserialization layer tests for tags nil/null/empty contract ─
+//
+// These three tests exercise handleMemoryCorrect through the actual MCP argument
+// deserialization path: the CallToolRequest.Params.Arguments field is populated by
+// json.Unmarshal (mimicking the live server path), not by direct Go map assignment.
+//
+// Contract (issue #765 fix):
+//   - missing tags key  → args["tags"] == nil  → UpdateMemory(tags=nil) → valid_from preserved
+//   - "tags": null      → args["tags"] == nil  → UpdateMemory(tags=nil) → valid_from preserved
+//                         NOTE: JSON null and absent key are indistinguishable after
+//                         json.Unmarshal into map[string]any; both produce nil.  This is
+//                         the documented behavior — see docs/tools.md#memory_correct.
+//   - "tags": []        → args["tags"] == []any{} → UpdateMemory(tags=[]string{}) → valid_from NULL
+
+// buildCorrectReqFromJSON deserializes a raw JSON arguments object into a
+// CallToolRequest exactly as the MCP server does: via json.Unmarshal into
+// map[string]any.  This exercises the real deserialization boundary rather than
+// bypassing it with direct Go map construction.
+func buildCorrectReqFromJSON(t *testing.T, rawJSON string) mcpgo.CallToolRequest {
+	t.Helper()
+	var args map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &args); err != nil {
+		t.Fatalf("buildCorrectReqFromJSON: json.Unmarshal failed: %v", err)
+	}
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = args
+	return req
+}
+
+// TestMemoryCorrect_MCP_OmitTagsPreservesValidFrom verifies that a JSON payload
+// with no "tags" key passes nil to UpdateMemory, leaving valid_from unchanged.
+func TestMemoryCorrect_MCP_OmitTagsPreservesValidFrom(t *testing.T) {
+	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
+	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
+	pool := newValidFromCorrectPoolV2(t, back)
+
+	// No "tags" key in JSON — simulates MCP client that only sends memory_id + new_content.
+	req := buildCorrectReqFromJSON(t, `{"project":"test","memory_id":"mem-omit-tags","content":"updated content"}`)
+
+	res, err := handleMemoryCorrect(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.True(t, back.called, "UpdateMemory must be called")
+	// Missing key → args["tags"] is nil → toStringSlice(nil) returns nil → tags passed as nil.
+	require.Nil(t, back.capturedTags,
+		"omitting tags key must pass nil to UpdateMemory, preserving valid_from (B1)")
+}
+
+// TestMemoryCorrect_MCP_NullTagsBehavior verifies that JSON "tags":null is
+// treated identically to a missing tags key — both produce nil in the args map
+// after json.Unmarshal, so valid_from is preserved.
+//
+// NOTE: This is a documented design constraint, not a bug.  JSON null and an
+// absent key are indistinguishable via map[string]any lookup; callers wishing to
+// explicitly clear valid_from must send "tags":[] (empty array), not null.
+func TestMemoryCorrect_MCP_NullTagsBehavior(t *testing.T) {
+	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
+	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
+	pool := newValidFromCorrectPoolV2(t, back)
+
+	// "tags":null — after json.Unmarshal into map[string]any, args["tags"] == nil.
+	req := buildCorrectReqFromJSON(t, `{"project":"test","memory_id":"mem-null-tags","content":"updated","tags":null}`)
+
+	res, err := handleMemoryCorrect(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.True(t, back.called, "UpdateMemory must be called")
+	// JSON null → map value is nil → toStringSlice(nil) returns nil → tags=nil → valid_from preserved.
+	// Same behavior as absent key — this is the documented contract.
+	require.Nil(t, back.capturedTags,
+		`"tags":null must be treated as absent (nil), preserving valid_from (B1 documented behavior)`)
+}
+
+// TestMemoryCorrect_MCP_EmptyTagsClearsValidFrom verifies that JSON "tags":[]
+// passes an empty (non-nil) slice to UpdateMemory, which clears valid_from to NULL.
+func TestMemoryCorrect_MCP_EmptyTagsClearsValidFrom(t *testing.T) {
+	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
+	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
+	pool := newValidFromCorrectPoolV2(t, back)
+
+	// "tags":[] — after json.Unmarshal into map[string]any, args["tags"] == []interface{}{}.
+	req := buildCorrectReqFromJSON(t, `{"project":"test","memory_id":"mem-empty-tags","tags":[]}`)
+
+	res, err := handleMemoryCorrect(context.Background(), pool, req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.True(t, back.called, "UpdateMemory must be called")
+	// "tags":[] → []interface{}{} → toStringSlice returns []string{} (non-nil) → tags passed to
+	// UpdateMemory → valid_from recalculated as NULL (no date: tag in empty set).
+	require.NotNil(t, back.capturedTags,
+		`"tags":[] must pass non-nil (empty) slice to UpdateMemory (B1)`)
+	require.Empty(t, back.capturedTags,
+		`"tags":[] must pass empty (not nil) slice, causing valid_from to be cleared (B1)`)
+	// Confirm valid_from would be NULL under the real DB impl.
+	gotVF := types.ParseDateTag(back.capturedTags)
+	require.Nil(t, gotVF,
+		"empty tags must yield nil valid_from (cleared to NULL in Postgres) (B1)")
 }
 
 // TestMemoryCorrect_PathAlpha_E_HistoryRetainsPriorValidFrom verifies that

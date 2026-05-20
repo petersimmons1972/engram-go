@@ -248,6 +248,26 @@ memory_correct(
 )
 ```
 
+**Accepted parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `memory_id` | string | yes | ID of the memory to update |
+| `new_content` | string | no | Replacement content; omit to leave content unchanged |
+| `tags` | array of strings | no | Replacement tag set; see tag-and-valid_from rules below |
+| `importance` | integer 0–4 | no | Replacement importance value; must be 0–4 |
+
+**Tag and valid_from rules (issue #765):**
+
+`valid_from` is derived from `date:YYYY-MM-DD` tags. On every `memory_correct` call that includes a `tags` argument, `valid_from` is recalculated from the supplied tag set:
+
+- **Omit `tags`** — `valid_from` is left unchanged. Use this when you only want to update content or importance.
+- **`tags: ["date:2024-06-01", ...]`** — `valid_from` is set to `2024-06-01`.
+- **`tags: []`** — `valid_from` is cleared to `NULL` (no date tag in the empty set).
+- **`tags: null`** — treated identically to omitting `tags`; `valid_from` is preserved. This is a JSON deserialization constraint: `null` and an absent key both produce `nil` after `json.Unmarshal` into `map[string]any`. To explicitly clear `valid_from`, send `"tags": []` (empty array).
+
+> **Behavior changes:** This recalculation behavior was introduced with issue #765. Prior to that fix, tags could be updated without recalculating `valid_from`, causing stale date values.
+
 Use `memory_correct` rather than `memory_forget` when you want to track that a change happened and why. If you just need a record gone — because it contains wrong security advice or outdated credentials — use `memory_forget`.
 
 ---

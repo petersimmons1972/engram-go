@@ -208,11 +208,10 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 	if tags != nil {
 		m.Tags = tags
-		// Always recalculate ValidFrom from the resulting tag set when tags arg is
-		// present (Path α — advisory for issue #765). ParseDateTag returns nil when
-		// no date: tag exists, which clears valid_from to NULL — consistent with the
-		// store-path nil semantics. A nil result here is intentional: callers that
-		// want to preserve an existing valid_from must omit the tags argument entirely.
+		// valid_from is recalculated from date: tags on every UpdateMemory call where
+		// tags are provided. ParseDateTag returns nil when no date: tag exists, which
+		// clears valid_from to NULL. To preserve an existing valid_from, omit the tags
+		// argument entirely (see docs/tools.md#memory_correct).
 		m.ValidFrom = types.ParseDateTag(tags)
 	}
 	if importance != nil {

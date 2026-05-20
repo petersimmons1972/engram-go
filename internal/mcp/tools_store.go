@@ -39,14 +39,14 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if len(content) > types.MaxContentLength {
-		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content exceeds max length %d bytes", types.MaxContentLength)), nil
 	}
 	if err := validateContent(content); err != nil {
-		return nil, fmt.Errorf("content: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content: %v", err)), nil
 	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
-		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+		return mcpgo.NewToolResultError(fmt.Sprintf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)), nil
 	}
 	// Auto-tag: when memory_type was not explicitly provided by the caller,
 	// detect preference-expressing content and override to "preference" (#364).
@@ -57,11 +57,11 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	}
 	importance := getInt(args, "importance", 2)
 	if importance < 0 || importance > 4 {
-		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
 	tags, err := toStringSlice(args["tags"])
 	if err != nil {
-		return nil, fmt.Errorf("tags: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
 	// Validate optional pattern_confidence field.
 	var patternConfidence *float64
@@ -168,20 +168,20 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if err := validateContent(content); err != nil {
-		return nil, fmt.Errorf("content: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content: %v", err)), nil
 	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
-		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+		return mcpgo.NewToolResultError(fmt.Sprintf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)), nil
 	}
 	importance := getInt(args, "importance", 2)
 	if importance < 0 || importance > 4 {
-		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
 	maxDoc, rawMax := configOrDefaults(cfg)
 	docTags, err := toStringSlice(args["tags"])
 	if err != nil {
-		return nil, fmt.Errorf("tags: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
 	m := &types.Memory{
 		ID:         types.NewMemoryID(),
