@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// ErrDisallowedModel is a permanent error returned when the model name is not
+// in the allowlist. The retry loop must not sleep on this error.
+var ErrDisallowedModel = errors.New("disallowed model")
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
@@ -49,6 +54,10 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 			return out, nil
 		}
 		lastErr = err
+		// Permanent validation errors must not be retried.
+		if errors.Is(err, ErrDisallowedModel) {
+			break
+		}
 		if attempt >= retries {
 			break
 		}
@@ -60,6 +69,14 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 		}
 	}
 	return "", lastErr
+}
+
+// GenerateForModel calls generate with the given model alias. model must be
+// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
+// unknown value causes generate → runClaude to return ErrDisallowedModel
+// immediately without retrying.
+func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
+	return generate(ctx, prompt, model, retries)
 }
 
 // validClaudeModels is the allowlist for the --model flag passed to
@@ -80,7 +97,7 @@ func isValidClaudeModel(model string) bool {
 
 func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	if !isValidClaudeModel(model) {
-		return "", fmt.Errorf("claude: refusing to invoke with disallowed model %q (allowed: opus, sonnet, haiku) (#678)", model)
+		return "", fmt.Errorf("%w: %q (allowed: opus, sonnet, haiku) (#678)", ErrDisallowedModel, model)
 	}
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
