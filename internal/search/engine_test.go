@@ -39,7 +39,7 @@ func newTestEngine(t *testing.T, project string) *search.SearchEngine {
 	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	return search.New(ctx, backend, &fakeClient{dims: 768}, project,
+	return search.New(ctx, backend, &fakeClient{dims: 1024}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
 }
 
@@ -357,7 +357,7 @@ func TestSearchEngine_EmbedderMismatchReturnsPermanentError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend1.Close() })
 
-	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 768}, project,
+	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 1024}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
 	t.Cleanup(func() { engine1.Close() })
 
@@ -378,7 +378,7 @@ func TestSearchEngine_EmbedderMismatchReturnsPermanentError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend2.Close() })
 
-	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake-v2", dims: 768}, project,
+	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake-v2", dims: 1024}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
 	t.Cleanup(func() { engine2.Close() })
 
@@ -422,11 +422,11 @@ func TestSearchEngine_EmbedderDimensionsMismatchReturnsPermanentError(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { backend1.Close() })
 
-	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 768}, project,
+	engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "fake", dims: 1024}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
 	t.Cleanup(func() { engine1.Close() })
 
-	// Store a memory to initialize embedder metadata with 768 dims.
+	// Store a memory to initialize embedder metadata with 1024 dims.
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     "test memory",
@@ -437,12 +437,14 @@ func TestSearchEngine_EmbedderDimensionsMismatchReturnsPermanentError(t *testing
 	err = engine1.Store(ctx, m)
 	require.NoError(t, err, "first store should succeed")
 
-	// Now create a second engine with same name but different dimensions (1024).
+	// Now create a second engine with same name but different dimensions (512).
+	// 512 is used here as the "wrong" dim to trigger the metadata mismatch guard
+	// without conflicting with the schema column dimension (1024).
 	backend2, err := db.NewPostgresBackend(ctx, project, testDSN(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { backend2.Close() })
 
-	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake", dims: 1024}, project,
+	engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "fake", dims: 512}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
 	t.Cleanup(func() { engine2.Close() })
 
@@ -468,9 +470,9 @@ func TestSearchEngine_EmbedderDimensionsMismatchReturnsPermanentError(t *testing
 	require.NotNil(t, pe, "PermanentError must not be nil")
 	require.Equal(t, "embedder_mismatch", pe.Code,
 		"Code should be 'embedder_mismatch'")
-	require.Equal(t, "768-dim", pe.Stored,
+	require.Equal(t, "1024-dim", pe.Stored,
 		"Stored should contain the original dimensions")
-	require.Equal(t, "1024-dim", pe.Current,
+	require.Equal(t, "512-dim", pe.Current,
 		"Current should contain the new dimensions")
 	require.Contains(t, pe.Remediation, "memory_migrate_embedder",
 		"Remediation should mention memory_migrate_embedder")

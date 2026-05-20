@@ -25,9 +25,13 @@ func newEngineWithDims(t *testing.T, proj string, dims int) *search.SearchEngine
 	ctx := context.Background()
 	backend, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
 	require.NoError(t, err)
-	t.Cleanup(func() { backend.Close() })
-	return search.New(ctx, backend, &fakeClient{dims: dims}, proj,
+	engine := search.New(ctx, backend, &fakeClient{dims: dims}, proj,
 		"http://ollama:11434", "llama3.2", false, nil, 0)
+	// engine.Close() shuts down workers and closes the backend pool; register
+	// it here so resources are always released even if the caller panics or
+	// returns early (fix for #758: missing t.Cleanup registration).
+	t.Cleanup(func() { engine.Close() })
+	return engine
 }
 
 // ── Scoring unit tests ────────────────────────────────────────────────────────
@@ -180,7 +184,6 @@ func TestRetrievalTracking_DimMismatch(t *testing.T) {
 
 	// Store a memory using a 1024-dim engine.
 	engine1024 := newEngineWithDims(t, proj, 1024)
-	t.Cleanup(func() { engine1024.Close() })
 	m := &types.Memory{
 		Content:     "dim mismatch test memory",
 		MemoryType:  types.MemoryTypeDecision,
@@ -194,7 +197,6 @@ func TestRetrievalTracking_DimMismatch(t *testing.T) {
 	// The fakeClient embeds query at 768 dims; pgvector will reject a cosine
 	// similarity query where the stored vectors are 1024-dim.
 	engine768 := newEngineWithDims(t, proj, 768)
-	t.Cleanup(func() { engine768.Close() })
 	_, _, err := engine768.RecallWithEvent(ctx, "dim mismatch test memory", 5, "normal")
 	require.Error(t, err, "RecallWithEvent with dim mismatch must return an error")
 
