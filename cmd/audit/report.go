@@ -76,7 +76,7 @@ func envOr(key, fallback string) string {
 // errNoEngram is returned when no Engram credentials can be resolved from
 // flags, environment variables, or the developer config file.
 var errNoEngram = errors.New(
-	"Engram credentials not found: set ENGRAM_URL and ENGRAM_TOKEN env vars, " +
+	"engram credentials not found: set ENGRAM_URL and ENGRAM_TOKEN env vars, " +
 		"or pass -engram and -token flags",
 )
 
