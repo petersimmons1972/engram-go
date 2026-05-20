@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,7 +31,7 @@ func fetchPatterns(base, token string) ([]engramMemory, error) {
 			"limit":   50,
 		}
 		b, _ := json.Marshal(body)
-		req, err := http.NewRequest(http.MethodPost, base+"/quick-recall", bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/quick-recall", bytes.NewReader(b))
 		if err != nil {
 			return nil, fmt.Errorf("quick-recall %s: build request: %w", project, err)
 		}
@@ -45,7 +46,7 @@ func fetchPatterns(base, token string) ([]engramMemory, error) {
 			Results []engramMemory `json:"results"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&payload)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		for _, m := range payload.Results {
 			hasSig := false

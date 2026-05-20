@@ -8,7 +8,7 @@ import (
 )
 
 // preferenceStripRe strips the opening recommendation verb phrase from a question.
-// e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?"
+// e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?".
 var preferenceStripRe = regexp.MustCompile(
 	`(?i)^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me) `)
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -379,14 +378,3 @@ func init() {
 	var _ engramAPI = (*hybridEngram)(nil)
 }
 
-// restBodyContains is a helper for tests that want to confirm a tag appears
-// somewhere in the comma-joined body string (for human readability in errors).
-func restBodyContains(body map[string]any, tag string) bool {
-	tags, _ := body["tags"].([]any)
-	for _, t := range tags {
-		if s, ok := t.(string); ok && strings.Contains(s, tag) {
-			return true
-		}
-	}
-	return false
-}

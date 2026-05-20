@@ -21,7 +21,7 @@ const (
 
 // skipFamilies lists Olla model families whose thinking-mode token leakage
 // breaks structured JSON output (benchmark 2026-04-24).
-// See: ~/projects/instinct/consolidator/instinct/haiku_client.py:30
+// See: ~/projects/instinct/consolidator/instinct/haiku_client.py:30.
 var skipFamilies = map[string]struct{}{
 	"qwen3":    {},
 	"qwen3moe": {},

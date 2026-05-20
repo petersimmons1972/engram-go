@@ -775,10 +775,6 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 	type resultMessage struct {
 		Content []resultContent `json:"content"`
 	}
-	type resultSuccess struct {
-		Type    string        `json:"type"`
-		Message resultMessage `json:"message"`
-	}
 	type resultErrorDetail struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`

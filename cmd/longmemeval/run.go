@@ -24,9 +24,6 @@ var temporalInterrogativeRe = regexp.MustCompile(
 		`|on what (date|day) )`,
 )
 
-// contextTopK is kept for documentation; actual limit comes from cfg or ContextTopKForTypeWithBump.
-const contextTopK = 8 // 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster
-
 // runRun executes the run stage. Returns the process exit code: 0 on success,
 // 1 when zero items completed successfully out of any that were attempted
 // (#703 — total-failure guard so scripted pipelines don't proceed when every
@@ -194,12 +191,13 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := item.Question
 	if !cfg.DisableQueryRewrite {
-		if item.QuestionType == "temporal-reasoning" {
+		switch item.QuestionType {
+		case "temporal-reasoning":
 			recallQuery = temporalInterrogativeRe.ReplaceAllString(recallQuery, "")
 			if recallQuery == "" {
 				recallQuery = item.Question
 			}
-		} else if item.QuestionType == "single-session-preference" {
+		case "single-session-preference":
 			recallQuery = longmemeval.PreferenceRecallQuery(item.Question)
 		}
 	}
