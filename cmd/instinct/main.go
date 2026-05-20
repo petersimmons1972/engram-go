@@ -160,6 +160,18 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// envDuration returns the time.Duration value of the named environment variable
+// (parsed via time.ParseDuration), or def when unset, empty, or not parseable.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		slog.Warn("instinct: ignoring unparseable duration env var", "key", key, "value", v)
+	}
+	return def
+}
+
 // loadAndRotate reads the buffer JSONL. Returns empty if file missing or
 // line count < minEvents. On success renames to .processed and returns events + new path.
 type bufferLoadOutcome int
@@ -735,7 +747,10 @@ func run(ctx context.Context, cfg config) error {
 		Backend:  envOr("LLM_BACKEND", "anthropic"),
 		APIKey:   cfg.anthropicKey,
 		Endpoint: cfg.haikuEndpoint,
-		Timeout:  30 * time.Second,
+		// Per-inference timeout: configurable via INSTINCT_LLM_TIMEOUT env var
+		// (e.g. "60s", "2m") so operators with slow Olla hosts can increase it
+		// without rebuilding.  Mirrors the --timeout flag in cmd/audit.
+		Timeout: envDuration("INSTINCT_LLM_TIMEOUT", 30*time.Second),
 	})
 	var patterns []Pattern
 	if err != nil {

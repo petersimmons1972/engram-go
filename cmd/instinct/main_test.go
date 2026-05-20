@@ -65,6 +65,39 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestEnvDuration verifies the envDuration helper used for INSTINCT_LLM_TIMEOUT.
+// Ref: #732.
+func TestEnvDuration(t *testing.T) {
+	t.Run("returns_default_when_unset", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_MISSING", "")
+		got := envDuration("ENVTEST_DUR_MISSING", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default)", got)
+		}
+	})
+	t.Run("parses_valid_duration", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_VALID", "2m")
+		got := envDuration("ENVTEST_DUR_VALID", 30*time.Second)
+		if got != 2*time.Minute {
+			t.Errorf("envDuration() = %v, want 2m", got)
+		}
+	})
+	t.Run("returns_default_on_invalid_value", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_BAD", "notaduration")
+		got := envDuration("ENVTEST_DUR_BAD", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default on bad input)", got)
+		}
+	})
+	t.Run("instinct_llm_timeout_sets_llm_timeout", func(t *testing.T) {
+		t.Setenv("INSTINCT_LLM_TIMEOUT", "90s")
+		got := envDuration("INSTINCT_LLM_TIMEOUT", 30*time.Second)
+		if got != 90*time.Second {
+			t.Errorf("INSTINCT_LLM_TIMEOUT = %v, want 90s", got)
+		}
+	})
+}
+
 func TestLoadAndRotate_BelowMinEvents(t *testing.T) {
 	dir := t.TempDir()
 	buf := filepath.Join(dir, "buffer.jsonl")
