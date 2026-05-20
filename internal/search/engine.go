@@ -946,6 +946,13 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
+	// Guard: reject calls when the stored embedder name does not match the
+	// current client — same check wired into RecallWithOpts and StoreBatch.
+	// Without this, dimension or model mismatches return garbage silently.
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return nil, err
+	}
+
 	// Embed call bounded by embedRecallTimeout, consistent with RecallWithOpts.
 	// RecallWithinMemory has no BM25 fallback (document chunk search is
 	// vector-only), so it returns an error on embed failure.
