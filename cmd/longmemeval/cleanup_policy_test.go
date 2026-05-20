@@ -129,3 +129,99 @@ func TestCleanupPolicyStructuralGuard(t *testing.T) {
 		t.Error("run.go: must call shouldCleanupProject() for cleanup decision (#751)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// B2: unknown --cleanup-policy value must be rejected — Round 2 QA
+// ---------------------------------------------------------------------------
+
+// TestCleanupPolicy_UnknownValueRejected verifies that an unrecognised
+// --cleanup-policy value causes dispatch to exit non-zero with a descriptive
+// error message rather than silently falling through to auto. (B2)
+// Note: --data is intentionally omitted so dispatch returns before running
+// ingest (avoids log.Fatalf in loadItems). The cleanup-policy check must fire
+// before the --data required check.
+func TestCleanupPolicy_UnknownValueRejected(t *testing.T) {
+	cases := []string{"ALWAYS", "Never", "sometimes", "1"}
+	for _, val := range cases {
+		t.Run("policy="+val, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			args := []string{"longmemeval", "ingest", "--cleanup-policy", val}
+			exit := dispatch(args, &stdout, &stderr)
+			if exit == 0 {
+				t.Errorf("dispatch with --cleanup-policy=%q exited 0; want non-zero (invalid value must be rejected)", val)
+			}
+			combined := stderr.String() + stdout.String()
+			if !strings.Contains(combined, "invalid --cleanup-policy") {
+				t.Errorf("expected 'invalid --cleanup-policy' in output; got stderr=%q stdout=%q", stderr.String(), stdout.String())
+			}
+		})
+	}
+}
+
+// TestCleanupPolicy_ValidValuesAccepted ensures the three valid values are not
+// rejected by the enum guard (they may fail later due to missing --data, but
+// must not fail with the cleanup-policy error). (B2 regression guard)
+func TestCleanupPolicy_ValidValuesAccepted(t *testing.T) {
+	for _, val := range []string{"auto", "always", "never"} {
+		t.Run("policy="+val, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			args := []string{"longmemeval", "ingest", "--cleanup-policy", val}
+			exit := dispatch(args, &stdout, &stderr)
+			combined := stderr.String() + stdout.String()
+			if strings.Contains(combined, "invalid --cleanup-policy") {
+				t.Errorf("valid --cleanup-policy=%q was rejected: %s", val, combined)
+			}
+			// exit may be non-zero (e.g. missing --data) but must not be due to policy
+			_ = exit
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B3: --no-cleanup + explicit --cleanup-policy must conflict — Round 2 QA
+// ---------------------------------------------------------------------------
+
+// TestNoCleanup_ConflictsWithExplicitPolicy verifies that combining the
+// deprecated --no-cleanup flag with an explicit (non-default) --cleanup-policy
+// value causes an error rather than silently overwriting the policy. (B3)
+// Note: --data omitted intentionally — conflict check must fire before data check.
+func TestNoCleanup_ConflictsWithExplicitPolicy(t *testing.T) {
+	// "auto" is the default value; --no-cleanup + explicit auto cannot be
+	// distinguished from --no-cleanup alone, so only non-auto values conflict.
+	conflicts := []string{"always", "never"}
+	for _, policy := range conflicts {
+		t.Run("policy="+policy, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			args := []string{
+				"longmemeval", "ingest",
+				"--no-cleanup",
+				"--cleanup-policy", policy,
+			}
+			exit := dispatch(args, &stdout, &stderr)
+			if exit == 0 {
+				t.Errorf("--no-cleanup --cleanup-policy=%s exited 0; want non-zero (conflict must be detected)", policy)
+			}
+			combined := stderr.String() + stdout.String()
+			if !strings.Contains(combined, "conflicting flags") {
+				t.Errorf("expected 'conflicting flags' in output; got stderr=%q stdout=%q", stderr.String(), stdout.String())
+			}
+		})
+	}
+}
+
+// TestNoCleanup_AloneCoercesToNever verifies that --no-cleanup alone (without
+// an explicit --cleanup-policy) silently coerces to never without error. (B3 regression guard)
+func TestNoCleanup_AloneCoercesToNever(t *testing.T) {
+	var stdout, stderr strings.Builder
+	// --data is missing so dispatch will return an error, but it must NOT be
+	// a conflict error — the conflict check only fires when policy is explicit.
+	args := []string{"longmemeval", "ingest", "--no-cleanup"}
+	_ = dispatch(args, &stdout, &stderr)
+	combined := stderr.String() + stdout.String()
+	if strings.Contains(combined, "conflicting flags") {
+		t.Errorf("--no-cleanup alone must not trigger conflict error; got: %s", combined)
+	}
+	if strings.Contains(combined, "invalid --cleanup-policy") {
+		t.Errorf("--no-cleanup alone must not trigger policy-validation error; got: %s", combined)
+	}
+}

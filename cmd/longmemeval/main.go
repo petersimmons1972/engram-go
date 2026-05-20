@@ -201,8 +201,27 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// #751: --no-cleanup is deprecated; coerce to CleanupPolicyNever and warn.
+	// B2 (#807): validate --cleanup-policy against the known enum set.
+	// Must fire before any other validation so the error is clearly attributable.
+	switch cfg.CleanupPolicy {
+	case CleanupPolicyAuto, CleanupPolicyAlways, CleanupPolicyNever:
+		// valid
+	default:
+		_, _ = fmt.Fprintf(stderr, "invalid --cleanup-policy %q: must be one of auto|always|never\n", cfg.CleanupPolicy)
+		return 1
+	}
+
+	// B3 (#807): --no-cleanup is deprecated; coerce to CleanupPolicyNever and warn.
+	// If user explicitly set a non-default policy alongside --no-cleanup, reject
+	// the combination — silently overwriting would hide intent bugs.
 	if cfg.NoCleanup {
+		if cfg.CleanupPolicy != CleanupPolicyAuto {
+			// User passed both --no-cleanup and an explicit --cleanup-policy.
+			_, _ = fmt.Fprintf(stderr,
+				"conflicting flags: --no-cleanup is deprecated alias for --cleanup-policy=never; cannot combine with --cleanup-policy=%s\n",
+				cfg.CleanupPolicy)
+			return 1
+		}
 		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
 		cfg.CleanupPolicy = CleanupPolicyNever
 	}
@@ -248,7 +267,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 }
 
 func newRunID() string {
-	b := make([]byte, 3)
+	// S7 (#807): 8 bytes = 16 hex chars = 64 bits; reduces prefix-match collision
+	// risk on shared infra from 1/16M (24-bit) to ~1/18E (64-bit). Callers treat
+	// RunID as an opaque string so length change is backward-compatible.
+	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

@@ -88,17 +88,38 @@ func runRun(cfg *Config) int {
 	}
 	close(work)
 
+	// S9 (#807): collect preserved-project names so we can emit one summary line
+	// instead of per-item log noise (~one line per question).
+	preservedCh := make(chan string, cfg.Workers*2)
+
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(cfg, itemMap, work, innerCh)
+			runWorker(cfg, itemMap, work, innerCh, preservedCh)
 		}()
 	}
 	wg.Wait()
 	close(innerCh)
+	close(preservedCh)
 	wgWriter.Wait()
+
+	// S9 (#807): emit one summary line for all preserved projects.
+	var preserved []string
+	for name := range preservedCh {
+		preserved = append(preserved, name)
+	}
+	if len(preserved) > 0 {
+		sample := preserved
+		if len(sample) > 5 {
+			sample = sample[:5]
+		}
+		// TODO(#807-S3): migrate to slog once structured logging is wired into
+		// cmd/longmemeval (currently uses stdlib log; slog lives in internal/ only).
+		log.Printf("INFO run: preserved %d project(s) under cleanup-policy=%s (sample: %v); pass --cleanup-policy=always to override",
+			len(preserved), cfg.CleanupPolicy, sample)
+	}
 
 	att := attempted.Load()
 	errs := errors.Load()
@@ -130,7 +151,9 @@ func exitCodeForRunOutcome(attempted, errors int64) int {
 	return 0
 }
 
-func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry) {
+// runWorker processes items from work, writing RunEntry results to out and
+// sending preserved-project names to preservedCh (for S9 summary logging).
+func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry, preservedCh chan<- string) {
 	for ingestEntry := range work {
 		ctx := context.Background()
 		item, ok := itemMap[ingestEntry.QuestionID]
@@ -157,12 +180,12 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 				}
 			}()
 			entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
-		out <- entry
-		if entry.Status == "error" {
-			log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
-		} else {
-			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
-		}
+			out <- entry
+			if entry.Status == "error" {
+				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+			} else {
+				log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+			}
 
 			if shouldCleanupProject(cfg, ingestEntry.Project) {
 				if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
@@ -171,7 +194,9 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 					}
 				}
 			} else {
-				log.Printf("INFO cleanup-policy=auto: preserving project %s (not created by this run); pass --cleanup-policy=always to override", ingestEntry.Project)
+				// S9 (#807): send to preservedCh for batch summary at end of run;
+				// avoids per-question log noise (~N lines for N questions).
+				preservedCh <- ingestEntry.Project
 			}
 		}()
 	}
