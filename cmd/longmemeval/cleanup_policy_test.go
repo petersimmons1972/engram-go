@@ -141,7 +141,7 @@ func TestCleanupPolicyStructuralGuard(t *testing.T) {
 // ingest (avoids log.Fatalf in loadItems). The cleanup-policy check must fire
 // before the --data required check.
 func TestCleanupPolicy_UnknownValueRejected(t *testing.T) {
-	cases := []string{"ALWAYS", "Never", "sometimes", "1"}
+	cases := []string{"ALWAYS", "Never", "sometimes", "1", ""}
 	for _, val := range cases {
 		t.Run("policy="+val, func(t *testing.T) {
 			var stdout, stderr strings.Builder
