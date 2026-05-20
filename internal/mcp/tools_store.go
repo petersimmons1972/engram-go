@@ -12,6 +12,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/parse"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -90,7 +91,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		Immutable:         getBool(args, "immutable", false),
 		StorageMode:       "focused",
 		EpisodeID:         episodeID,
-		ValidFrom:         types.ParseDateTag(tags),
+		ValidFrom:         parse.ParseDateTag(tags),
 		PatternConfidence: patternConfidence,
 	}
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
@@ -191,7 +192,7 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		Tags:       docTags,
 		Immutable:  getBool(args, "immutable", false),
 		EpisodeID:  episodeIDFromContextOrArgs(ctx, args),
-		ValidFrom:  types.ParseDateTag(docTags),
+		ValidFrom:  parse.ParseDateTag(docTags),
 	}
 	engine := h.Engine
 	deps := storeDocumentDeps{
@@ -310,7 +311,7 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Immutable:         getBool(mmap, "immutable", false),
 			StorageMode:       "focused",
 			EpisodeID:         itemEpisodeID,
-			ValidFrom:         types.ParseDateTag(itemTags),
+			ValidFrom:         parse.ParseDateTag(itemTags),
 			PatternConfidence: itemPatternConfidence,
 		})
 	}
