@@ -2,7 +2,6 @@ package reembed
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -71,7 +70,7 @@ type countingEmbedder struct {
 func (c *countingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, c.dims), nil
 }
-func (c *countingEmbedder) Name() string    { return fmt.Sprintf("counting") }
+func (c *countingEmbedder) Name() string    { return "counting" }
 func (c *countingEmbedder) Dimensions() int { return c.dims }
 
 // TestGlobalReembedder_RecoveryIntegration is an integration test that requires
@@ -122,7 +121,7 @@ func TestGlobalReembedder_RecoveryIntegration(t *testing.T) {
 		t.Fatalf("StoreChunks: %v", err)
 	}
 
-	embedder := &countingEmbedder{dims: 768}
+	embedder := &countingEmbedder{dims: 1024}
 	g := NewGlobalReembedder(pool, embedder, 10, 100*time.Millisecond)
 
 	// Simulate all connections going stale (e.g. Postgres was restarted) by
