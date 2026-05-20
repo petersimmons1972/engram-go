@@ -229,7 +229,7 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateOAI(ctx, prompt, baseURL, model, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -251,21 +251,22 @@ Answer in one sentence using only the facts directly required by the question. D
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.
+// Label is requested on the FIRST LINE so that truncation cannot strip it.
 func ScoringPrompt(question, referenceAnswer, hypothesis string) string {
-	return fmt.Sprintf(`You are judging whether a generated answer correctly answers a question about conversation history.
+	return fmt.Sprintf(`You are grading a hypothesis against a gold answer. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then on the NEXT LINE explain your reasoning in 1-3 sentences.
+
+Definitions:
+- CORRECT: hypothesis contains all key facts from the gold answer with no contradictions. Extra correct context is fine.
+- PARTIALLY_CORRECT: some key facts present, others missing or hedged; partial overlap with gold.
+- INCORRECT: key facts wrong, contradicted, or completely absent (even if topically related).
 
 Question: %s
 
-Reference answer: %s
+Gold answer: %s
 
-Generated answer: %s
+Hypothesis: %s
 
-Is the generated answer correct? Reply with exactly one of these labels on the first line:
-CORRECT
-PARTIALLY_CORRECT
-INCORRECT
-
-Then on the second line, briefly explain why (one sentence).`, question, referenceAnswer, hypothesis)
+Judgment (one word on first line):`, question, referenceAnswer, hypothesis)
 }
 
 // ScoreResult holds the parsed output of the judge prompt.
@@ -280,27 +281,72 @@ func Score(ctx context.Context, question, referenceAnswer, hypothesis string, re
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateHaiku(ctx, prompt, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+// validLabels is the ordered set of recognised score labels.
+var validLabels = []string{"CORRECT", "PARTIALLY_CORRECT", "INCORRECT"}
+
 // ParseScoreLabel extracts the label and explanation from raw judge output.
-// Returns PARTIALLY_CORRECT as default if the label is unrecognised.
+//
+// Strategy:
+//  1. Read the first non-empty line; match case-insensitively against the
+//     three valid labels.
+//  2. If no match on the first line, scan every line for the first occurrence
+//     of any valid label (handles preamble / COT output).
+//  3. If still no match, return SCORE_ERROR — never default to PARTIALLY_CORRECT,
+//     which was masking truncation failures.
 func ParseScoreLabel(raw string) (label, explanation string) {
-	lines := strings.SplitN(strings.TrimSpace(raw), "\n", 2)
-	first := strings.ToUpper(strings.TrimSpace(lines[0]))
-	switch first {
-	case "CORRECT", "PARTIALLY_CORRECT", "INCORRECT":
-		label = first
-	default:
-		label = "PARTIALLY_CORRECT"
+	allLines := strings.Split(strings.TrimSpace(raw), "\n")
+
+	// Pass 1: first non-empty line.
+	firstLineIdx := -1
+	for i, l := range allLines {
+		if strings.TrimSpace(l) != "" {
+			firstLineIdx = i
+			first := strings.ToUpper(strings.TrimSpace(l))
+			for _, v := range validLabels {
+				if first == v {
+					label = v
+					if i+1 < len(allLines) {
+						explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+					}
+					return label, explanation
+				}
+			}
+			break
+		}
 	}
-	if len(lines) > 1 {
-		explanation = strings.TrimSpace(lines[1])
+
+	// Pass 2: scan all lines for first label occurrence.
+	for i, l := range allLines {
+		upper := strings.ToUpper(strings.TrimSpace(l))
+		for _, v := range validLabels {
+			if upper == v {
+				label = v
+				// Explanation is whatever follows on subsequent lines.
+				if i+1 < len(allLines) {
+					explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+				}
+				// Also capture any pre-label text as part of explanation if first line had content.
+				if firstLineIdx >= 0 && firstLineIdx != i {
+					pre := strings.TrimSpace(strings.Join(allLines[firstLineIdx:i], "\n"))
+					if pre != "" && explanation != "" {
+						explanation = pre + "\n" + explanation
+					} else if pre != "" {
+						explanation = pre
+					}
+				}
+				return label, explanation
+			}
+		}
 	}
-	return label, explanation
+
+	// Pass 3: no label found — explicit error, not a silent PARTIALLY_CORRECT.
+	return "SCORE_ERROR", strings.TrimSpace(raw)
 }
 
 
