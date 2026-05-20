@@ -69,7 +69,7 @@ func runRun(cfg *Config) int {
 		release, lockErr := acquireBackendLock(lockCfg, cfg.LLMBaseURL)
 		if lockErr != nil {
 			log.Print(lockErr)
-			return 2
+			return ExitCodeLockContention
 		}
 		defer release()
 	}

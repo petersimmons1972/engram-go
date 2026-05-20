@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -147,6 +148,115 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 			t.Errorf("input slice was mutated at index %d", i)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// R2-B1: runRun must return ExitCodeLockContention (75), not 2, on lock
+// contention. We test this via (a) a source-level structural guard that the
+// literal `2` is not used as the lock-contention exit code, and (b) a
+// subprocess test that wires runRun through a locked backend.
+// ---------------------------------------------------------------------------
+
+// TestRunRun_LockContention_ExitCode75_StructuralGuard asserts that run.go
+// does NOT contain `return 2` as the lock-contention exit path. This is a
+// source-level regression guard — the functional assertion is in
+// TestRunRun_LockContention_ExitCode75_Subprocess below.
+func TestRunRun_LockContention_ExitCode75_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	// The lock-contention branch must use ExitCodeLockContention, not a
+	// literal 2. We check that ExitCodeLockContention is referenced and
+	// that the pattern `return 2` does not appear in the lock-contention
+	// block (i.e., adjacent to lockErr != nil check).
+	if !strings.Contains(text, "ExitCodeLockContention") {
+		t.Error("run.go missing ExitCodeLockContention — lock-contention exit code not wired (#808 R2-B1)")
+	}
+	// Detect the old bug: `return 2` immediately after the lockErr check.
+	// We look for the pattern in the lock-acquisition block context.
+	if strings.Contains(text, "return 2") {
+		t.Error("run.go still contains `return 2` — must use ExitCodeLockContention (#808 R2-B1)")
+	}
+}
+
+// TestRunRun_LockContention_ExitCode75_Subprocess verifies that when runRun
+// finds the backend locked, the process exits with ExitCodeLockContention (75).
+// Uses the lockHelper subprocess to hold the lock, then spawns a second
+// subprocess that calls runRun via a minimal Config pointing at the same URL.
+func TestRunRun_LockContention_ExitCode75_Subprocess(t *testing.T) {
+	if os.Getenv("LME_LOCK_HELPER") != "" {
+		lockHelperMain()
+		return
+	}
+	if os.Getenv("LME_RUNRUN_HELPER") != "" {
+		runRunLockHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	url := "http://runrun-exit75:8000/v1"
+
+	// First subprocess: hold the lock.
+	cmd1 := exec.Command(os.Args[0], "-test.run=TestRunRun_LockContention_ExitCode75_Subprocess")
+	cmd1.Env = append(os.Environ(),
+		"LME_LOCK_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+		"LME_LOCK_HOLD=1s",
+	)
+	if err := cmd1.Start(); err != nil {
+		t.Fatalf("start lock-holder: %v", err)
+	}
+	defer func() { _ = cmd1.Process.Kill() }()
+
+	// Wait for lockfile to appear.
+	lockPath := backendLockPath(dir, url)
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(lockPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Second subprocess: calls runRun with the locked backend. Must exit 75.
+	cmd2 := exec.Command(os.Args[0], "-test.run=TestRunRun_LockContention_ExitCode75_Subprocess")
+	cmd2.Env = append(os.Environ(),
+		"LME_RUNRUN_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+	)
+	err := cmd2.Run()
+	var exitErr *exec.ExitError
+	if ok := asExitError(err, &exitErr); !ok {
+		t.Fatalf("runRun subprocess should exit non-zero; got: %v", err)
+	}
+	if exitErr.ExitCode() != ExitCodeLockContention {
+		t.Errorf("runRun exit code = %d, want ExitCodeLockContention (%d) (#808 R2-B1)",
+			exitErr.ExitCode(), ExitCodeLockContention)
+	}
+}
+
+// runRunLockHelper is the subprocess entry for TestRunRun_LockContention_ExitCode75_Subprocess.
+// It calls runRun with a minimal Config pointing at the locked backend URL.
+// The data file and out dir are intentionally invalid — runRun must exit at
+// the lock-acquisition step before reaching them.
+func runRunLockHelper() {
+	dir := os.Getenv("LME_LOCK_DIR")
+	url := os.Getenv("LME_LOCK_URL")
+	outDir, _ := os.MkdirTemp("", "lme-runrun-test-*")
+	defer os.RemoveAll(outDir)
+	cfg := &Config{
+		LLMBaseURL:       url,
+		ExclusiveBackend: true,
+		BackendLockDir:   dir,
+		OutDir:           outDir,
+		DataFile:         "/dev/null",
+		Workers:          1,
+	}
+	code := runRun(cfg)
+	os.Exit(code)
 }
 
 // ---------------------------------------------------------------------------

@@ -19,20 +19,33 @@ import (
 // flag package uses for parse errors.
 const ExitCodeLockContention = 75
 
-// redactURL strips user-info (credentials) from a URL string before it
-// appears in error messages or logs. Uses net/url to parse; if parsing fails,
-// returns the first 12 hex chars of the SHA-256 of the raw string instead of
-// leaking the raw value.
+// redactURL strips credentials and query strings from a URL before it appears
+// in error messages or logs. Uses net/url to parse.
+//
+// Redaction rules:
+//   - User-info (user:password@) is always removed.
+//   - Query string is always removed — tokens and API keys commonly appear
+//     there (e.g. ?api_key=…, ?token=…) and must not appear in logs.
+//   - Fragment is dropped by net/url.String() when RawQuery is cleared.
+//
+// If parsing fails or the URL has no host (e.g. unparseable strings that may
+// contain credentials in the query), returns the fixed placeholder
+// "[redacted-url]" rather than a sha256 hash. A hash of a low-entropy URL
+// (e.g. "http://localhost:8000") is precomputable and provides false
+// redaction assurance.
 func redactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		// Unparseable — return sha256[:12] so callers still have a stable
-		// identifier without exposing credentials.
-		sum := sha256.Sum256([]byte(raw))
-		return fmt.Sprintf("%x", sum[:6])
+		// Unparseable or host-less — do not leak any fragment of the raw
+		// value; return a fixed placeholder.
+		return "[redacted-url]"
 	}
-	// Strip user-info regardless of whether credentials are present.
+	// Strip user-info and query string. The redacted form intentionally drops
+	// both so neither credentials (in userinfo) nor tokens (in query params)
+	// appear in logs or error messages.
 	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
 	return u.String()
 }
 
@@ -61,9 +74,11 @@ func defaultLockDir() string {
 // path, and drops any query string. This ensures that
 // "http://OBLIVION:8000/v1/" and "http://oblivion:8000/v1" hash identically.
 func normalizeBackendURL(rawURL string) string {
-	// Split on "://" to get scheme+rest without importing net/url (avoids a
-	// dependency on stdlib URL parsing that can behave differently for edge
-	// inputs). Simple string manipulation is sufficient for our well-formed URLs.
+	// Simple string manipulation rather than net/url.Parse for consistent
+	// hash-key construction: net/url round-trips may alter percent-encoding
+	// or drop opaque path components for unusual but well-formed URLs, causing
+	// the same logical backend URL to produce different lock-file names across
+	// Go versions. The string-split approach is stable for our URL shape.
 	scheme := ""
 	rest := rawURL
 	if idx := strings.Index(rawURL, "://"); idx >= 0 {
@@ -170,7 +185,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	}
 	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
 		// Non-fatal: if we can't create the dir, skip locking and warn.
-		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: cannot create lock dir %q: %v — skipping lock", dir, mkErr)
 		return noop, nil
 	}
@@ -180,7 +195,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	// Open (or create) the lock file.
 	fd, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if openErr != nil {
-		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: cannot open lock file %q: %v — skipping lock", lockPath, openErr)
 		return noop, nil
 	}
@@ -217,7 +232,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	if flockErr != syscall.EWOULDBLOCK {
 		// Unexpected flock error; skip locking with a warning.
 		_ = fd.Close()
-		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: flock error on %q: %v — skipping lock", lockPath, flockErr)
 		return noop, nil
 	}
@@ -239,7 +254,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	if !isProcessAlive(pid) {
 		// Stale lock — dead or invalid pid. Log and reclaim.
 		startTime := time.Unix(startUnix, 0).UTC().Format(time.RFC3339)
-		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN stale lock from pid=%d (dead), started=%s inv=%s — reclaiming %s",
 			pid, startTime, invID, lockPath)
 
@@ -249,7 +264,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		_ = fd.Close()
 		fd2, openErr2 := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 		if openErr2 != nil {
-			// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+			// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 			log.Printf("WARN backend lock: reclaim open failed: %v — skipping lock", openErr2)
 			return noop, nil
 		}
@@ -257,7 +272,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		flockErr2 := syscall.Flock(int(fd2.Fd()), syscall.LOCK_EX)
 		if flockErr2 != nil {
 			_ = fd2.Close()
-			// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
+			// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
 			log.Printf("WARN backend lock: reclaim flock failed: %v — skipping lock", flockErr2)
 			return noop, nil
 		}

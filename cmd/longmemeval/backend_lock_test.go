@@ -272,6 +272,11 @@ func TestRedactURL(t *testing.T) {
 		{"https://token:x@oblivion:8000/v1", "https://oblivion:8000/v1"},
 		{"http://noauth@host/v1", "http://host/v1"},
 		{"http://host:8000/v1", "http://host:8000/v1"},
+		// R2-B3: query strings must also be stripped (tokens in query params).
+		{"http://user:p@host/v1?api_key=secret", "http://host/v1"},
+		{"http://host/v1?token=xyz", "http://host/v1"},
+		// Idempotent: already clean URLs pass through unchanged.
+		{"http://host/v1", "http://host/v1"},
 	}
 	for _, tc := range cases {
 		got := redactURL(tc.input)
@@ -280,15 +285,35 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 
-	// Unparseable URL must return a sha256 prefix, not the raw URL.
+	// R3: low-entropy parseable URLs (e.g. http://localhost:8000) must NOT
+	// be hashed — hashes of well-known URLs are precomputable. The redacted
+	// form returns the scheme+host only (no credentials, no query) which is
+	// the correct safe form for log messages.
+	lowEntropy := "http://localhost:8000"
+	gotLow := redactURL(lowEntropy)
+	// The URL has no credentials and no query, so redactURL is a no-op in
+	// content (but importantly it went through the net/url path, not sha256).
+	if gotLow != "http://localhost:8000" {
+		t.Errorf("redactURL(%q) = %q, want %q", lowEntropy, gotLow, "http://localhost:8000")
+	}
+
+	// Low-entropy URL with query string — query must be stripped.
+	lowEntropyWithQuery := "http://localhost:8000?api_key=mytoken"
+	gotLowQ := redactURL(lowEntropyWithQuery)
+	if gotLowQ != "http://localhost:8000" {
+		t.Errorf("redactURL(%q) = %q, want %q (query stripped)", lowEntropyWithQuery, gotLowQ, "http://localhost:8000")
+	}
+
+	// Unparseable URL must return the fixed placeholder "[redacted-url]", not
+	// the raw value (which may contain credentials in query params) and not a
+	// sha256 hash (which is precomputable for low-entropy values).
 	ugly := "://bad url with spaces and :pass@"
 	got := redactURL(ugly)
 	if got == ugly {
-		t.Error("redactURL(unparseable) returned raw URL; want sha256 prefix")
+		t.Error("redactURL(unparseable) returned raw URL; want [redacted-url]")
 	}
-	// Must be a 12-hex-char sha256 prefix.
-	if len(got) != 12 {
-		t.Errorf("redactURL(unparseable) = %q (len %d), want 12-char sha256 prefix", got, len(got))
+	if got != "[redacted-url]" {
+		t.Errorf("redactURL(unparseable) = %q, want \"[redacted-url]\"", got)
 	}
 }
 
