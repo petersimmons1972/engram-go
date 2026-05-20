@@ -6,9 +6,11 @@ package search_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -195,6 +197,14 @@ func TestRetrievalTracking_DimMismatch(t *testing.T) {
 	t.Cleanup(func() { engine768.Close() })
 	_, _, err := engine768.RecallWithEvent(ctx, "dim mismatch test memory", 5, "normal")
 	require.Error(t, err, "RecallWithEvent with dim mismatch must return an error")
-	assert.Contains(t, err.Error(), "dim",
-		"error must mention embedding dimension mismatch (got: %v)", err)
+
+	// Assert on the structured embed.PermanentError type. The dim mismatch
+	// surfaces via the Stored/Current fields, not as a "dim" substring in the
+	// formatted Error() string (which only renders Code + Remediation).
+	var permErr *embed.PermanentError
+	require.True(t, errors.As(err, &permErr),
+		"error must be an *embed.PermanentError (got: %v)", err)
+	assert.NotEqual(t, permErr.Stored, permErr.Current,
+		"PermanentError must record the dim mismatch in Stored vs Current (stored=%q current=%q)",
+		permErr.Stored, permErr.Current)
 }
