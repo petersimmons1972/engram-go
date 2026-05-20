@@ -30,6 +30,7 @@
 - **Model floor rule:** Always set `model:` explicitly on every agent dispatch. Default to the lowest tier that can do the job correctly — Haiku first, Sonnet only when the task requires judgment or multi-file synthesis, Opus only per the A1–A5 triggers below. Homogeneous Sonnet teams are a smell. If you cannot articulate why Haiku is insufficient for a given agent, use Haiku.
 - **Advisory mandate:** Every implementation agent brief must include: "Before proposing or selecting any implementation approach, invoke the `advisory-gate` skill if 2+ approaches exist with meaningfully different consequences (A1-A5 triggers)."
 - **Engram context mandate:** When dispatching implementation agents, include relevant Engram recall results from the current session in the brief. Subagents receive no session hooks — coordinator is responsible for seeding their context.
+- **Publish boundary mandate:** Sub-agent briefs MAY include `git add` and `git commit` but MUST NOT include `git push`. The coordinator owns the publish boundary and pushes only after explicit per-push founder confirmation. Applies to any ref pushed to a shared remote (main, release branches, anything visible beyond the local machine). Rule landed 2026-05-20 after AP.11 violation during harness-port Project A Stage 0; see lessons-learned.md entry of same date.
 
 ## Pre-Flight Protocol — MANDATORY
 
