@@ -91,7 +91,7 @@ func TestBackendLock_Contention(t *testing.T) {
 	}()
 	<-ready
 
-	// Second process: should exit 2 immediately (backend already locked).
+	// Second process: should exit 75 (EX_TEMPFAIL) immediately (backend already locked).
 	start := time.Now()
 	cmd2 := exec.Command(os.Args[0], "-test.run=TestBackendLock_Contention")
 	cmd2.Env = append(os.Environ(),
@@ -110,8 +110,8 @@ func TestBackendLock_Contention(t *testing.T) {
 	if ok := asExitError(err, &exitErr); !ok {
 		t.Fatalf("second process should have exited non-zero; got: %v", err)
 	}
-	if exitErr.ExitCode() != 2 {
-		t.Errorf("second process exit code = %d, want 2", exitErr.ExitCode())
+	if exitErr.ExitCode() != 75 {
+		t.Errorf("second process exit code = %d, want 75 (EX_TEMPFAIL)", exitErr.ExitCode())
 	}
 }
 
@@ -233,6 +233,158 @@ func asExitError(err error, target **exec.ExitError) bool {
 	return ok
 }
 
+// TestBackendLock_PidZeroReclaim verifies that a lock file containing pid=0
+// is treated as stale and reclaimed, never as a live process.
+func TestBackendLock_PidZeroReclaim(t *testing.T) {
+	dir := t.TempDir()
+	url := "http://pid-zero-backend:8000/v1"
+	lockPath := backendLockPath(dir, url)
+
+	// Write a lock file with pid=0, which parseLockFile returns for a corrupt file.
+	content := []byte("0\n1700000000\nstale-zero-inv\n")
+	if err := os.WriteFile(lockPath, content, 0600); err != nil {
+		t.Fatalf("write pid=0 lock file: %v", err)
+	}
+
+	// isProcessAlive(0) must return false — kernel init process must never be claimed.
+	if isProcessAlive(0) {
+		t.Error("isProcessAlive(0) returned true; want false (pid=0 is never a valid user process)")
+	}
+
+	cfg := &BackendLockConfig{ExclusiveBackend: true, BackendLockDir: dir}
+	release, err := acquireBackendLock(cfg, url)
+	if err != nil {
+		t.Errorf("pid=0 lock file: acquireBackendLock should reclaim and succeed, got: %v", err)
+	}
+	if release == nil {
+		t.Fatal("release func must be non-nil on success")
+	}
+	release()
+}
+
+// TestRedactURL verifies that credentials in URLs are stripped from error output.
+func TestRedactURL(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"http://user:pass@host/v1", "http://host/v1"},
+		{"https://token:x@oblivion:8000/v1", "https://oblivion:8000/v1"},
+		{"http://noauth@host/v1", "http://host/v1"},
+		{"http://host:8000/v1", "http://host:8000/v1"},
+	}
+	for _, tc := range cases {
+		got := redactURL(tc.input)
+		if got != tc.want {
+			t.Errorf("redactURL(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+
+	// Unparseable URL must return a sha256 prefix, not the raw URL.
+	ugly := "://bad url with spaces and :pass@"
+	got := redactURL(ugly)
+	if got == ugly {
+		t.Error("redactURL(unparseable) returned raw URL; want sha256 prefix")
+	}
+	// Must be a 12-hex-char sha256 prefix.
+	if len(got) != 12 {
+		t.Errorf("redactURL(unparseable) = %q (len %d), want 12-char sha256 prefix", got, len(got))
+	}
+}
+
+// TestBackendLock_ContendingExitCode75 verifies that lock contention now exits
+// with code 75 (EX_TEMPFAIL), not 2 (which collides with flag-parse errors).
+func TestBackendLock_ContendingExitCode75(t *testing.T) {
+	if os.Getenv("LME_LOCK_HELPER") != "" {
+		lockHelperMain()
+		return
+	}
+
+	dir := t.TempDir()
+	url := "http://exit75-backend:8000/v1"
+
+	// First process: hold the lock.
+	cmd1 := exec.Command(os.Args[0], "-test.run=TestBackendLock_ContendingExitCode75")
+	cmd1.Env = append(os.Environ(),
+		"LME_LOCK_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+		"LME_LOCK_HOLD=500ms",
+	)
+	if err := cmd1.Start(); err != nil {
+		t.Fatalf("start first process: %v", err)
+	}
+	defer func() { _ = cmd1.Process.Kill() }()
+
+	// Wait for lock file to appear.
+	lockPath := backendLockPath(dir, url)
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(lockPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Second process: must exit 75, not 2.
+	cmd2 := exec.Command(os.Args[0], "-test.run=TestBackendLock_ContendingExitCode75")
+	cmd2.Env = append(os.Environ(),
+		"LME_LOCK_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+		"LME_LOCK_HOLD=0",
+	)
+	err := cmd2.Run()
+	var exitErr *exec.ExitError
+	if ok := asExitError(err, &exitErr); !ok {
+		t.Fatalf("second process should exit non-zero; got: %v", err)
+	}
+	if exitErr.ExitCode() != 75 {
+		t.Errorf("second process exit code = %d, want 75 (EX_TEMPFAIL)", exitErr.ExitCode())
+	}
+}
+
+// TestBackendLock_StaleReclaimAtomicity verifies that stale-lock reclaim opens
+// the file WITHOUT O_TRUNC before acquiring flock (no TOCTOU window).
+// We test the observable behavior: reclaim of a dead-PID file must succeed
+// and the new content must reflect our PID, not the stale one.
+func TestBackendLock_StaleReclaimAtomicity(t *testing.T) {
+	if os.Getenv("LME_LOCK_HELPER") != "" {
+		lockHelperMain()
+		return
+	}
+
+	dir := t.TempDir()
+	url := "http://stale-atomic-backend:8000/v1"
+	lockPath := backendLockPath(dir, url)
+
+	// Write a stale lock file with a dead PID.
+	deadPID := 999999
+	staleContent := fmt.Sprintf("%d\n1700000000\nstale-atomic-inv\n", deadPID)
+	if err := os.WriteFile(lockPath, []byte(staleContent), 0600); err != nil {
+		t.Fatalf("write stale lock file: %v", err)
+	}
+	if isProcessAlive(deadPID) {
+		t.Skipf("PID %d is unexpectedly alive — skip atomicity test", deadPID)
+	}
+
+	cfg := &BackendLockConfig{ExclusiveBackend: true, BackendLockDir: dir}
+	release, err := acquireBackendLock(cfg, url)
+	if err != nil {
+		t.Fatalf("stale-reclaim: unexpected error: %v", err)
+	}
+	defer release()
+
+	// After reclaim, lock file must contain OUR pid, not the dead one.
+	data, readErr := os.ReadFile(lockPath)
+	if readErr != nil {
+		t.Fatalf("read lock file after reclaim: %v", readErr)
+	}
+	pid, _, _ := parseLockFile(data)
+	if pid != os.Getpid() {
+		t.Errorf("lock file pid after reclaim = %d, want our pid %d", pid, os.Getpid())
+	}
+}
+
 // lockHelperMain is the subprocess entry point for contention tests.
 // It acquires the lock using the env-configured URL+dir, holds it for
 // LME_LOCK_HOLD duration, then exits.
@@ -257,7 +409,7 @@ func lockHelperMain() {
 	release, err := acquireBackendLock(cfg, url)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(2)
+		os.Exit(75) // EX_TEMPFAIL — backend lock held by another lme run
 	}
 	defer release()
 

@@ -138,6 +138,17 @@ kill -9 <actual_binary_pid>
 
 **Prevention**: Use a process manager (systemd service, supervisord, or K8s) if benchmark runs in background. Shell job control can hide subprocess PIDs.
 
+**Automated guard (v3.3.0+):** The `--exclusive-backend` flag (default enabled) now prevents this scenario automatically. A PID-liveness lock file is written to `$XDG_RUNTIME_DIR/lme/backend-<hash>.lock` (or `/tmp/lme/` if `XDG_RUNTIME_DIR` is unset). If a second `lme run` targets the same backend while the first is still alive, it exits immediately with code **75 (EX_TEMPFAIL)**:
+
+```
+ERROR another lme run holds the lock on backend http://oblivion:8000/v1
+(pid=12345, started=2026-05-20T10:00:00Z, invocation=...).
+Wait for it, or pass --no-exclusive-backend if you accept result contamination.
+Exit code 75 (EX_TEMPFAIL) signals temporary contention.
+```
+
+When two parallel runs *are* intentional (e.g. benchmarking two different Engram server URLs on the same host), pass `--no-exclusive-backend` to both invocations to opt out. Dead-process lock files are reclaimed automatically on the next acquisition attempt — no manual cleanup is needed.
+
 ---
 
 ## Throughput Optimization

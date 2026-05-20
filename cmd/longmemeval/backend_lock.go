@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,29 @@ import (
 	"syscall"
 	"time"
 )
+
+// ExitCodeLockContention is returned when a live process holds the backend
+// lock. Uses EX_TEMPFAIL (75, from sysexits.h) — semantically "temporary
+// failure, try again later" — to avoid colliding with exit code 2 which the
+// flag package uses for parse errors.
+const ExitCodeLockContention = 75
+
+// redactURL strips user-info (credentials) from a URL string before it
+// appears in error messages or logs. Uses net/url to parse; if parsing fails,
+// returns the first 12 hex chars of the SHA-256 of the raw string instead of
+// leaking the raw value.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		// Unparseable — return sha256[:12] so callers still have a stable
+		// identifier without exposing credentials.
+		sum := sha256.Sum256([]byte(raw))
+		return fmt.Sprintf("%x", sum[:6])
+	}
+	// Strip user-info regardless of whether credentials are present.
+	u.User = nil
+	return u.String()
+}
 
 // BackendLockConfig carries the locking-related flags parsed from the CLI.
 type BackendLockConfig struct {
@@ -108,7 +132,16 @@ func parseLockFile(data []byte) (pid int, startUnix int64, invocationID string) 
 
 // isProcessAlive returns true if pid is a live process on this machine.
 // Uses kill(pid, 0) — no signal is sent; ESRCH means the process is gone.
+//
+// Guard: pid <= 0 is never a valid user-space process and always returns
+// false. This prevents a deadlock where parseLockFile returns pid=0 on a
+// corrupt or partially-written lock file, which would otherwise be mistaken
+// for a live process on Linux (kill(0, 0) returns success for the process
+// group).
 func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -119,9 +152,9 @@ func isProcessAlive(pid int) bool {
 
 // acquireBackendLock creates (or reclaims) the per-backend lock file under cfg.
 // Returns a release function (always non-nil) and nil on success.
-// Returns an error with exit-code semantics (exit 2) when a live process holds
-// the lock. The caller must call release() in a defer immediately after a nil
-// error return.
+// Returns an error (caller should exit ExitCodeLockContention = 75) when a
+// live process holds the lock. The caller must call release() in a defer
+// immediately after a nil error return.
 //
 // When cfg.ExclusiveBackend is false, the function is a no-op and the release
 // function is also a no-op.
@@ -137,6 +170,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	}
 	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
 		// Non-fatal: if we can't create the dir, skip locking and warn.
+		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: cannot create lock dir %q: %v — skipping lock", dir, mkErr)
 		return noop, nil
 	}
@@ -146,6 +180,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	// Open (or create) the lock file.
 	fd, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if openErr != nil {
+		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: cannot open lock file %q: %v — skipping lock", lockPath, openErr)
 		return noop, nil
 	}
@@ -156,8 +191,20 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		// Lock acquired cleanly. Write our PID record.
 		invID := fmt.Sprintf("%d", time.Now().UnixNano())
 		content := lockFileContent(os.Getpid(), time.Now().Unix(), invID)
-		_ = fd.Truncate(0)
-		_, _ = fd.WriteAt(content, 0)
+		if err := fd.Truncate(0); err != nil {
+			// Write setup failed — release flock, remove lock file, return error.
+			_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN)
+			_ = fd.Close()
+			_ = os.Remove(lockPath)
+			return nil, fmt.Errorf("backend lock: truncate %q failed: %w", lockPath, err)
+		}
+		if _, writeErr := fd.WriteAt(content, 0); writeErr != nil {
+			// Write failed — release flock, remove lock file, return error.
+			_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN)
+			_ = fd.Close()
+			_ = os.Remove(lockPath)
+			return nil, fmt.Errorf("backend lock: write pid record to %q failed: %w", lockPath, writeErr)
+		}
 
 		releaseFunc := func() {
 			_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN)
@@ -170,6 +217,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	if flockErr != syscall.EWOULDBLOCK {
 		// Unexpected flock error; skip locking with a warning.
 		_ = fd.Close()
+		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN backend lock: flock error on %q: %v — skipping lock", lockPath, flockErr)
 		return noop, nil
 	}
@@ -180,36 +228,54 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		_ = fd.Close()
 		return nil, fmt.Errorf(
 			"ERROR another lme run holds the lock on backend %s (pid=unknown, started=unknown, invocation=unknown). "+
-				"Wait for it, or pass --no-exclusive-backend if you accept result contamination", rawURL)
+				"Wait for it, or pass --no-exclusive-backend if you accept result contamination",
+			redactURL(rawURL))
 	}
 
 	pid, startUnix, invID := parseLockFile(data)
 
-	if pid > 0 && !isProcessAlive(pid) {
-		// Stale lock — dead process. Log and reclaim.
+	// pid <= 0 means corrupt/partial lock file — isProcessAlive guards this
+	// too, but the explicit check here makes the reclaim path clear.
+	if !isProcessAlive(pid) {
+		// Stale lock — dead or invalid pid. Log and reclaim.
 		startTime := time.Unix(startUnix, 0).UTC().Format(time.RFC3339)
+		// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 		log.Printf("WARN stale lock from pid=%d (dead), started=%s inv=%s — reclaiming %s",
 			pid, startTime, invID, lockPath)
 
-		// Re-try flock with a brief re-open to get a fresh fd after the original
-		// locker released. The dead process's flock has already been cleared by
-		// the kernel when the process died; a second non-blocking attempt should
-		// now succeed.
+		// S1 fix: close the old fd, re-open WITHOUT O_TRUNC, acquire flock
+		// FIRST, THEN truncate+write under the lock. Opening with O_TRUNC
+		// before holding the flock creates a TOCTOU race window.
 		_ = fd.Close()
-		fd2, openErr2 := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0600)
+		fd2, openErr2 := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 		if openErr2 != nil {
+			// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 			log.Printf("WARN backend lock: reclaim open failed: %v — skipping lock", openErr2)
 			return noop, nil
 		}
-		flockErr2 := syscall.Flock(int(fd2.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		// Acquire flock (blocking is fine — we've decided to reclaim a dead lock).
+		flockErr2 := syscall.Flock(int(fd2.Fd()), syscall.LOCK_EX)
 		if flockErr2 != nil {
 			_ = fd2.Close()
+			// TODO(S3): migrate to slog when slog is wired into cmd/longmemeval.
 			log.Printf("WARN backend lock: reclaim flock failed: %v — skipping lock", flockErr2)
 			return noop, nil
 		}
+		// Truncate and write under the lock.
+		if truncErr := fd2.Truncate(0); truncErr != nil {
+			_ = syscall.Flock(int(fd2.Fd()), syscall.LOCK_UN)
+			_ = fd2.Close()
+			_ = os.Remove(lockPath)
+			return nil, fmt.Errorf("backend lock: reclaim truncate %q failed: %w", lockPath, truncErr)
+		}
 		invID2 := fmt.Sprintf("%d", time.Now().UnixNano())
 		content := lockFileContent(os.Getpid(), time.Now().Unix(), invID2)
-		_, _ = fd2.WriteAt(content, 0)
+		if _, writeErr := fd2.WriteAt(content, 0); writeErr != nil {
+			_ = syscall.Flock(int(fd2.Fd()), syscall.LOCK_UN)
+			_ = fd2.Close()
+			_ = os.Remove(lockPath)
+			return nil, fmt.Errorf("backend lock: reclaim write to %q failed: %w", lockPath, writeErr)
+		}
 
 		releaseFunc := func() {
 			_ = syscall.Flock(int(fd2.Fd()), syscall.LOCK_UN)
@@ -225,7 +291,8 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		startTime = time.Unix(startUnix, 0).UTC().Format(time.RFC3339)
 	}
 	return nil, fmt.Errorf(
-		"ERROR another lme run holds the lock on backend %s (pid=%d, started=%s, invocation=%s). "+
-			"Wait for it, or pass --no-exclusive-backend if you accept result contamination",
-		rawURL, pid, startTime, invID)
+		"ERROR another lme run holds the lock on backend %s (pid=%d, started=%s, invocation=%s); "+
+			"wait for it or pass --no-exclusive-backend to accept result contamination "+
+			"(exit %d = EX_TEMPFAIL)",
+		redactURL(rawURL), pid, startTime, invID, ExitCodeLockContention)
 }

@@ -99,6 +99,13 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
 	_, _ = fmt.Fprintln(w, "                          never: preserve all projects (use if reusing data in a follow-up experiment)")
 	_, _ = fmt.Fprintln(w, "  --no-cleanup            DEPRECATED: alias for --cleanup-policy=never")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Backend contention guard (--exclusive-backend is on by default):")
+	_, _ = fmt.Fprintln(w, "  --exclusive-backend         Guard the vLLM endpoint with a PID-liveness lockfile (default true)")
+	_, _ = fmt.Fprintln(w, "  --no-exclusive-backend      Disable backend lock; accept result contamination from parallel runs")
+	_, _ = fmt.Fprintln(w, "  --backend-lock-dir <dir>    Override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)")
+	_, _ = fmt.Fprintln(w, "  Lock file path: <lock-dir>/backend-<sha256(normalized_url)[:12]>.lock")
+	_, _ = fmt.Fprintln(w, "  Exit 75 (EX_TEMPFAIL): backend lock held by another lme run — wait and retry")
 }
 
 // dispatch parses args and runs the requested subcommand. Returns the process
