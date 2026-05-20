@@ -103,3 +103,104 @@ func TestRunWorker_HasPerItemCleanup(t *testing.T) {
 		t.Errorf("run.go missing mcpClient.Close() — per-item SSE leak risk (#669)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// sortBlocksChronologically
+// ---------------------------------------------------------------------------
+
+func TestSortBlocksChronologically_AscendingOrder(t *testing.T) {
+	b1 := "Session date: 2024-03-15\nSome content"
+	b2 := "Session date: 2024-01-01\nOlder content"
+	b3 := "Session date: 2024-06-30\nNewer content"
+
+	got := sortBlocksChronologically([]string{b1, b2, b3})
+	want := []string{b2, b1, b3}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("position %d: got %q, want %q", i, got[i][:30], w[:30])
+		}
+	}
+}
+
+func TestSortBlocksChronologically_NoParsableDate_SortsFirst(t *testing.T) {
+	noDate := "No date header here\nSome content"
+	dated := "Session date: 2020-05-10\nOld but dated"
+
+	got := sortBlocksChronologically([]string{dated, noDate})
+	if got[0] != noDate {
+		t.Errorf("block with no date should sort first (treated as 1970); got %q first", got[0][:20])
+	}
+}
+
+func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
+	b1 := "Session date: 2024-03-15\nContent A"
+	b2 := "Session date: 2024-01-01\nContent B"
+	input := []string{b1, b2}
+	orig := []string{b1, b2}
+
+	_ = sortBlocksChronologically(input)
+	for i := range orig {
+		if input[i] != orig[i] {
+			t.Errorf("input slice was mutated at index %d", i)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DisableQueryRewrite — structural guard
+// ---------------------------------------------------------------------------
+
+// TestDisableQueryRewrite_StructuralGuard verifies that run.go gates the
+// rewrite logic on cfg.DisableQueryRewrite. This is a source-level assertion
+// since exercising runOne requires a live MCP server.
+func TestDisableQueryRewrite_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "cfg.DisableQueryRewrite") {
+		t.Error("run.go missing cfg.DisableQueryRewrite gate — rewrite bypass flag not wired")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H15 — paraphrase union structural guards
+// ---------------------------------------------------------------------------
+
+// TestQueryParaphrasePassesFlag_StructuralGuard verifies that run.go gates the
+// paraphrase-union logic on cfg.QueryParaphrasePasses and calls both
+// GenerateParaphrases and DeduplicateIDs — the core H15 union mechanism.
+func TestQueryParaphrasePassesFlag_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	checks := []struct {
+		substr string
+		label  string
+	}{
+		{"cfg.QueryParaphrasePasses", "H15 flag gate"},
+		{"GenerateParaphrases", "H15 paraphrase call"},
+		{"DeduplicateIDs", "H15 dedup union"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.substr) {
+			t.Errorf("run.go missing %s (%q)", c.label, c.substr)
+		}
+	}
+}
+
+// TestQueryParaphrasePassesFlag_DefaultZero verifies that the Config field
+// defaults to 0 (off) so existing runs are unaffected.
+func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	// The flag registration must use default value 0.
+	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
+		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	}
+}

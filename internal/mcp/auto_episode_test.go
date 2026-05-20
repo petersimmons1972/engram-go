@@ -405,7 +405,7 @@ type episodeCorrectBackend struct {
 	called bool
 }
 
-func (b *episodeCorrectBackend) UpdateMemory(_ context.Context, id string, _ *string, _ []string, _ *int) (*types.Memory, error) {
+func (b *episodeCorrectBackend) UpdateMemory(_ context.Context, id string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	b.called = true
 	return &types.Memory{ID: id, Content: "corrected", Project: "global"}, nil
 }

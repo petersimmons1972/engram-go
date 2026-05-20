@@ -1,0 +1,72 @@
+{
+    "campaign_phase": 2,
+    "phase0_status": "CLOSED_PARTIAL",
+    "phase0_completed_at": "2026-05-19T17:04:24Z",
+    "phase0_v9_new_baseline": {"correct": 428, "partial": 176, "incorrect": 26, "total": 566, "pct_correct": 75.62},
+    "phase0_v9_500_baseline": {"correct": 365, "partial": 120, "incorrect": 15, "total": 500, "note": "approx from 566 set"},
+    "phase2_started_at": "2026-05-19T21:30:00Z",
+    "phase2_params": {
+        "generator": "Qwen3-32B via oblivion",
+        "llm_url": "http://oblivion.petersimmons.com:8000/v1",
+        "llm_model": "inference",
+        "scorer_url": "http://oblivion.petersimmons.com:8000/v1",
+        "scorer_model": "inference",
+        "scorer_max_tokens": 2048,
+        "workers": 2,
+        "max_position_embeddings": 40960,
+        "max_block_chars_at_topk100": 1200,
+        "note": "native max_position_embeddings=40960. Reserve 4K for sys+q+completion, ~36K for context. At topk=100: 36000/100=360 tokens/block~1260 chars. Using 1200 for safety."
+    },
+    "throughput_observed": {
+        "exp02_items_per_hour": "~14-26 items/hr with 2 workers (varies with GPU contention)",
+        "exp02_per_item_seconds": "~200-600s depending on content length + GPU load",
+        "estimated_exp02_total_hours": "18-35 hours for 500 items"
+    },
+    "coordinator_revision": {
+        "received_at": "2026-05-19T18:46:00Z",
+        "change": "exp06/07/07b switched to 100-item stratified subset (fixed seed=42) to reduce wall time from ~20h to ~20min per experiment",
+        "stratified_sample": "results/lme-camp-stratified-100.json",
+        "v9_baseline_on_100": "71C/29PC/0I",
+        "exp02_unchanged": "exp02 still runs full 500 items as anchor baseline"
+    },
+    "completed_experiments": ["00", "09-partial"],
+    "exp09_rerun_result": {
+        "items": 50,
+        "scores": "16C/12PC/22I",
+        "scorer": "Qwen3-32B via oblivion (rescore of haiku-scored run)",
+        "note": "vs haiku-scored: 12C/12PC/26I. Qwen scorer more generous (+4 CORRECT)"
+    },
+    "in_flight": "02+06",
+    "experiments": {
+        "02": {
+            "status": "IN_FLIGHT",
+            "started_at": "2026-05-19T18:48:00Z",
+            "items": 500,
+            "done_at_last_check": 15,
+            "flags": "--context-topk 100 --max-block-chars 1200",
+            "note": "Full 500-item anchor baseline. May complete over multiple sessions."
+        },
+        "06": {
+            "status": "IN_FLIGHT",
+            "started_at": "2026-05-19T18:51:43Z",
+            "items": 100,
+            "flags": "--context-topk 100 --max-block-chars 1200 --chrono-sort",
+            "subset": "stratified-100 (seed=42)"
+        },
+        "07": {
+            "status": "PENDING",
+            "items": 100,
+            "flags": "--context-topk 100 --max-block-chars 1200 --disable-query-rewrite",
+            "subset": "stratified-100 (seed=42)"
+        },
+        "07b": {
+            "status": "PENDING",
+            "items": 100,
+            "flags": "--context-topk 100 --max-block-chars 1200",
+            "subset": "stratified-100 (seed=42)",
+            "note": "requires ENGRAM_DECAY_FLOOR=0.15 server restart before run; restore to 0.0 after"
+        }
+    },
+    "oblivion_status": "UP",
+    "timestamp": "2026-05-19T23:55:00Z"
+}

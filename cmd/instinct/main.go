@@ -5,14 +5,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +20,9 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
+	"github.com/petersimmons1972/engram/internal/instinctllm"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -66,6 +66,7 @@ type config struct {
 	minEvents     int
 	engramURL     string
 	engramToken   string
+	engramRESTURL string // optional: REST base URL override; empty → derived from engramURL
 	anthropicKey  string
 	haikuEndpoint string // empty → production endpoint; injectable for tests
 }
@@ -265,10 +266,16 @@ type sseEngram struct {
 }
 
 const (
-	mcpConnectTimeout = 10 * time.Second
-	mcpCallTimeout    = 15 * time.Second
-	mcpRetryWindow    = 30 * time.Second
-	mcpRetryDelayBase = 200 * time.Millisecond
+	mcpConnectTimeout  = 10 * time.Second
+	mcpCallTimeout     = 15 * time.Second
+	mcpRetryWindow     = 30 * time.Second
+	mcpRetryDelayBase  = 200 * time.Millisecond
+	// mcpOperationTimeout gives each high-level operation (writeEpisode per-event,
+	// upsertPattern) the full retry window plus a reconnect buffer, ensuring at
+	// least two retry attempts can complete before the outer context expires.
+	// Previously mcpCallTimeout (15s) was used here, which cancelled before the
+	// second retry attempt in the 30s mcpRetryWindow — fix for issue #735.
+	mcpOperationTimeout = mcpRetryWindow + 10*time.Second // 40s
 )
 
 func newSSEEngram(baseURL, token string) (*sseEngram, error) {
@@ -375,11 +382,17 @@ func (e *sseEngram) callToolWithRetry(ctx context.Context, name string, args map
 }
 
 // callTool calls an MCP tool and returns the first text content as a parsed map.
+// e.c is snapshotted under e.mu before the call so that a concurrent reconnect()
+// cannot replace the pointer mid-flight (data race fix for issue #735).
 func (e *sseEngram) callTool(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	e.mu.Lock()
+	client := e.c
+	e.mu.Unlock()
+
 	req := mcp.CallToolRequest{}
 	req.Params.Name = name
 	req.Params.Arguments = args
-	result, err := e.c.CallTool(ctx, req)
+	result, err := client.CallTool(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
@@ -438,11 +451,11 @@ func (e *sseEngram) store(ctx context.Context, p Pattern, confidence float64, pr
 	content := fmt.Sprintf("%s | PROVENANCE: observed 1 time, first seen %s",
 		p.Description, time.Now().UTC().Format("2006-01-02"))
 	out, err := e.callToolWithRetry(ctx, "memory_store", map[string]any{
-		"content":     content,
-		"memory_type": "pattern",
-		"project":     projectID,
-		"importance":  confidence,
-		"tags":        []string{"instinct", p.Type, p.Domain, p.TagSignature},
+		"content":            content,
+		"memory_type":        "pattern",
+		"project":            projectID,
+		"pattern_confidence": confidence,
+		"tags":               []string{"instinct", p.Type, p.Domain, p.TagSignature},
 	})
 	if err != nil {
 		return "", err
@@ -471,8 +484,17 @@ func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) 
 		for _, t := range tags {
 			if s, ok := t.(string); ok && s == tagSignature {
 				id, _ := mem["id"].(string)
-				imp, _ := mem["importance"].(float64)
-				return &recallResult{id: id, confidence: imp}, nil
+				// Prefer pattern_confidence (float) written by E2+ instinct versions.
+				// Fall back to importance for records written before this change.
+				var conf float64
+				if pc, ok := mem["pattern_confidence"].(float64); ok {
+					conf = pc
+				} else {
+					// Legacy fallback: importance was the integer field used before E2.
+					// Stored as float64 in JSON; safe to read directly.
+					conf, _ = mem["importance"].(float64)
+				}
+				return &recallResult{id: id, confidence: conf}, nil
 			}
 		}
 	}
@@ -481,129 +503,10 @@ func (e *sseEngram) recall(ctx context.Context, tagSignature, projectID string) 
 
 func (e *sseEngram) correct(ctx context.Context, memoryID string, confidence float64) error {
 	_, err := e.callToolWithRetry(ctx, "memory_correct", map[string]any{
-		"memory_id":  memoryID,
-		"importance": confidence,
+		"memory_id":          memoryID,
+		"pattern_confidence": confidence,
 	})
 	return err
-}
-
-// ── Haiku client ──────────────────────────────────────────────────────────────
-
-const instinctSystemPrompt = `You are a pattern detection system analyzing Claude Code tool call sequences.
-
-Analyze the tool call events and identify recurring patterns of these types:
-
-1. CORRECTION: Evidence the user corrected the AI — re-do after rollback, "don't X" instruction, same action reversed within 3 steps.
-2. ERROR_RESOLUTION: The same error (matching exit_status=1 + similar output_summary) followed by the same fix tool sequence, 2+ times.
-3. WORKFLOW: A sequence of 3+ tool calls that recurs within the same session or across sessions in this batch.
-
-Return a JSON array. Each pattern object must have these exact fields:
-{
-  "type": "correction" | "error_resolution" | "workflow",
-  "description": "<human-readable pattern, one sentence, present tense>",
-  "domain": "<one word: testing | git | editing | bash | agent | general>",
-  "evidence": "<brief explanation of what you observed, max 100 chars>",
-  "tag_signature": "<stable slug for deduplication, e.g. 'sig-edit-test-fail-edit'>"
-}
-
-If no patterns are found, return []. Return ONLY the JSON array — no prose, no markdown fences.`
-
-const haikuModel = "claude-haiku-4-5-20251001"
-const anthropicEndpoint = "https://api.anthropic.com/v1/messages"
-
-// callHaiku sends events to Claude Haiku for pattern detection.
-// endpoint is injectable for testing; pass "" to use the production endpoint.
-// Returns empty slice on any error — patterns are best-effort.
-func callHaiku(ctx context.Context, apiKey string, events []Event, endpoint string) []Pattern {
-	if endpoint == "" {
-		endpoint = anthropicEndpoint
-	}
-
-	var sb strings.Builder
-	for _, e := range events {
-		fmt.Fprintf(&sb, "[%s] %s | %s | exit=%d\n",
-			e.Timestamp, e.ToolName, e.ToolOutputSummary, e.ExitStatus)
-	}
-
-	body, _ := json.Marshal(map[string]any{
-		"model":      haikuModel,
-		"max_tokens": 1024,
-		"system": []map[string]any{{
-			"type":          "text",
-			"text":          instinctSystemPrompt,
-			"cache_control": map[string]string{"type": "ephemeral"},
-		}},
-		"messages": []map[string]any{{
-			"role":    "user",
-			"content": sb.String(),
-		}},
-	})
-
-	// Cap the Haiku call — buffer already rotated, a hung API call would
-	// block indefinitely with no recovery path.
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		slog.Error("instinct: haiku request build", "err", err)
-		return nil
-	}
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
-	req.Header.Set("content-type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		slog.Error("instinct: haiku HTTP", "err", err)
-		return nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		slog.Error("instinct: haiku non-200", "status", resp.StatusCode)
-		return nil
-	}
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		slog.Error("instinct: haiku read body", "err", err)
-		return nil
-	}
-
-	var apiResp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(raw, &apiResp); err != nil || len(apiResp.Content) == 0 {
-		slog.Error("instinct: haiku parse response", "err", err)
-		return nil
-	}
-
-	text := apiResp.Content[0].Text
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-
-	var rawPatterns []Pattern
-	if err := json.Unmarshal([]byte(text), &rawPatterns); err != nil {
-		slog.Warn("instinct: haiku JSON parse", "err", err)
-		return nil
-	}
-
-	var patterns []Pattern
-	for _, p := range rawPatterns {
-		if p.Type == "" || p.Description == "" || p.Domain == "" || p.Evidence == "" || p.TagSignature == "" {
-			slog.Warn("instinct: skipping pattern with missing fields", "tag", p.TagSignature)
-			continue
-		}
-		patterns = append(patterns, p)
-	}
-	return patterns
 }
 
 // ── Confidence management ─────────────────────────────────────────────────────
@@ -697,6 +600,46 @@ func upsertPattern(ctx context.Context, e engramAPI, p Pattern, events []Event) 
 	}
 }
 
+// ── Type conversion helpers ───────────────────────────────────────────────────
+//
+// main.go keeps its own Event/Pattern types for backward compatibility with
+// the existing Engram wiring (engramAPI interface, upsertPattern, etc.).
+// The consolidator package has identical struct shapes but lives in a separate
+// package, so we bridge with these thin converters.
+
+// toConsolidatorEvents converts a []Event (main package) to []consolidator.Event.
+func toConsolidatorEvents(events []Event) []consolidator.Event {
+	out := make([]consolidator.Event, len(events))
+	for i, e := range events {
+		out[i] = consolidator.Event{
+			Timestamp:         e.Timestamp,
+			SessionID:         e.SessionID,
+			ProjectID:         e.ProjectID,
+			ToolName:          e.ToolName,
+			ToolInputHash:     e.ToolInputHash,
+			ToolOutputSummary: e.ToolOutputSummary,
+			ExitStatus:        e.ExitStatus,
+			SchemaVersion:     e.SchemaVersion,
+		}
+	}
+	return out
+}
+
+// fromConsolidatorPatterns converts []consolidator.Pattern to []Pattern (main package).
+func fromConsolidatorPatterns(cps []consolidator.Pattern) []Pattern {
+	out := make([]Pattern, len(cps))
+	for i, p := range cps {
+		out[i] = Pattern{
+			Type:         p.Type,
+			Description:  p.Description,
+			Domain:       p.Domain,
+			Evidence:     p.Evidence,
+			TagSignature: p.TagSignature,
+		}
+	}
+	return out
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -759,10 +702,10 @@ func run(ctx context.Context, cfg config) error {
 		return fmt.Errorf("ENGRAM_BASE_URL not set")
 	}
 
-	e, err := newSSEEngram(cfg.engramURL, cfg.engramToken)
+	e, err := newHybridEngram(cfg.engramURL, cfg.engramToken, cfg.engramRESTURL)
 	if err != nil {
 		requeue(cfg.bufferPath, processedPath)
-		return fmt.Errorf("newSSEEngram: %w", err)
+		return fmt.Errorf("newHybridEngram: %w", err)
 	}
 	if err := e.connect(ctx); err != nil {
 		requeue(cfg.bufferPath, processedPath)
@@ -772,7 +715,7 @@ func run(ctx context.Context, cfg config) error {
 
 	groups := groupBySession(events)
 	for key, group := range groups {
-		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		opCtx, cancel := context.WithTimeout(ctx, mcpOperationTimeout)
 		err := writeEpisode(opCtx, e, key.sessionID, key.projectID, group)
 		cancel()
 		if err != nil {
@@ -780,10 +723,35 @@ func run(ctx context.Context, cfg config) error {
 		}
 	}
 
-	patterns := callHaiku(ctx, cfg.anthropicKey, events, cfg.haikuEndpoint)
+	// Build the LLM client via factory; fall back to log+skip on failure so
+	// the consolidator never crashes on a bad config — pattern detection is
+	// best-effort and the main pipeline (episode write) must not be blocked.
+	//
+	// Precedence: LLM_BACKEND env → "anthropic" default.  Backend is resolved
+	// here at the binary level and passed explicitly via Config.Backend — the
+	// same pattern cmd/audit uses — so the factory env fallback is dead code
+	// and parallel tests can't race on process environment state.
+	llmClient, err := instinctllm.NewClient(instinctllm.Config{
+		Backend:  envOr("LLM_BACKEND", "anthropic"),
+		APIKey:   cfg.anthropicKey,
+		Endpoint: cfg.haikuEndpoint,
+		Timeout:  30 * time.Second,
+	})
+	var patterns []Pattern
+	if err != nil {
+		slog.Error("instinct: build LLM client — skipping pattern detection", "err", err)
+	} else {
+		cEvents := toConsolidatorEvents(events)
+		cPatterns, detectErr := consolidator.Detect(ctx, llmClient, cEvents)
+		if detectErr != nil {
+			slog.Warn("instinct: pattern detection failed", "err", detectErr)
+		} else {
+			patterns = fromConsolidatorPatterns(cPatterns)
+		}
+	}
 	slog.Info("instinct: detected patterns", "count", len(patterns))
 	for _, p := range patterns {
-		opCtx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		opCtx, cancel := context.WithTimeout(ctx, mcpOperationTimeout)
 		upsertPattern(opCtx, e, p, events)
 		cancel()
 	}
@@ -798,8 +766,15 @@ func writeEpisode(ctx context.Context, e engramAPI, sessionID, projectID string,
 		return fmt.Errorf("episodeStart: %w", err)
 	}
 	for _, ev := range events {
-		if err := e.ingest(ctx, ev, projectID, sessionID); err != nil {
-			slog.Warn("instinct: ingest failed", "tool", ev.ToolName, "err", err)
+		// Each event gets its own independent timeout budget so that a slow
+		// or retried first call does not starve subsequent events by depleting
+		// a shared context deadline. Use mcpOperationTimeout (40s) so the full
+		// retry window can run before this per-event context expires (#735).
+		evCtx, evCancel := context.WithTimeout(ctx, mcpOperationTimeout)
+		ingestErr := e.ingest(evCtx, ev, projectID, sessionID)
+		evCancel()
+		if ingestErr != nil {
+			slog.Warn("instinct: ingest failed", "tool", ev.ToolName, "err", ingestErr)
 		}
 	}
 	if epID != "" {

@@ -49,7 +49,8 @@ type Backend interface {
 	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)
 	// UpdateMemory updates mutable fields on an existing memory.
 	// Returns nil, nil if not found. Returns error if immutable.
-	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error)
+	// patternConfidence: nil means "leave unchanged"; non-nil writes the value.
+	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int, patternConfidence *float64) (*types.Memory, error)
 	// DeleteMemory hard-deletes a memory and its chunks/relationships by ID.
 	// Prefer SoftDeleteMemory for normal use — it preserves history and respects
 	// immutability. DeleteMemory is retained for internal rollback paths only

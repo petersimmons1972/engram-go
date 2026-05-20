@@ -728,6 +728,8 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		switch detail {
 		case "id_only":
+			// Intentionally minimal: only the ID is returned. All other fields
+			// (Content, PatternConfidence, Tags, etc.) are stripped by design.
 			result.Memory = &types.Memory{ID: m.ID}
 		case "summary":
 			if m.Summary != nil {
@@ -1096,8 +1098,9 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 // Correct updates mutable fields on an existing memory and returns the updated record.
 // When content is non-nil, the old chunks are deleted and new chunks are created so
 // the search index reflects the corrected text.
-func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error) {
-	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance)
+// patternConfidence: nil means "do not touch this field".
+func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int, patternConfidence *float64) (*types.Memory, error) {
+	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance, patternConfidence)
 	if err != nil {
 		return nil, err
 	}

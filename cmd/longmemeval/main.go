@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
 // Config holds flags shared across all subcommands.
@@ -28,6 +30,36 @@ type Config struct {
 	OutDir     string
 	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
 	LLMModel   string // model name for LLMBaseURL endpoint
+
+	// score-efficient flags
+	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
+	ScorerModel     string // model name (env: LME_SCORER_MODEL)
+	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
+	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
+	ForceRescore    bool   // ignore checkpoint, re-score everything
+
+	// score-batch flags
+	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
+
+	// generation flags
+	GenerationModel  string // claude model alias for answer generation (default "sonnet")
+	ContextTopKBump  bool   // raise all contextTopK categories to 15 when true
+
+	// retrieval ablation flags
+	RecallTopK           int  // memories recalled before context trim (default 100)
+	ContextTopKOverride  int  // explicit context topK; 0 = per-type default
+	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
+	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
+	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+
+	// H16: question_date injection
+	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
+
+	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
+	TemporalPromptAug bool // inject H-M5 ordering instruction and H-M1 entity enumeration step into temporal-reasoning prompts (default off)
+
+	// H15: paraphrased multi-pass BM25 union
+	QueryParaphrasePasses int // Haiku paraphrase variants to generate per query; union retrieved IDs (default 0 = off)
 }
 
 func main() {
@@ -42,8 +74,10 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  ingest    Load the dataset into Engram (per-question isolation projects)")
 	_, _ = fmt.Fprintln(w, "  run       Recall + generate hypotheses for each question")
 	_, _ = fmt.Fprintln(w, "  score     Score hypotheses against gold answers")
-	_, _ = fmt.Fprintln(w, "  all       Run ingest → run → score in one invocation")
-	_, _ = fmt.Fprintln(w, "  help      Print this usage and exit")
+	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
+	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
+	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
+	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
 	_, _ = fmt.Fprintln(w, "  --data <path>           Path to longmemeval_m_cleaned.json (required for ingest/run/score/all)")
@@ -88,6 +122,62 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
+	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
+	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
+	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
+	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
+	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
+	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	// H16
+	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "H16: prepend 'Today's date is: {question_date}' to temporal-reasoning prompts to anchor relative-time references (default off)")
+	// Exp-14: H-M5 + H-M1
+	fs.BoolVar(&cfg.TemporalPromptAug, "temporal-prompt-aug", false, "Exp-14: inject H-M5 chrono-sort forcing + H-M1 entity enumeration step into temporal-reasoning generation prompts (default off)")
+	// H15: paraphrased multi-pass BM25 union
+	fs.IntVar(&cfg.QueryParaphrasePasses, "query-paraphrase-passes", 0, "H15: number of Haiku-generated query paraphrases to run and union with primary recall (default 0 = off)")
+
+	// score-efficient has its own flag set and early return.
+	if subcommand == "score-efficient" {
+		sefs := flag.NewFlagSet("score-efficient", flag.ExitOnError)
+		sefs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
+		sefs.IntVar(&cfg.Workers, "workers", 4, "parallel workers")
+		sefs.StringVar(&cfg.OutDir, "out", ".", "output directory")
+		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
+		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
+		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
+		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
+		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
+		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
+		_ = sefs.Parse(args[2:])
+		if cfg.DataFile == "" {
+			_, _ = fmt.Fprintln(stderr, "--data is required")
+			return 1
+		}
+		if cfg.RunID == "" {
+			cfg.RunID = newRunID()
+		}
+		return runScoreEfficient(cfg)
+	}
+
+	// score-batch has its own flag set and early return.
+	if subcommand == "score-batch" {
+		sbfs := flag.NewFlagSet("score-batch", flag.ExitOnError)
+		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
+		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
+		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
+		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
+		sbfs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
+		sbfs.StringVar(&cfg.ScorerBatchAPIKey, "api-key-anthropic", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key (env: ANTHROPIC_API_KEY)")
+		_ = sbfs.Parse(args[2:])
+		if cfg.DataFile == "" {
+			_, _ = fmt.Fprintln(stderr, "--data is required")
+			return 1
+		}
+		if cfg.RunID == "" {
+			cfg.RunID = newRunID()
+		}
+		return runScoreBatch(cfg)
+	}
 
 	switch subcommand {
 	case "ingest", "run", "score", "all":
@@ -104,6 +194,21 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
+		return 1
+	}
+
+	validGenerationModels := map[string]bool{"opus": true, "sonnet": true, "haiku": true}
+	if !validGenerationModels[cfg.GenerationModel] {
+		_, _ = fmt.Fprintf(stderr, "--generation-model %q is not allowed; must be one of: opus, sonnet, haiku\n", cfg.GenerationModel)
+		return 1
+	}
+
+	if cfg.RecallTopK <= 0 || cfg.RecallTopK > 500 {
+		_, _ = fmt.Fprintf(stderr, "--recall-topk %d is out of range; must be 1–500\n", cfg.RecallTopK)
+		return 1
+	}
+	if cfg.ContextTopKOverride < 0 || cfg.ContextTopKOverride > cfg.RecallTopK {
+		_, _ = fmt.Fprintf(stderr, "--context-topk %d is out of range; must be 0–%d (recall-topk)\n", cfg.ContextTopKOverride, cfg.RecallTopK)
 		return 1
 	}
 

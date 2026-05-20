@@ -2,11 +2,13 @@ package longmemeval_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"os/exec"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -41,6 +43,40 @@ func TestParseScoreLabel_Explanation(t *testing.T) {
 	_, explanation := longmemeval.ParseScoreLabel("CORRECT\nThe answer matches the reference exactly.")
 	if !strings.Contains(explanation, "matches") {
 		t.Errorf("explanation = %q, want it to contain 'matches'", explanation)
+	}
+}
+
+// TestParseScoreLabel_Truncation verifies that a response truncated mid-rationale
+// with no label returns SCORE_ERROR rather than a silent PARTIALLY_CORRECT.
+func TestParseScoreLabel_Truncation(t *testing.T) {
+	truncated := "The hypothesis mentions the correct city but omits the date, which is an important"
+	label, raw := longmemeval.ParseScoreLabel(truncated)
+	if label != "SCORE_ERROR" {
+		t.Errorf("truncated response: label = %q, want SCORE_ERROR", label)
+	}
+	if raw == "" {
+		t.Error("truncated response: expected raw text in explanation, got empty string")
+	}
+}
+
+// TestParseScoreLabel_LabelInBody verifies that when the first line has preamble
+// but a valid label appears on a later line, the parser finds and returns it.
+func TestParseScoreLabel_LabelInBody(t *testing.T) {
+	preamble := "Let me think about this carefully.\nINCORRECT\nThe hypothesis contradicts the gold answer."
+	label, _ := longmemeval.ParseScoreLabel(preamble)
+	if label != "INCORRECT" {
+		t.Errorf("preamble+label: label = %q, want INCORRECT", label)
+	}
+}
+
+// TestParseScoreLabel_MultipleLabels verifies that when multiple labels appear
+// in a response the FIRST one is returned (not the last, not PARTIALLY_CORRECT).
+func TestParseScoreLabel_MultipleLabels(t *testing.T) {
+	// Model outputs preamble, then contradicts itself — first label wins.
+	ambiguous := "Some context here.\nCORRECT\nBut wait, actually INCORRECT because of X."
+	label, _ := longmemeval.ParseScoreLabel(ambiguous)
+	if label != "CORRECT" {
+		t.Errorf("ambiguous multi-label: label = %q, want CORRECT (first found)", label)
 	}
 }
 
@@ -145,6 +181,217 @@ func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
 	}
 }
 
+func TestBuildScoringRequestBody(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		MaxTokens   int     `json:"max_tokens"`
+		Temperature float64 `json:"temperature"`
+		Model       string  `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != longmemeval.DefaultScorerMaxTokens {
+		t.Errorf("want max_tokens=%d got %d", longmemeval.DefaultScorerMaxTokens, req.MaxTokens)
+	}
+	if req.Temperature != 0 {
+		t.Errorf("want temperature=0 got %f", req.Temperature)
+	}
+	if req.Model != "mymodel" {
+		t.Errorf("want mymodel got %s", req.Model)
+	}
+}
+
+func TestBuildScoringRequestBody_CustomMaxTokens(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 512 {
+		t.Errorf("want max_tokens=512 got %d", req.MaxTokens)
+	}
+}
+
+// --- ScoreBatch tests ---
+
+// batchTestServer builds an httptest.Server that handles the three Anthropic
+// batch endpoints. pollResponses is a slice of processing_status values
+// returned on sequential GET /v1/messages/batches/{id} calls; the last value
+// must be "ended". resultsNDJSON is the raw NDJSON to return from the results
+// endpoint.
+func batchTestServer(t *testing.T, pollResponses []string, resultsNDJSON string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var pollCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages/batches":
+			// Verify required headers.
+			if r.Header.Get("x-api-key") == "" {
+				t.Errorf("missing x-api-key header")
+			}
+			if r.Header.Get("anthropic-beta") != "message-batches-2024-09-24" {
+				t.Errorf("missing/wrong anthropic-beta header: %s", r.Header.Get("anthropic-beta"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"batch_test123","processing_status":"in_progress"}`)
+
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/results"):
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, resultsNDJSON)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/v1/messages/batches/"):
+			idx := int(pollCount.Add(1)) - 1
+			status := pollResponses[idx%len(pollResponses)]
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"batch_test123","processing_status":"%s"}`, status)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	return srv, &pollCount
+}
+
+func TestScoreBatch_happyPath(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"CORRECT\nMatches exactly."}]}}}` + "\n" +
+		`{"custom_id":"q2","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"INCORRECT\nDoes not match."}]}}}` + "\n"
+
+	srv, _ := batchTestServer(t, []string{"ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q1?", ReferenceAnswer: "A1", Hypothesis: "A1"},
+		{QuestionID: "q2", Question: "Q2?", ReferenceAnswer: "A2", Hypothesis: "wrong"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch: %v", err)
+	}
+	if results["q1"].Label != "CORRECT" {
+		t.Errorf("q1 label = %q, want CORRECT", results["q1"].Label)
+	}
+	if results["q2"].Label != "INCORRECT" {
+		t.Errorf("q2 label = %q, want INCORRECT", results["q2"].Label)
+	}
+	if !strings.Contains(results["q1"].Explanation, "Matches") {
+		t.Errorf("q1 explanation = %q, expected to contain 'Matches'", results["q1"].Explanation)
+	}
+}
+
+func TestScoreBatch_pollsUntilEnded(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"CORRECT\nGood."}]}}}` + "\n"
+
+	// First two polls return "in_progress", third returns "ended".
+	srv, pollCount := batchTestServer(t, []string{"in_progress", "in_progress", "ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q?", ReferenceAnswer: "A", Hypothesis: "A"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch: %v", err)
+	}
+	if results["q1"].Label != "CORRECT" {
+		t.Errorf("q1 label = %q, want CORRECT", results["q1"].Label)
+	}
+	// Expect exactly 3 poll calls (in_progress, in_progress, ended).
+	if n := pollCount.Load(); n != 3 {
+		t.Errorf("poll count = %d, want 3", n)
+	}
+}
+
+func TestScoreBatch_handlesErroredItem(t *testing.T) {
+	ndjson := `{"custom_id":"q1","result":{"type":"errored","error":{"type":"server_error","message":"timeout"}}}` + "\n"
+
+	srv, _ := batchTestServer(t, []string{"ended"}, ndjson)
+	defer srv.Close()
+
+	longmemeval.SetAnthropicBaseURL(srv.URL)
+	defer longmemeval.SetAnthropicBaseURL("https://api.anthropic.com")
+
+	items := []longmemeval.BatchScoringItem{
+		{QuestionID: "q1", Question: "Q?", ReferenceAnswer: "A", Hypothesis: "B"},
+	}
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, items, "test-key", "claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ScoreBatch returned error, want nil: %v", err)
+	}
+	if results["q1"].Label != "SCORE_ERROR" {
+		t.Errorf("errored item label = %q, want SCORE_ERROR", results["q1"].Label)
+	}
+}
+
+func TestScoreBatch_emptyAPIKey(t *testing.T) {
+	ctx := context.Background()
+	_, err := longmemeval.ScoreBatch(ctx, []longmemeval.BatchScoringItem{{QuestionID: "q1"}}, "", "model")
+	if err == nil {
+		t.Error("expected error for empty apiKey, got nil")
+	}
+}
+
+func TestScoreBatch_emptyItems(t *testing.T) {
+	ctx := context.Background()
+	results, err := longmemeval.ScoreBatch(ctx, nil, "key", "model")
+	if err != nil {
+		t.Fatalf("ScoreBatch(nil items): %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty map for no items, got %d entries", len(results))
+	}
+}
+
+func TestGenerationPrompt_PreferenceType_DescribesPreference(t *testing.T) {
+	// single-session-preference prompts must instruct the model to describe the
+	// user's preference, not answer the question directly. The v9 run scored 0/30
+	// because the generic prompt caused the model to answer "here are resources..."
+	// instead of "the user would prefer resources tailored to X...".
+	prompt := longmemeval.GenerationPromptForType(
+		"Can you recommend some resources where I can learn more about video editing?",
+		"single-session-preference",
+		"2024-03-15",
+		[]string{"Session date: 2024-03-10\nUser asked about advanced Adobe Premiere Pro color grading settings."},
+	)
+	if !strings.Contains(strings.ToLower(prompt), "prefer") {
+		t.Errorf("preference prompt must contain 'prefer' to orient model toward preference description, got:\n%s", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "answer in one sentence") {
+		t.Errorf("preference prompt must NOT use generic 'answer in one sentence' instruction — that causes literal-answer hallucination")
+	}
+}
+
+func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
+	// Non-preference types must still use the original generic prompt.
+	prompt := longmemeval.GenerationPromptForType(
+		"When did the user buy their camera?",
+		"single-session-user",
+		"2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."},
+	)
+	if !strings.Contains(strings.ToLower(prompt), "answer in one sentence") {
+		t.Errorf("non-preference prompt must retain 'answer in one sentence' instruction, got:\n%s", prompt)
+	}
+}
+
 // TestGenerate_RequiresClaude is skipped in short mode.
 func TestGenerate_RequiresClaude(t *testing.T) {
 	// #678: the claude binary is an undocumented prerequisite for this test.
@@ -213,4 +460,79 @@ func TestParseScoreLabel_ScoreErrorPropagation(t *testing.T) {
 	//
 	// If this behaviour changes, update this comment and the switch.
 	t.Log("SCORE_ERROR falls into default/Incorrect in writeScoreReport — documented by design")
+}
+
+func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
+	cases := []struct {
+		question        string
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			question:        "Can you recommend some resources where I can learn more about video editing?",
+			wantContains:    []string{"prefer", "video editing"},
+			wantNotContains: []string{"recommend"},
+		},
+		{
+			question:        "Can you suggest some accessories that would complement my current photography setup?",
+			wantContains:    []string{"prefer", "photography"},
+			wantNotContains: []string{"suggest"},
+		},
+		{
+			question:        "Can you recommend a hotel for my upcoming trip to Miami?",
+			wantContains:    []string{"prefer", "hotel", "Miami"},
+			wantNotContains: []string{"recommend"},
+		},
+	}
+	for _, c := range cases {
+		q := longmemeval.PreferenceRecallQuery(c.question)
+		for _, want := range c.wantContains {
+			if !strings.Contains(strings.ToLower(q), strings.ToLower(want)) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q, missing %q", c.question, q, want)
+			}
+		}
+		for _, skip := range c.wantNotContains {
+			if strings.Contains(strings.ToLower(q), strings.ToLower(skip)) {
+				t.Errorf("PreferenceRecallQuery(%q) = %q, should NOT contain %q", c.question, q, skip)
+			}
+		}
+	}
+}
+
+func TestContextTopKForType(t *testing.T) {
+	cases := []struct {
+		qtype   string
+		wantMin int
+	}{
+		{"multi-session", 15},
+		{"temporal-reasoning", 15},
+		{"single-session-user", 8},
+		{"single-session-assistant", 8},
+		{"knowledge-update", 8},
+		{"single-session-preference", 8},
+	}
+	for _, c := range cases {
+		got := longmemeval.ContextTopKForType(c.qtype)
+		if got < c.wantMin {
+			t.Errorf("ContextTopKForType(%q) = %d, want >= %d", c.qtype, got, c.wantMin)
+		}
+	}
+}
+
+func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
+	prompt := longmemeval.GenerationPromptForType(
+		"How many weeks ago did I attend the baking class?",
+		"temporal-reasoning",
+		"2024-03-15",
+		[]string{"Session date: 2024-02-22\nUser attended a baking class at a local culinary school."},
+	)
+	if !strings.Contains(prompt, "step") && !strings.Contains(prompt, "Step") {
+		t.Errorf("temporal prompt must include step-by-step arithmetic guidance, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "2024-03-15") {
+		t.Errorf("temporal prompt must include question date for arithmetic, got:\n%s", prompt)
+	}
+	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
+		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
+	}
 }

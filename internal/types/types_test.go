@@ -1,6 +1,7 @@
 package types_test
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +261,62 @@ func TestValidateFailureClass(t *testing.T) {
 	for _, v := range invalid {
 		if types.ValidateFailureClass(v) {
 			t.Errorf("expected %q to be invalid failure class", v)
+		}
+	}
+}
+
+// TestValidatePatternConfidenceValid checks that valid inputs in [0.0, 1.0] are
+// accepted and returned unchanged.
+func TestValidatePatternConfidenceValid(t *testing.T) {
+	cases := []float64{0.0, 0.5, 1.0, 0.123456, 0.999}
+	for _, c := range cases {
+		got, err := types.ValidatePatternConfidence(c)
+		if err != nil {
+			t.Errorf("ValidatePatternConfidence(%v) returned unexpected error: %v", c, err)
+		}
+		if got != c {
+			t.Errorf("ValidatePatternConfidence(%v) = %v, want %v", c, got, c)
+		}
+	}
+}
+
+// TestValidatePatternConfidenceNegative checks that negative values are rejected.
+func TestValidatePatternConfidenceNegative(t *testing.T) {
+	cases := []float64{-0.001, -1.0, -100.0}
+	for _, c := range cases {
+		_, err := types.ValidatePatternConfidence(c)
+		if err == nil {
+			t.Errorf("ValidatePatternConfidence(%v): expected error, got nil", c)
+		}
+	}
+}
+
+// TestValidatePatternConfidenceOverOne checks that values above 1.0 are rejected.
+func TestValidatePatternConfidenceOverOne(t *testing.T) {
+	cases := []float64{1.001, 2.0, 100.0}
+	for _, c := range cases {
+		_, err := types.ValidatePatternConfidence(c)
+		if err == nil {
+			t.Errorf("ValidatePatternConfidence(%v): expected error, got nil", c)
+		}
+	}
+}
+
+// TestValidatePatternConfidenceNaN checks that NaN is rejected.
+func TestValidatePatternConfidenceNaN(t *testing.T) {
+	_, err := types.ValidatePatternConfidence(math.NaN())
+	if err == nil {
+		t.Error("ValidatePatternConfidence(NaN): expected error, got nil")
+	}
+}
+
+// TestValidatePatternConfidenceInf checks that positive and negative infinity are rejected.
+func TestValidatePatternConfidenceInf(t *testing.T) {
+	cases := []float64{math.Inf(1), math.Inf(-1)}
+	for _, c := range cases {
+		_, err := types.ValidatePatternConfidence(c)
+		if err == nil {
+			t.Errorf("ValidatePatternConfidence(%v): expected error, got nil", c)
 		}
 	}
 }
