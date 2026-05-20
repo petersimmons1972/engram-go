@@ -179,3 +179,77 @@ func TestAnthropicEmptyPrompts(t *testing.T) {
 		t.Errorf("empty user prompt: got %q, want []", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// #772 — transport errors must wrap ErrBackendUnavailable
+// ---------------------------------------------------------------------------
+
+// TestAnthropicTransportError_WrapsBackendUnavailable: server is closed before
+// the request lands (connection refused). The error must wrap ErrBackendUnavailable
+// so errors.Is(err, ErrBackendUnavailable) returns true.
+func TestAnthropicTransportError_WrapsBackendUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	// Close immediately so subsequent request gets connection refused.
+	srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if err == nil {
+		t.Fatal("Complete() should return error when server is unavailable")
+	}
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("transport error must wrap ErrBackendUnavailable; got: %v", err)
+	}
+}
+
+// TestAnthropicNon200_WrapsBackendUnavailable: server returns 503; error must
+// wrap ErrBackendUnavailable so callers can use errors.Is to skip gracefully.
+func TestAnthropicNon200_WrapsBackendUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if err == nil {
+		t.Fatal("Complete() should return error on 503")
+	}
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("non-200 status must wrap ErrBackendUnavailable; got: %v", err)
+	}
+}
+
+// TestAnthropicReadBodyError_WrapsBackendUnavailable: server closes the
+// connection mid-response (hijack), so ReadAll fails. The error must wrap
+// ErrBackendUnavailable.
+func TestAnthropicReadBodyError_WrapsBackendUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Send a valid 200 header but then hijack and close so body read fails.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("ResponseWriter does not implement Hijacker")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("Hijack: %v", err)
+			return
+		}
+		// Write minimal HTTP/1.1 200 headers then close mid-body.
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{"))
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	c := newAnthropicClient(t, srv.URL+"/v1/messages")
+	_, err := c.Complete(context.Background(), "system", "user")
+	if err == nil {
+		t.Fatal("Complete() should return error on truncated body")
+	}
+	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		t.Errorf("read-body failure must wrap ErrBackendUnavailable; got: %v", err)
+	}
+}
