@@ -204,6 +204,17 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, cfg.RecallTopK)
+	if err == nil && cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
+		// H8: run a topK=500 exhaustive sweep on the object noun-phrase and union.
+		const aggregationSweepTopK = 500
+		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
+		sweepIDs, sweepErr := mcpClient.Recall(ctx, ingest.Project, sweepQuery, aggregationSweepTopK)
+		if sweepErr == nil {
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
+		} else {
+			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
+		}
+	}
 	if err == nil && cfg.DualPreferenceRecall && item.QuestionType == "single-session-preference" {
 		// H15: run a second recall using the subject-anchor query and union.
 		// Each leg uses topK=50 so the union stays within cfg.RecallTopK.

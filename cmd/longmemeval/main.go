@@ -54,6 +54,9 @@ type Config struct {
 
 	// H15: dual-query preference recall
 	DualPreferenceRecall bool // run a second subject-anchor recall for preference questions and union results
+
+	// H8: exhaustive aggregation recall
+	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
 }
 
 func main() {
@@ -125,6 +128,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
 	// H15
 	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", false, "H15: run a second subject-anchor recall for preference questions and union both result sets (default off)")
+	// H8
+	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {

@@ -53,6 +53,49 @@ func ExtractSubjectAnchor(question string) string {
 	return strings.Join(keep, " ")
 }
 
+// ---------------------------------------------------------------------------
+// H8 — Exhaustive aggregation recall helpers
+// ---------------------------------------------------------------------------
+
+// aggregationRe matches count-shaped questions that require population-level
+// retrieval rather than a single top-scoring session.
+var aggregationRe = regexp.MustCompile(
+	`(?i)\b(how many|how often|how much total|total number of|sum of|count of)\b`)
+
+// aggregationStripRe strips the counting interrogative phrase so that the
+// remaining tokens describe the object being counted.
+var aggregationStripRe = regexp.MustCompile(
+	`(?i)^(how many (times )?|how often |how much total |what is the total (number of )?|what is the sum of |give me a count of |count of )`)
+
+// IsAggregationQuestion returns true when the question matches the aggregation
+// pattern that requires exhaustive population recall (H8).
+func IsAggregationQuestion(question string) bool {
+	return aggregationRe.MatchString(question)
+}
+
+// ExtractAggregationAnchor strips the counting interrogative prefix and removes
+// stop-words from the object noun phrase, producing a concise BM25-friendly
+// query for the H8 exhaustive sweep recall.
+func ExtractAggregationAnchor(question string) string {
+	stripped := aggregationStripRe.ReplaceAllString(question, "")
+	stripped = strings.TrimRight(stripped, "?!.,;:")
+	if stripped == "" {
+		stripped = question
+	}
+	tokens := strings.Fields(stripped)
+	var keep []string
+	for _, tok := range tokens {
+		lower := strings.ToLower(strings.TrimRight(tok, "?!.,;:"))
+		if !preferenceStopWords[lower] {
+			keep = append(keep, tok)
+		}
+	}
+	if len(keep) == 0 {
+		return stripped
+	}
+	return strings.Join(keep, " ")
+}
+
 // UnionMemoryIDs merges primary and secondary ID slices, preserving order and
 // deduplicating by memory ID. Primary IDs appear first; secondary IDs that are
 // not already in primary are appended in their original order.
