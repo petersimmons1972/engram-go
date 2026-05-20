@@ -59,6 +59,21 @@ var temporalInterrogativeRe = regexp.MustCompile(
 // (#703 — total-failure guard so scripted pipelines don't proceed when every
 // recall/generate failed).
 func runRun(cfg *Config) int {
+	// #749: acquire per-backend lock before doing any work so parallel lme
+	// invocations against the same vLLM endpoint are detected and rejected.
+	if cfg.LLMBaseURL != "" {
+		lockCfg := &BackendLockConfig{
+			ExclusiveBackend: cfg.ExclusiveBackend,
+			BackendLockDir:   cfg.BackendLockDir,
+		}
+		release, lockErr := acquireBackendLock(lockCfg, cfg.LLMBaseURL)
+		if lockErr != nil {
+			log.Print(lockErr)
+			return ExitCodeLockContention
+		}
+		defer release()
+	}
+
 	items := loadItems(cfg.DataFile)
 	itemMap := make(map[string]longmemeval.Item, len(items))
 	for _, item := range items {
