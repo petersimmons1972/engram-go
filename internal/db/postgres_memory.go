@@ -79,12 +79,12 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		  (id, content, memory_type, project, tags,
 		   importance, access_count, last_accessed, created_at, updated_at,
 		   immutable, expires_at, content_hash, storage_mode, episode_id,
-		   dynamic_importance, document_id, pattern_confidence)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		   dynamic_importance, document_id, pattern_confidence, valid_from)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		m.ID, m.Content, m.MemoryType, m.Project, tagsJSON,
 		m.Importance, m.AccessCount, now, now, now,
 		m.Immutable, m.ExpiresAt, hash, m.StorageMode, episodeArg,
-		m.DynamicImportance, documentArg, m.PatternConfidence,
+		m.DynamicImportance, documentArg, m.PatternConfidence, m.ValidFrom,
 	)
 	return err
 }
