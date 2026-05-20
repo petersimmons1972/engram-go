@@ -18,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/petersimmons1972/engram/internal/config"
 )
 
 const usageText = `Usage: starter [subcommand] [options]
@@ -173,12 +175,16 @@ func main() {
 // runHealth probes the engram /health endpoint on localhost and exits 0 if the
 // response is HTTP 200, or 1 on any error or non-200 status. Used as the
 // Docker HEALTHCHECK command in distroless images that have no shell or wget.
+//
+// The port is read from ENGRAM_PORT (canonical default: config.DefaultPort).
+// This ensures the healthcheck always targets the same port the binary binds to,
+// preventing false-positives when ENGRAM_PORT is overridden. (#729)
 func runHealth() {
-	port := "8788"
+	port := config.PortOrDefault()
 	client := &http.Client{Timeout: 4 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", port), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "health: %v\n", err)
 		os.Exit(1)
