@@ -12,11 +12,13 @@
 # Inventory:  ansible/inventory/hosts.ini  (group: k8s_workers, worker131–139)
 # Group vars: ansible/group_vars/k8s_workers.yml  (registry_ip, registry_host)
 #
-# Run (all workers):
-#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml
+# Run (per-node — preferred form, lowest blast radius):
+#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml \
+#       --limit worker131.petersimmons.com
 #
-# Run (single node):
-#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml --limit worker131.petersimmons.com
+# Run (all workers — only after per-node verification on at least one host):
+#   cd ansible && ansible-playbook playbooks/registry-hosts.yaml
+#   ⚠  Fleet-wide. Touches /etc/hosts on every worker in [k8s_workers].
 #
 # Idempotent: safe to re-run at any time. Will not duplicate lines on nodes
 # where the manual entry already exists from prior configuration.
@@ -30,12 +32,28 @@
 
 - name: Ensure registry.petersimmons.com resolves on K8s worker nodes
   hosts: k8s_workers
-  become: true
+  # become is set on the task, not the play — prevents future tasks from
+  # silently inheriting root. See issue #47.
+  gather_facts: false
 
   tasks:
     - name: Add registry A-record to /etc/hosts
+      become: true
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^\s*[0-9]{1,3}(\.[0-9]{1,3}){3}\s+registry\.petersimmons\.com(\s.*)?$'
         line: "{{ registry_ip }} {{ registry_host }}  # managed by ansible — homelab-config#2"
         state: present
+
+    - name: Verify registry hostname resolves to expected IP
+      # Post-task check: getent reads /etc/hosts (plus nsswitch sources) and
+      # returns the resolved IP in column 1. We assert it matches registry_ip.
+      # Fails loud if the lineinfile task wrote a malformed entry or another
+      # source (DNS, dnsmasq) returns a different answer. See issue #42.
+      ansible.builtin.command:
+        cmd: "getent hosts {{ registry_host }}"
+      register: getent_result
+      changed_when: false
+      failed_when: >-
+        getent_result.rc != 0
+        or (getent_result.stdout.split() | first) != registry_ip
