@@ -182,9 +182,11 @@ func TestQuickStoreHandler_TagTooLong(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestQuickStoreHandler_InvalidImportance verifies that importance outside [0,100] is rejected with 400.
+// TestQuickStoreHandler_InvalidImportance verifies that importance outside [0,4] is rejected with 400.
+// The range was previously documented as 0–100 but the handler (handleMemoryStore) always enforced
+// 0–4. This test was updated as part of fix #768 to match the narrowed validator.
 func TestQuickStoreHandler_InvalidImportance(t *testing.T) {
-	tests := []int{-1, 101}
+	tests := []int{-1, 5}
 	for _, imp := range tests {
 		t.Run(fmt.Sprintf("importance=%d", imp), func(t *testing.T) {
 			s := newQuickStoreServer(t)
@@ -201,6 +203,19 @@ func TestQuickStoreHandler_InvalidImportance(t *testing.T) {
 			s.handleQuickStore(w, req)
 
 			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+// TestValidateQuickStoreInput_RejectsImportanceAbove4 is the regression test for #768.
+// Values in the formerly-accepted range (5–100) must now be rejected by the validator
+// before they reach handleMemoryStore, giving callers an early, descriptive error.
+func TestValidateQuickStoreInput_RejectsImportanceAbove4(t *testing.T) {
+	for _, imp := range []int{5, 10, 50, 100} {
+		t.Run(fmt.Sprintf("importance=%d", imp), func(t *testing.T) {
+			err := validateQuickStoreInput("some content", "global", nil, imp)
+			require.Error(t, err, "importance=%d should be rejected — was accepted by the buggy 0-100 validator", imp)
+			require.Contains(t, err.Error(), "importance must be", "error message should describe the valid range")
 		})
 	}
 }
