@@ -1263,7 +1263,7 @@ func (s *Server) registerTools() {
 		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
 			noConfig(handleMemoryExpand)},
 		// Mutations
-		{"memory_correct", "Update content, tags, importance, or pattern_confidence (float 0.0–1.0) on an existing memory. Omit pattern_confidence to leave it unchanged.",
+		{"memory_correct", "Update content, tags, importance, or pattern_confidence (float 0.0–1.0) on an existing memory. Omit pattern_confidence to leave it unchanged. Only-promote-never-nullify rule: omit 'tags' entirely to preserve the existing valid_from; sending tags=[...] recalculates valid_from from date: tags; sending tags=[] clears valid_from to null. See docs/tools.md#memory_correct and issue #765.",
 			noConfig(handleMemoryCorrect)},
 		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
 			noConfig(handleMemoryForget)},

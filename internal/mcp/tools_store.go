@@ -378,8 +378,8 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	var importance *int
 	if v, ok := args["importance"].(float64); ok {
 		n := int(v)
-		if n < minImportanceValue || n > maxImportanceValue {
-			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be %d–%d, got %d", minImportanceValue, maxImportanceValue, n)), nil
+		if n < highestImportanceLevel || n > lowestImportanceLevel {
+			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be %d–%d, got %d", highestImportanceLevel, lowestImportanceLevel, n)), nil
 		}
 		importance = &n
 	}
@@ -446,12 +446,16 @@ const maxQuickStoreTags = 64
 // maxQuickStoreTagLength is the maximum length of a single tag.
 const maxQuickStoreTagLength = 256
 
-// maxImportanceValue is the maximum allowed importance value.
+// lowestImportanceLevel is the highest numeric value on the 0–4 importance
+// scale (= least important / lowest retention priority). The scale is inverted:
+// 0 = Critical (highest priority), 4 = Low (lowest priority). "Lowest" here
+// refers to retention importance, not the numeric value.
 // Must match the 0–4 range enforced by handleMemoryStore.
-const maxImportanceValue = 4
+const lowestImportanceLevel = 4
 
-// minImportanceValue is the minimum allowed importance value.
-const minImportanceValue = 0
+// highestImportanceLevel is the lowest numeric value on the 0–4 importance
+// scale (= most important / highest retention priority). 0 = Critical.
+const highestImportanceLevel = 0
 
 // projectNamePattern validates project names: ^[a-z0-9_-]{1,64}$.
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
@@ -476,8 +480,8 @@ func validateQuickStoreInput(content string, project string, tags []string, impo
 			return fmt.Errorf("tag %d exceeds max length %d chars", i, maxQuickStoreTagLength)
 		}
 	}
-	if importance < minImportanceValue || importance > maxImportanceValue {
-		return fmt.Errorf("importance must be %d–%d, got %d", minImportanceValue, maxImportanceValue, importance)
+	if importance < highestImportanceLevel || importance > lowestImportanceLevel {
+		return fmt.Errorf("importance must be %d–%d, got %d", highestImportanceLevel, lowestImportanceLevel, importance)
 	}
 	return nil
 }
