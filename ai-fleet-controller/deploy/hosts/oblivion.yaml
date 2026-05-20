@@ -1,0 +1,31 @@
+apiVersion: ai.petersimmons.com/v1
+kind: GPUHost
+metadata:
+  name: oblivion
+  namespace: ai-fleet
+spec:
+  host: oblivion.petersimmons.com
+  reservedMemoryGB: 8
+  nfsMount: "truenas.petersimmons.com:/mnt/zp1/ai-models"
+  models:
+  - name: nemo
+    framework: vllm
+    repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+    dtype: auto
+    port: 8002
+    image: vllm/vllm-openai:latest
+    extraArgs:
+    - --max-model-len
+    - "131072"
+    - --gpu-memory-utilization
+    - "0.90"
+    - --kv-cache-dtype
+    - fp8
+    - --enable-chunked-prefill
+
+  - name: inference
+    framework: vllm
+    repo: Qwen/Qwen3-Coder-30B-A3B-Instruct
+    dtype: auto
+    port: 8000
+    image: vllm/vllm-openai:latest

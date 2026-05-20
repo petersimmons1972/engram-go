@@ -1,0 +1,70 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gpuhosts.ai.petersimmons.com
+spec:
+  group: ai.petersimmons.com
+  names:
+    kind: GPUHost
+    listKind: GPUHostList
+    plural: gpuhosts
+    singular: gpuhost
+    shortNames: [gpu]
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Host
+      type: string
+      jsonPath: .spec.host
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [host, nfsMount, models]
+            properties:
+              host:
+                type: string
+              reservedMemoryGB:
+                type: integer
+                default: 8
+              nfsMount:
+                type: string
+              models:
+                type: array
+                items:
+                  type: object
+                  required: [name, framework, repo, port, image]
+                  properties:
+                    name:
+                      type: string
+                    framework:
+                      type: string
+                      enum: [vllm, infinity, llama-cpp]
+                    repo:
+                      type: string
+                    dtype:
+                      type: string
+                    task:
+                      type: string
+                      enum: [embedding, generation]
+                    port:
+                      type: integer
+                    image:
+                      type: string
+                    extraArgs:
+                      type: array
+                      items:
+                        type: string
+                    gpuDriver:
+                      type: string
+                      enum: [nvidia, rocm]
+                    renderDevice:
+                      type: string

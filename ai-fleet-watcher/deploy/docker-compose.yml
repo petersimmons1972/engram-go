@@ -1,0 +1,33 @@
+# Bootstrap — copy to each GPU host and run:
+#   HOSTNAME=oblivion.petersimmons.com docker compose up -d
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: always
+    networks: [ai-watcher]
+
+  watcher:
+    image: registry.petersimmons.com/ai-fleet/watcher:latest
+    environment:
+      HOSTNAME: ${HOSTNAME:?HOSTNAME required}
+      CONTROLLER_URL: https://ai-fleet.petersimmons.com
+      DOCKER_HOST: tcp://docker-proxy:2375
+    volumes:
+      - ai-watcher-data:/data
+    restart: always
+    depends_on: [docker-proxy]
+    networks: [ai-watcher]
+
+networks:
+  ai-watcher:
+
+volumes:
+  ai-watcher-data:

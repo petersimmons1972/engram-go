@@ -1,0 +1,194 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: olla-config
+  namespace: ai-fleet
+data:
+  config.local.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 40114
+      request_logging: true
+      rate_limits:
+        global_requests_per_minute: 60000
+        per_ip_requests_per_minute: 60000
+        burst_size: 50000
+
+    proxy:
+      engine: "olla"
+      load_balancer: "least-connections"
+      profile: "auto"
+      connection_timeout: 60s
+      response_timeout: 900s
+      read_timeout: 600s
+      retry:
+        enabled: true
+        on_connection_failure: true
+        on_status_codes: [502, 503, 504]
+        max_attempts: 2
+
+    discovery:
+      type: "static"
+      refresh_interval: 30s
+      static:
+        endpoints:
+          # GB10 Grace-Blackwell (128 GB unified) — Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4
+          # Managed by ai-fleet-controller (policy a9e7777d)
+          - url: "http://oblivion.petersimmons.com:8000"
+            name: "oblivion-gb10-vllm"
+            type: "openai"
+            priority: 200
+
+          # RX 7900 XT (20 GB, gfx1100, leviathan) — bge-m3 via Infinity on port 8004
+          - url: "http://leviathan.petersimmons.com:8004"
+            name: "leviathan-7900xt-infinity"
+            type: "openai"
+            priority: 150
+
+          # GB10 Grace-Blackwell — bge-m3 via Infinity port 8003 (down — will reconnect when restored)
+          - url: "http://oblivion.petersimmons.com:8003"
+            name: "oblivion-gb10-infinity"
+            type: "openai"
+            priority: 125
+
+          # W6800 (32 GB, gfx1030, precision) — bge-m3 via Infinity port 8005
+          - url: "http://precision.petersimmons.com:8005"
+            name: "precision-w6800-infinity"
+            type: "openai"
+            priority: 100
+
+          # W6800 (32 GB, gfx1030, precision) — Ollama general inference
+          - url: "http://precision.petersimmons.com:11434"
+            name: "w6800"
+            type: "ollama"
+            priority: 100
+
+          # MI-50 (16 GB, gfx906, precision) — Ollama coding (qwen2.5-coder:14b-q6_K)
+          - url: "http://precision.petersimmons.com:11436"
+            name: "mi50"
+            type: "ollama"
+            priority: 75
+
+          # RX 7900 XT (leviathan) — Ollama backup inference
+          - url: "http://leviathan.petersimmons.com:11434"
+            name: "leviathan-7900xt"
+            type: "ollama"
+            priority: 50
+
+    model_discovery:
+      enabled: true
+      interval: 5m
+      timeout: 30s
+
+    model_registry:
+      type: "memory"
+      enable_unifier: true
+      unification:
+        enabled: true
+        stale_threshold: 24h
+        cleanup_interval: 10m
+
+    routing_strategy:
+      type: "round-robin"
+      options:
+        fallback_behavior: "compatible_only"
+        discovery_timeout: 2s
+        discovery_refresh_on_miss: true
+
+    translators:
+      anthropic:
+        enabled: true
+        passthrough_enabled: true
+
+    logging:
+      level: "info"
+      format: "json"
+      output: "stdout"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: olla
+  namespace: ai-fleet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: olla
+  template:
+    metadata:
+      labels:
+        app: olla
+    spec:
+      containers:
+      - name: olla
+        image: ghcr.io/thushan/olla:latest
+        ports:
+        - containerPort: 40114
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /olla/health
+            port: 40114
+          initialDelaySeconds: 5
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /olla/health
+            port: 40114
+          initialDelaySeconds: 3
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: olla-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: olla
+  namespace: ai-fleet
+spec:
+  selector:
+    app: olla
+  ports:
+  - port: 80
+    targetPort: 40114
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: olla
+  namespace: ai-fleet
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: olla.petersimmons.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: olla
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - olla.petersimmons.com
+    secretName: olla-tls
