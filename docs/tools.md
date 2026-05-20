@@ -111,6 +111,8 @@ memory_store(
 | Low | 3 | 0.67× | Never |
 | Trivial | 4 | 0.33× | After 30 days |
 
+> **Two scales, do not confuse them.** `importance` itself is an integer 0–4 (5 discrete levels). The **multiplier** column above shows the runtime scoring effect (~0.33× to ~1.67×, derived as `max(0.1, (5 - importance) / 3)`). If you have seen a range like "5-100" or "0.33–1.67" referenced elsewhere, that is the multiplier or its percent form, not the input you pass to `memory_store`. The only other numeric memory field, `pattern_confidence`, is a float 0.0–1.0.
+
 Set `importance=0` (Critical) sparingly. A constraint that must never be violated — never use raw SQL outside the repository layer, never store tokens in localStorage — belongs here. Most decisions belong at High or Medium. If everything is Critical, nothing is.
 
 ---
