@@ -62,13 +62,6 @@ func GenerateOpus(ctx context.Context, prompt string, retries int) (string, erro
 	return generate(ctx, prompt, "opus", retries)
 }
 
-// GenerateForModel calls generate with the given model alias. model must be
-// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
-// unknown value causes generate → runClaude to return an error immediately.
-func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
-	return generate(ctx, prompt, model, retries)
-}
-
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}

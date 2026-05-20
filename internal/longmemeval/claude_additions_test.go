@@ -54,39 +54,8 @@ func TestContextTopKForTypeWithBump_BumpTrue(t *testing.T) {
 // GenerateForModel — model validation behaviour
 // ---------------------------------------------------------------------------
 
-// validModelServer returns an httptest server that simulates a successful
-// claude CLI interaction is not possible in unit tests because claude is an
-// external binary. Instead we test GenerateForModel's rejection of invalid
-// model names, which happens inside runClaude before exec.Command fires.
-// For valid model names we verify the error is NOT a model-rejection error
-// (it will be an exec "executable not found" or similar in CI).
-
-func TestGenerateForModel_InvalidModel(t *testing.T) {
-	ctx := context.Background()
-	_, err := longmemeval.GenerateForModel(ctx, "prompt", "gpt-4o", 0)
-	if err == nil {
-		t.Fatal("expected error for invalid model, got nil")
-	}
-	if !strings.Contains(err.Error(), "disallowed model") {
-		t.Errorf("error = %q, want it to contain 'disallowed model'", err.Error())
-	}
-}
-
-func TestGenerateForModel_InvalidModel_NoRetry(t *testing.T) {
-	t.Skip("subprocess retry blocks 60s timeout; functionality covered by sibling test")
-	// Even with retries > 0 the model-rejection error should be returned
-	// immediately (no point sleeping and retrying a static validation failure).
-	// The current implementation does retry, which wastes time. We just assert
-	// the error is still the disallowed-model error.
-	ctx := context.Background()
-	_, err := longmemeval.GenerateForModel(ctx, "prompt", "claude-3-opus-20240229", 2)
-	if err == nil {
-		t.Fatal("expected error for invalid model, got nil")
-	}
-	if !strings.Contains(err.Error(), "disallowed model") {
-		t.Errorf("error = %q, want 'disallowed model'", err.Error())
-	}
-}
+// TestGenerateForModel_InvalidModel and TestGenerateForModel_InvalidModel_NoRetry
+// live in generate_for_model_test.go (the definitive, timing-checked versions from #755).
 
 func TestGenerateOpus_InvalidModel_NotTriggered(t *testing.T) {
 	// GenerateOpus passes "opus" which IS in the allowlist. The call will fail
