@@ -107,6 +107,9 @@ Behavioral defaults (telemetry shows I default to the wrong tool without these):
 - Security review first step → `semgrep scan --config auto <path>`
 - File search → `fd <pattern> [path]` (not `find . -name`) — already installed, respects .gitignore
 - Recursive code search → `rg <pattern> [path]` (not `grep -r`) — already installed, skips binaries and .git/
+- Structural diff → `difft <a> <b>` or `GIT_EXTERNAL_DIFF=difft git diff --staged` for Go/Python pre-commit review
+- HTML extraction → `curl -s <url> | pup 'selector text{}'` (not raw curl piped to head)
+- CSV/JSONL transforms → `mlr --jsonl filter/cut/stats/tail <file>` (not `cat | python3 -c`)
 
 Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckdb`, `tokei`, `jq`, `just`, full `kubectl`/`git` workflows → `~/TOOLS.md`.
 
