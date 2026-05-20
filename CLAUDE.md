@@ -115,7 +115,7 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 
 ## Critical Rules
 **NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup
-**ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth
+**ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth · k8s network diagnosis: check NetworkPolicy in the source namespace FIRST (cluster uses default-deny egress with per-IP/port allows). See ~/docs/k8s-firewall.md if it exists, otherwise homelab Engram pattern.
 
 ## Container Image Standard — NON-NEGOTIABLE
 Default: Chainguard base images. Python-with-tools: `python:latest-dev` build stage → `wolfi-base` runtime; nonroot UID **65532**, tini at `/sbin/tini`. K8s: `fsGroup: 65532` MANDATORY or volume mounts crashloop; `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`. Full pattern → `~/docs/container-images.md`.
