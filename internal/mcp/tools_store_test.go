@@ -122,9 +122,22 @@ func TestMemoryStoreBatch_ImmutableForwardedToDBAll(t *testing.T) {
 }
 
 // TestMemoryStoreBatch_ImmutableMixedNoCrossContamination verifies that when a
-// batch has a mix of immutable and mutable items, only the items with
-// immutable=true arrive at the DB layer as Immutable=true, and mutable items
-// are not promoted — regression guard for #764 and #782.
+// batch has a mix of immutable and mutable items, the Immutable flag does not
+// bleed between items in either direction:
+//
+//  1. Immutable→mutable: an item with immutable=true must not cause adjacent
+//     mutable items (immutable=false or absent) to be stored as Immutable=true.
+//  2. Mutable→immutable: items with immutable=false or no flag must not prevent
+//     an item with immutable=true from being stored as Immutable=true.
+//
+// Regression guard for #764 and #782.
+//
+// NOTE: The assertions below match items by their sequential input index
+// (cap.stored[0] corresponds to the first entry in the memories array, etc.).
+// This is valid because handleMemoryStoreBatch processes items sequentially and
+// the capturing backend appends in call order. If batch processing ever becomes
+// concurrent, these index-based assertions must be replaced with content- or
+// id-based matching (#816).
 func TestMemoryStoreBatch_ImmutableMixedNoCrossContamination(t *testing.T) {
 	pool, cap := newCapturingPool(t)
 
@@ -152,12 +165,14 @@ func TestMemoryStoreBatch_ImmutableMixedNoCrossContamination(t *testing.T) {
 	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
 
 	require.Len(t, cap.stored, 3, "exactly 3 memories must be stored")
-	require.False(t, cap.stored[0].Immutable,
-		"item 0 (immutable=false): must not be marked immutable at DB layer")
+	// Direction 1 (mutable→immutable not blocked): immutable=true item must arrive as Immutable=true.
 	require.True(t, cap.stored[1].Immutable,
 		"item 1 (immutable=true): must be marked immutable at DB layer — see issue #764/#782")
+	// Direction 2 (immutable→mutable not promoted): adjacent mutable items must not be elevated.
+	require.False(t, cap.stored[0].Immutable,
+		"item 0 (immutable=false): must not be marked immutable at DB layer — no bleed from item 1")
 	require.False(t, cap.stored[2].Immutable,
-		"item 2 (no flag): must default to mutable at DB layer — no cross-contamination from item 1")
+		"item 2 (no flag): must default to mutable at DB layer — no bleed from item 1")
 }
 
 // ── #763: memory_store_document drops valid_from and episode_id ───────────────
@@ -597,23 +612,65 @@ func TestMemoryCorrect_MCP_EmptyTagsClearsValidFrom(t *testing.T) {
 		"empty tags must yield nil valid_from (cleared to NULL in Postgres) (B1)")
 }
 
+// historyTrackingBackend is a test backend that records each UpdateMemory call as
+// a MemoryVersion entry, allowing handleMemoryHistory to return a real version
+// chain without a Postgres instance — regression guard for issue #821.
+type historyTrackingBackend struct {
+	noopBackend
+	mu       sync.Mutex
+	versions map[string][]*types.MemoryVersion // keyed by memory_id
+}
+
+func (b *historyTrackingBackend) UpdateMemory(_ context.Context, id string, content *string, tags []string, _ *int, _ *float64) (*types.Memory, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.versions == nil {
+		b.versions = make(map[string][]*types.MemoryVersion)
+	}
+	vf := types.ParseDateTag(tags)
+	// Snapshot the state of this update as a new version (mirrors versionMemoryTx behaviour).
+	v := &types.MemoryVersion{
+		ID:         fmt.Sprintf("ver-%d", len(b.versions[id])+1),
+		MemoryID:   id,
+		ChangeType: "update",
+		ValidFrom:  vf,
+		Tags:       tags,
+		SystemFrom: time.Now().UTC(),
+	}
+	if content != nil {
+		v.Content = *content
+	}
+	// Prepend so GetMemoryHistory returns newest-first (matches postgres_memory.go order).
+	b.versions[id] = append([]*types.MemoryVersion{v}, b.versions[id]...)
+	return &types.Memory{ID: id, Tags: tags, ValidFrom: vf}, nil
+}
+
+func (b *historyTrackingBackend) GetMemoryHistory(_ context.Context, _ string, memoryID string) ([]*types.MemoryVersion, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.versions[memoryID], nil
+}
+
+func (b *historyTrackingBackend) Begin(_ context.Context) (db.Tx, error) { return noopTx{}, nil }
+
+func newHistoryTrackingPool(t *testing.T, back *historyTrackingBackend) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, back, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
+}
+
 // TestMemoryCorrect_History_RetainsPriorValidFrom verifies that two successive
-// corrections produce distinct valid_from values, confirming the MCP layer passes
-// updated tag sets through correctly on each call.
-//
-// NOTE: This test does NOT call handleMemoryHistory — it asserts MCP-layer
-// pass-through only. The real history versioning assertion (that memory_history
-// returns a version chain with before/after valid_from) is tracked in
-// https://github.com/petersimmons1972/engram-go/issues/821.
-// DB-layer versioning is covered by internal/db/postgres_valid_from_test.go.
+// corrections produce distinct valid_from values AND that handleMemoryHistory
+// returns a version chain with ≥ 2 entries whose valid_from values match the
+// sequence of date tags applied — regression guard for issue #821.
 func TestMemoryCorrect_History_RetainsPriorValidFrom(t *testing.T) {
-	// Versioning is enforced at the DB layer (versionMemoryTx snapshots the
-	// prior row including valid_from before UPDATE). We verify the MCP layer
-	// passes through two successive corrections without error — the DB-layer
-	// versioning test (TestUpdateMemory_PromotesValidFromOnDateTagChange +
-	// postgres_valid_from_test.go) is the authoritative guard for version content.
-	back := &validFromCorrectBackendV2{}
-	pool := newValidFromCorrectPoolV2(t, back)
+	back := &historyTrackingBackend{}
+	pool := newHistoryTrackingPool(t, back)
 
 	// First correction: set date:2024-03-20
 	req1 := mcpgo.CallToolRequest{}
@@ -637,17 +694,55 @@ func TestMemoryCorrect_History_RetainsPriorValidFrom(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res2.IsError)
 
-	// Both corrections must reach UpdateMemory and produce distinct ValidFrom values.
-	first := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
-	second := time.Date(2024, 4, 15, 0, 0, 0, 0, time.UTC)
+	// Real history assertion: handleMemoryHistory must return ≥ 2 versions with
+	// distinct valid_from values matching the sequence of corrections — #821.
+	histReq := mcpgo.CallToolRequest{}
+	histReq.Params.Arguments = map[string]any{
+		"project":   "test",
+		"memory_id": "mem-e-test",
+	}
+	histRes, err := handleMemoryHistory(context.Background(), pool, histReq)
+	require.NoError(t, err)
+	require.NotNil(t, histRes)
+	require.False(t, histRes.IsError, "handleMemoryHistory must not error, got: %+v", histRes.Content)
 
-	vf1 := types.ParseDateTag([]string{"date:2024-03-20"})
-	vf2 := types.ParseDateTag(back.capturedTags)
-	require.NotNil(t, vf1, "first correction valid_from must be non-nil")
-	require.NotNil(t, vf2, "second correction valid_from must be non-nil")
-	require.True(t, vf1.Equal(first), "first valid_from must be 2024-03-20")
-	require.True(t, vf2.Equal(second), "second valid_from must be 2024-04-15")
-	require.False(t, vf1.Equal(*vf2), "two successive corrections must produce distinct valid_from values")
+	// Decode the version list from the tool result.
+	require.NotEmpty(t, histRes.Content, "history result must have content")
+	tc, ok := histRes.Content[0].(mcpgo.TextContent)
+	require.True(t, ok, "history result must be TextContent")
+
+	var payload struct {
+		Count    int                    `json:"count"`
+		Versions []*types.MemoryVersion `json:"versions"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(tc.Text), &payload),
+		"history result must be valid JSON")
+
+	require.GreaterOrEqual(t, payload.Count, 2,
+		"handleMemoryHistory must return ≥ 2 versions after two corrections (#821)")
+	require.Len(t, payload.Versions, payload.Count,
+		"versions slice length must match count field")
+
+	// Collect all valid_from values from the version chain.
+	var validFroms []time.Time
+	for _, v := range payload.Versions {
+		if v.ValidFrom != nil {
+			validFroms = append(validFroms, *v.ValidFrom)
+		}
+	}
+	require.Len(t, validFroms, 2,
+		"both versions must carry a non-nil valid_from matching the applied date tags (#821)")
+
+	date1 := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
+	date2 := time.Date(2024, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	// Versions are newest-first; verify the set contains both dates regardless of order.
+	hasDate1 := validFroms[0].Equal(date1) || validFroms[1].Equal(date1)
+	hasDate2 := validFroms[0].Equal(date2) || validFroms[1].Equal(date2)
+	require.True(t, hasDate1, "version chain must include valid_from 2024-03-20 (#821)")
+	require.True(t, hasDate2, "version chain must include valid_from 2024-04-15 (#821)")
+	require.False(t, validFroms[0].Equal(validFroms[1]),
+		"two versions must have distinct valid_from values (#821)")
 }
 
 // TestMemoryCorrect_ImportanceOutOfRange verifies that handleMemoryCorrect
