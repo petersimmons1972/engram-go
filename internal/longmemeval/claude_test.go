@@ -468,7 +468,103 @@ func TestContextTopKForType(t *testing.T) {
 	}
 }
 
-func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
+// ---------------------------------------------------------------------------
+// H12 — Enumerate-first generation prompt
+// ---------------------------------------------------------------------------
+
+// TestEnumerateFirstPrompt_ContainsEnumerationInstruction verifies that when
+// --enumerate-first is requested for an aggregation question, the generation
+// prompt contains an explicit enumerate-before-summing instruction.
+func TestEnumerateFirstPrompt_ContainsEnumerationInstruction(t *testing.T) {
+	question := "How many doctor visits did I have last year?"
+	contextBlocks := []string{
+		"Session date: 2023-03-10\nUser: I went to the doctor today for a checkup.",
+		"Session date: 2023-07-22\nUser: Had a follow-up appointment with Dr. Smith.",
+		"Session date: 2023-11-05\nUser: Annual flu-shot visit at the clinic.",
+	}
+	prompt := longmemeval.GenerationPromptEnumerateFirst(question, "2024-01-01", contextBlocks)
+	// The prompt must instruct the model to enumerate each event before summing.
+	enumerationHints := []string{"enumerate", "list each", "each event", "then sum", "then total", "then count"}
+	found := false
+	lowerPrompt := strings.ToLower(prompt)
+	for _, hint := range enumerationHints {
+		if strings.Contains(lowerPrompt, hint) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("enumerate-first prompt must contain an enumeration instruction; got:\n%s", prompt)
+	}
+}
+
+// TestEnumerateFirstPrompt_ContainsQuestion verifies the question is included
+// in the enumerate-first prompt so the model knows what to count.
+func TestEnumerateFirstPrompt_ContainsQuestion(t *testing.T) {
+	question := "How many gym sessions did I attend this month?"
+	prompt := longmemeval.GenerationPromptEnumerateFirst(question, "2024-01-31", []string{"ctx"})
+	if !strings.Contains(prompt, question) {
+		t.Errorf("enumerate-first prompt must include the original question; got:\n%s", prompt)
+	}
+}
+
+// TestEnumerateFirstPrompt_ContainsContext verifies context blocks are included
+// in the enumerate-first prompt.
+func TestEnumerateFirstPrompt_ContainsContext(t *testing.T) {
+	blocks := []string{"Session date: 2023-05-01\nUser visited the gym."}
+	prompt := longmemeval.GenerationPromptEnumerateFirst("How many gym visits?", "2024-01-01", blocks)
+	if !strings.Contains(prompt, "Session date: 2023-05-01") {
+		t.Errorf("enumerate-first prompt must include context blocks; got:\n%s", prompt)
+	}
+}
+
+// TestGenerationPromptForTypeEnumerate_UsesEnumerateFirstForAggregation verifies
+// that GenerationPromptForType returns the enumerate-first prompt when
+// enumerateFirst=true AND the question is an aggregation question.
+func TestGenerationPromptForTypeEnumerate_UsesEnumerateFirstForAggregation(t *testing.T) {
+	question := "How many times did I go hiking this year?"
+	prompt := longmemeval.GenerationPromptForTypeEnumerate(
+		question, "multi-session", "2024-06-01",
+		[]string{"Session date: 2024-03-10\nWent hiking at Mt. Tam."},
+		true,
+	)
+	lowerPrompt := strings.ToLower(prompt)
+	enumerationHints := []string{"enumerate", "list each", "each event", "then sum", "then total", "then count"}
+	found := false
+	for _, hint := range enumerationHints {
+		if strings.Contains(lowerPrompt, hint) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("GenerationPromptForTypeEnumerate with enumerateFirst=true on aggregation question must inject enumeration; got:\n%s", prompt)
+	}
+}
+
+// TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
+// verifies that the enumerate-first instruction is NOT injected for non-aggregation
+// questions even when enumerateFirst=true — avoids altering non-counting prompts.
+func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation(t *testing.T) {
+	question := "What restaurant did I visit last week?"
+	prompt := longmemeval.GenerationPromptForTypeEnumerate(
+		question, "single-session-user", "2024-06-01",
+		[]string{"Session date: 2024-06-02\nUser visited Trattoria."},
+		true,
+	)
+	lowerPrompt := strings.ToLower(prompt)
+	// Should NOT contain enumeration instructions for non-aggregation questions.
+	enumerationHints := []string{"enumerate", "list each event", "then sum", "then total", "then count"}
+	for _, hint := range enumerationHints {
+		if strings.Contains(lowerPrompt, hint) {
+			t.Errorf("enumerate-first must NOT inject enumeration for non-aggregation; found %q in prompt:\n%s", hint, prompt)
+		}
+	}
+}
+
+// TestGenerationPromptForType_TemporalType_HasArithmeticGuidance is kept
+// unchanged — verifies temporal prompts still work after H12 refactor.
+func TestGenerationPromptForType_TemporalType_HasArithmeticGuidance(t *testing.T) {
 	prompt := longmemeval.GenerationPromptForType(
 		"How many weeks ago did I attend the baking class?",
 		"temporal-reasoning",

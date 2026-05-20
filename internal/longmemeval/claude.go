@@ -359,6 +359,16 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 // user's preferences rather than answer the question directly — answering directly
 // was the root cause of 0/30 on that category in v9 (engram-go#741 follow-up).
 func GenerationPromptForType(question, questionType, questionDate string, contextBlocks []string) string {
+	return GenerationPromptForTypeEnumerate(question, questionType, questionDate, contextBlocks, false)
+}
+
+// GenerationPromptForTypeEnumerate is like GenerationPromptForType but accepts
+// an enumerateFirst flag (H12). When enumerateFirst is true AND the question
+// matches the aggregation pattern, the generation prompt instructs the model to
+// enumerate each relevant event from the retrieved blocks before stating a count.
+// For non-aggregation questions the flag is a no-op so all other question types
+// are unaffected.
+func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
 	if questionType == "temporal-reasoning" {
 		return temporalGenerationPrompt(question, questionDate, contextBlocks)
 	}
@@ -375,7 +385,33 @@ Question (asked on %s): %s
 
 Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`, questionDate, ctx, questionDate, question)
 	}
+	if enumerateFirst && IsAggregationQuestion(question) {
+		return GenerationPromptEnumerateFirst(question, questionDate, contextBlocks)
+	}
 	return GenerationPrompt(question, questionDate, contextBlocks)
+}
+
+// GenerationPromptEnumerateFirst returns a generation prompt that instructs the
+// model to enumerate each relevant event from the memory blocks individually
+// before computing a total. H12 mechanism: forces an explicit intermediate
+// enumeration pass that prevents the model from returning a session count
+// instead of an entity count (Case 5 failure mode from in-context-all-failure-mechanics.md).
+func GenerationPromptEnumerateFirst(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are answering questions about a person's conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Instructions:
+1. First, enumerate each relevant event or entity mentioned across the memory blocks above. List each one separately (e.g. "1. Visit on 2023-03-10", "2. Visit on 2023-07-22"). If the same event appears in multiple blocks, count it only once.
+2. Then, sum or total the distinct items you enumerated to answer the question.
+3. State the final answer concisely. If the answer is a number, return only that number with minimal framing.
+4. If the answer is not present in the memory blocks, say so. Do not invent events or dates not found in the context.`, questionDate, ctx, questionDate, question)
 }
 
 // GenerationPrompt builds the prompt for answer generation.

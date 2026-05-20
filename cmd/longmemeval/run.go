@@ -278,7 +278,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = sortBlocksChronologically(contextBlocks)
 	}
 
-	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
+	// H12: use enumerate-first variant when flag is set; falls back to standard prompt for non-aggregation questions.
+	prompt := longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, cfg.EnumerateFirst)
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {
 		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
