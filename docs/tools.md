@@ -258,6 +258,8 @@ memory_correct(
 | `tags` | array of strings | no | Replacement tag set; see tag-and-valid_from rules below |
 | `importance` | integer 0–4 | no | Replacement importance value; must be 0–4. Out-of-range returns a tool-result error (`isError: true`) with message `importance must be 0-4`. Symmetric with `memory_store` validation. |
 
+> **Only-promote-never-nullify rule (issue #779):** `memory_correct` can set or recalculate `valid_from` via `date:` tags, but it can never clear it except through an explicit empty tag list. Sending no `tags` argument at all leaves `valid_from` untouched — it is never nullified by a field you did not send. In practice: omit `tags` to update only `content` or `importance` without disturbing `valid_from`. This asymmetry is intentional; it prevents accidental date-erasure when the caller only cares about the content. The sole exception is `tags: []` (empty array), which explicitly clears `valid_from` — see issue #765 for the recalculation logic.
+
 **Tag and valid_from rules (issue #765):**
 
 `valid_from` is derived from `date:YYYY-MM-DD` tags. On every `memory_correct` call that includes a `tags` argument, `valid_from` is recalculated from the supplied tag set:
