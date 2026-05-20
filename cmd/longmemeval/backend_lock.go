@@ -19,14 +19,15 @@ import (
 // flag package uses for parse errors.
 const ExitCodeLockContention = 75
 
-// redactURL strips credentials and query strings from a URL before it appears
-// in error messages or logs. Uses net/url to parse.
+// redactURL strips credentials, query strings, and fragments from a URL before
+// it appears in error messages or logs. Uses net/url to parse.
 //
 // Redaction rules:
 //   - User-info (user:password@) is always removed.
 //   - Query string is always removed — tokens and API keys commonly appear
 //     there (e.g. ?api_key=…, ?token=…) and must not appear in logs.
-//   - Fragment is dropped by net/url.String() when RawQuery is cleared.
+//   - Fragment is always removed — tokens occasionally appear there
+//     (e.g. #token=abc) and must not appear in logs.
 //
 // If parsing fails or the URL has no host (e.g. unparseable strings that may
 // contain credentials in the query), returns the fixed placeholder
@@ -40,12 +41,13 @@ func redactURL(raw string) string {
 		// value; return a fixed placeholder.
 		return "[redacted-url]"
 	}
-	// Strip user-info and query string. The redacted form intentionally drops
-	// both so neither credentials (in userinfo) nor tokens (in query params)
-	// appear in logs or error messages.
+	// Strip userinfo, query, and fragment. The redacted form intentionally drops
+	// all three so neither credentials (in userinfo), tokens (in query params),
+	// nor tokens embedded in fragments appear in logs or error messages.
 	u.User = nil
 	u.RawQuery = ""
 	u.ForceQuery = false
+	u.Fragment = ""
 	return u.String()
 }
 

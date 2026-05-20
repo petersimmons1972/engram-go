@@ -275,6 +275,8 @@ func TestRedactURL(t *testing.T) {
 		// R2-B3: query strings must also be stripped (tokens in query params).
 		{"http://user:p@host/v1?api_key=secret", "http://host/v1"},
 		{"http://host/v1?token=xyz", "http://host/v1"},
+		// R2-B4: fragments must also be stripped (tokens occasionally appear there).
+		{"http://host/v1#token=abc", "http://host/v1"},
 		// Idempotent: already clean URLs pass through unchanged.
 		{"http://host/v1", "http://host/v1"},
 	}
