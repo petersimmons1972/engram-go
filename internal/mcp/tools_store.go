@@ -189,6 +189,8 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		Importance: importance,
 		Tags:       docTags,
 		Immutable:  getBool(args, "immutable", false),
+		EpisodeID:  episodeIDFromContextOrArgs(ctx, args),
+		ValidFrom:  parseDateTag(docTags),
 	}
 	engine := h.Engine
 	deps := storeDocumentDeps{
@@ -304,8 +306,10 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Project:           project,
 			Importance:        importance,
 			Tags:              itemTags,
+			Immutable:         getBool(mmap, "immutable", false),
 			StorageMode:       "focused",
 			EpisodeID:         itemEpisodeID,
+			ValidFrom:         parseDateTag(itemTags),
 			PatternConfidence: itemPatternConfidence,
 		})
 	}
@@ -504,31 +508,11 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	return handleMemoryStore(ctx, pool, req2, cfg)
 }
 
-// parseDateTag scans tags for a "date:<value>" entry and returns the parsed
-// UTC time (date portion only), or nil if no valid date tag is found.
-// The first matching tag wins. Supported formats:
-//   - "2006-01-02"                — ISO date
-//   - "2006/01/02 (Mon) 15:04"   — LongMemEval haystack date format
-//
-// This is used to populate ValidFrom so the recency scorer uses the actual
-// session date rather than the arbitrary ingest/access time.
+// parseDateTag is a package-local shim that delegates to types.ParseDateTag.
+// Kept for call-site compatibility within this file; callers in other packages
+// (e.g., internal/db) import types.ParseDateTag directly.
 func parseDateTag(tags []string) *time.Time {
-	layouts := []string{"2006-01-02", "2006/01/02 (Mon) 15:04"}
-	for _, tag := range tags {
-		val, ok := strings.CutPrefix(tag, "date:")
-		if !ok {
-			continue
-		}
-		for _, layout := range layouts {
-			t, err := time.Parse(layout, val)
-			if err != nil {
-				continue
-			}
-			t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-			return &t
-		}
-	}
-	return nil
+	return types.ParseDateTag(tags)
 }
 
 // handleMemoryQuery is a simplified front door for handleMemoryRecall.

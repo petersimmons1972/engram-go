@@ -208,6 +208,13 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 	if tags != nil {
 		m.Tags = tags
+		// Recalculate ValidFrom from the new tags so a date: tag added (or changed)
+		// via memory_correct takes effect. If the new tags have no date: tag but the
+		// old tags did, ValidFrom is left unchanged ("only promote, never nullify"
+		// policy — avoids accidental precision loss on partial corrections). Closes #765.
+		if newVF := types.ParseDateTag(tags); newVF != nil {
+			m.ValidFrom = newVF
+		}
 	}
 	if importance != nil {
 		m.Importance = *importance
@@ -227,13 +234,13 @@ func (b *PostgresBackend) UpdateMemory(
 		m.ContentHash = &hash
 		// Clear the summary so the background worker regenerates it with the new content.
 		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6 WHERE id=$7 AND project=$8",
-			m.Content, tagsJSON, m.Importance, now, hash, m.PatternConfidence, id, b.project,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6, valid_from=$7 WHERE id=$8 AND project=$9",
+			m.Content, tagsJSON, m.Importance, now, hash, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	} else {
 		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5 WHERE id=$6 AND project=$7",
-			m.Content, tagsJSON, m.Importance, now, m.PatternConfidence, id, b.project,
+			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5, valid_from=$6 WHERE id=$7 AND project=$8",
+			m.Content, tagsJSON, m.Importance, now, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	}
 	if err != nil {
