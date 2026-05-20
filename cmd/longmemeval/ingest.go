@@ -36,7 +36,10 @@ func runIngest(cfg *Config) {
 		defer cancel()
 		backend, err := db.NewPostgresBackend(ctx, "_lme_ingest", cfg.DatabaseURL)
 		if err != nil {
-			log.Printf("ingest: WARN: cannot open Postgres for TTL stamping (%v); projects will be durable", err)
+			// Log without the raw DSN/error (which may embed credentials) to
+			// satisfy CodeQL CWE-312. Use redactURL on the URL portion only.
+			log.Printf("ingest: WARN: cannot open Postgres for TTL stamping (dsn=%s); projects will be durable",
+				redactURL(cfg.DatabaseURL))
 		} else {
 			defer backend.Close()
 			stamper = backend
