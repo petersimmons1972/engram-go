@@ -1,4 +1,4 @@
-package instinctllm
+package llmclient
 
 import (
 	"bytes"

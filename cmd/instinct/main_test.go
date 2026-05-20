@@ -15,7 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 func TestLoadConfig_EnvVars(t *testing.T) {
@@ -374,12 +374,12 @@ func TestEngramClient_Correct(t *testing.T) {
 
 // ── Detect pipeline tests (replaces former callHaiku tests) ──────────────────
 //
-// These are integration tests of the full instinctllm.AnthropicClient → consolidator.Detect
+// These are integration tests of the full llmclient.AnthropicClient → consolidator.Detect
 // path, run from the main package to exercise the wiring.
 
-func newTestAnthropicClient(t *testing.T, endpoint string) instinctllm.LLMClient {
+func newTestAnthropicClient(t *testing.T, endpoint string) llmclient.LLMClient {
 	t.Helper()
-	c, err := instinctllm.NewAnthropicClient(instinctllm.Config{
+	c, err := llmclient.NewAnthropicClient(llmclient.Config{
 		APIKey:   "sk-ant-fake",
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,

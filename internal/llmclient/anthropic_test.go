@@ -1,4 +1,4 @@
-package instinctllm_test
+package llmclient_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // goldenAnthropicResponse returns a minimal Anthropic Messages API response
@@ -18,14 +18,14 @@ func goldenAnthropicResponse(text string) string {
 	return fmt.Sprintf(`{"content":[{"type":"text","text":%q}],"usage":{"input_tokens":10,"output_tokens":50}}`, text)
 }
 
-func newAnthropicClient(t *testing.T, endpoint string) instinctllm.LLMClient {
+func newAnthropicClient(t *testing.T, endpoint string) llmclient.LLMClient {
 	t.Helper()
-	cfg := instinctllm.Config{
+	cfg := llmclient.Config{
 		APIKey:   "sk-ant-fake",
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,
 	}
-	c, err := instinctllm.NewAnthropicClient(cfg)
+	c, err := llmclient.NewAnthropicClient(cfg)
 	if err != nil {
 		t.Fatalf("NewAnthropicClient: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestAnthropicEmptyContentNotSentinel(t *testing.T) {
 
 	c := newAnthropicClient(t, srv.URL+"/v1/messages")
 	_, err := c.Complete(context.Background(), "system", "user")
-	if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("Complete() err = %v, empty content must NOT be ErrBackendUnavailable", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestAnthropicParseFailureIsNotSentinel(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete() should return error on malformed JSON")
 	}
-	if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("Complete() err = %v, parse failure must NOT be ErrBackendUnavailable", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestAnthropicTransportError_WrapsBackendUnavailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete() should return error when server is unavailable")
 	}
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("transport error must wrap ErrBackendUnavailable; got: %v", err)
 	}
 }
@@ -217,7 +217,7 @@ func TestAnthropicNon200_WrapsBackendUnavailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete() should return error on 503")
 	}
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("non-200 status must wrap ErrBackendUnavailable; got: %v", err)
 	}
 }
@@ -249,7 +249,7 @@ func TestAnthropicReadBodyError_WrapsBackendUnavailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete() should return error on truncated body")
 	}
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("read-body failure must wrap ErrBackendUnavailable; got: %v", err)
 	}
 }
