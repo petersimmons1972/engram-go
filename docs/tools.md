@@ -253,9 +253,10 @@ memory_correct(
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `memory_id` | string | yes | ID of the memory to update |
+| `project` | string | yes | Project namespace the memory belongs to; must match the project used at store time |
 | `new_content` | string | no | Replacement content; omit to leave content unchanged |
 | `tags` | array of strings | no | Replacement tag set; see tag-and-valid_from rules below |
-| `importance` | integer 0–4 | no | Replacement importance value; must be 0–4 |
+| `importance` | integer 0–4 | no | Replacement importance value; must be 0–4. Out-of-range returns a tool-result error (`isError: true`) with message `importance must be 0-4`. Symmetric with `memory_store` validation. |
 
 **Tag and valid_from rules (issue #765):**
 
@@ -265,6 +266,8 @@ memory_correct(
 - **`tags: ["date:2024-06-01", ...]`** — `valid_from` is set to `2024-06-01`.
 - **`tags: []`** — `valid_from` is cleared to `NULL` (no date tag in the empty set).
 - **`tags: null`** — treated identically to omitting `tags`; `valid_from` is preserved. This is a JSON deserialization constraint: `null` and an absent key both produce `nil` after `json.Unmarshal` into `map[string]any`. To explicitly clear `valid_from`, send `"tags": []` (empty array).
+
+> **For typed-language SDKs (Go, Rust, Java):** A nil/null pointer field serialized to JSON usually emits `"tags":null`, which is treated as omitting `tags` (preserves `valid_from`). To CLEAR `valid_from`, serialize `tags` as an empty array `[]`, not `null`. Go SDKs should tag the field with `json:",omitempty"` if "no field" is the intended default.
 
 > **Behavior changes:** This recalculation behavior was introduced with issue #765. Prior to that fix, tags could be updated without recalculating `valid_from`, causing stale date values.
 

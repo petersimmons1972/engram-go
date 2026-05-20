@@ -387,15 +387,15 @@ func TestMemoryCorrect_RecalculatesValidFromOnTagChange(t *testing.T) {
 //   d. Correct WITHOUT tags arg → valid_from unchanged
 //   e. memory_history returns 2 versions with distinct valid_from
 
-// TestMemoryCorrect_PathAlpha_A_StoreWithDateTag verifies that storing a memory
-// with a date: tag sets valid_from correctly (assertion a).
-func TestMemoryCorrect_PathAlpha_A_StoreWithDateTag(t *testing.T) {
+// TestMemoryCorrect_DateTag_StoreSetsValidFrom verifies that storing a memory
+// with a date: tag sets valid_from correctly.
+func TestMemoryCorrect_DateTag_StoreSetsValidFrom(t *testing.T) {
 	pool, cap := newCapturingPool(t)
 
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"project":     "test",
-		"content":     "dated memory for path alpha test a",
+		"content":     "dated memory for store-sets-valid-from test",
 		"memory_type": "context",
 		"tags":        []any{"date:2024-03-20"},
 	}
@@ -407,14 +407,14 @@ func TestMemoryCorrect_PathAlpha_A_StoreWithDateTag(t *testing.T) {
 
 	require.Len(t, cap.stored, 1)
 	want := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
-	require.NotNil(t, cap.stored[0].ValidFrom, "valid_from must be set from date: tag (assertion a)")
+	require.NotNil(t, cap.stored[0].ValidFrom, "valid_from must be set from date: tag")
 	require.True(t, cap.stored[0].ValidFrom.Equal(want),
-		"valid_from must be 2024-03-20, got %s (assertion a)", cap.stored[0].ValidFrom)
+		"valid_from must be 2024-03-20, got %s", cap.stored[0].ValidFrom)
 }
 
-// TestMemoryCorrect_PathAlpha_B_CorrectWithDateTag verifies that correcting a
-// memory with a new date: tag updates valid_from to the new date (assertion b).
-func TestMemoryCorrect_PathAlpha_B_CorrectWithDateTag(t *testing.T) {
+// TestMemoryCorrect_DateTag_CorrectUpdatesValidFrom verifies that correcting a
+// memory with a new date: tag updates valid_from to the new date.
+func TestMemoryCorrect_DateTag_CorrectUpdatesValidFrom(t *testing.T) {
 	want := time.Date(2024, 4, 15, 0, 0, 0, 0, time.UTC)
 	back := &validFromCorrectBackendV2{}
 	pool := newValidFromCorrectPoolV2(t, back)
@@ -433,15 +433,15 @@ func TestMemoryCorrect_PathAlpha_B_CorrectWithDateTag(t *testing.T) {
 
 	require.True(t, back.called, "UpdateMemory must be called")
 	gotVF := types.ParseDateTag(back.capturedTags)
-	require.NotNil(t, gotVF, "ParseDateTag on updated tags must return non-nil (assertion b)")
+	require.NotNil(t, gotVF, "ParseDateTag on updated tags must return non-nil")
 	require.True(t, gotVF.Equal(want),
-		"valid_from must be 2024-04-15 after correct with date: tag, got %s (assertion b)", gotVF)
+		"valid_from must be 2024-04-15 after correct with date: tag, got %s", gotVF)
 }
 
-// TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom verifies that
-// correcting with tags:[] clears valid_from to NULL (assertion c —
-// valid_from is recalculated from tags; empty set means no date: tag → NULL).
-func TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom(t *testing.T) {
+// TestMemoryCorrect_EmptyTags_ClearsValidFrom verifies that correcting with
+// tags:[] clears valid_from to NULL (valid_from is recalculated from tags;
+// empty set means no date: tag → NULL).
+func TestMemoryCorrect_EmptyTags_ClearsValidFrom(t *testing.T) {
 	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
 	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
 	pool := newValidFromCorrectPoolV2(t, back)
@@ -463,12 +463,12 @@ func TestMemoryCorrect_PathAlpha_C_ClearTagsSetsNullValidFrom(t *testing.T) {
 	// The backend simulation returns nil ValidFrom when tags is non-nil but has no date:.
 	gotVF := types.ParseDateTag(back.capturedTags)
 	require.Nil(t, gotVF,
-		"valid_from must be NULL when tags:[] clears all date: tags (assertion c)")
+		"valid_from must be NULL when tags:[] clears all date: tags")
 }
 
-// TestMemoryCorrect_PathAlpha_D_OmitTagsLeavesValidFromUnchanged verifies that
-// a correct call WITHOUT the tags argument leaves valid_from unchanged (assertion d).
-func TestMemoryCorrect_PathAlpha_D_OmitTagsLeavesValidFromUnchanged(t *testing.T) {
+// TestMemoryCorrect_OmitTags_PreservesValidFrom verifies that a correct call
+// WITHOUT the tags argument leaves valid_from unchanged.
+func TestMemoryCorrect_OmitTags_PreservesValidFrom(t *testing.T) {
 	initial := time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC)
 	back := &validFromCorrectBackendV2{initialValidFrom: &initial}
 	pool := newValidFromCorrectPoolV2(t, back)
@@ -489,7 +489,7 @@ func TestMemoryCorrect_PathAlpha_D_OmitTagsLeavesValidFromUnchanged(t *testing.T
 	require.True(t, back.called, "UpdateMemory must be called")
 	// When tags arg is absent, capturedTags is nil → backend preserves initialValidFrom.
 	require.Nil(t, back.capturedTags,
-		"tags must be nil (not empty slice) when tags arg omitted (assertion d)")
+		"tags must be nil (not empty slice) when tags arg omitted")
 }
 
 // ── B1: MCP JSON-deserialization layer tests for tags nil/null/empty contract ─
@@ -597,12 +597,17 @@ func TestMemoryCorrect_MCP_EmptyTagsClearsValidFrom(t *testing.T) {
 		"empty tags must yield nil valid_from (cleared to NULL in Postgres) (B1)")
 }
 
-// TestMemoryCorrect_PathAlpha_E_HistoryRetainsPriorValidFrom verifies that
-// memory_history records prior valid_from in versions — ensuring audit trail
-// captures before/after (assertion e). This is a unit-level check; full DB-layer
-// history versioning is covered by internal/db/postgres_valid_from_test.go.
-func TestMemoryCorrect_PathAlpha_E_HistoryRetainsPriorValidFrom(t *testing.T) {
-	// Assertion e is enforced at the DB layer (versionMemoryTx snapshots the
+// TestMemoryCorrect_History_RetainsPriorValidFrom verifies that two successive
+// corrections produce distinct valid_from values, confirming the MCP layer passes
+// updated tag sets through correctly on each call.
+//
+// NOTE: This test does NOT call handleMemoryHistory — it asserts MCP-layer
+// pass-through only. The real history versioning assertion (that memory_history
+// returns a version chain with before/after valid_from) is tracked in
+// https://github.com/petersimmons1972/engram-go/issues/821.
+// DB-layer versioning is covered by internal/db/postgres_valid_from_test.go.
+func TestMemoryCorrect_History_RetainsPriorValidFrom(t *testing.T) {
+	// Versioning is enforced at the DB layer (versionMemoryTx snapshots the
 	// prior row including valid_from before UPDATE). We verify the MCP layer
 	// passes through two successive corrections without error — the DB-layer
 	// versioning test (TestUpdateMemory_PromotesValidFromOnDateTagChange +
@@ -638,9 +643,9 @@ func TestMemoryCorrect_PathAlpha_E_HistoryRetainsPriorValidFrom(t *testing.T) {
 
 	vf1 := types.ParseDateTag([]string{"date:2024-03-20"})
 	vf2 := types.ParseDateTag(back.capturedTags)
-	require.NotNil(t, vf1, "first correction valid_from must be non-nil (assertion e)")
-	require.NotNil(t, vf2, "second correction valid_from must be non-nil (assertion e)")
-	require.True(t, vf1.Equal(first), "first valid_from must be 2024-03-20 (assertion e)")
-	require.True(t, vf2.Equal(second), "second valid_from must be 2024-04-15 (assertion e)")
-	require.False(t, vf1.Equal(*vf2), "two corrections must produce distinct valid_from values (assertion e)")
+	require.NotNil(t, vf1, "first correction valid_from must be non-nil")
+	require.NotNil(t, vf2, "second correction valid_from must be non-nil")
+	require.True(t, vf1.Equal(first), "first valid_from must be 2024-03-20")
+	require.True(t, vf2.Equal(second), "second valid_from must be 2024-04-15")
+	require.False(t, vf1.Equal(*vf2), "two successive corrections must produce distinct valid_from values")
 }
