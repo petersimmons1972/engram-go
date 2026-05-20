@@ -390,6 +390,60 @@ SessionLimit: 470          // Typical LME dataset size
 
 ---
 
+## Operator: Scratch Retention (TTL, #754)
+
+LME benchmark runs create ephemeral `lme-<run-id>` projects. Without cleanup these accumulate indefinitely, inflating index size and risking accidental re-use of stale haystacks.
+
+### Stamping TTL at ingest time
+
+Pass `--scratch-ttl <duration>` and `--database-url <dsn>` to `longmemeval ingest`:
+
+```
+longmemeval ingest \
+  --data-file questions.json \
+  --out-dir /tmp/lme-run-001 \
+  --scratch-ttl 168h \
+  --database-url "${DATABASE_URL}"
+```
+
+The default TTL is **168 h (7 days)** — long enough to re-run scoring without re-ingesting; short enough to prevent unbounded growth.
+
+### Running the prune sweep
+
+```
+longmemeval prune \
+  --database-url "${DATABASE_URL}" \
+  --url "${ENGRAM_URL}" \
+  --api-key "${ENGRAM_API_KEY}"
+```
+
+Add `--dry-run` to preview. Add `--limit 50` to cap blast radius on first run.
+
+The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`.
+
+### Backfilling existing runs
+
+Existing `lme-*` projects (created before migration 022) have `NULL expires_at`. To opt them into the sweep:
+
+```sql
+UPDATE project_ttl
+   SET expires_at = created_at + INTERVAL '7 days'
+ WHERE project LIKE 'lme-%'
+   AND expires_at IS NULL;
+```
+
+Projects without a `project_ttl` row at all can be enrolled with:
+
+```sql
+INSERT INTO project_ttl (project, created_at, expires_at)
+SELECT DISTINCT project, NOW() - INTERVAL '1 day', NOW() + INTERVAL '7 days'
+  FROM memories
+ WHERE project LIKE 'lme-%'
+ON CONFLICT (project) DO NOTHING;
+```
+
+---
+
 ## References
 
 - **vLLM Repository**: https://github.com/vllm-project/vllm (GH#39103 — Nemotron v3 reasoning parser)

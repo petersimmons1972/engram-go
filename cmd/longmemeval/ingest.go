@@ -9,13 +9,44 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
+
+// ttlStamper writes project_ttl rows during ingest (#754). It is a tiny
+// interface so the ingest worker can be unit-tested with a fake.
+type ttlStamper interface {
+	SetProjectTTL(ctx context.Context, project string, createdAt time.Time, expiresAt *time.Time) error
+}
 
 func runIngest(cfg *Config) {
 	items := loadItems(cfg.DataFile)
 	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl")
+
+	// #754: if a scratch TTL is in effect and a DSN is configured, open a
+	// PostgresBackend so each per-question project gets a project_ttl row
+	// stamped at first-store time. Failure to connect downgrades to a WARN
+	// rather than failing ingest — a missing TTL row makes the project durable
+	// (the operator backfill query is documented in the migration header).
+	var stamper ttlStamper
+	if cfg.ScratchTTL > 0 && cfg.DatabaseURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		backend, err := db.NewPostgresBackend(ctx, "_lme_ingest", cfg.DatabaseURL)
+		if err != nil {
+			// Log without the raw DSN/error (which may embed credentials) to
+			// satisfy CodeQL CWE-312. Use redactURL on the URL portion only.
+			log.Printf("ingest: WARN: cannot open Postgres for TTL stamping (dsn=%s); projects will be durable",
+				redactURL(cfg.DatabaseURL))
+		} else {
+			defer backend.Close()
+			stamper = backend
+		}
+	} else if cfg.ScratchTTL > 0 && cfg.DatabaseURL == "" {
+		log.Printf("ingest: WARN: --scratch-ttl set but no --database-url; projects will be durable")
+	}
 
 	skip, err := longmemeval.ReadSkipSet(ckptPath)
 	if err != nil {
@@ -44,7 +75,7 @@ func runIngest(cfg *Config) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ingestWorker(cfg, work, ckptCh)
+			ingestWorker(cfg, stamper, work, ckptCh)
 		}()
 	}
 	wg.Wait()
@@ -54,11 +85,22 @@ func runIngest(cfg *Config) {
 	log.Printf("ingest: complete")
 }
 
-func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmemeval.IngestEntry) {
+func ingestWorker(cfg *Config, stamper ttlStamper, work <-chan longmemeval.Item, out chan<- longmemeval.IngestEntry) {
 	ctx := context.Background()
 	restClient := longmemeval.NewRestClient(cfg.ServerURL, cfg.APIKey)
 	for item := range work {
 		entry := ingestOne(ctx, cfg, restClient, item)
+		// #754: stamp TTL once per successful project so the prune sweep can
+		// reclaim it later. Best-effort: stamping failure is logged but does
+		// not flip ingest status — the memories landed, only the metadata is
+		// missing, and an operator backfill exists.
+		if entry.Status == "done" && stamper != nil && cfg.ScratchTTL > 0 {
+			now := time.Now().UTC()
+			exp := now.Add(cfg.ScratchTTL)
+			if err := stamper.SetProjectTTL(ctx, entry.Project, now, &exp); err != nil {
+				log.Printf("ingest [%s] WARN: set TTL: %v", item.QuestionID, err)
+			}
+		}
 		out <- entry
 		log.Printf("ingest [%s] project=%s sessions=%d status=%s error=%q", item.QuestionID, entry.Project, entry.SessionCount, entry.Status, entry.Error)
 	}
