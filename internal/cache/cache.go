@@ -7,13 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 type entry struct {
 	CacheKey string            `json:"cache_key"`
 	StoredAt time.Time         `json:"stored_at"`
-	Result   types.ModelResult `json:"result"`
+	Result   benchmark.ModelResult `json:"result"`
 }
 
 type store struct {
@@ -59,7 +59,7 @@ func (c *Cache) save(s store) error {
 }
 
 // Write stores a result for model with the given cache key.
-func (c *Cache) Write(model, cacheKey string, result types.ModelResult) error {
+func (c *Cache) Write(model, cacheKey string, result benchmark.ModelResult) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s, err := c.load()
@@ -75,22 +75,22 @@ func (c *Cache) Write(model, cacheKey string, result types.ModelResult) error {
 }
 
 // Read returns the cached result if the key matches and the entry is fresher than maxAge.
-func (c *Cache) Read(model, cacheKey string, maxAge time.Duration) (types.ModelResult, bool, error) {
+func (c *Cache) Read(model, cacheKey string, maxAge time.Duration) (benchmark.ModelResult, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s, err := c.load()
 	if err != nil {
-		return types.ModelResult{}, false, err
+		return benchmark.ModelResult{}, false, err
 	}
 	e, ok := s.Entries[model]
 	if !ok {
-		return types.ModelResult{}, false, nil
+		return benchmark.ModelResult{}, false, nil
 	}
 	if e.CacheKey != cacheKey {
-		return types.ModelResult{}, false, nil
+		return benchmark.ModelResult{}, false, nil
 	}
 	if time.Since(e.StoredAt) > maxAge {
-		return types.ModelResult{}, false, nil
+		return benchmark.ModelResult{}, false, nil
 	}
 	return e.Result, true, nil
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/runner"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 var tagSlugRe = regexp.MustCompile(`^[a-z0-9-]{3,64}$`)
@@ -42,10 +42,10 @@ func isValidPattern(p rawPattern) bool {
 }
 
 // Score computes a Score from a RunResult. Pure function — no I/O.
-func Score(result types.RunResult) types.Score {
+func Score(result benchmark.RunResult) benchmark.Score {
 	// Skipped?
 	if result.Skipped {
-		return types.Score{Verdict: types.VerdictSkippedVRAM, VerdictReason: result.SkipReason}
+		return benchmark.Score{Verdict: benchmark.VerdictSkippedVRAM, VerdictReason: result.SkipReason}
 	}
 
 	// All timed out? (requires at least one run)
@@ -57,7 +57,7 @@ func Score(result types.RunResult) types.Score {
 		}
 	}
 	if allTimedOut {
-		return types.Score{Verdict: types.VerdictTimedOut, VerdictReason: "all runs timed out"}
+		return benchmark.Score{Verdict: benchmark.VerdictTimedOut, VerdictReason: "all runs timed out"}
 	}
 
 	// Check thinking leak (any run)
@@ -95,18 +95,18 @@ func Score(result types.RunResult) types.Score {
 	jsonValid := validCount >= 2
 
 	if !jsonValid {
-		return types.Score{
+		return benchmark.Score{
 			JSONValid:     false,
-			Verdict:       types.VerdictFailed,
+			Verdict:       benchmark.VerdictFailed,
 			VerdictReason: fmt.Sprintf("JSON invalid on %d of %d runs", len(parsed)-validCount, len(parsed)),
 		}
 	}
 
 	if thinkingLeak {
-		return types.Score{
+		return benchmark.Score{
 			JSONValid:     true,
 			ThinkingLeak:  true,
-			Verdict:       types.VerdictNotRecommended,
+			Verdict:       benchmark.VerdictNotRecommended,
 			VerdictReason: "thinking mode tokens leak into JSON content field",
 		}
 	}
@@ -159,24 +159,24 @@ func Score(result types.RunResult) types.Score {
 	composite := (qualityPct * float64(validPatterns) * 2) - (avgLatency.Seconds() * 0.05)
 
 	if validPatterns == 0 {
-		return types.Score{
+		return benchmark.Score{
 			JSONValid:     true,
 			PatternCount:  medianCount,
-			AvgLatency:    types.Duration(avgLatency),
+			AvgLatency:    benchmark.Duration(avgLatency),
 			Composite:     composite,
-			Verdict:       types.VerdictUsable,
+			Verdict:       benchmark.VerdictUsable,
 			VerdictReason: "valid JSON; zero patterns detected — may improve with prompt tuning",
 		}
 	}
 
-	return types.Score{
+	return benchmark.Score{
 		JSONValid:     true,
 		PatternCount:  medianCount,
 		ValidPatterns: validPatterns,
 		QualityPct:    qualityPct,
-		AvgLatency:    types.Duration(avgLatency),
+		AvgLatency:    benchmark.Duration(avgLatency),
 		Composite:     composite,
-		Verdict:       types.VerdictRecommended,
+		Verdict:       benchmark.VerdictRecommended,
 		VerdictReason: fmt.Sprintf("detected %d valid pattern(s) with %.0f%% schema conformance", validPatterns, qualityPct*100),
 	}
 }

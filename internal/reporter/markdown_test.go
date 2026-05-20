@@ -7,21 +7,21 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/reporter"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 
-func sampleResults() []types.ModelResult {
-	return []types.ModelResult{
+func sampleResults() []benchmark.ModelResult {
+	return []benchmark.ModelResult{
 		{
 			Model:  "mistral:7b",
 			VRAMGB: 4.5,
 			Tier:   "4-6GB",
 			Vendor: "Mistral AI",
-			Score: types.Score{
-				Verdict:       types.VerdictRecommended,
+			Score: benchmark.Score{
+				Verdict:       benchmark.VerdictRecommended,
 				ValidPatterns: 4,
-				AvgLatency:    types.Duration(13 * time.Second),
+				AvgLatency:    benchmark.Duration(13 * time.Second),
 				Composite:     7.44,
 				VerdictReason: "detected 4 valid patterns",
 			},

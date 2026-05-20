@@ -13,7 +13,7 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/ollama"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 const SystemPrompt = `You are a pattern detection system analyzing Claude Code tool call sequences.
@@ -76,8 +76,8 @@ func truncate(s string, n int) string {
 }
 
 // Run executes numRuns inference calls against model and returns raw results.
-func Run(ctx context.Context, client *ollama.Client, model manifest.Model, fixturePath string, numRuns int) (types.RunResult, error) {
-	result := types.RunResult{Model: model.Name}
+func Run(ctx context.Context, client *ollama.Client, model manifest.Model, fixturePath string, numRuns int) (benchmark.RunResult, error) {
+	result := benchmark.RunResult{Model: model.Name}
 
 	available, digest, err := client.IsAvailable(ctx, model.Name)
 	if err != nil {
@@ -86,7 +86,7 @@ func Run(ctx context.Context, client *ollama.Client, model manifest.Model, fixtu
 	if !available {
 		pullStart := time.Now()
 		d, err := client.Pull(ctx, model.Name, os.Stdout)
-		result.PullDuration = types.Duration(time.Since(pullStart))
+		result.PullDuration = benchmark.Duration(time.Since(pullStart))
 		if err != nil {
 			result.Skipped = true
 			result.SkipReason = fmt.Sprintf("pull failed: %v", err)
@@ -105,7 +105,7 @@ func Run(ctx context.Context, client *ollama.Client, model manifest.Model, fixtu
 
 	for i := 0; i < numRuns; i++ {
 		runCtx, cancel := context.WithTimeout(ctx, 300*time.Second)
-		attempt := types.RunAttempt{}
+		attempt := benchmark.RunAttempt{}
 		start := time.Now()
 
 		resp, err := client.Chat(runCtx, ollama.ChatRequest{
@@ -117,7 +117,7 @@ func Run(ctx context.Context, client *ollama.Client, model manifest.Model, fixtu
 			Format:  formatJSON,
 			Options: map[string]any{"temperature": 0.1, "num_predict": 1024},
 		})
-		attempt.Duration = types.Duration(time.Since(start))
+		attempt.Duration = benchmark.Duration(time.Since(start))
 		// Capture context state before cancel clears it.
 		timedOut := runCtx.Err() != nil
 		cancel()
