@@ -25,8 +25,8 @@ func main() {
 func run() int {
 	llmBackend := flag.String("llm-backend", envOr("LLM_BACKEND", "anthropic"), "LLM backend: anthropic or olla")
 	timeout := flag.Duration("timeout", defaultTimeout, "Per-inference timeout")
-	engramBase := flag.String("engram", "", "Engram base URL (overrides config)")
-	engramToken := flag.String("token", "", "Engram Bearer token (overrides config)")
+	engramBase := flag.String("engram", "", "Engram base URL (overrides ENGRAM_URL env var and ~/.claude/mcp_servers.json)")
+	engramToken := flag.String("token", "", "Engram Bearer token (overrides ENGRAM_TOKEN env var and ~/.claude/mcp_servers.json)")
 	flag.Parse()
 
 	// Resolve Engram coordinates.
