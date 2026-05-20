@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -202,5 +205,81 @@ func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
 	// The flag registration must use default value 0.
 	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
 		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R2-B2: preservedLog — deadlock-free collection (mutex-protected slice)
+// ---------------------------------------------------------------------------
+
+// TestPreservedLog_NoDeadlockOnHighCount verifies that N concurrent goroutines
+// can each append a name to a preservedLog without blocking, even when N far
+// exceeds any channel buffer size. This is the regression guard for R2-B2
+// (#807): the old chan-based approach deadlocked when preserved-project count
+// exceeded cfg.Workers*2.
+func TestPreservedLog_NoDeadlockOnHighCount(t *testing.T) {
+	const N = 100
+	pl := &preservedLog{}
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			pl.add(fmt.Sprintf("project-%03d", n))
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(5 * time.Second):
+		t.Fatal("preservedLog.add deadlocked under high concurrency (R2-B2 regression)")
+	}
+
+	names := pl.names()
+	if len(names) != N {
+		t.Errorf("preservedLog collected %d names, want %d", len(names), N)
+	}
+}
+
+// TestPreservedLog_NamesReturnsCopy verifies that mutating the returned slice
+// does not affect the underlying preservedLog state.
+func TestPreservedLog_NamesReturnsCopy(t *testing.T) {
+	pl := &preservedLog{}
+	pl.add("alpha")
+	pl.add("beta")
+
+	got := pl.names()
+	got[0] = "mutated"
+
+	got2 := pl.names()
+	for _, n := range got2 {
+		if n == "mutated" {
+			t.Error("names() returned a slice sharing the backing array — mutations affect internal state")
+		}
+	}
+}
+
+// TestCleanupSummary_TokenIsCleanupSummary verifies the greppable log token
+// used for the end-of-run preserved-project summary is exactly "cleanup-summary"
+// as specified in S9 (#807 Round 3). (Source-level structural guard.)
+func TestCleanupSummary_TokenIsCleanupSummary(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "cleanup-summary") {
+		t.Error("run.go missing 'cleanup-summary' log token (S9 #807 Round 3 spec)")
+	}
+	// Ensure the old token is gone.
+	if strings.Contains(text, "INFO run: preserved") {
+		t.Error("run.go still contains old log token 'INFO run: preserved' — should be replaced by 'cleanup-summary'")
 	}
 }

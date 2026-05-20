@@ -15,6 +15,36 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+// preservedLog is a mutex-protected accumulator for project names that were
+// preserved (not cleaned up) during a run. Using a slice rather than a buffered
+// channel avoids the R2-B2 deadlock: a channel blocks senders when full, which
+// causes runWorker goroutines to hang while wg.Wait() waits for them to finish.
+// See R2-B2, #807.
+type preservedLog struct {
+	mu    sync.Mutex
+	items []string
+}
+
+// add appends name to the log. Safe for concurrent use.
+func (pl *preservedLog) add(name string) {
+	pl.mu.Lock()
+	pl.items = append(pl.items, name)
+	pl.mu.Unlock()
+}
+
+// names returns a copy of the collected names. Safe to call after all writers
+// have finished (e.g., after wg.Wait()).
+func (pl *preservedLog) names() []string {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if len(pl.items) == 0 {
+		return nil
+	}
+	out := make([]string, len(pl.items))
+	copy(out, pl.items)
+	return out
+}
+
 // temporalInterrogativeRe strips leading relative-time interrogatives so the
 // recall query matches event noun-phrases rather than the question scaffolding.
 var temporalInterrogativeRe = regexp.MustCompile(
@@ -88,17 +118,37 @@ func runRun(cfg *Config) int {
 	}
 	close(work)
 
+	// S9 (#807 R3): collect preserved-project names via a mutex-protected slice.
+	// A buffered channel was used in R2 but deadlocks when the number of
+	// preserved projects exceeds the buffer size (cfg.Workers*2) — workers block
+	// on send while wg.Wait() blocks waiting for workers to finish. The slice
+	// approach has no capacity limit and never blocks. (R2-B2)
+	pl := &preservedLog{}
+
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(cfg, itemMap, work, innerCh)
+			runWorker(cfg, itemMap, work, innerCh, pl)
 		}()
 	}
 	wg.Wait()
 	close(innerCh)
 	wgWriter.Wait()
+
+	// S9 (#807): emit one end-of-run summary line (token: cleanup-summary).
+	preserved := pl.names()
+	if len(preserved) > 0 {
+		sample := preserved
+		if len(sample) > 5 {
+			sample = sample[:5]
+		}
+		// TODO(#807-S3): migrate to slog once structured logging is wired into
+		// cmd/longmemeval (currently uses stdlib log; slog lives in internal/ only).
+		log.Printf("cleanup-summary cleanup-policy=auto preserved=%d sample=%v",
+			len(preserved), sample)
+	}
 
 	att := attempted.Load()
 	errs := errors.Load()
@@ -130,7 +180,9 @@ func exitCodeForRunOutcome(attempted, errors int64) int {
 	return 0
 }
 
-func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry) {
+// runWorker processes items from work, writing RunEntry results to out and
+// recording preserved-project names in pl (for S9 end-of-run summary logging).
+func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry, pl *preservedLog) {
 	for ingestEntry := range work {
 		ctx := context.Background()
 		item, ok := itemMap[ingestEntry.QuestionID]
@@ -157,19 +209,23 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 				}
 			}()
 			entry := runOne(ctx, cfg, mcpClient, item, ingestEntry)
-		out <- entry
-		if entry.Status == "error" {
-			log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
-		} else {
-			log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
-		}
+			out <- entry
+			if entry.Status == "error" {
+				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+			} else {
+				log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+			}
 
-			if !cfg.NoCleanup {
+			if shouldCleanupProject(cfg, ingestEntry.Project) {
 				if err := mcpClient.DeleteProject(ctx, ingestEntry.Project); err != nil {
 					if !longmemeval.IsStaleSessionError(err) {
 						log.Printf("WARN run [%s] cleanup failed: %v", item.QuestionID, err)
 					}
 				}
+			} else {
+				// S9 (#807): record in preservedLog for end-of-run summary;
+				// avoids per-question log noise (~N lines for N questions).
+				pl.add(ingestEntry.Project)
 			}
 		}()
 	}

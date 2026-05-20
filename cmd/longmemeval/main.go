@@ -25,7 +25,8 @@ type Config struct {
 	RunID      string
 	ServerURL  string
 	APIKey     string
-	NoCleanup  bool
+	NoCleanup     bool          // Deprecated: use CleanupPolicy=never
+	CleanupPolicy CleanupPolicy // "auto" | "always" | "never" (default: auto)
 	Retries    int
 	OutDir     string
 	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
@@ -89,7 +90,11 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
 	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
 	_, _ = fmt.Fprintln(w, "  --retries <n>           Retry count for generation + Engram calls (default 1)")
-	_, _ = fmt.Fprintln(w, "  --no-cleanup            Skip project deletion after run stage")
+	_, _ = fmt.Fprintln(w, "  --cleanup-policy <val>  Project cleanup after run: auto (default), always, never")
+	_, _ = fmt.Fprintln(w, "                          auto: delete only projects created by this run invocation")
+	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
+	_, _ = fmt.Fprintln(w, "                          never: preserve all projects (use if reusing data in a follow-up experiment)")
+	_, _ = fmt.Fprintln(w, "  --no-cleanup            DEPRECATED: alias for --cleanup-policy=never")
 }
 
 // dispatch parses args and runs the requested subcommand. Returns the process
@@ -117,7 +122,11 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	defaultURL, defaultKey := mcpDefaults()
 	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
 	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
-	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Skip Engram project deletion after run stage")
+	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
+	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
+	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
+	// Deprecated: --no-cleanup is an alias for --cleanup-policy=never. Emits a deprecation WARN at parse time.
+	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "DEPRECATED: use --cleanup-policy=never instead")
 	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for generation and Engram calls")
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
@@ -192,6 +201,31 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// B2 (#807): validate --cleanup-policy against the known enum set.
+	// Must fire before any other validation so the error is clearly attributable.
+	switch cfg.CleanupPolicy {
+	case CleanupPolicyAuto, CleanupPolicyAlways, CleanupPolicyNever:
+		// valid
+	default:
+		_, _ = fmt.Fprintf(stderr, "invalid --cleanup-policy %q: must be one of auto|always|never\n", cfg.CleanupPolicy)
+		return 1
+	}
+
+	// B3 (#807): --no-cleanup is deprecated; coerce to CleanupPolicyNever and warn.
+	// If user explicitly set a non-default policy alongside --no-cleanup, reject
+	// the combination — silently overwriting would hide intent bugs.
+	if cfg.NoCleanup {
+		if cfg.CleanupPolicy != CleanupPolicyAuto {
+			// User passed both --no-cleanup and an explicit --cleanup-policy.
+			_, _ = fmt.Fprintf(stderr,
+				"conflicting flags: --no-cleanup is deprecated alias for --cleanup-policy=never; cannot combine with --cleanup-policy=%s\n",
+				cfg.CleanupPolicy)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
+		cfg.CleanupPolicy = CleanupPolicyNever
+	}
+
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
 		return 1
@@ -233,7 +267,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 }
 
 func newRunID() string {
-	b := make([]byte, 3)
+	// S7 (#807): 8 bytes = 16 hex chars = 64 bits; reduces prefix-match collision
+	// risk on shared infra from 1/16M (24-bit) to ~1/18E (64-bit). Callers treat
+	// RunID as an opaque string so length change is backward-compatible.
+	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
