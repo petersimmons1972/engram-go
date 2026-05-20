@@ -1,4 +1,4 @@
-package instinctllm
+package llmclient
 
 import (
 	"fmt"
@@ -28,6 +28,6 @@ func NewClient(cfg Config) (LLMClient, error) {
 	case "olla":
 		return NewOllaClient(cfg)
 	default:
-		return nil, fmt.Errorf("llm: unknown backend %q (valid: anthropic, olla)", backend)
+		return nil, fmt.Errorf("llmclient: unknown backend %q (valid: anthropic, olla)", backend)
 	}
 }

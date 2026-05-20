@@ -1,4 +1,4 @@
-package instinctllm_test
+package llmclient_test
 
 import (
 	"context"
@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // ollaModelList builds a minimal Olla /olla/models response.
 type ollaModelEntry struct {
-	id       string
-	family   string
-	caps     []string
-	states   []string // availability states
+	id     string
+	family string
+	caps   []string
+	states []string // availability states
 }
 
 func buildOllaModelsResponse(models []ollaModelEntry) string {
@@ -93,13 +93,13 @@ func newOllaTestServer(
 	}))
 }
 
-func newOllaClient(t *testing.T, endpoint string) instinctllm.LLMClient {
+func newOllaClient(t *testing.T, endpoint string) llmclient.LLMClient {
 	t.Helper()
-	cfg := instinctllm.Config{
+	cfg := llmclient.Config{
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,
 	}
-	c, err := instinctllm.NewOllaClient(cfg)
+	c, err := llmclient.NewOllaClient(cfg)
 	if err != nil {
 		t.Fatalf("NewOllaClient: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestOllaNoModelAvailable(t *testing.T) {
 
 	c := newOllaClient(t, srv.URL)
 	got, err := c.Complete(context.Background(), "sys", "user")
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("Complete() err = %v, want ErrBackendUnavailable", err)
 	}
 	if got != "" {
@@ -249,7 +249,7 @@ func TestOllaModelDiscoveryFailure(t *testing.T) {
 
 	c := newOllaClient(t, srv.URL)
 	got, err := c.Complete(context.Background(), "sys", "user")
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("Complete() err = %v, want ErrBackendUnavailable", err)
 	}
 	if got != "" {
@@ -262,7 +262,7 @@ func TestOllaModelDiscoveryFailure(t *testing.T) {
 // write backend-agnostic logic via errors.Is.
 func TestOllaUnavailableIsSentinel(t *testing.T) {
 	// Point at a bogus host so the discovery request fails at the transport layer.
-	c, err := instinctllm.NewOllaClient(instinctllm.Config{
+	c, err := llmclient.NewOllaClient(llmclient.Config{
 		Endpoint: "http://127.0.0.1:1", // reserved discard port; refuses connections
 		Timeout:  500 * time.Millisecond,
 	})
@@ -270,7 +270,7 @@ func TestOllaUnavailableIsSentinel(t *testing.T) {
 		t.Fatalf("NewOllaClient(): %v", err)
 	}
 	got, err := c.Complete(context.Background(), "sys", "user")
-	if !errors.Is(err, instinctllm.ErrBackendUnavailable) {
+	if !errors.Is(err, llmclient.ErrBackendUnavailable) {
 		t.Errorf("Complete() err = %v, want errors.Is(..., ErrBackendUnavailable) = true", err)
 	}
 	if got != "" {

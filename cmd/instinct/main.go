@@ -22,7 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -278,10 +278,10 @@ type sseEngram struct {
 }
 
 const (
-	mcpConnectTimeout  = 10 * time.Second
-	mcpCallTimeout     = 15 * time.Second
-	mcpRetryWindow     = 30 * time.Second
-	mcpRetryDelayBase  = 200 * time.Millisecond
+	mcpConnectTimeout = 10 * time.Second
+	mcpCallTimeout    = 15 * time.Second
+	mcpRetryWindow    = 30 * time.Second
+	mcpRetryDelayBase = 200 * time.Millisecond
 	// mcpOperationTimeout gives each high-level operation (writeEpisode per-event,
 	// upsertPattern) the full retry window plus a reconnect buffer, ensuring at
 	// least two retry attempts can complete before the outer context expires.
@@ -743,7 +743,7 @@ func run(ctx context.Context, cfg config) error {
 	// here at the binary level and passed explicitly via Config.Backend — the
 	// same pattern cmd/audit uses — so the factory env fallback is dead code
 	// and parallel tests can't race on process environment state.
-	llmClient, err := instinctllm.NewClient(instinctllm.Config{
+	llmClient, err := llmclient.NewClient(llmclient.Config{
 		Backend:  envOr("LLM_BACKEND", "anthropic"),
 		APIKey:   cfg.anthropicKey,
 		Endpoint: cfg.haikuEndpoint,
