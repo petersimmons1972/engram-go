@@ -63,12 +63,13 @@ func TestStoreMemory_NilValidFromStaysNil(t *testing.T) {
 	require.Nil(t, got.ValidFrom, "valid_from must remain NULL when not set on the struct")
 }
 
-// TestUpdateMemory_PreservesValidFromWhenTagsHaveNoDate verifies the
-// "only promote, never nullify" policy: if memory_correct sends tags that
-// no longer include a date: tag, the previously-stored valid_from is
-// preserved unchanged. Regression guard for issue #765.
-func TestUpdateMemory_PreservesValidFromWhenTagsHaveNoDate(t *testing.T) {
-	proj := uniqueProject("update-vf-preserve")
+// TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate verifies Path α behavior
+// (advisory for issue #765): if memory_correct sends tags that no longer include
+// a date: tag, valid_from is cleared to NULL. This supersedes the old
+// "only promote, never nullify" policy. Callers that want to preserve an
+// existing valid_from must omit the tags argument entirely.
+func TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate(t *testing.T) {
+	proj := uniqueProject("update-vf-clear")
 	b := newTestBackend(t, proj)
 	ctx := context.Background()
 
@@ -76,7 +77,7 @@ func TestUpdateMemory_PreservesValidFromWhenTagsHaveNoDate(t *testing.T) {
 	originalDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := &types.Memory{
 		ID:         types.NewMemoryID(),
-		Content:    "test content for preserve",
+		Content:    "test content for clear",
 		Project:    proj,
 		MemoryType: types.MemoryTypeContext,
 		Importance: 1,
@@ -90,10 +91,9 @@ func TestUpdateMemory_PreservesValidFromWhenTagsHaveNoDate(t *testing.T) {
 	updated, err := b.UpdateMemory(ctx, m.ID, nil, newTags, nil, nil)
 	require.NoError(t, err)
 
-	// 3. ValidFrom must still equal the original date — preserved, not cleared.
-	require.NotNil(t, updated.ValidFrom, "ValidFrom must not be nullified when new tags omit date:")
-	require.True(t, updated.ValidFrom.Equal(originalDate),
-		"ValidFrom must equal original 2024-06-15, got %s — see issue #765 'only promote, never nullify'", updated.ValidFrom)
+	// 3. ValidFrom must be NULL — Path α always recalculates from the new tags.
+	require.Nil(t, updated.ValidFrom,
+		"ValidFrom must be NULL when new tags omit date: (Path α, issue #765)")
 }
 
 // TestUpdateMemory_PromotesValidFromOnDateTagChange is the paired positive case:
