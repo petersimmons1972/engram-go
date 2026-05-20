@@ -64,11 +64,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan for secrets (infisical)
-        uses: infisical/secrets-scan-action@v2
-        with:
-          # Fail if any high-entropy or pattern-matched secret is found tracked in git
-          scanType: git
+      - name: Scan for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   lint:
     name: Lint
