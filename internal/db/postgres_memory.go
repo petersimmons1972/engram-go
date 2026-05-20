@@ -17,6 +17,14 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// updateMemory SQL constants — keep both in sync when adding new columns to the
+// memories table. The "with content" variant also refreshes content_hash and
+// clears the summary so the background worker regenerates it.
+const (
+	sqlUpdateMemoryWithContent = "UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6, valid_from=$7 WHERE id=$8 AND project=$9"
+	sqlUpdateMemoryNoContent   = "UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5, valid_from=$6 WHERE id=$7 AND project=$8"
+)
+
 // ContentHash returns the canonical SHA-256 hex digest for a memory's content.
 // Used by both the storage layer and the ingest dedup path to guarantee
 // identical hash values from the same input string.
@@ -232,13 +240,11 @@ func (b *PostgresBackend) UpdateMemory(
 		hash := ContentHash(m.Content)
 		m.ContentHash = &hash
 		// Clear the summary so the background worker regenerates it with the new content.
-		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6, valid_from=$7 WHERE id=$8 AND project=$9",
+		_, err = tx.Exec(ctx, sqlUpdateMemoryWithContent,
 			m.Content, tagsJSON, m.Importance, now, hash, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	} else {
-		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5, valid_from=$6 WHERE id=$7 AND project=$8",
+		_, err = tx.Exec(ctx, sqlUpdateMemoryNoContent,
 			m.Content, tagsJSON, m.Importance, now, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	}
