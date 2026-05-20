@@ -1,7 +1,17 @@
+//go:build !windows
+// +build !windows
+// engram-go targets Linux and macOS only. syscall.Flock / LOCK_EX / LOCK_NB /
+// EWOULDBLOCK are POSIX-only and do not exist on Windows. A no-op stub is not
+// provided because engram-go has no Windows CI and a silent no-op would mask
+// contention bugs in future cross-platform work. If Windows support is ever
+// needed, replace this file with two build-tagged variants. (#817)
+
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/url"
@@ -70,6 +80,19 @@ func defaultLockDir() string {
 		return filepath.Join(xdg, "lme")
 	}
 	return "/tmp/lme"
+}
+
+// newInvocationID generates a 16-hex-char random ID for lock-file records.
+// Uses crypto/rand to avoid predictability from co-tenant processes that share
+// a wall clock. Falls back to a time-based ID with "ns-" prefix rather than
+// panicking if rand.Read fails (should never happen on Linux/macOS) (#818).
+func newInvocationID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: "ns-" prefix distinguishes from the hex path and signals degraded mode.
+		return fmt.Sprintf("ns-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // normalizeBackendURL lowercases the host, strips trailing slashes from the
@@ -206,7 +229,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {
 		// Lock acquired cleanly. Write our PID record.
-		invID := fmt.Sprintf("%d", time.Now().UnixNano())
+		invID := newInvocationID()
 		content := lockFileContent(os.Getpid(), time.Now().Unix(), invID)
 		if err := fd.Truncate(0); err != nil {
 			// Write setup failed — release flock, remove lock file, return error.
@@ -285,7 +308,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 			_ = os.Remove(lockPath)
 			return nil, fmt.Errorf("backend lock: reclaim truncate %q failed: %w", lockPath, truncErr)
 		}
-		invID2 := fmt.Sprintf("%d", time.Now().UnixNano())
+		invID2 := newInvocationID()
 		content := lockFileContent(os.Getpid(), time.Now().Unix(), invID2)
 		if _, writeErr := fd2.WriteAt(content, 0); writeErr != nil {
 			_ = syscall.Flock(int(fd2.Fd()), syscall.LOCK_UN)
