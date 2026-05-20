@@ -89,3 +89,41 @@ func TestClassifyFailure_NormalWordOverlapHigh(t *testing.T) {
 		t.Errorf("ClassifyFailure: got %q, want %q", result.Class, "generation_failure")
 	}
 }
+
+// TestClassifyFailure_FiveDigitNumericAggregation verifies that a five-digit
+// numeric gold answer (e.g. "10000") is correctly classified as
+// "aggregation_failure" when gold sessions are present in the retrieved set.
+//
+// Regression guard for #815: the original numericRE cap of 1–4 digits caused
+// five-digit counts to fall through to word-overlap classification, where
+// word-overlap against a bare number is near-zero, yielding a false
+// "missing_recall" even when the gold sessions were retrieved.
+func TestClassifyFailure_FiveDigitNumericAggregation(t *testing.T) {
+	result := longmemeval.ClassifyFailure(longmemeval.TaxonomyInput{
+		GoldAnswer:        "10000",
+		GoldSessionIDs:    []string{"sess-a", "sess-b"},
+		RetrievedSessions: []string{"sess-a", "sess-b", "sess-c"},
+	})
+	if result.Class != "aggregation_failure" {
+		t.Errorf("ClassifyFailure(gold=%q, sessions retrieved): got %q, want %q — five-digit numeric gold should be aggregation_failure (#815)",
+			"10000", result.Class, "aggregation_failure")
+	}
+	if result.Evidence == "" {
+		t.Error("ClassifyFailure: Evidence must not be empty")
+	}
+}
+
+// TestClassifyFailure_FiveDigitNumericMissingRecall verifies that a five-digit
+// numeric gold answer with no gold sessions in the retrieved set is classified
+// as "missing_recall" (data not present), not "generation_failure". (#815)
+func TestClassifyFailure_FiveDigitNumericMissingRecall(t *testing.T) {
+	result := longmemeval.ClassifyFailure(longmemeval.TaxonomyInput{
+		GoldAnswer:        "10000",
+		GoldSessionIDs:    []string{"sess-gold"},
+		RetrievedSessions: []string{"sess-other"},
+	})
+	if result.Class != "missing_recall" {
+		t.Errorf("ClassifyFailure(gold=%q, no sessions retrieved): got %q, want missing_recall (#815)",
+			"10000", result.Class)
+	}
+}
