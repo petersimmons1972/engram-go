@@ -208,13 +208,11 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 	if tags != nil {
 		m.Tags = tags
-		// Recalculate ValidFrom from the new tags so a date: tag added (or changed)
-		// via memory_correct takes effect. If the new tags have no date: tag but the
-		// old tags did, ValidFrom is left unchanged ("only promote, never nullify"
-		// policy — avoids accidental precision loss on partial corrections). Closes #765.
-		if newVF := types.ParseDateTag(tags); newVF != nil {
-			m.ValidFrom = newVF
-		}
+		// valid_from is recalculated from date: tags on every UpdateMemory call where
+		// tags are provided. ParseDateTag returns nil when no date: tag exists, which
+		// clears valid_from to NULL. To preserve an existing valid_from, omit the tags
+		// argument entirely (see docs/tools.md#memory_correct).
+		m.ValidFrom = types.ParseDateTag(tags)
 	}
 	if importance != nil {
 		m.Importance = *importance
