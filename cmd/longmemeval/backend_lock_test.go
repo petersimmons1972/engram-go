@@ -1,3 +1,6 @@
+//go:build !windows
+// +build !windows
+
 package main
 
 import (
@@ -446,4 +449,40 @@ func lockHelperMain() {
 		time.Sleep(hold)
 	}
 	os.Exit(0)
+}
+
+// TestNewInvocationID verifies that newInvocationID returns 16 hex chars and
+// that two consecutive calls produce distinct non-time-based values. (#818)
+func TestNewInvocationID(t *testing.T) {
+	id1 := newInvocationID()
+	id2 := newInvocationID()
+
+	// Must be 16 hex characters (8 bytes encoded).
+	for _, id := range []string{id1, id2} {
+		if len(id) != 16 {
+			t.Errorf("newInvocationID() = %q, want 16 hex chars (got %d)", id, len(id))
+		}
+		for _, c := range id {
+			if !strings.ContainsRune("0123456789abcdef", c) {
+				t.Errorf("newInvocationID() = %q contains non-hex char %q", id, c)
+				break
+			}
+		}
+		// Must NOT look like a bare nanosecond timestamp (all decimal digits).
+		allDigits := true
+		for _, c := range id {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			t.Errorf("newInvocationID() = %q looks like a decimal timestamp; want hex", id)
+		}
+	}
+
+	// Two consecutive calls must differ (birthday probability: 1/2^64 negligible).
+	if id1 == id2 {
+		t.Errorf("newInvocationID() returned identical values on consecutive calls: %q", id1)
+	}
 }
