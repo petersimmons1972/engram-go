@@ -12,6 +12,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -219,6 +220,36 @@ func TestMemoryStoreDocument_PersistsValidFromAndEpisode(t *testing.T) {
 		"ValidFrom must equal 2024-03-20 UTC, got %s", m.ValidFrom)
 
 	require.Equal(t, episodeID, m.EpisodeID, "EpisodeID must be propagated — see issue #763")
+}
+
+// ── #789: handleMemoryCorrect silently clamps importance; should validate ────────
+
+// TestHandleMemoryCorrect_RejectsOutOfRangeImportance is the regression guard
+// for issue #789. handleMemoryCorrect was silently clamping importance values
+// outside [0, 4] instead of returning an error. It must now mirror the store
+// path and reject them with a descriptive MCP error.
+func TestHandleMemoryCorrect_RejectsOutOfRangeImportance(t *testing.T) {
+	back := &validFromCorrectBackend{}
+	pool := newValidFromCorrectPool(t, back)
+
+	for _, imp := range []float64{-1, 5, 10, 100} {
+		t.Run(fmt.Sprintf("importance=%.0f", imp), func(t *testing.T) {
+			req := mcpgo.CallToolRequest{}
+			req.Params.Arguments = map[string]any{
+				"project":    "test",
+				"memory_id":  "mem-abc123",
+				"importance": imp,
+			}
+
+			res, err := handleMemoryCorrect(context.Background(), pool, req)
+			require.NoError(t, err, "handler must not return a Go error for invalid importance")
+			require.NotNil(t, res, "handler must return a result")
+			require.True(t, res.IsError,
+				"importance=%.0f is out of range — handler must return an MCP error, not silently clamp", imp)
+			require.False(t, back.called,
+				"UpdateMemory must not be called when importance is out of range")
+		})
+	}
 }
 
 // ── #765: memory_correct does not recalc valid_from on tag change ─────────────

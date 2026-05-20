@@ -376,7 +376,10 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 	var importance *int
 	if v, ok := args["importance"].(float64); ok {
-		n := types.ValidateImportance(int(v))
+		n := int(v)
+		if n < minImportanceValue || n > maxImportanceValue {
+			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be %d–%d, got %d", minImportanceValue, maxImportanceValue, n)), nil
+		}
 		importance = &n
 	}
 	var patternConfidence *float64
