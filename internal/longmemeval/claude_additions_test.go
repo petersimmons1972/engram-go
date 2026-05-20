@@ -2,6 +2,7 @@ package longmemeval_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -362,5 +363,83 @@ func TestDeduplicateIDs_EmptyInput(t *testing.T) {
 	got = longmemeval.DeduplicateIDs([]string{})
 	if len(got) != 0 {
 		t.Errorf("empty input: expected empty, got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #773 — GenerateParaphrases n>0 path (injected fake paraphraser)
+// ---------------------------------------------------------------------------
+
+// fakeGenerator returns a pre-formatted numbered list of paraphrases so tests
+// do not need a running claude process. retries is accepted but ignored.
+func fakeGenerator(responses []string) longmemeval.TextGenerator {
+	return func(ctx context.Context, prompt string, retries int) (string, error) {
+		var lines []string
+		for i, r := range responses {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, r))
+		}
+		return strings.Join(lines, "\n"), nil
+	}
+}
+
+// TestGenerateParaphrasesWith_NPositive_ReturnsParsedList: with n=3 and a fake
+// generator, GenerateParaphrasesWith returns exactly 3 paraphrases without
+// calling the real LLM.
+func TestGenerateParaphrasesWith_NPositive_ReturnsParsedList(t *testing.T) {
+	ctx := context.Background()
+	want := []string{"how many plants did I purchase", "plant buying count", "number of plants acquired"}
+	gen := fakeGenerator(want)
+
+	got, err := longmemeval.GenerateParaphrasesWith(ctx, "how many plants did I buy?", 3, 0, gen)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d paraphrases, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("paraphrase[%d]: got %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// TestGenerateParaphrasesWith_ZeroN_ShortCircuits: n=0 must return empty slice
+// without calling gen at all.
+func TestGenerateParaphrasesWith_ZeroN_ShortCircuits(t *testing.T) {
+	ctx := context.Background()
+	called := false
+	gen := func(ctx context.Context, prompt string, retries int) (string, error) {
+		called = true
+		return "", nil
+	}
+
+	got, err := longmemeval.GenerateParaphrasesWith(ctx, "any query", 0, 0, gen)
+	if err != nil {
+		t.Fatalf("n=0: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("n=0: expected empty, got %v", got)
+	}
+	if called {
+		t.Error("n=0: gen must not be called when n<=0")
+	}
+}
+
+// TestGenerateParaphrasesWith_GeneratorError_Propagates: generator failure must
+// return a wrapped error, not a nil slice.
+func TestGenerateParaphrasesWith_GeneratorError_Propagates(t *testing.T) {
+	ctx := context.Background()
+	genErr := fmt.Errorf("simulated LLM failure")
+	gen := func(ctx context.Context, prompt string, retries int) (string, error) {
+		return "", genErr
+	}
+
+	_, err := longmemeval.GenerateParaphrasesWith(ctx, "any query", 2, 0, gen)
+	if err == nil {
+		t.Fatal("expected error when generator fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "paraphrase") {
+		t.Errorf("error should contain 'paraphrase' prefix, got: %v", err)
 	}
 }

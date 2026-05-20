@@ -220,19 +220,31 @@ func DeduplicateIDs(ids []string) []string {
 	return out
 }
 
-// GenerateParaphrases calls Haiku to produce n paraphrased query variants for
-// the given query. Returns an empty slice when n == 0 (default-off behaviour).
-// retries is passed through to the Haiku call.
-func GenerateParaphrases(ctx context.Context, query string, n, retries int) ([]string, error) {
+// TextGenerator is a function that calls an LLM with a prompt and returns the
+// raw response. It matches the signature of GenerateHaiku so that
+// generateParaphrasesWith can be used in tests with a fake implementation.
+type TextGenerator func(ctx context.Context, prompt string, retries int) (string, error)
+
+// generateParaphrasesWith is the testable core of GenerateParaphrases.
+// gen is called with the formatted paraphrase prompt; the returned text is
+// parsed via ParseParaphrases. Exported-ish via the package-level wrapper.
+func generateParaphrasesWith(ctx context.Context, query string, n, retries int, gen TextGenerator) ([]string, error) {
 	if n <= 0 {
 		return nil, nil
 	}
 	prompt := BuildParaphrasePrompt(query, n)
-	raw, err := GenerateHaiku(ctx, prompt, retries)
+	raw, err := gen(ctx, prompt, retries)
 	if err != nil {
 		return nil, fmt.Errorf("paraphrase: %w", err)
 	}
 	return ParseParaphrases(raw), nil
+}
+
+// GenerateParaphrases calls Haiku to produce n paraphrased query variants for
+// the given query. Returns an empty slice when n == 0 (default-off behaviour).
+// retries is passed through to the Haiku call.
+func GenerateParaphrases(ctx context.Context, query string, n, retries int) ([]string, error) {
+	return generateParaphrasesWith(ctx, query, n, retries, GenerateHaiku)
 }
 
 // temporalGenerationPromptWithDateInjection is the H16 variant of
