@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,10 +29,14 @@ var skipFamilies = map[string]struct{}{
 }
 
 // ollaClient implements LLMClient using Olla's OpenAI-compatible endpoint.
-// Model selection is dynamic: on each Complete call (or lazily on first use)
-// the client queries /olla/models, picks the first text-generation-capable
-// available model that is not in the skip list, and uses that model for the
-// completion call.
+// Model selection is dynamic: the client queries /olla/models on the first
+// Complete call, picks the first text-generation-capable available model not
+// in the skip list, and caches the result for the lifetime of the client.
+// The cache avoids an HTTP round-trip per call for callers that invoke Complete
+// many times (e.g. audit, which calls Complete once per pattern).
+//
+// Cache invalidation: if the cached model becomes unavailable (ErrBackendUnavailable
+// from the completion endpoint), the cache is cleared so the next call re-resolves.
 //
 // Unavailability semantics: if the model discovery endpoint is unreachable,
 // returns no suitable model, or the completion fails, Complete returns
@@ -43,6 +48,14 @@ var skipFamilies = map[string]struct{}{
 type ollaClient struct {
 	host    string
 	timeout time.Duration
+
+	// modelOnce guards the cached model ID.  sync.Once is appropriate because
+	// pickModel is idempotent: running it N times on the same Olla host always
+	// returns the same model (model list is stable within a single run).
+	// Reset modelOnce on ErrBackendUnavailable to allow re-resolution on a
+	// flapping host.
+	modelOnce sync.Once
+	modelID   string // set once by modelOnce
 }
 
 // NewOllaClient constructs an Olla LLMClient from cfg.
@@ -134,11 +147,10 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 			continue
 		}
 
-		// Skip qwen3 family — thinking-mode token leakage breaks JSON output.
+		// Skip families in the deny-list — thinking-mode token leakage breaks
+		// JSON output (benchmark 2026-04-24).  The skipFamilies map is the
+		// single source of truth; do not add parallel prefix checks here.
 		if _, skip := skipFamilies[olla.Family]; skip {
-			continue
-		}
-		if strings.HasPrefix(strings.ToLower(model.ID), "qwen3") {
 			continue
 		}
 
@@ -149,18 +161,40 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 	return ""
 }
 
+// resolvedModel returns the cached model ID, calling pickModel on the first
+// invocation.  If the cached model is empty (discovery failed), it returns "".
+// Call resetModel to clear the cache so the next call retries discovery.
+func (c *ollaClient) resolvedModel(ctx context.Context) string {
+	c.modelOnce.Do(func() {
+		c.modelID = c.pickModel(ctx)
+	})
+	return c.modelID
+}
+
+// resetModel clears the model cache so the next Complete call re-discovers.
+// Called when the completion endpoint returns ErrBackendUnavailable, indicating
+// the previously selected model may have become unavailable.
+func (c *ollaClient) resetModel() {
+	c.modelOnce = sync.Once{}
+	c.modelID = ""
+}
+
 // Complete sends systemPrompt + userPrompt to Olla using the OpenAI-compatible
 // chat completions API.  If no suitable model is available it returns
 // ("", ErrBackendUnavailable) so callers can distinguish infrastructure
 // absence from an empty model response.  HTTP or JSON parse failures return a
 // non-sentinel error — these are protocol bugs that the caller should surface,
 // not treat as a missing backend.
+//
+// The model is resolved once per client lifetime via pickModel and cached.
+// Subsequent calls reuse the cached model without an HTTP round-trip.
+// The cache is cleared on ErrBackendUnavailable so a flapping host recovers.
 func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	// Per-call context with timeout so a slow Olla does not block forever.
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	model := c.pickModel(callCtx)
+	model := c.resolvedModel(callCtx)
 	if model == "" {
 		// No usable model — wrap sentinel so caller can distinguish "backend
 		// unavailable" from "model returned empty string".
@@ -189,12 +223,14 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: completion HTTP error", "err", err)
+		c.resetModel() // cached model may be gone; re-resolve next call
 		return "", fmt.Errorf("llm/olla: completion transport: %w", ErrBackendUnavailable)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("llm/olla: completion non-200", "status", resp.StatusCode)
+		c.resetModel() // model may have become unavailable
 		return "", fmt.Errorf("llm/olla: completion status %d: %w", resp.StatusCode, ErrBackendUnavailable)
 	}
 

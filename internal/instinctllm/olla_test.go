@@ -277,3 +277,90 @@ func TestOllaUnavailableIsSentinel(t *testing.T) {
 		t.Errorf("Complete() = %q, want empty string", got)
 	}
 }
+
+// TestOllaSkipFamiliesMapIsAuthoritative verifies that the skipFamilies map is
+// the single source of truth for the deny-list — a qwen3 model whose family
+// field is set correctly is skipped, and a qwen3-prefixed model ID whose family
+// field is NOT in the map is NOT skipped (proving the removed HasPrefix check
+// is gone and the map alone drives filtering).  Ref: #731.
+func TestOllaSkipFamiliesMapIsAuthoritative(t *testing.T) {
+	t.Run("qwen3_family_skipped", func(t *testing.T) {
+		// family="qwen3" → must be skipped regardless of model ID.
+		models := buildOllaModelsResponse([]ollaModelEntry{
+			{id: "qwen3:7b", family: "qwen3", caps: []string{"text-generation"}, states: []string{"available"}},
+			{id: "llama3.2:3b", family: "llama3", caps: []string{"text-generation"}, states: []string{"available"}},
+		})
+		var selectedModel string
+		srv := newOllaTestServer(t, models, goldenOllaCompletionResponse("[]"), func(body map[string]any) {
+			if m, ok := body["model"].(string); ok {
+				selectedModel = m
+			}
+		})
+		defer srv.Close()
+		c := newOllaClient(t, srv.URL)
+		if _, err := c.Complete(context.Background(), "sys", "user"); err != nil {
+			t.Fatalf("Complete() error: %v", err)
+		}
+		if selectedModel != "llama3.2:3b" {
+			t.Errorf("selected model = %q, want llama3.2:3b (qwen3 family must be skipped)", selectedModel)
+		}
+	})
+
+	t.Run("qwen3moe_family_skipped", func(t *testing.T) {
+		// family="qwen3moe" is also in the deny-list.
+		models := buildOllaModelsResponse([]ollaModelEntry{
+			{id: "qwen3moe:30b", family: "qwen3moe", caps: []string{"text-generation"}, states: []string{"available"}},
+			{id: "mistral:7b", family: "mistral", caps: []string{"text-generation"}, states: []string{"available"}},
+		})
+		var selectedModel string
+		srv := newOllaTestServer(t, models, goldenOllaCompletionResponse("[]"), func(body map[string]any) {
+			if m, ok := body["model"].(string); ok {
+				selectedModel = m
+			}
+		})
+		defer srv.Close()
+		c := newOllaClient(t, srv.URL)
+		if _, err := c.Complete(context.Background(), "sys", "user"); err != nil {
+			t.Fatalf("Complete() error: %v", err)
+		}
+		if selectedModel != "mistral:7b" {
+			t.Errorf("selected model = %q, want mistral:7b (qwen3moe family must be skipped)", selectedModel)
+		}
+	})
+}
+
+// TestOllaPickModelCachedAfterFirstCall verifies that the model discovery
+// endpoint is called exactly once regardless of how many Complete calls are
+// made.  Ref: #733.
+func TestOllaPickModelCachedAfterFirstCall(t *testing.T) {
+	models := buildOllaModelsResponse([]ollaModelEntry{
+		{id: "llama3.2:3b", family: "llama3", caps: []string{"text-generation"}, states: []string{"available"}},
+	})
+
+	var discoveryCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/olla/models":
+			discoveryCount++
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, models)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, goldenOllaCompletionResponse("ok"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newOllaClient(t, srv.URL)
+	const calls = 5
+	for i := 0; i < calls; i++ {
+		if _, err := c.Complete(context.Background(), "sys", "user"); err != nil {
+			t.Fatalf("Complete() call %d error: %v", i, err)
+		}
+	}
+	if discoveryCount != 1 {
+		t.Errorf("model discovery endpoint called %d times for %d Complete calls, want 1", discoveryCount, calls)
+	}
+}
