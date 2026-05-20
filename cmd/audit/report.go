@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,18 +73,41 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// errNoEngram is returned when no Engram credentials can be resolved from
+// flags, environment variables, or the developer config file.
+var errNoEngram = errors.New(
+	"engram credentials not found: set ENGRAM_URL and ENGRAM_TOKEN env vars, " +
+		"or pass -engram and -token flags",
+)
+
 // resolveEngram returns the Engram base URL and bearer token to use.
-// If baseFlag and tokenFlag are both non-empty they are used as-is.
-// Otherwise the values are read from ~/.claude/mcp_servers.json.
-// Ported verbatim from instinct-python/cmd/audit/main.go:262-284.
+//
+// Resolution order (first fully-populated pair wins):
+//  1. -engram / -token CLI flags (baseFlag, tokenFlag)
+//  2. ENGRAM_URL / ENGRAM_TOKEN environment variables
+//  3. ~/.claude/mcp_servers.json — developer-only fallback, attempted only
+//     when the file exists and no env vars are set
+//
+// If none of the above provide both values, errNoEngram is returned.
 func resolveEngram(baseFlag, tokenFlag string) (string, string, error) {
+	// 1. Flags take priority.
 	if baseFlag != "" && tokenFlag != "" {
 		return baseFlag, tokenFlag, nil
 	}
+
+	// 2. Environment variables.
+	envURL := os.Getenv("ENGRAM_URL")
+	envToken := os.Getenv("ENGRAM_TOKEN")
+	if envURL != "" && envToken != "" {
+		return envURL, envToken, nil
+	}
+
+	// 3. Developer config file — silent fallback when the file exists.
 	cfgPath := filepath.Join(os.Getenv("HOME"), ".claude", "mcp_servers.json")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return "", "", err
+		// File absent or unreadable — not a developer machine.
+		return "", "", errNoEngram
 	}
 	var cfg struct {
 		McpServers map[string]struct {
@@ -97,5 +121,8 @@ func resolveEngram(baseFlag, tokenFlag string) (string, string, error) {
 	e := cfg.McpServers["engram"]
 	sseURL := strings.TrimSuffix(strings.TrimRight(e.URL, "/"), "/sse")
 	auth := strings.TrimPrefix(e.Headers["Authorization"], "Bearer ")
+	if sseURL == "" || auth == "" {
+		return "", "", errNoEngram
+	}
 	return sseURL, auth, nil
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/config"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/entity"
@@ -98,8 +99,10 @@ func run() error {
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
-	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
-	host := fs.String("host", envOr("ENGRAM_HOST", "127.0.0.1"), "Bind address (default: loopback only; set 0.0.0.0 for LAN — #666)")
+	// Canonical defaults come from internal/config — the single source of truth
+	// for ENGRAM_PORT and ENGRAM_HOST. (#729)
+	port := fs.Int("port", envInt(config.EnvKeyPort, config.DefaultPort), "MCP SSE port")
+	host := fs.String("host", envOr(config.EnvKeyHost, config.DefaultHost), "Bind address (default: loopback only; set 0.0.0.0 for LAN — #666)")
 	baseURL := fs.String("base-url", envOr("ENGRAM_BASE_URL", ""), "External URL advertised in SSE events (e.g. http://127.0.0.1:8788); defaults to http://<host>:<port>")
 	// #136: ENGRAM_API_KEY is intentionally NOT a CLI flag — secrets in CLI flags
 	// are visible in /proc/cmdline to any process on the host. Read from env only.
