@@ -178,7 +178,7 @@ func main() {
 //
 // The port is read from ENGRAM_PORT (canonical default: config.DefaultPort).
 // This ensures the healthcheck always targets the same port the binary binds to,
-// preventing false-positives when ENGRAM_PORT is overridden. (#729)
+// preventing false-positives when ENGRAM_PORT is overridden. (#729).
 func runHealth() {
 	port := config.PortOrDefault()
 	client := &http.Client{Timeout: 4 * time.Second}
