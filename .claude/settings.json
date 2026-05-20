@@ -248,12 +248,18 @@
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
             "timeout": 15,
-            "statusMessage": "Syncing armies profiles \u2192 ~/.claude/agents/"
+            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
           },
           {
             "type": "command",
             "command": "~/.claude/hooks/telemetry-emit.sh",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "/home/psimmons/.claude/hooks/session-start-budget.sh",
+            "timeout": 5,
+            "statusMessage": "Checking CLAUDE.md line budget"
           }
         ]
       }
@@ -278,6 +284,5 @@
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "sonnet"
+  "skipAutoPermissionPrompt": true
 }
