@@ -508,17 +508,24 @@ func ParseScoreLabel(raw string) (label, explanation string) {
 	}
 
 	// Pass 2: scan all lines for first label occurrence.
+	// Note: firstLineIdx != i is always true when the if-block below is entered —
+	// Pass 1 already tried firstLineIdx and found no match, so Pass 2 cannot
+	// match there either. The guard is removed to reduce cognitive overhead (#760).
 	for i, l := range allLines {
 		upper := strings.ToUpper(strings.TrimSpace(l))
 		for _, v := range validLabels {
 			if upper == v {
 				label = v
 				// Explanation is whatever follows on subsequent lines.
+				// When the label is on the last line (rationale-first format like
+				// "rationale\nCORRECT"), post is empty and the pre-label text
+				// becomes the explanation instead — this is intentional (#759).
 				if i+1 < len(allLines) {
 					explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
 				}
-				// Also capture any pre-label text as part of explanation if first line had content.
-				if firstLineIdx >= 0 && firstLineIdx != i {
+				// Capture any pre-label text as part of explanation.
+				// firstLineIdx != i is guaranteed (Pass 1 eliminated firstLineIdx).
+				if firstLineIdx >= 0 {
 					pre := strings.TrimSpace(strings.Join(allLines[firstLineIdx:i], "\n"))
 					if pre != "" && explanation != "" {
 						explanation = pre + "\n" + explanation

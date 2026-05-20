@@ -443,23 +443,47 @@ func TestParseScoreLabel_TruncatedNoLabel(t *testing.T) {
 	}
 }
 
-// TestParseScoreLabel_ScoreErrorPropagation verifies that SCORE_ERROR returned
-// from ParseScoreLabel results in a score entry with status="error" (not
-// silently counted as PARTIALLY_CORRECT in the score report).
+// TestParseScoreLabel_LabelLastLine verifies explanation semantics when the label
+// is on the last line (rationale-first / old format like "rationale\nCORRECT").
+// When no post-label lines exist, ParseScoreLabel uses the pre-label text as the
+// explanation — this is intentional: the preamble IS the rationale. (#759)
+func TestParseScoreLabel_LabelLastLine(t *testing.T) {
+	raw := "The answer matches the gold facts exactly.\nCORRECT"
+	label, expl := longmemeval.ParseScoreLabel(raw)
+	if label != "CORRECT" {
+		t.Errorf("label = %q, want CORRECT", label)
+	}
+	// Pre-label rationale becomes the explanation in last-line-label format.
+	if expl == "" {
+		t.Errorf("explanation is empty; want pre-label rationale as explanation (#759)")
+	}
+	if !strings.Contains(expl, "matches") {
+		t.Errorf("explanation = %q; want pre-label rationale text (#759)", expl)
+	}
+}
+
+// TestParseScoreLabel_ScoreErrorPropagation verifies that ParseScoreLabel returns
+// SCORE_ERROR (not CORRECT or PARTIALLY_CORRECT) when no valid label is found.
+// Guards the pipeline contract: SCORE_ERROR hits the default/Incorrect bucket in
+// writeScoreReport (cmd/longmemeval/score.go) — never silently inflates scores. (#761)
 func TestParseScoreLabel_ScoreErrorPropagation(t *testing.T) {
-	// SCORE_ERROR should be treated as an error in writeScoreReport, not as a
-	// valid label. Verify it falls into the "default" / Incorrect bucket.
-	// This test documents the expected pipeline behaviour.
-	//
-	// In writeScoreReport (cmd/longmemeval/score.go), the switch statement:
-	//   case "CORRECT": ...
-	//   case "PARTIALLY_CORRECT": ...
-	//   default: Incorrect++
-	// SCORE_ERROR hits "default" → counted as Incorrect, which is correct
-	// behaviour (conservative: unknown = not correct).
-	//
-	// If this behaviour changes, update this comment and the switch.
-	t.Log("SCORE_ERROR falls into default/Incorrect in writeScoreReport — documented by design")
+	inputs := []string{
+		// Truncated response — context window ran out before label was emitted.
+		"The hypothesis mentions the correct city but the explanation was cut",
+		// Garbled output — label-like text embedded inside a longer word.
+		"The result is INCORRECTLY stated in the hypothesis.",
+		// Empty string — no content at all.
+		"",
+	}
+	for _, raw := range inputs {
+		label, _ := longmemeval.ParseScoreLabel(raw)
+		if label == "CORRECT" || label == "PARTIALLY_CORRECT" {
+			t.Errorf("ParseScoreLabel(%q) = %q; want SCORE_ERROR, not a valid label — would silently inflate score counts (#761)", raw, label)
+		}
+		if label != "SCORE_ERROR" {
+			t.Errorf("ParseScoreLabel(%q) = %q, want SCORE_ERROR (#761)", raw, label)
+		}
+	}
 }
 
 func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
