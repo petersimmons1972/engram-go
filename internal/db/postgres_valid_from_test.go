@@ -63,8 +63,8 @@ func TestStoreMemory_NilValidFromStaysNil(t *testing.T) {
 	require.Nil(t, got.ValidFrom, "valid_from must remain NULL when not set on the struct")
 }
 
-// TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate verifies Path α behavior
-// (advisory for issue #765): if memory_correct sends tags that no longer include
+// TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate verifies the behavior
+// described in issue #765: if memory_correct sends tags that no longer include
 // a date: tag, valid_from is cleared to NULL. This supersedes the old
 // "only promote, never nullify" policy. Callers that want to preserve an
 // existing valid_from must omit the tags argument entirely.
@@ -91,9 +91,9 @@ func TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate(t *testing.T) {
 	updated, err := b.UpdateMemory(ctx, m.ID, nil, newTags, nil, nil)
 	require.NoError(t, err)
 
-	// 3. ValidFrom must be NULL — Path α always recalculates from the new tags.
+	// 3. ValidFrom must be NULL — always recalculate when new tags change.
 	require.Nil(t, updated.ValidFrom,
-		"ValidFrom must be NULL when new tags omit date: (Path α, issue #765)")
+		"ValidFrom must be NULL when new tags omit date: (see issue #765)")
 }
 
 // TestUpdateMemory_PromotesValidFromOnDateTagChange is the paired positive case:
