@@ -649,3 +649,34 @@ func TestMemoryCorrect_History_RetainsPriorValidFrom(t *testing.T) {
 	require.True(t, vf2.Equal(second), "second valid_from must be 2024-04-15")
 	require.False(t, vf1.Equal(*vf2), "two successive corrections must produce distinct valid_from values")
 }
+
+// TestMemoryCorrect_ImportanceOutOfRange verifies that handleMemoryCorrect
+// rejects importance values outside [0, 4] with a tool-level error rather than
+// silently clamping them — regression guard for the fix in issue #809.
+func TestMemoryCorrect_ImportanceOutOfRange(t *testing.T) {
+	back := &validFromCorrectBackend{}
+	pool := newValidFromCorrectPool(t, back)
+
+	cases := []struct {
+		name       string
+		importance float64
+	}{
+		{"negative", -1},
+		{"above max", 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mcpgo.CallToolRequest{}
+			req.Params.Arguments = map[string]any{
+				"project":    "test",
+				"memory_id":  "mem-12345",
+				"importance": tc.importance,
+			}
+			res, err := handleMemoryCorrect(context.Background(), pool, req)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.True(t, res.IsError, "importance=%v must produce a tool error, not be silently clamped", tc.importance)
+			require.False(t, back.called, "UpdateMemory must NOT be called on importance validation failure")
+		})
+	}
+}
