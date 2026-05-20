@@ -694,13 +694,25 @@ func main() {
 
 // run is the top-level pipeline: load buffer → group by session → write
 // episodes to Engram → detect patterns via Haiku → upsert patterns.
+//
+// Phase 1 timing (#396): stageTimes is populated at each major checkpoint and
+// flushed to hook-timings-v2.tsv on exit (always, including error paths).
 func run(ctx context.Context, cfg config) error {
+	st := newStageTimes()
+	exitCode := 0
+	defer func() {
+		st.exitTime = time.Now()
+		appendTimingRow(st.toTSVRow("instinct", exitCode))
+	}()
+
 	events, processedPath, outcome, err := loadAndRotate(cfg.bufferPath, cfg.minEvents)
 	if err != nil {
+		exitCode = 1
 		return err
 	}
 	if len(events) == 0 {
 		if outcome == bufferLoadRejected {
+			exitCode = 1
 			return fmt.Errorf("instinct: malformed buffer rejected: %s", processedPath)
 		}
 		slog.Info("instinct: noop", "reason", "buffer below min events or missing")
@@ -709,21 +721,33 @@ func run(ctx context.Context, cfg config) error {
 
 	slog.Info("instinct: processing", "events", len(events))
 
+	// Phase 1 timing: auth is resolved once loadConfig succeeds; mark it here
+	// (config is already loaded; this is the point we first use the token).
+	st.authResolved = time.Now()
+
 	if cfg.engramURL == "" {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("ENGRAM_BASE_URL not set")
 	}
 
 	e, err := newHybridEngram(cfg.engramURL, cfg.engramToken, cfg.engramRESTURL)
 	if err != nil {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("newHybridEngram: %w", err)
 	}
 	if err := e.connect(ctx); err != nil {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("connect: %w", err)
 	}
+	// Phase 1 timing: MCP connection established.
+	st.mcpConnected = time.Now()
 	defer func() { _ = e.close() }()
+
+	// Phase 1 timing: first payload is sent when the first writeEpisode begins.
+	st.requestSent = time.Now()
 
 	groups := groupBySession(events)
 	for key, group := range groups {
@@ -770,6 +794,9 @@ func run(ctx context.Context, cfg config) error {
 		upsertPattern(opCtx, e, p, events)
 		cancel()
 	}
+
+	// Phase 1 timing: all Engram writes complete; final response received.
+	st.responseReceived = time.Now()
 
 	slog.Info("instinct: done", "events", len(events), "patterns", len(patterns))
 	return nil
