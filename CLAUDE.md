@@ -20,6 +20,7 @@
 - **Visual quality rules:** `visual-output-standards` skill is the canonical source for all charts, SVGs, and illustrations. Engram carries session context only — quality rules live in the skill. Every Cassandre dispatch must read the skill first. Run `bin/render-check.sh` before Ramsay review.
 
 ## Parallel Agent Rules
+- **Worktree isolation MANDATORY for parallel implementer agents.** When dispatching 2+ implementer agents against the same git repository, each MUST be spawned with `isolation: "worktree"` on the Agent tool. Without this, agents in the same checkout cross-contaminate branches and pick up each other's uncommitted changes. Three branch-crossover incidents on 2026-05-20 confirmed the failure mode; the rule eliminates the class. Single-agent dispatches and read-only Explore agents may omit isolation.
 - **Pre-validation:** ONE agent analyzes 2–3 samples first. Present findings. Only then dispatch remaining agents with the confirmed problem definition.
 - List which functions each agent will touch. Two agents on the same function → flag it, run full test suite after.
 - **Always include one zero-context reviewer** — receives only raw inputs, no prior findings.
@@ -104,6 +105,8 @@ Behavioral defaults (telemetry shows I default to the wrong tool without these):
 - HTTP requests → `xh` (not `curl`)
 - Multi-pod log tailing → `stern <name> -n <ns>` (not `kubectl logs`)
 - Security review first step → `semgrep scan --config auto <path>`
+- File search → `fd <pattern> [path]` (not `find . -name`) — already installed, respects .gitignore
+- Recursive code search → `rg <pattern> [path]` (not `grep -r`) — already installed, skips binaries and .git/
 
 Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckdb`, `tokei`, `jq`, `just`, full `kubectl`/`git` workflows → `~/TOOLS.md`.
 
