@@ -6,8 +6,15 @@ import (
 	"strings"
 )
 
-// numericRE matches a bare integer gold answer (1–4 digits, optional whitespace).
-var numericRE = regexp.MustCompile(`^\s*\d{1,4}\s*$`)
+// numericRE matches a bare integer gold answer (up to 10 digits, optional whitespace).
+//
+// Cap derivation: the largest numeric gold answer observed in the LongMemEval-M
+// testdata (longmemeval_m_cleaned.json) is 1300 (4 digits). A 4-digit cap would
+// technically cover the known dataset, but the original limit was undocumented and
+// silently excluded any five-or-more-digit counts (e.g. "10000"). We use 10 digits
+// (10 billion) as a generous, comment-justified upper bound so that future dataset
+// additions with larger count answers are not misclassified as missing_recall (#815).
+var numericRE = regexp.MustCompile(`^\s*\d{1,10}\s*$`)
 
 // wordOverlapThreshold is the minimum IoU word-overlap score to consider a gold
 // answer substantially present in the hypothesis.  Below this the item is
@@ -38,7 +45,7 @@ type TaxonomyResult struct {
 // ClassifyFailure classifies why a LongMemEval item was not answered correctly.
 //
 // Classification logic (ordered):
-//  1. If GoldAnswer is a bare number (≤4 digits) AND at least one gold session
+//  1. If GoldAnswer is a bare number (up to 10 digits) AND at least one gold session
 //     was retrieved → "aggregation_failure": the data was present but the model
 //     failed to aggregate across sessions.
 //  2. If GoldAnswer is a bare number AND no gold sessions were retrieved →
