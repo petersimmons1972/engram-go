@@ -149,7 +149,7 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 
 	memoryMap := make(map[string]string, len(sessions))
 	for i, s := range sessions {
-		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags)
+		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags, nil)
 		if err != nil {
 			return longmemeval.IngestEntry{
 				QuestionID: item.QuestionID,
