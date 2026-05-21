@@ -281,6 +281,35 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
+	// the object noun-phrase for count-shaped questions and union with primary.
+	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
+		const aggregationSweepTopK = 500
+		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
+		sweepIDs, sweepErr := mcpClient.Recall(ctx, ingest.Project, sweepQuery, aggregationSweepTopK)
+		if sweepErr == nil {
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
+		} else {
+			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
+		}
+	}
+
+	// H15 (lme-h8h12h15): dual-query preference recall — run a second recall
+	// using the subject-anchor query for preference questions and union results.
+	if cfg.DualPreferenceRecall && item.QuestionType == "single-session-preference" {
+		anchorTopK := cfg.RecallTopK / 2
+		if anchorTopK < 1 {
+			anchorTopK = 1
+		}
+		anchor := longmemeval.ExtractSubjectAnchor(item.Question)
+		anchorIDs, anchorErr := mcpClient.Recall(ctx, ingest.Project, anchor, anchorTopK)
+		if anchorErr == nil {
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
+		} else {
+			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
+		}
+	}
+
 	// H15: paraphrased multi-pass BM25 union.
 	// When --query-paraphrase-passes N > 0, ask Haiku to generate N paraphrase
 	// variants of the recall query, run a separate Recall for each variant, then
@@ -346,11 +375,18 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
 	// the two are mutually exclusive. When both are set, aug wins.
+	// H12 (--enumerate-first) is orthogonal — it only fires for aggregation
+	// questions, which the temporal/preference branches above never match.
 	var prompt string
-	if cfg.TemporalPromptAug {
+	switch {
+	case cfg.TemporalPromptAug:
 		prompt = longmemeval.GenerationPromptForTypeWithTemporalAug(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	} else {
-		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, cfg.InjectQuestionDate)
+	case cfg.InjectQuestionDate:
+		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	case cfg.EnumerateFirst:
+		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	default:
+		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {

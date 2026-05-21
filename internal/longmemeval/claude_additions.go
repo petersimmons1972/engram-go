@@ -24,6 +24,109 @@ func PreferenceRecallQuery(question string) string {
 	return "user preference " + stripped + " like dislike use avoid"
 }
 
+// ---------------------------------------------------------------------------
+// H15 / H8 — lme-h8h12h15 branch additions: subject-anchor + aggregation helpers
+// ---------------------------------------------------------------------------
+
+// preferenceStopWords is a small set of English function words that carry no
+// domain signal. We strip these when building a subject anchor so the remaining
+// tokens are more likely to match the gold preference session via BM25.
+var preferenceStopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "for": true, "on": true,
+	"in": true, "of": true, "to": true, "and": true, "or": true,
+	"i": true, "me": true, "my": true, "you": true, "your": true,
+	"do": true, "is": true, "are": true, "some": true, "any": true,
+	"can": true, "could": true, "would": true, "should": true,
+	"what": true, "which": true, "how": true, "when": true, "where": true,
+}
+
+// ExtractSubjectAnchor (H15) builds a domain-specific recall query from the
+// object noun-phrase of a preference question. It strips the recommendation
+// verb phrase via preferenceStripRe, then tokenises by whitespace, removes
+// stop-words, and joins the remaining tokens. If all tokens are stop-words it
+// falls back to the full stripped remainder so the anchor is never empty.
+func ExtractSubjectAnchor(question string) string {
+	stripped := preferenceStripRe.ReplaceAllString(question, "")
+	if stripped == "" {
+		stripped = question
+	}
+	stripped = strings.TrimRight(stripped, "?!.,;:")
+
+	tokens := strings.Fields(stripped)
+	var keep []string
+	for _, tok := range tokens {
+		lower := strings.ToLower(tok)
+		lower = strings.TrimRight(lower, "?!.,;:")
+		if !preferenceStopWords[lower] {
+			keep = append(keep, tok)
+		}
+	}
+	if len(keep) == 0 {
+		return stripped
+	}
+	return strings.Join(keep, " ")
+}
+
+// aggregationRe (H8) matches count-shaped questions that require
+// population-level retrieval rather than a single top-scoring session.
+var aggregationRe = regexp.MustCompile(
+	`(?i)\b(how many|how often|how much total|total number of|sum of|count of)\b`)
+
+// aggregationStripRe (H8) strips the counting interrogative phrase so that the
+// remaining tokens describe the object being counted.
+var aggregationStripRe = regexp.MustCompile(
+	`(?i)^(how many (times )?|how often |how much total |what is the total (number of )?|what is the sum of |give me a count of |count of )`)
+
+// IsAggregationQuestion (H8) returns true when the question matches the
+// aggregation pattern that requires exhaustive population recall.
+func IsAggregationQuestion(question string) bool {
+	return aggregationRe.MatchString(question)
+}
+
+// ExtractAggregationAnchor (H8) strips the counting interrogative prefix and
+// removes stop-words from the object noun phrase, producing a concise
+// BM25-friendly query for the exhaustive sweep recall.
+func ExtractAggregationAnchor(question string) string {
+	stripped := aggregationStripRe.ReplaceAllString(question, "")
+	stripped = strings.TrimRight(stripped, "?!.,;:")
+	if stripped == "" {
+		stripped = question
+	}
+	tokens := strings.Fields(stripped)
+	var keep []string
+	for _, tok := range tokens {
+		lower := strings.ToLower(strings.TrimRight(tok, "?!.,;:"))
+		if !preferenceStopWords[lower] {
+			keep = append(keep, tok)
+		}
+	}
+	if len(keep) == 0 {
+		return stripped
+	}
+	return strings.Join(keep, " ")
+}
+
+// UnionMemoryIDs (H8/H15) merges primary and secondary ID slices, preserving
+// order and deduplicating by memory ID. Primary IDs appear first; secondary
+// IDs that are not already in primary are appended in their original order.
+func UnionMemoryIDs(primary, secondary []string) []string {
+	seen := make(map[string]bool, len(primary))
+	result := make([]string, 0, len(primary)+len(secondary))
+	for _, id := range primary {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	for _, id := range secondary {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
 // ContextTopKForType returns how many recalled memories to feed to generation.
 // Multi-session and temporal questions need more context to capture the right
 // sessions; other types are fine with the baseline of 8.
