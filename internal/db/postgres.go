@@ -60,7 +60,9 @@ func configureSharedPool(cfg *pgxpool.Config) {
 	cfg.MaxConns = 50
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 3 * time.Minute
-	cfg.HealthCheckPeriod = 30 * time.Second
+	// 15s health-check so the pool detects dead connections within one
+	// GlobalReembedder poll interval after a Postgres restart (#645).
+	cfg.HealthCheckPeriod = 15 * time.Second
 }
 
 // registerTypesAfterConnect registers custom type codecs that every connection

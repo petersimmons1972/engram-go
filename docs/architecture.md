@@ -127,7 +127,7 @@ The `/quick-store` and `/quick-recall` REST endpoints enforce per-field limits:
 - **Content Size:** max 1 MiB (quick-store only)
 - **Project Name:** must match `^[a-z0-9_-]{1,64}$` (alphanumeric, underscore, hyphen; no spaces, uppercase, or path traversal)
 - **Tags:** max 64 total; each max 256 characters
-- **Importance:** 0–100 (not 0–4 like memory_type)
+- **Importance:** 0–4 (matches the handler range; 0=Critical, 4=Low)
 - **Query:** must be non-empty
 
 Validation failures return HTTP 400 with structured error message.

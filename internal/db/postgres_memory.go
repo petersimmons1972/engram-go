@@ -13,7 +13,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/petersimmons1972/engram/internal/parse"
 	"github.com/petersimmons1972/engram/internal/types"
+)
+
+// updateMemory SQL constants — keep both in sync when adding new columns to the
+// memories table. The "with content" variant also refreshes content_hash and
+// clears the summary so the background worker regenerates it.
+const (
+	sqlUpdateMemoryWithContent = "UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6, valid_from=$7 WHERE id=$8 AND project=$9"
+	sqlUpdateMemoryNoContent   = "UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5, valid_from=$6 WHERE id=$7 AND project=$8"
 )
 
 // ContentHash returns the canonical SHA-256 hex digest for a memory's content.
@@ -79,12 +88,12 @@ func (b *PostgresBackend) storeMemoryExec(ctx context.Context, ex execer, m *typ
 		  (id, content, memory_type, project, tags,
 		   importance, access_count, last_accessed, created_at, updated_at,
 		   immutable, expires_at, content_hash, storage_mode, episode_id,
-		   dynamic_importance, document_id, pattern_confidence)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		   dynamic_importance, document_id, pattern_confidence, valid_from)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		m.ID, m.Content, m.MemoryType, m.Project, tagsJSON,
 		m.Importance, m.AccessCount, now, now, now,
 		m.Immutable, m.ExpiresAt, hash, m.StorageMode, episodeArg,
-		m.DynamicImportance, documentArg, m.PatternConfidence,
+		m.DynamicImportance, documentArg, m.PatternConfidence, m.ValidFrom,
 	)
 	return err
 }
@@ -208,6 +217,11 @@ func (b *PostgresBackend) UpdateMemory(
 	}
 	if tags != nil {
 		m.Tags = tags
+		// valid_from is recalculated from date: tags on every UpdateMemory call where
+		// tags are provided. ParseDateTag returns nil when no date: tag exists, which
+		// clears valid_from to NULL. To preserve an existing valid_from, omit the tags
+		// argument entirely (see docs/tools.md#memory_correct).
+		m.ValidFrom = parse.ParseDateTag(tags)
 	}
 	if importance != nil {
 		m.Importance = *importance
@@ -226,14 +240,12 @@ func (b *PostgresBackend) UpdateMemory(
 		hash := ContentHash(m.Content)
 		m.ContentHash = &hash
 		// Clear the summary so the background worker regenerates it with the new content.
-		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, content_hash=$5, summary=NULL, pattern_confidence=$6 WHERE id=$7 AND project=$8",
-			m.Content, tagsJSON, m.Importance, now, hash, m.PatternConfidence, id, b.project,
+		_, err = tx.Exec(ctx, sqlUpdateMemoryWithContent,
+			m.Content, tagsJSON, m.Importance, now, hash, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	} else {
-		_, err = tx.Exec(ctx,
-			"UPDATE memories SET content=$1, tags=$2, importance=$3, updated_at=$4, pattern_confidence=$5 WHERE id=$6 AND project=$7",
-			m.Content, tagsJSON, m.Importance, now, m.PatternConfidence, id, b.project,
+		_, err = tx.Exec(ctx, sqlUpdateMemoryNoContent,
+			m.Content, tagsJSON, m.Importance, now, m.PatternConfidence, m.ValidFrom, id, b.project,
 		)
 	}
 	if err != nil {

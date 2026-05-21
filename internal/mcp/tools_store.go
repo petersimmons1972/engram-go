@@ -12,6 +12,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/parse"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -39,14 +40,14 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if len(content) > types.MaxContentLength {
-		return nil, fmt.Errorf("content exceeds max length %d bytes", types.MaxContentLength)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content exceeds max length %d bytes", types.MaxContentLength)), nil
 	}
 	if err := validateContent(content); err != nil {
-		return nil, fmt.Errorf("content: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content: %v", err)), nil
 	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
-		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+		return mcpgo.NewToolResultError(fmt.Sprintf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)), nil
 	}
 	// Auto-tag: when memory_type was not explicitly provided by the caller,
 	// detect preference-expressing content and override to "preference" (#364).
@@ -57,11 +58,11 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	}
 	importance := getInt(args, "importance", 2)
 	if importance < 0 || importance > 4 {
-		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
 	tags, err := toStringSlice(args["tags"])
 	if err != nil {
-		return nil, fmt.Errorf("tags: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
 	// Validate optional pattern_confidence field.
 	var patternConfidence *float64
@@ -70,6 +71,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		if !ok {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
 		}
+		// Error (not clamp) is intentional — see ValidatePatternConfidence godoc.
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
@@ -89,7 +91,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		Immutable:         getBool(args, "immutable", false),
 		StorageMode:       "focused",
 		EpisodeID:         episodeID,
-		ValidFrom:         parseDateTag(tags),
+		ValidFrom:         parse.ParseDateTag(tags),
 		PatternConfidence: patternConfidence,
 	}
 	storeCtx, storeCancel := context.WithTimeout(ctx, storeTimeout)
@@ -167,20 +169,20 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		return mcpgo.NewToolResultError("content is required"), nil
 	}
 	if err := validateContent(content); err != nil {
-		return nil, fmt.Errorf("content: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("content: %v", err)), nil
 	}
 	memType := getString(args, "memory_type", types.MemoryTypeContext)
 	if !types.ValidateMemoryType(memType) {
-		return nil, fmt.Errorf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)
+		return mcpgo.NewToolResultError(fmt.Sprintf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)), nil
 	}
 	importance := getInt(args, "importance", 2)
 	if importance < 0 || importance > 4 {
-		return nil, fmt.Errorf("importance must be 0–4, got %d", importance)
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
 	maxDoc, rawMax := configOrDefaults(cfg)
 	docTags, err := toStringSlice(args["tags"])
 	if err != nil {
-		return nil, fmt.Errorf("tags: %w", err)
+		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
 	m := &types.Memory{
 		ID:         types.NewMemoryID(),
@@ -189,6 +191,8 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 		Importance: importance,
 		Tags:       docTags,
 		Immutable:  getBool(args, "immutable", false),
+		EpisodeID:  episodeIDFromContextOrArgs(ctx, args),
+		ValidFrom:  parse.ParseDateTag(docTags),
 	}
 	engine := h.Engine
 	deps := storeDocumentDeps{
@@ -304,8 +308,10 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			Project:           project,
 			Importance:        importance,
 			Tags:              itemTags,
+			Immutable:         getBool(mmap, "immutable", false),
 			StorageMode:       "focused",
 			EpisodeID:         itemEpisodeID,
+			ValidFrom:         parse.ParseDateTag(itemTags),
 			PatternConfidence: itemPatternConfidence,
 		})
 	}
@@ -371,7 +377,10 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	}
 	var importance *int
 	if v, ok := args["importance"].(float64); ok {
-		n := types.ValidateImportance(int(v))
+		n := int(v)
+		if n < highestImportanceLevel || n > lowestImportanceLevel {
+			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be %d–%d, got %d", highestImportanceLevel, lowestImportanceLevel, n)), nil
+		}
 		importance = &n
 	}
 	var patternConfidence *float64
@@ -380,6 +389,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		if !ok {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence must be a number, got %T", raw)), nil
 		}
+		// Error (not clamp) is intentional — see ValidatePatternConfidence godoc.
 		validated, validErr := types.ValidatePatternConfidence(v)
 		if validErr != nil {
 			return mcpgo.NewToolResultError(fmt.Sprintf("pattern_confidence: %v", validErr)), nil
@@ -436,11 +446,16 @@ const maxQuickStoreTags = 64
 // maxQuickStoreTagLength is the maximum length of a single tag.
 const maxQuickStoreTagLength = 256
 
-// maxImportanceValue is the maximum allowed importance value.
-const maxImportanceValue = 100
+// lowestImportanceLevel is the highest numeric value on the 0–4 importance
+// scale (= least important / lowest retention priority). The scale is inverted:
+// 0 = Critical (highest priority), 4 = Low (lowest priority). "Lowest" here
+// refers to retention importance, not the numeric value.
+// Must match the 0–4 range enforced by handleMemoryStore.
+const lowestImportanceLevel = 4
 
-// minImportanceValue is the minimum allowed importance value.
-const minImportanceValue = 0
+// highestImportanceLevel is the lowest numeric value on the 0–4 importance
+// scale (= most important / highest retention priority). 0 = Critical.
+const highestImportanceLevel = 0
 
 // projectNamePattern validates project names: ^[a-z0-9_-]{1,64}$.
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
@@ -449,7 +464,7 @@ var projectNamePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 // - content: required, max 1 MiB
 // - project: must match ^[a-z0-9_-]{1,64}$
 // - tags: max 64, each max 256 chars
-// - importance: 0–100.
+// - importance: 0–4.
 func validateQuickStoreInput(content string, project string, tags []string, importance int) error {
 	if len(content) > maxQuickStoreContentSize {
 		return fmt.Errorf("content exceeds max size %d bytes", maxQuickStoreContentSize)
@@ -465,8 +480,8 @@ func validateQuickStoreInput(content string, project string, tags []string, impo
 			return fmt.Errorf("tag %d exceeds max length %d chars", i, maxQuickStoreTagLength)
 		}
 	}
-	if importance < minImportanceValue || importance > maxImportanceValue {
-		return fmt.Errorf("importance must be %d–%d, got %d", minImportanceValue, maxImportanceValue, importance)
+	if importance < highestImportanceLevel || importance > lowestImportanceLevel {
+		return fmt.Errorf("importance must be %d–%d, got %d", highestImportanceLevel, lowestImportanceLevel, importance)
 	}
 	return nil
 }
@@ -502,33 +517,6 @@ func handleMemoryQuickStore(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	req2 := req
 	req2.Params.Arguments = merged
 	return handleMemoryStore(ctx, pool, req2, cfg)
-}
-
-// parseDateTag scans tags for a "date:<value>" entry and returns the parsed
-// UTC time (date portion only), or nil if no valid date tag is found.
-// The first matching tag wins. Supported formats:
-//   - "2006-01-02"                — ISO date
-//   - "2006/01/02 (Mon) 15:04"   — LongMemEval haystack date format
-//
-// This is used to populate ValidFrom so the recency scorer uses the actual
-// session date rather than the arbitrary ingest/access time.
-func parseDateTag(tags []string) *time.Time {
-	layouts := []string{"2006-01-02", "2006/01/02 (Mon) 15:04"}
-	for _, tag := range tags {
-		val, ok := strings.CutPrefix(tag, "date:")
-		if !ok {
-			continue
-		}
-		for _, layout := range layouts {
-			t, err := time.Parse(layout, val)
-			if err != nil {
-				continue
-			}
-			t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-			return &t
-		}
-	}
-	return nil
 }
 
 // handleMemoryQuery is a simplified front door for handleMemoryRecall.

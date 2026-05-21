@@ -177,7 +177,7 @@ func TestDecayWorker_RunsOnTick(t *testing.T) {
 	require.NoError(t, err)
 
 	// 50ms tick so the test completes quickly.
-	engine := search.New(ctx, backend, &fakeClient{dims: 768}, project,
+	engine := search.New(ctx, backend, &fakeClient{dims: 1024}, project,
 		"http://ollama:11434", "llama3.2", false, nil, 50*time.Millisecond)
 	t.Cleanup(func() { engine.Close() })
 

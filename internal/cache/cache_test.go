@@ -6,20 +6,20 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/cache"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 func TestRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "results.json")
 	c := cache.New(path)
 
-	result := types.ModelResult{
+	result := benchmark.ModelResult{
 		Model:  "mistral:7b",
 		VRAMGB: 4.5,
 		Tier:   "4-6GB",
 		Vendor: "Mistral AI",
-		Score: types.Score{
-			Verdict:   types.VerdictRecommended,
+		Score: benchmark.Score{
+			Verdict:   benchmark.VerdictRecommended,
 			Composite: 7.44,
 		},
 	}
@@ -35,7 +35,7 @@ func TestRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
-	if got.Score.Verdict != types.VerdictRecommended {
+	if got.Score.Verdict != benchmark.VerdictRecommended {
 		t.Errorf("want Recommended, got %s", got.Score.Verdict)
 	}
 }
@@ -43,7 +43,7 @@ func TestRoundTrip(t *testing.T) {
 func TestRead_Miss_WrongKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "results.json")
 	c := cache.New(path)
-	result := types.ModelResult{Model: "mistral:7b"}
+	result := benchmark.ModelResult{Model: "mistral:7b"}
 	if err := c.Write("mistral:7b", "key-a", result); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRead_Miss_WrongKey(t *testing.T) {
 func TestRead_Miss_Expired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "results.json")
 	c := cache.New(path)
-	result := types.ModelResult{Model: "mistral:7b"}
+	result := benchmark.ModelResult{Model: "mistral:7b"}
 	if err := c.Write("mistral:7b", "key-a", result); err != nil {
 		t.Fatalf("Write: %v", err)
 	}

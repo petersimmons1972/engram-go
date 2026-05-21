@@ -5,13 +5,27 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// ErrDisallowedModel is a permanent error returned when the model name is not
+// in the allowlist. The retry loop must not sleep on this error.
+var ErrDisallowedModel = errors.New("disallowed model")
+
+// debugOAIRequests gates verbose request/response logging for OAI calls.
+// Set LME_DEBUG_REQUESTS=1 to enable. Logs request body size and full response
+// body on non-200, so 400 errors include the vLLM error detail.
+var debugOAIRequests = os.Getenv("LME_DEBUG_REQUESTS") == "1"
+
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
@@ -43,6 +57,12 @@ func GenerateHaiku(ctx context.Context, prompt string, retries int) (string, err
 	return generate(ctx, prompt, "haiku", retries)
 }
 
+// GenerateOpus is like Generate but uses Opus — highest-capability model,
+// suitable for complex multi-session and temporal-reasoning questions.
+func GenerateOpus(ctx context.Context, prompt string, retries int) (string, error) {
+	return generate(ctx, prompt, "opus", retries)
+}
+
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -52,6 +72,10 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 			return out, nil
 		}
 		lastErr = err
+		// Permanent validation errors must not be retried.
+		if errors.Is(err, ErrDisallowedModel) {
+			break
+		}
 		if attempt >= retries {
 			break
 		}
@@ -63,6 +87,14 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 		}
 	}
 	return "", lastErr
+}
+
+// GenerateForModel calls generate with the given model alias. model must be
+// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
+// unknown value causes generate → runClaude to return ErrDisallowedModel
+// immediately without retrying.
+func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
+	return generate(ctx, prompt, model, retries)
 }
 
 // validClaudeModels is the allowlist for the --model flag passed to
@@ -83,7 +115,7 @@ func isValidClaudeModel(model string) bool {
 
 func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	if !isValidClaudeModel(model) {
-		return "", fmt.Errorf("claude: refusing to invoke with disallowed model %q (allowed: opus, sonnet, haiku) (#678)", model)
+		return "", fmt.Errorf("%w: %q (allowed: opus, sonnet, haiku) (#678)", ErrDisallowedModel, model)
 	}
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
@@ -119,14 +151,33 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	return out, nil
 }
 
+// OAIOptions controls generation quality parameters for OpenAI-compatible endpoints.
+// Zero values fall back to conservative defaults safe for all models.
+type OAIOptions struct {
+	// EnableThinking enables chain-of-thought reasoning for models that support it
+	// (e.g. Qwen3). Improves answer quality significantly; use higher MaxTokens.
+	// Do NOT enable for Nemotron v3 — causes HTTP 400 (vLLM GH#39103).
+	EnableThinking bool
+	// MaxTokens caps the output token budget. Default 2048 is fine for
+	// enable_thinking=false; use ≥8192 when thinking is enabled.
+	MaxTokens int
+}
+
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
 // the claude CLI. baseURL is the API root (e.g. "http://oblivion:8000/v1").
 // Retry/backoff behaviour mirrors generate().
+// Calls with conservative defaults (thinking off, 2048 tokens).
 func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int) (string, error) {
+	return GenerateOAIWithOpts(ctx, prompt, baseURL, model, retries, OAIOptions{})
+}
+
+// GenerateOAIWithOpts is the full-featured variant; use when you need thinking mode or
+// a larger token budget.
+func GenerateOAIWithOpts(ctx context.Context, prompt, baseURL, model string, retries int, opts OAIOptions) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAI(ctx, prompt, baseURL, model)
+		out, err := callOAI(ctx, prompt, baseURL, model, opts)
 		if err == nil {
 			return out, nil
 		}
@@ -144,13 +195,23 @@ func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int
 	return "", lastErr
 }
 
-func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error) {
+func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 
+	// Truncate prompt to last 480000 chars (~120k tokens) to avoid vLLM context overflow (status 400).
+	// We keep the END of the prompt because the question is at the end.
+	const maxPromptChars = 480_000
+	if len(prompt) > maxPromptChars {
+		slog.Warn("prompt truncated to fit context window",
+			"original_chars", len(prompt),
+			"truncated_chars", maxPromptChars)
+		prompt = prompt[len(prompt)-maxPromptChars:]
+	}
+
 	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
 	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
-	reqBody, err := buildOAIRequestBody(model, prompt)
+	reqBody, err := buildOAIRequestBody(model, prompt, opts)
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
 	}
@@ -161,6 +222,9 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 		return "", fmt.Errorf("create OAI request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if debugOAIRequests {
+		log.Printf("DEBUG callOAI: url=%s request_body_bytes=%d", url, len(reqBody))
+	}
 
 	resp, err := oaiHTTPClient.Do(req)
 	if err != nil {
@@ -172,6 +236,11 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if debugOAIRequests {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("DEBUG callOAI: status=%d request_body_bytes=%d response_body=%s",
+				resp.StatusCode, len(reqBody), strings.TrimSpace(string(body)))
+		}
 		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)
 	}
 
@@ -210,15 +279,24 @@ func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error)
 	return content, nil
 }
 
-// BuildScoringRequestBody returns an OAI request body optimised for label classification.
-// max_tokens=100 (scoring output ~30-50 tokens), temperature=0 (deterministic).
+// DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
+// 2048 gives the model room to produce its label and a full explanation even
+// after reasoning tokens, preventing truncation from stripping the label.
+const DefaultScorerMaxTokens = 2048
+
+// BuildScoringRequestBody returns an OAI request body for label classification.
+// maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
+// unless you have a specific reason to reduce it.
 // Exported so the test package can inspect the marshalled fields.
-func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
-	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 }
 
 // buildScoringRequestBody is the unexported implementation used internally.
-func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string) ([]byte, error) {
+func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+	if maxTokens <= 0 {
+		maxTokens = DefaultScorerMaxTokens
+	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	body := struct {
 		Model       string       `json:"model"`
@@ -228,22 +306,23 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 	}{
 		Model: model,
 		Messages: []oaiMessage{
-			{Role: "system", Content: "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2."},
+			{Role: "system", Content: "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   100,
+		MaxTokens:   maxTokens,
 		Temperature: 0,
 	}
 	return json.Marshal(body)
 }
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
-// (max_tokens=100, temperature=0) for efficient local-model scoring.
-func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries int) (ScoreResult, error) {
+// (maxTokens, temperature=0) for efficient local-model scoring.
+// maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
+func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int) (ScoreResult, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model)
+		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model, maxTokens)
 		if err == nil {
 			label, explanation := ParseScoreLabel(out)
 			return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -255,17 +334,17 @@ func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesi
 		wait := backoffs[attempt%len(backoffs)]
 		select {
 		case <-ctx.Done():
-			return ScoreResult{Label: "PARTIALLY_CORRECT"}, ctx.Err()
+			return ScoreResult{Label: "SCORE_ERROR"}, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
-	return ScoreResult{Label: "PARTIALLY_CORRECT"}, lastErr
+	return ScoreResult{Label: "SCORE_ERROR"}, lastErr
 }
 
-func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string) (string, error) {
+func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, maxTokens int) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
-	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis)
+	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
 	if err != nil {
 		return "", fmt.Errorf("marshal scoring request: %w", err)
 	}
@@ -309,7 +388,7 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateOAI(ctx, prompt, baseURL, model, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
@@ -340,6 +419,38 @@ Do NOT answer the question directly. Instead, describe what the user would prefe
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
 
+// GenerationPromptForTypeWithTemporalAug is like GenerationPromptForType but
+// applies the Exp-14 H-M5+H-M1 combined prompt augmentation for
+// temporal-reasoning questions when temporalPromptAug is true.
+//   - H-M5 (chrono-sort forcing): for ordering questions, instructs the model
+//     to list all relevant events in chronological order before answering.
+//   - H-M1 (entity enumeration): for entity-ambiguous questions with a
+//     relative-time anchor, instructs the model to enumerate all events of
+//     the target type before committing to the most temporally precise one.
+//
+// For all other question types, or when temporalPromptAug is false, the
+// standard GenerationPromptForType output is returned unchanged.
+// Activated by --temporal-prompt-aug (Config.TemporalPromptAug). Off by default.
+func GenerationPromptForTypeWithTemporalAug(question, questionType, questionDate string, contextBlocks []string, temporalPromptAug bool) string {
+	if temporalPromptAug && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithAug(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptForTypeWithDateInjection is like GenerationPromptForType but
+// applies the H16 date-injection variant for temporal-reasoning questions.
+// When injectQuestionDate is true and the question type is "temporal-reasoning",
+// the prompt is prepended with "Today's date is: {questionDate}" so relative-time
+// anchors resolve unambiguously. For all other question types the flag is a no-op
+// and the standard prompt is returned unchanged.
+func GenerationPromptForTypeWithDateInjection(question, questionType, questionDate string, contextBlocks []string, injectQuestionDate bool) string {
+	if injectQuestionDate && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithDateInjection(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
 // GenerationPrompt builds the prompt for answer generation.
 func GenerationPrompt(question, questionDate string, contextBlocks []string) string {
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
@@ -356,21 +467,22 @@ Answer in one sentence using only the facts directly required by the question. D
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.
+// Label is requested on the FIRST LINE so that truncation cannot strip it.
 func ScoringPrompt(question, referenceAnswer, hypothesis string) string {
-	return fmt.Sprintf(`You are judging whether a generated answer correctly answers a question about conversation history.
+	return fmt.Sprintf(`You are grading a hypothesis against a gold answer. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then on the NEXT LINE explain your reasoning in 1-3 sentences.
+
+Definitions:
+- CORRECT: hypothesis contains all key facts from the gold answer with no contradictions. Extra correct context is fine.
+- PARTIALLY_CORRECT: some key facts present, others missing or hedged; partial overlap with gold.
+- INCORRECT: key facts wrong, contradicted, or completely absent (even if topically related).
 
 Question: %s
 
-Reference answer: %s
+Gold answer: %s
 
-Generated answer: %s
+Hypothesis: %s
 
-Is the generated answer correct? Reply with exactly one of these labels on the first line:
-CORRECT
-PARTIALLY_CORRECT
-INCORRECT
-
-Then on the second line, briefly explain why (one sentence).`, question, referenceAnswer, hypothesis)
+Judgment (one word on first line):`, question, referenceAnswer, hypothesis)
 }
 
 // ScoreResult holds the parsed output of the judge prompt.
@@ -385,27 +497,79 @@ func Score(ctx context.Context, question, referenceAnswer, hypothesis string, re
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	out, err := GenerateSonnet(ctx, prompt, retries)
 	if err != nil {
-		return ScoreResult{Label: "PARTIALLY_CORRECT"}, err
+		return ScoreResult{Label: "SCORE_ERROR"}, err
 	}
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+// validLabels is the ordered set of recognised score labels.
+var validLabels = []string{"CORRECT", "PARTIALLY_CORRECT", "INCORRECT"}
+
 // ParseScoreLabel extracts the label and explanation from raw judge output.
-// Returns PARTIALLY_CORRECT as default if the label is unrecognised.
+//
+// Strategy:
+//  1. Read the first non-empty line; match case-insensitively against the
+//     three valid labels.
+//  2. If no match on the first line, scan every line for the first occurrence
+//     of any valid label (handles preamble / COT output).
+//  3. If still no match, return SCORE_ERROR — never default to PARTIALLY_CORRECT,
+//     which was masking truncation failures.
 func ParseScoreLabel(raw string) (label, explanation string) {
-	lines := strings.SplitN(strings.TrimSpace(raw), "\n", 2)
-	first := strings.ToUpper(strings.TrimSpace(lines[0]))
-	switch first {
-	case "CORRECT", "PARTIALLY_CORRECT", "INCORRECT":
-		label = first
-	default:
-		label = "PARTIALLY_CORRECT"
+	allLines := strings.Split(strings.TrimSpace(raw), "\n")
+
+	// Pass 1: first non-empty line.
+	firstLineIdx := -1
+	for i, l := range allLines {
+		if strings.TrimSpace(l) != "" {
+			firstLineIdx = i
+			first := strings.ToUpper(strings.TrimSpace(l))
+			for _, v := range validLabels {
+				if first == v {
+					label = v
+					if i+1 < len(allLines) {
+						explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+					}
+					return label, explanation
+				}
+			}
+			break
+		}
 	}
-	if len(lines) > 1 {
-		explanation = strings.TrimSpace(lines[1])
+
+	// Pass 2: scan all lines for first label occurrence.
+	// Note: firstLineIdx != i is always true when the if-block below is entered —
+	// Pass 1 already tried firstLineIdx and found no match, so Pass 2 cannot
+	// match there either. The guard is removed to reduce cognitive overhead (#760).
+	for i, l := range allLines {
+		upper := strings.ToUpper(strings.TrimSpace(l))
+		for _, v := range validLabels {
+			if upper == v {
+				label = v
+				// Explanation is whatever follows on subsequent lines.
+				// When the label is on the last line (rationale-first format like
+				// "rationale\nCORRECT"), post is empty and the pre-label text
+				// becomes the explanation instead — this is intentional (#759).
+				if i+1 < len(allLines) {
+					explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
+				}
+				// Capture any pre-label text as part of explanation.
+				// firstLineIdx != i is guaranteed (Pass 1 eliminated firstLineIdx).
+				if firstLineIdx >= 0 {
+					pre := strings.TrimSpace(strings.Join(allLines[firstLineIdx:i], "\n"))
+					if pre != "" && explanation != "" {
+						explanation = pre + "\n" + explanation
+					} else if pre != "" {
+						explanation = pre
+					}
+				}
+				return label, explanation
+			}
+		}
 	}
-	return label, explanation
+
+	// Pass 3: no label found — explicit error, not a silent PARTIALLY_CORRECT.
+	return "SCORE_ERROR", strings.TrimSpace(raw)
 }
 
 
@@ -424,10 +588,22 @@ func needsChatTemplateKwargs(model string) bool {
 }
 
 // buildOAIRequestBody marshals the OpenAI chat completion request body for
-// the given model + prompt. Only includes chat_template_kwargs for models
-// that understand it (currently vLLM Nemotron). Extracted from callOAI so
-// the model-gating decision is unit-testable. #671.
-func buildOAIRequestBody(model, prompt string) ([]byte, error) {
+// the given model + prompt. Accepts OAIOptions to control thinking mode and
+// token budget. Only includes chat_template_kwargs when opts.EnableThinking
+// is set or the model is Nemotron. Extracted from callOAI so the
+// model-gating decision is unit-testable. #671.
+func buildOAIRequestBody(model, prompt string, opts OAIOptions) ([]byte, error) {
+	maxTokens := 2048
+	if opts.MaxTokens > 0 {
+		maxTokens = opts.MaxTokens
+	} else if opts.EnableThinking {
+		maxTokens = 8192
+	}
+	// Qwen3 docs: temperature=0.6 for thinking mode, lower for non-thinking.
+	temperature := 0.2
+	if opts.EnableThinking {
+		temperature = 0.6
+	}
 	body := struct {
 		Model              string         `json:"model"`
 		Messages           []oaiMessage   `json:"messages"`
@@ -441,11 +617,15 @@ func buildOAIRequestBody(model, prompt string) ([]byte, error) {
 			{Role: "system", Content: "You are a precise QA assistant. Answer concisely using only the provided memory context."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   2048,
-		Temperature: 0.2,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
 		TopP:        0.95,
 	}
-	if needsChatTemplateKwargs(model) {
+	if opts.EnableThinking {
+		// enable_thinking=true: full chain-of-thought in reasoning_content, answer in content.
+		// Nemotron v3 does not support enable_thinking — do NOT pass EnableThinking=true for that model.
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
+	} else if needsChatTemplateKwargs(model) {
 		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
 	return json.Marshal(body)
@@ -491,7 +671,7 @@ type BatchScoringItem struct {
 // apiKey must be non-empty. model is the Anthropic model ID (e.g.
 // "claude-haiku-4-5"). On batch creation failure the error is returned and
 // the caller may fall back to per-item scoring. Items with errored results
-// receive PARTIALLY_CORRECT as the default label.
+// receive SCORE_ERROR — never PARTIALLY_CORRECT, which would mask infrastructure failures.
 //
 // Poll loop: starts at 2 s backoff, doubles each iteration, caps at 30 s.
 // Terminal state is "ended" only — "canceling" is NOT terminal.
@@ -533,8 +713,8 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			CustomID: item.QuestionID,
 			Params: anthropicParams{
 				Model:     model,
-				MaxTokens: 100,
-				System:    "You are a precise answer-correctness judge. Reply with exactly one label (CORRECT, PARTIALLY_CORRECT, or INCORRECT) on line 1 and one explanation sentence on line 2.",
+				MaxTokens: DefaultScorerMaxTokens,
+				System:    "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line.",
 				Messages: []anthropicMessage{
 					{Role: "user", Content: []anthropicContent{{Type: "text", Text: prompt}}},
 				},
@@ -648,10 +828,6 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 	type resultMessage struct {
 		Content []resultContent `json:"content"`
 	}
-	type resultSuccess struct {
-		Type    string        `json:"type"`
-		Message resultMessage `json:"message"`
-	}
 	type resultErrorDetail struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -680,12 +856,13 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 			continue
 		}
 		if rl.Result.Type != "succeeded" {
-			// errored or expired items default to PARTIALLY_CORRECT.
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT", Explanation: rl.Result.Error.Message}
+			// errored or expired items are explicitly flagged — never silently
+			// default to PARTIALLY_CORRECT, which would mask infrastructure failures.
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: rl.Result.Error.Message}
 			continue
 		}
 		if len(rl.Result.Message.Content) == 0 {
-			out[rl.CustomID] = ScoreResult{Label: "PARTIALLY_CORRECT"}
+			out[rl.CustomID] = ScoreResult{Label: "SCORE_ERROR", Explanation: "empty content"}
 			continue
 		}
 		text := rl.Result.Message.Content[0].Text

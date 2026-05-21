@@ -141,7 +141,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 		if useOAI {
 			result, err = longmemeval.ScoreOAIEfficient(ctx,
 				item.Question, string(item.Answer), r.Hypothesis,
-				cfg.ScorerURL, cfg.ScorerModel, cfg.Retries)
+				cfg.ScorerURL, cfg.ScorerModel, cfg.Retries, cfg.ScorerMaxTokens)
 		} else {
 			result, err = longmemeval.Score(ctx,
 				item.Question, string(item.Answer), r.Hypothesis, cfg.Retries)

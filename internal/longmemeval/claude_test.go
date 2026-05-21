@@ -34,8 +34,8 @@ func TestParseScoreLabel_Valid(t *testing.T) {
 
 func TestParseScoreLabel_Invalid(t *testing.T) {
 	label, _ := longmemeval.ParseScoreLabel("I'm not sure about this one.")
-	if label != "PARTIALLY_CORRECT" {
-		t.Errorf("unrecognised label default = %q, want PARTIALLY_CORRECT", label)
+	if label != "SCORE_ERROR" {
+		t.Errorf("unrecognised label default = %q, want SCORE_ERROR (not PARTIALLY_CORRECT — #753)", label)
 	}
 }
 
@@ -43,6 +43,40 @@ func TestParseScoreLabel_Explanation(t *testing.T) {
 	_, explanation := longmemeval.ParseScoreLabel("CORRECT\nThe answer matches the reference exactly.")
 	if !strings.Contains(explanation, "matches") {
 		t.Errorf("explanation = %q, want it to contain 'matches'", explanation)
+	}
+}
+
+// TestParseScoreLabel_Truncation verifies that a response truncated mid-rationale
+// with no label returns SCORE_ERROR rather than a silent PARTIALLY_CORRECT.
+func TestParseScoreLabel_Truncation(t *testing.T) {
+	truncated := "The hypothesis mentions the correct city but omits the date, which is an important"
+	label, raw := longmemeval.ParseScoreLabel(truncated)
+	if label != "SCORE_ERROR" {
+		t.Errorf("truncated response: label = %q, want SCORE_ERROR", label)
+	}
+	if raw == "" {
+		t.Error("truncated response: expected raw text in explanation, got empty string")
+	}
+}
+
+// TestParseScoreLabel_LabelInBody verifies that when the first line has preamble
+// but a valid label appears on a later line, the parser finds and returns it.
+func TestParseScoreLabel_LabelInBody(t *testing.T) {
+	preamble := "Let me think about this carefully.\nINCORRECT\nThe hypothesis contradicts the gold answer."
+	label, _ := longmemeval.ParseScoreLabel(preamble)
+	if label != "INCORRECT" {
+		t.Errorf("preamble+label: label = %q, want INCORRECT", label)
+	}
+}
+
+// TestParseScoreLabel_MultipleLabels verifies that when multiple labels appear
+// in a response the FIRST one is returned (not the last, not PARTIALLY_CORRECT).
+func TestParseScoreLabel_MultipleLabels(t *testing.T) {
+	// Model outputs preamble, then contradicts itself — first label wins.
+	ambiguous := "Some context here.\nCORRECT\nBut wait, actually INCORRECT because of X."
+	label, _ := longmemeval.ParseScoreLabel(ambiguous)
+	if label != "CORRECT" {
+		t.Errorf("ambiguous multi-label: label = %q, want CORRECT (first found)", label)
 	}
 }
 
@@ -129,7 +163,9 @@ func TestScoreOAI_ReturnsCorrect(t *testing.T) {
 	}
 }
 
-func TestScoreOAI_HTTPError_ReturnsPartiallyCorrect(t *testing.T) {
+func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
+	// Pre-#753: ScoreOAI returned PARTIALLY_CORRECT on HTTP error, masking infra failures.
+	// Post-#753: ScoreOAI returns SCORE_ERROR so errors are visible in score reports.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -140,13 +176,13 @@ func TestScoreOAI_HTTPError_ReturnsPartiallyCorrect(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for HTTP 503, got nil")
 	}
-	if result.Label != "PARTIALLY_CORRECT" {
-		t.Errorf("label = %q, want PARTIALLY_CORRECT as default on error", result.Label)
+	if result.Label != "SCORE_ERROR" {
+		t.Errorf("label = %q, want SCORE_ERROR on HTTP error (not PARTIALLY_CORRECT — #753)", result.Label)
 	}
 }
 
 func TestBuildScoringRequestBody(t *testing.T) {
-	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A")
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,14 +194,30 @@ func TestBuildScoringRequestBody(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.MaxTokens != 100 {
-		t.Errorf("want max_tokens=100 got %d", req.MaxTokens)
+	if req.MaxTokens != longmemeval.DefaultScorerMaxTokens {
+		t.Errorf("want max_tokens=%d got %d", longmemeval.DefaultScorerMaxTokens, req.MaxTokens)
 	}
 	if req.Temperature != 0 {
 		t.Errorf("want temperature=0 got %f", req.Temperature)
 	}
 	if req.Model != "mymodel" {
 		t.Errorf("want mymodel got %s", req.Model)
+	}
+}
+
+func TestBuildScoringRequestBody_CustomMaxTokens(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 512 {
+		t.Errorf("want max_tokens=512 got %d", req.MaxTokens)
 	}
 }
 
@@ -284,8 +336,8 @@ func TestScoreBatch_handlesErroredItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScoreBatch returned error, want nil: %v", err)
 	}
-	if results["q1"].Label != "PARTIALLY_CORRECT" {
-		t.Errorf("errored item label = %q, want PARTIALLY_CORRECT", results["q1"].Label)
+	if results["q1"].Label != "SCORE_ERROR" {
+		t.Errorf("errored item label = %q, want SCORE_ERROR", results["q1"].Label)
 	}
 }
 
@@ -358,6 +410,79 @@ func TestGenerate_RequiresClaude(t *testing.T) {
 	}
 	if out == "" {
 		t.Error("Generate returned empty output")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ParseScoreLabel — #753 regression guards for rubric error inflating v9 baseline
+// ---------------------------------------------------------------------------
+
+// TestParseScoreLabel_OldFormatRationale verifies that the pre-fix rubric format
+// (rationale before label, as generated before commit 423343a) is handled by
+// the scan-all-lines pass and does NOT default to PARTIALLY_CORRECT.
+// This is a regression guard against reverting the rubric prompt structure.
+func TestParseScoreLabel_OldFormatRationale(t *testing.T) {
+	// Old format: rationale first, label buried at end — no longer generated
+	// but ParseScoreLabel must handle it gracefully (find the label, not error).
+	old := "The hypothesis closely matches the gold answer in key facts.\nCORRECT"
+	label, _ := longmemeval.ParseScoreLabel(old)
+	if label != "CORRECT" {
+		t.Errorf("ParseScoreLabel(old-format rationale-first) = %q, want CORRECT", label)
+	}
+}
+
+// TestParseScoreLabel_TruncatedNoLabel verifies that when max_tokens is too low
+// and the response is cut off before a label appears, SCORE_ERROR is returned
+// rather than PARTIALLY_CORRECT (pre-fix behaviour).
+func TestParseScoreLabel_TruncatedNoLabel(t *testing.T) {
+	truncated := "The hypothesis matches several facts from the gold answer such as the date"
+	// Note: no label anywhere — simulates truncation before label was emitted
+	label, _ := longmemeval.ParseScoreLabel(truncated)
+	if label != "SCORE_ERROR" {
+		t.Errorf("ParseScoreLabel(truncated, no label) = %q, want SCORE_ERROR", label)
+	}
+}
+
+// TestParseScoreLabel_LabelLastLine verifies explanation semantics when the label
+// is on the last line (rationale-first / old format like "rationale\nCORRECT").
+// When no post-label lines exist, ParseScoreLabel uses the pre-label text as the
+// explanation — this is intentional: the preamble IS the rationale. (#759)
+func TestParseScoreLabel_LabelLastLine(t *testing.T) {
+	raw := "The answer matches the gold facts exactly.\nCORRECT"
+	label, expl := longmemeval.ParseScoreLabel(raw)
+	if label != "CORRECT" {
+		t.Errorf("label = %q, want CORRECT", label)
+	}
+	// Pre-label rationale becomes the explanation in last-line-label format.
+	if expl == "" {
+		t.Errorf("explanation is empty; want pre-label rationale as explanation (#759)")
+	}
+	if !strings.Contains(expl, "matches") {
+		t.Errorf("explanation = %q; want pre-label rationale text (#759)", expl)
+	}
+}
+
+// TestParseScoreLabel_ScoreErrorPropagation verifies that ParseScoreLabel returns
+// SCORE_ERROR (not CORRECT or PARTIALLY_CORRECT) when no valid label is found.
+// Guards the pipeline contract: SCORE_ERROR hits the default/Incorrect bucket in
+// writeScoreReport (cmd/longmemeval/score.go) — never silently inflates scores. (#761)
+func TestParseScoreLabel_ScoreErrorPropagation(t *testing.T) {
+	inputs := []string{
+		// Truncated response — context window ran out before label was emitted.
+		"The hypothesis mentions the correct city but the explanation was cut",
+		// Garbled output — label-like text embedded inside a longer word.
+		"The result is INCORRECTLY stated in the hypothesis.",
+		// Empty string — no content at all.
+		"",
+	}
+	for _, raw := range inputs {
+		label, _ := longmemeval.ParseScoreLabel(raw)
+		if label == "CORRECT" || label == "PARTIALLY_CORRECT" {
+			t.Errorf("ParseScoreLabel(%q) = %q; want SCORE_ERROR, not a valid label — would silently inflate score counts (#761)", raw, label)
+		}
+		if label != "SCORE_ERROR" {
+			t.Errorf("ParseScoreLabel(%q) = %q, want SCORE_ERROR (#761)", raw, label)
+		}
 	}
 }
 

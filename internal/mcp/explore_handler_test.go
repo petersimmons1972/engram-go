@@ -150,6 +150,12 @@ func (noopBackend) PruneColdDocuments(_ context.Context, _ string, _ float64, _ 
 	return 0, nil
 }
 func (noopBackend) DeleteProject(_ context.Context, _ string) error { return nil }
+func (noopBackend) SetProjectTTL(_ context.Context, _ string, _ time.Time, _ *time.Time) error {
+	return nil
+}
+func (noopBackend) ListExpiredProjects(_ context.Context, _ string, _ time.Time, _ int) ([]string, error) {
+	return nil, nil
+}
 func (noopBackend) FTSSearch(_ context.Context, _, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
 	return nil, nil
 }

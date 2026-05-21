@@ -404,3 +404,4 @@ type AggregateRow struct {
 	Oldest time.Time `json:"oldest"`
 	Newest time.Time `json:"newest"`
 }
+

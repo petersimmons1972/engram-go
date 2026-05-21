@@ -22,7 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -160,6 +160,18 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// envDuration returns the time.Duration value of the named environment variable
+// (parsed via time.ParseDuration), or def when unset, empty, or not parseable.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		slog.Warn("instinct: ignoring unparseable duration env var", "key", key, "value", v)
+	}
+	return def
+}
+
 // loadAndRotate reads the buffer JSONL. Returns empty if file missing or
 // line count < minEvents. On success renames to .processed and returns events + new path.
 type bufferLoadOutcome int
@@ -266,10 +278,10 @@ type sseEngram struct {
 }
 
 const (
-	mcpConnectTimeout  = 10 * time.Second
-	mcpCallTimeout     = 15 * time.Second
-	mcpRetryWindow     = 30 * time.Second
-	mcpRetryDelayBase  = 200 * time.Millisecond
+	mcpConnectTimeout = 10 * time.Second
+	mcpCallTimeout    = 15 * time.Second
+	mcpRetryWindow    = 30 * time.Second
+	mcpRetryDelayBase = 200 * time.Millisecond
 	// mcpOperationTimeout gives each high-level operation (writeEpisode per-event,
 	// upsertPattern) the full retry window plus a reconnect buffer, ensuring at
 	// least two retry attempts can complete before the outer context expires.
@@ -682,13 +694,25 @@ func main() {
 
 // run is the top-level pipeline: load buffer → group by session → write
 // episodes to Engram → detect patterns via Haiku → upsert patterns.
+//
+// Phase 1 timing (#396): stageTimes is populated at each major checkpoint and
+// flushed to hook-timings-v2.tsv on exit (always, including error paths).
 func run(ctx context.Context, cfg config) error {
+	st := newStageTimes()
+	exitCode := 0
+	defer func() {
+		st.exitTime = time.Now()
+		appendTimingRow(st.toTSVRow("instinct", exitCode))
+	}()
+
 	events, processedPath, outcome, err := loadAndRotate(cfg.bufferPath, cfg.minEvents)
 	if err != nil {
+		exitCode = 1
 		return err
 	}
 	if len(events) == 0 {
 		if outcome == bufferLoadRejected {
+			exitCode = 1
 			return fmt.Errorf("instinct: malformed buffer rejected: %s", processedPath)
 		}
 		slog.Info("instinct: noop", "reason", "buffer below min events or missing")
@@ -697,21 +721,33 @@ func run(ctx context.Context, cfg config) error {
 
 	slog.Info("instinct: processing", "events", len(events))
 
+	// Phase 1 timing: auth is resolved once loadConfig succeeds; mark it here
+	// (config is already loaded; this is the point we first use the token).
+	st.authResolved = time.Now()
+
 	if cfg.engramURL == "" {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("ENGRAM_BASE_URL not set")
 	}
 
 	e, err := newHybridEngram(cfg.engramURL, cfg.engramToken, cfg.engramRESTURL)
 	if err != nil {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("newHybridEngram: %w", err)
 	}
 	if err := e.connect(ctx); err != nil {
 		requeue(cfg.bufferPath, processedPath)
+		exitCode = 1
 		return fmt.Errorf("connect: %w", err)
 	}
+	// Phase 1 timing: MCP connection established.
+	st.mcpConnected = time.Now()
 	defer func() { _ = e.close() }()
+
+	// Phase 1 timing: first payload is sent when the first writeEpisode begins.
+	st.requestSent = time.Now()
 
 	groups := groupBySession(events)
 	for key, group := range groups {
@@ -731,11 +767,14 @@ func run(ctx context.Context, cfg config) error {
 	// here at the binary level and passed explicitly via Config.Backend — the
 	// same pattern cmd/audit uses — so the factory env fallback is dead code
 	// and parallel tests can't race on process environment state.
-	llmClient, err := instinctllm.NewClient(instinctllm.Config{
+	llmClient, err := llmclient.NewClient(llmclient.Config{
 		Backend:  envOr("LLM_BACKEND", "anthropic"),
 		APIKey:   cfg.anthropicKey,
 		Endpoint: cfg.haikuEndpoint,
-		Timeout:  30 * time.Second,
+		// Per-inference timeout: configurable via INSTINCT_LLM_TIMEOUT env var
+		// (e.g. "60s", "2m") so operators with slow Olla hosts can increase it
+		// without rebuilding.  Mirrors the --timeout flag in cmd/audit.
+		Timeout: envDuration("INSTINCT_LLM_TIMEOUT", 30*time.Second),
 	})
 	var patterns []Pattern
 	if err != nil {
@@ -755,6 +794,9 @@ func run(ctx context.Context, cfg config) error {
 		upsertPattern(opCtx, e, p, events)
 		cancel()
 	}
+
+	// Phase 1 timing: all Engram writes complete; final response received.
+	st.responseReceived = time.Now()
 
 	slog.Info("instinct: done", "events", len(events), "patterns", len(patterns))
 	return nil

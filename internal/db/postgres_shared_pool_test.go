@@ -12,6 +12,9 @@ import (
 // TestSharedPoolConfig verifies configureSharedPool sets values tuned for
 // a single pool shared across all project backends: higher MaxConns to handle
 // concurrent projects, lower MinConns to avoid wasting slots on idle instances.
+// HealthCheckPeriod was tightened from 30s to 15s in #645 so the pool detects
+// dead connections within one GlobalReembedder poll interval after a Postgres
+// restart, eliminating the silent-hang regression.
 func TestSharedPoolConfig(t *testing.T) {
 	cfg, err := pgxpool.ParseConfig("postgres://user:password@localhost:5432/engram")
 	if err != nil {
@@ -29,7 +32,9 @@ func TestSharedPoolConfig(t *testing.T) {
 	if got, want := cfg.MaxConnIdleTime, 3*time.Minute; got != want {
 		t.Errorf("MaxConnIdleTime: got %v, want %v", got, want)
 	}
-	if got, want := cfg.HealthCheckPeriod, 30*time.Second; got != want {
+	// 15s: tightened from 30s in #645 so stale connections are detected within
+	// one GlobalReembedder poll interval after a Postgres restart.
+	if got, want := cfg.HealthCheckPeriod, 15*time.Second; got != want {
 		t.Errorf("HealthCheckPeriod: got %v, want %v", got, want)
 	}
 	if cfg.MaxConnLifetime == 0 {

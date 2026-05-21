@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/reporter"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 func TestRenderSVG_ContainsExpected(t *testing.T) {
-	results := []types.ModelResult{
-		{Model: "mistral:7b", VRAMGB: 4.5, Tier: "4-6GB", Score: types.Score{
-			Verdict: types.VerdictRecommended, Composite: 7.44,
-			AvgLatency: types.Duration(13 * time.Second),
+	results := []benchmark.ModelResult{
+		{Model: "mistral:7b", VRAMGB: 4.5, Tier: "4-6GB", Score: benchmark.Score{
+			Verdict: benchmark.VerdictRecommended, Composite: 7.44,
+			AvgLatency: benchmark.Duration(13 * time.Second),
 		}},
 	}
 	svg, err := reporter.RenderSVG(results)
@@ -36,10 +36,10 @@ func TestRenderSVG_ContainsExpected(t *testing.T) {
 // XSS attacks when SVG content is embedded in HTML.
 func TestSVGTemplateEscapesHTML(t *testing.T) {
 	// Inject an HTML/script payload in the model name to verify escaping
-	results := []types.ModelResult{
-		{Model: `<script>alert(1)</script>`, VRAMGB: 4.5, Tier: "4-6GB", Score: types.Score{
-			Verdict: types.VerdictRecommended, Composite: 7.44,
-			AvgLatency: types.Duration(13 * time.Second),
+	results := []benchmark.ModelResult{
+		{Model: `<script>alert(1)</script>`, VRAMGB: 4.5, Tier: "4-6GB", Score: benchmark.Score{
+			Verdict: benchmark.VerdictRecommended, Composite: 7.44,
+			AvgLatency: benchmark.Duration(13 * time.Second),
 		}},
 	}
 	svg, err := reporter.RenderSVG(results)

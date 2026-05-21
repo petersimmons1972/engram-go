@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -115,5 +116,78 @@ func TestIngestOne_EmptySessionsSkipped(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("expected 1 REST call for 1 non-empty session, got %d", calls)
+	}
+}
+
+// TestIngestOne_ScratchTTL_PassesExpiresAt verifies that when ScratchTTL > 0,
+// ingestOne passes a non-nil expires_at in the QuickStore request body.
+func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "m-ttl"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	cfg := &Config{RunID: "run-ttl", Workers: 1, ScratchTTL: 168 * time.Hour}
+	item := longmemeval.Item{
+		QuestionID:         "q-ttl",
+		HaystackSessionIDs: []string{"sid-1"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "user", Content: "session content"}},
+		},
+	}
+
+	before := time.Now().UTC()
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	after := time.Now().UTC()
+
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
+	}
+
+	raw, ok := gotBody["expires_at"]
+	if !ok {
+		t.Fatal("expires_at missing from QuickStore request body")
+	}
+	parsed, err := time.Parse(time.RFC3339, raw.(string))
+	if err != nil {
+		t.Fatalf("expires_at is not RFC3339: %v", err)
+	}
+	// expires_at is serialized as RFC3339 (second precision), so truncate to seconds for comparison.
+	expectedMin := before.Add(168 * time.Hour).Truncate(time.Second)
+	expectedMax := after.Add(168 * time.Hour).Add(time.Second) // +1s to account for truncation
+	if parsed.Before(expectedMin) || parsed.After(expectedMax) {
+		t.Errorf("expires_at %v outside expected range [%v, %v]", parsed, expectedMin, expectedMax)
+	}
+}
+
+// TestIngestOne_NoScratchTTL_OmitsExpiresAt verifies that when ScratchTTL == 0,
+// expires_at is absent from the QuickStore request body.
+func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "m-durable"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	cfg := &Config{RunID: "run-durable", Workers: 1, ScratchTTL: 0}
+	item := longmemeval.Item{
+		QuestionID:         "q-durable",
+		HaystackSessionIDs: []string{"sid-1"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "user", Content: "durable content"}},
+		},
+	}
+
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
+	}
+	if _, ok := gotBody["expires_at"]; ok {
+		t.Error("expires_at must be absent from QuickStore body when ScratchTTL is 0")
 	}
 }

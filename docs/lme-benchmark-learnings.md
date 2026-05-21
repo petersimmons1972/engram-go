@@ -138,6 +138,35 @@ kill -9 <actual_binary_pid>
 
 **Prevention**: Use a process manager (systemd service, supervisord, or K8s) if benchmark runs in background. Shell job control can hide subprocess PIDs.
 
+**Automated guard (v3.3.0+):** The `--exclusive-backend` flag (default enabled) now prevents this scenario automatically. A PID-liveness lock file is written to `$XDG_RUNTIME_DIR/lme/backend-<hash>.lock` (or `/tmp/lme/` if `XDG_RUNTIME_DIR` is unset). If a second `lme run` targets the same backend while the first is still alive, it exits immediately with code **75 (EX_TEMPFAIL)**:
+
+```
+ERROR another lme run holds the lock on backend http://oblivion:8000/v1
+(pid=12345, started=2026-05-20T10:00:00Z, invocation=...).
+Wait for it, or pass --no-exclusive-backend if you accept result contamination.
+Exit code 75 (EX_TEMPFAIL) signals temporary contention.
+```
+
+When two parallel runs *are* intentional (e.g. benchmarking two different Engram server URLs on the same host), pass `--no-exclusive-backend` to both invocations to opt out. Dead-process lock files are reclaimed automatically on the next acquisition attempt — no manual cleanup is needed.
+
+#### Manual recovery
+
+Automatic reclaim handles the common case (lock held by a dead PID). If reclaim silently fails — for example when the lock directory permissions are wrong, or an unexpected `flock` error caused the guard to skip the lock entirely — you can recover manually:
+
+1. **Locate the lock file.** Lock files follow the pattern `backend-<12-hex-chars>.lock`:
+   - `$XDG_RUNTIME_DIR/lme/backend-*.lock` (preferred path when `XDG_RUNTIME_DIR` is set)
+   - `/tmp/lme/backend-*.lock` (fallback)
+   - `<custom-dir>/backend-*.lock` (if `--backend-lock-dir` was used)
+
+2. **Verify no `lme run` is active.** Use `ps aux | grep longmemeval` to confirm no benchmark process is running against the affected backend.
+
+3. **Remove the lock file.** `rm` is safe when no `lme run` is active:
+   ```bash
+   rm "$XDG_RUNTIME_DIR/lme/backend-*.lock"   # or /tmp/lme/backend-*.lock
+   ```
+
+4. **Relocate if the directory is problematic.** Use `--backend-lock-dir /path/to/writable/dir` to move lock files to a directory with correct permissions.
+
 ---
 
 ## Throughput Optimization
@@ -358,6 +387,60 @@ SessionLimit: 470          // Typical LME dataset size
 - [ ] Profile vLLM throughput with reduced batch sizes and smaller prompts
 - [ ] Evaluate alternative models (Qwen2.5-30B-Instruct, Llama3.1-8B) on same dataset
 - [ ] Instrument checkpoint corruption detection (verify file lock, checksum)
+
+---
+
+## Operator: Scratch Retention (TTL, #754)
+
+LME benchmark runs create ephemeral `lme-<run-id>` projects. Without cleanup these accumulate indefinitely, inflating index size and risking accidental re-use of stale haystacks.
+
+### Stamping TTL at ingest time
+
+Pass `--scratch-ttl <duration>` and `--database-url <dsn>` to `longmemeval ingest`:
+
+```
+longmemeval ingest \
+  --data-file questions.json \
+  --out-dir /tmp/lme-run-001 \
+  --scratch-ttl 168h \
+  --database-url "${DATABASE_URL}"
+```
+
+The default TTL is **168 h (7 days)** — long enough to re-run scoring without re-ingesting; short enough to prevent unbounded growth.
+
+### Running the prune sweep
+
+```
+longmemeval prune \
+  --database-url "${DATABASE_URL}" \
+  --url "${ENGRAM_URL}" \
+  --api-key "${ENGRAM_API_KEY}"
+```
+
+Add `--dry-run` to preview. Add `--limit 50` to cap blast radius on first run.
+
+The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`.
+
+### Backfilling existing runs
+
+Existing `lme-*` projects (created before migration 022) have `NULL expires_at`. To opt them into the sweep:
+
+```sql
+UPDATE project_ttl
+   SET expires_at = created_at + INTERVAL '7 days'
+ WHERE project LIKE 'lme-%'
+   AND expires_at IS NULL;
+```
+
+Projects without a `project_ttl` row at all can be enrolled with:
+
+```sql
+INSERT INTO project_ttl (project, created_at, expires_at)
+SELECT DISTINCT project, NOW() - INTERVAL '1 day', NOW() + INTERVAL '7 days'
+  FROM memories
+ WHERE project LIKE 'lme-%'
+ON CONFLICT (project) DO NOTHING;
+```
 
 ---
 

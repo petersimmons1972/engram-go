@@ -219,6 +219,16 @@ type Backend interface {
 	// and metadata for a project. Irreversible. Used for eval isolation project cleanup.
 	DeleteProject(ctx context.Context, project string) error
 
+	// ── Project TTL (#754) ──────────────────────────────────────────────────
+
+	// SetProjectTTL upserts the created_at and expires_at for a project into
+	// project_ttl. Pass nil expiresAt for a durable (non-expiring) project.
+	SetProjectTTL(ctx context.Context, project string, createdAt time.Time, expiresAt *time.Time) error
+	// ListExpiredProjects returns names of projects whose expires_at is non-NULL
+	// and before cutoff, optionally filtered to names with the given prefix and
+	// capped to limit rows (0 = unlimited).
+	ListExpiredProjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]string, error)
+
 	// ── Full-text search ────────────────────────────────────────────────────
 
 	// FTSSearch runs a PostgreSQL plainto_tsquery search. Returns (memory, score) pairs.
