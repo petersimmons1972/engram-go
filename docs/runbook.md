@@ -437,6 +437,12 @@ application-level audit logging of mutations.
 
 For deeper investigation:
 
+> ⚠️ **Heredoc stdin warning:** `docker exec` without `-i` silently discards
+> stdin — multi-statement heredocs appear to succeed (exit 0) but never run.
+> Use `docker exec -i ...` for inline SQL, or preferably use
+> `scripts/psql-exec.sh <file.sql>` which uses `docker cp` + `psql -f`
+> (unambiguous, no stdin). See issue #646.
+
 ```bash
 # Top 10 slowest queries
 docker exec engram-postgres psql -U engram -d engram -c "
