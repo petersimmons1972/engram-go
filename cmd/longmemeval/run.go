@@ -54,6 +54,34 @@ var temporalInterrogativeRe = regexp.MustCompile(
 		`|on what (date|day) )`,
 )
 
+// buildRecallQuery derives the Engram recall query from a raw LME question.
+// For temporal-reasoning questions it strips the interrogative scaffold so the
+// query matches event noun-phrases. For preference questions it delegates to
+// longmemeval.PreferenceRecallQuery. When disableRewrite is true the raw
+// question is returned unchanged.
+func buildRecallQuery(question, questionType string, disableRewrite bool) string {
+	if disableRewrite {
+		return question
+	}
+	switch questionType {
+	case "temporal-reasoning":
+		q := temporalInterrogativeRe.ReplaceAllString(question, "")
+		if q == "" {
+			return question
+		}
+		// Preserve temporal classifier signal so isTemporalQuery() returns true
+		// on the Engram server and TemporalWeights are applied. The interrogative
+		// strip removes all temporal words (e.g. "ago", "days") — prepending
+		// "recent " (present in temporalQuerySignals) restores the signal while
+		// keeping the semantic noun-phrase clean. (F2)
+		return "recent " + strings.TrimSpace(q)
+	case "single-session-preference":
+		return longmemeval.PreferenceRecallQuery(question)
+	default:
+		return question
+	}
+}
+
 // runRun executes the run stage. Returns the process exit code: 0 on success,
 // 1 when zero items completed successfully out of any that were attempted
 // (#703 — total-failure guard so scripted pipelines don't proceed when every
@@ -260,18 +288,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
 	// When --disable-query-rewrite is set, use the raw question unchanged.
-	recallQuery := item.Question
-	if !cfg.DisableQueryRewrite {
-		switch item.QuestionType {
-		case "temporal-reasoning":
-			recallQuery = temporalInterrogativeRe.ReplaceAllString(recallQuery, "")
-			if recallQuery == "" {
-				recallQuery = item.Question
-			}
-		case "single-session-preference":
-			recallQuery = longmemeval.PreferenceRecallQuery(item.Question)
-		}
-	}
+	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, cfg.RecallTopK)
 	if err != nil {
 		return longmemeval.RunEntry{
