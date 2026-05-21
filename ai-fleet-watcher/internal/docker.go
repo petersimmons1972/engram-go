@@ -380,11 +380,18 @@ func healthConfig(spec ModelSpec) map[string]any {
 		if apiKey := envValue(spec.EnvVars, "VLLM_API_KEY"); apiKey != "" {
 			curlCmd = fmt.Sprintf(`curl -sf -H 'Authorization: Bearer %s' http://localhost:%d/v1/models | grep -q '"id"'`, apiKey, spec.Port)
 		}
+		// StartPeriod must accommodate model shard load time from NFS.
+		// Qwen3-32B (17 shards, ~47s/shard) needs ~800s from cold NFS cache.
+		// readinessTimeoutSec from the CRD spec is the authority; fall back to 900s.
+		startPeriod := 900 * time.Second
+		if spec.ReadinessTimeoutSec > 0 {
+			startPeriod = time.Duration(spec.ReadinessTimeoutSec) * time.Second
+		}
 		return map[string]any{
 			"Test":        []string{"CMD-SHELL", curlCmd},
 			"Interval":    int64(30 * time.Second),
 			"Timeout":     int64(10 * time.Second),
-			"StartPeriod": int64(180 * time.Second),
+			"StartPeriod": int64(startPeriod),
 			"Retries":     3,
 		}
 	case "llama-cpp":

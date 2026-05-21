@@ -23,6 +23,10 @@ type ModelSpec struct {
 	EnvVars      []string `json:"envVars,omitempty"`
 	GpuDriver  string   `json:"gpuDriver,omitempty"`  // nvidia (default) or rocm
 	RenderDevice string `json:"renderDevice,omitempty"` // e.g. /dev/dri/renderD128 (rocm only)
+	// ReadinessTimeoutSec is how long to wait for the model to become ready
+	// before marking the container degraded. Used as Docker HEALTHCHECK StartPeriod.
+	// 0 = fall back to 900s default (sufficient for Qwen3-32B NFS cold load).
+	ReadinessTimeoutSec int `json:"readinessTimeoutSec,omitempty"`
 	// StopTimeoutSec is seconds to wait for graceful SIGTERM before SIGKILL.
 	// 0 = use Docker default (10s). Set to 30 for ROCm containers so HIP
 	// worker threads can release /dev/kfd before SIGKILL.
