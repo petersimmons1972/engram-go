@@ -84,11 +84,11 @@ func run() error {
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
-	litellmURL := fs.String("litellm-url", envOr("LITELLM_URL", "http://litellm:4000"), "LiteLLM base URL (generation)")
+	routerURL := fs.String("litellm-url", routerURLFromEnv("http://litellm:4000", slog.Default()), "Router base URL (generation); env: ENGRAM_ROUTER_URL (LITELLM_URL accepted as deprecated fallback)")
 	litellmAPIKey := envOr("LITELLM_API_KEY", "")
-	// ENGRAM_EMBED_URL overrides LITELLM_URL for embeddings only — use when the
+	// ENGRAM_EMBED_URL overrides ENGRAM_ROUTER_URL for embeddings only — use when the
 	// embed backend is different from the generation backend (e.g. direct llama.cpp).
-	embedURL := envOr("ENGRAM_EMBED_URL", envOr("LITELLM_URL", "http://litellm:4000"))
+	embedURL := envOr("ENGRAM_EMBED_URL", routerURLFromEnv("http://litellm:4000", slog.Default()))
 	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "")), "Embedding model (required; set ENGRAM_EMBED_MODEL or --model)")
 	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
@@ -231,7 +231,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// LITELLM_URL and ENGRAM_EMBED_URL come from operator config (env vars at process start),
+	// ENGRAM_ROUTER_URL and ENGRAM_EMBED_URL come from operator config (env vars at process start),
 	// not from user input. Operators self-host on private networks by design — Docker bridges,
 	// LAN DNS, RFC1918 — so blocking private IPs at startup is a category error: it asserts a
 	// SaaS threat model on a homelab deployment.
@@ -241,16 +241,16 @@ func run() error {
 	//
 	// We still parse + reject the URL if it isn't a valid http(s) URL — that's not SSRF, that's
 	// basic config sanity.
-	parsedLiteLLMURL, err := url.ParseRequestURI(*litellmURL)
-	if err != nil || (parsedLiteLLMURL.Scheme != "http" && parsedLiteLLMURL.Scheme != "https") {
-		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *litellmURL)
+	parsedRouterURL, err := url.ParseRequestURI(*routerURL)
+	if err != nil || (parsedRouterURL.Scheme != "http" && parsedRouterURL.Scheme != "https") {
+		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *routerURL)
 	}
 	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
 		return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
 	}
-	safeLiteLLMURL := *parsedLiteLLMURL
-	safeLiteLLMURL.User = nil
-	slog.Info("connecting to LiteLLM", "url", safeLiteLLMURL.String(), "model", *embedModel)
+	safeRouterURL := *parsedRouterURL
+	safeRouterURL.User = nil
+	slog.Info("connecting to router", "url", safeRouterURL.String(), "model", *embedModel)
 
 	// E6: startup probe is non-fatal. Server starts in degraded mode when
 	// LiteLLM is unavailable; /health reports embed:degraded with HTTP 200.
@@ -281,7 +281,7 @@ func run() error {
 	}
 
 	dsn := *databaseURL
-	litellmURLVal := *litellmURL
+	routerURLVal := *routerURL
 	sumModel := *summarizeModel
 	sumEnabled := *summarizeEnabled
 
@@ -349,7 +349,7 @@ func run() error {
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(serverCtx, backend, embedClient, project, litellmURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
 		engine.SetGlobalReembedder(globalReembedder)
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
@@ -378,7 +378,7 @@ func run() error {
 	sessionRehydrateWindow := envDuration("ENGRAM_SESSION_REHYDRATE_WINDOW", 0)
 
 	cfg := internalmcp.Config{
-		LiteLLMURL:               *litellmURL,
+		RouterURL:                *routerURL,
 		EmbedModel:               *embedModel,
 		SummarizeModel:           *summarizeModel,
 		SummarizeEnabled:         *summarizeEnabled,
@@ -599,6 +599,20 @@ func checkBindInterlock(host string, rateLimitDisable bool) error {
 		return nil
 	}
 	return fmt.Errorf("refusing to start: ENGRAM_RATE_LIMIT_DISABLE=true is forbidden when bound to non-loopback host %q (#666). Set ENGRAM_HOST=127.0.0.1 or unset ENGRAM_RATE_LIMIT_DISABLE", host)
+}
+
+// routerURLFromEnv resolves the router URL from environment variables.
+// Priority: ENGRAM_ROUTER_URL > LITELLM_URL (deprecated) > def.
+// When LITELLM_URL is used as a fallback, a deprecation warning is logged.
+func routerURLFromEnv(def string, logger *slog.Logger) string {
+	if v := os.Getenv("ENGRAM_ROUTER_URL"); v != "" {
+		return v
+	}
+	if legacy := os.Getenv("LITELLM_URL"); legacy != "" {
+		logger.Warn("LITELLM_URL is deprecated; set ENGRAM_ROUTER_URL instead")
+		return legacy
+	}
+	return def
 }
 
 func envOr(key, def string) string {

@@ -150,7 +150,7 @@ func TestHandleMemoryModels_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := Config{LiteLLMURL: srv.URL, EmbedModel: "nomic-embed-text"}
+	cfg := Config{RouterURL: srv.URL, EmbedModel: "nomic-embed-text"}
 	result, err := handleMemoryModels(context.Background(), nil, mcpgo.CallToolRequest{}, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -184,7 +184,7 @@ func TestHandleMemoryModels_OllamaUnreachable_GracefulDegradation(t *testing.T) 
 	url := srv.URL
 	srv.Close()
 
-	cfg := Config{LiteLLMURL: url, EmbedModel: "nomic-embed-text"}
+	cfg := Config{RouterURL: url, EmbedModel: "nomic-embed-text"}
 	result, err := handleMemoryModels(context.Background(), nil, mcpgo.CallToolRequest{}, cfg)
 	if err != nil {
 		t.Fatalf("expected graceful degradation, got error: %v", err)
@@ -224,7 +224,7 @@ func TestHandleMemoryEmbeddingEval_SameModelsRejected(t *testing.T) {
 		"model_a": "nomic-embed-text",
 		"model_b": "nomic-embed-text",
 	}
-	cfg := Config{LiteLLMURL: "http://127.0.0.1:0", EmbedModel: "nomic-embed-text"}
+	cfg := Config{RouterURL: "http://127.0.0.1:0", EmbedModel: "nomic-embed-text"}
 	_, err := handleMemoryEmbeddingEval(context.Background(), nil, req, cfg)
 	if err == nil {
 		t.Fatal("expected error when model_a == model_b")
@@ -242,7 +242,7 @@ func TestHandleMemoryEmbeddingEval_ModelADefaultsFromConfig(t *testing.T) {
 	req.Params.Arguments = map[string]any{
 		"model_b": "mxbai-embed-large",
 	}
-	cfg := Config{LiteLLMURL: "http://127.0.0.1:0", EmbedModel: "mxbai-embed-large"}
+	cfg := Config{RouterURL: "http://127.0.0.1:0", EmbedModel: "mxbai-embed-large"}
 	_, err := handleMemoryEmbeddingEval(context.Background(), nil, req, cfg)
 	if err == nil {
 		t.Fatal("expected must-differ error: model_a defaulted to cfg.EmbedModel should equal explicit model_b")
@@ -261,7 +261,7 @@ func TestHandleMemoryEmbeddingEval_HappyPath(t *testing.T) {
 		"model_a": "nomic-embed-text",
 		"model_b": "mxbai-embed-large",
 	}
-	cfg := Config{LiteLLMURL: srv.URL, EmbedModel: "nomic-embed-text"}
+	cfg := Config{RouterURL: srv.URL, EmbedModel: "nomic-embed-text"}
 	result, err := handleMemoryEmbeddingEval(context.Background(), nil, req, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -295,7 +295,7 @@ func TestHandleMemoryEmbeddingEval_OllamaUnreachable(t *testing.T) {
 		"model_a": "nomic-embed-text",
 		"model_b": "mxbai-embed-large",
 	}
-	cfg := Config{LiteLLMURL: url, EmbedModel: "nomic-embed-text"}
+	cfg := Config{RouterURL: url, EmbedModel: "nomic-embed-text"}
 	_, err := handleMemoryEmbeddingEval(context.Background(), nil, req, cfg)
 	if err == nil {
 		t.Error("expected error when Ollama is unreachable")

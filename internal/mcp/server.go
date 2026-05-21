@@ -369,9 +369,9 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		// Construct a minimal LiteLLMClient for the probe.
+		// Construct a minimal LiteLLMClient for the probe (uses RouterURL).
 		// We only use it once per TTL interval.
-		client := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, cfg.EmbedModel, "", cfg.EmbedDimensions)
+		client := embed.NewLiteLLMClientNoProbe(cfg.RouterURL, cfg.EmbedModel, "", cfg.EmbedDimensions)
 		ok, reason := client.Probe(probeCtx)
 		return ok, reason
 	}, 5*time.Second)
@@ -1452,14 +1452,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		pgStatus = "ok"
 	}
 
-	// Probe LiteLLM via InfinityQueueCheck: GETs /v1/models and parses Infinity
+	// Probe router via InfinityQueueCheck: GETs /v1/models and parses Infinity
 	// queue stats to detect GPU thread deadlock (queue_fraction > 1.0,
 	// results_pending == 0). Subsumes the former status-code-only check (#649).
 	embedLiveOK := false
-	if s.cfg.LiteLLMURL != "" {
+	if s.cfg.RouterURL != "" {
 		embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer embedCancel()
-		probeOK, probeReason := embed.InfinityQueueCheck(embedCtx, http.DefaultClient, s.cfg.LiteLLMURL)
+		probeOK, probeReason := embed.InfinityQueueCheck(embedCtx, http.DefaultClient, s.cfg.RouterURL)
 		if !probeOK {
 			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
 			slog.Warn("health: litellm probe failed", "reason", probeReason)

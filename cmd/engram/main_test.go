@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"fmt"
 	"net/http"
@@ -10,6 +12,51 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/netutil"
 )
+
+// TestRouterURLFallback verifies the deprecation fallback:
+// - ENGRAM_ROUTER_URL takes priority when set.
+// - When only LITELLM_URL is set, its value is used and a deprecation warning is emitted.
+// - When neither is set, the default is returned.
+func TestRouterURLFallback(t *testing.T) {
+	t.Run("ENGRAM_ROUTER_URL wins when both set", func(t *testing.T) {
+		t.Setenv("ENGRAM_ROUTER_URL", "http://router:4000")
+		t.Setenv("LITELLM_URL", "http://legacy:4000")
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, nil))
+		got := routerURLFromEnv("http://litellm:4000", logger)
+		if got != "http://router:4000" {
+			t.Errorf("routerURLFromEnv = %q, want %q", got, "http://router:4000")
+		}
+		if strings.Contains(buf.String(), "deprecated") {
+			t.Error("unexpected deprecation warning when ENGRAM_ROUTER_URL is set")
+		}
+	})
+
+	t.Run("LITELLM_URL fallback with deprecation warning", func(t *testing.T) {
+		t.Setenv("ENGRAM_ROUTER_URL", "")
+		t.Setenv("LITELLM_URL", "http://legacy:4000")
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, nil))
+		got := routerURLFromEnv("http://litellm:4000", logger)
+		if got != "http://legacy:4000" {
+			t.Errorf("routerURLFromEnv = %q, want %q", got, "http://legacy:4000")
+		}
+		if !strings.Contains(buf.String(), "deprecated") {
+			t.Error("expected deprecation warning when only LITELLM_URL is set, got none")
+		}
+	})
+
+	t.Run("default returned when neither set", func(t *testing.T) {
+		t.Setenv("ENGRAM_ROUTER_URL", "")
+		t.Setenv("LITELLM_URL", "")
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, nil))
+		got := routerURLFromEnv("http://litellm:4000", logger)
+		if got != "http://litellm:4000" {
+			t.Errorf("routerURLFromEnv = %q, want %q", got, "http://litellm:4000")
+		}
+	})
+}
 
 func TestRecallDefaultModeDefault(t *testing.T) {
 	const key = "ENGRAM_RECALL_DEFAULT_MODE"
