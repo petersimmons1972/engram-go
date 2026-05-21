@@ -19,9 +19,12 @@ type ModelSpec struct {
 	// EnvVars holds KEY=VALUE pairs passed verbatim to the container environment.
 	// Matches the CRD schema field envVars. Included in the policy hash so that
 	// adding or changing env vars (e.g. VLLM_API_KEY) triggers a watcher reconcile.
-	EnvVars       []string `json:"envVars,omitempty"`
-	GpuDriver     string   `json:"gpuDriver,omitempty"`
-	RenderDevice  string   `json:"renderDevice,omitempty"`
+	EnvVars             []string `json:"envVars,omitempty"`
+	// ReadinessTimeoutSec is forwarded to the watcher as the Docker HEALTHCHECK
+	// StartPeriod. Must cover model shard load time from NFS. 0 = watcher default (900s).
+	ReadinessTimeoutSec int      `json:"readinessTimeoutSec,omitempty"`
+	GpuDriver           string   `json:"gpuDriver,omitempty"`
+	RenderDevice        string   `json:"renderDevice,omitempty"`
 }
 
 type GPUHostSpec struct {
