@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
+	"os"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -152,6 +154,13 @@ func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 // handleMemoryDeleteProject hard-deletes all memories, chunks, relationships,
 // episodes, and metadata for a project. Irreversible. Used for eval isolation
 // project cleanup (#384).
+//
+// A-4 (#689) authorization gate: requires BOTH
+//   1. Server started with ENGRAM_ALLOW_PROJECT_DELETE=1 (out-of-band gate
+//      that an LLM cannot flip).
+//   2. confirm argument exactly matches the project argument (typo guard).
+// Both failures return a tool-level error (isError=true), not a Go error,
+// so the calling LLM sees structured guidance — not a transport failure.
 func handleMemoryDeleteProject(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project, err := getProject(args, "")
@@ -160,6 +169,18 @@ func handleMemoryDeleteProject(ctx context.Context, pool *EnginePool, req mcpgo.
 	}
 	if project == "" {
 		return nil, fmt.Errorf("project is required for memory_delete_project")
+	}
+
+	// A-4 gate 1: server-level env var must be set.
+	gate := os.Getenv("ENGRAM_ALLOW_PROJECT_DELETE")
+	if gate != "1" && !strings.EqualFold(gate, "true") {
+		return mcpgo.NewToolResultError("memory_delete_project is disabled. This server was started without ENGRAM_ALLOW_PROJECT_DELETE=1. To delete a project, the operator must restart the server with that env var set. This is intentional — project deletion is irreversible. Do not retry; ask the human operator."), nil
+	}
+
+	// A-4 gate 2: confirm argument must match project (typo guard).
+	confirm, _ := args["confirm"].(string)
+	if confirm != project {
+		return mcpgo.NewToolResultError(fmt.Sprintf("memory_delete_project: confirm argument must exactly match project. Got project=%q, confirm=%q. This is a typo guard — supply confirm=%q to proceed.", project, confirm, project)), nil
 	}
 
 	h, err := pool.Get(ctx, project)

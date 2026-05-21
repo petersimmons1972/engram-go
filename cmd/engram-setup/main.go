@@ -54,9 +54,16 @@ func run() error {
 	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
 	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
 	offline := flag.Bool("offline", false, "preview-only: skip /setup-token call and require --dry-run")
-	format := flag.String("format", "text", "output format: text or json")
+	format := flag.String("format", "text", "output format: text or json (alias: --output-json)")
+	// #691: --output-json is an alias for --format=json for consistency with
+	// engram-eval and instinct-benchmark which use the boolean style.
+	outputJSON := flag.Bool("output-json", false, "shorthand for --format=json (sibling-tool consistency)")
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *outputJSON {
+		jsonFmt := "json"
+		format = &jsonFmt
+	}
 
 	if *versionFlag {
 		fmt.Printf("engram-setup %s\n", Version)
@@ -137,7 +144,8 @@ func run() error {
 	// User can use --offline when the server is rate-limited (#589)
 	// In offline mode, we cannot fetch a real token, so generate a stub (#589)
 	stubSetup := &setupResponse{
-		Token:    "stub-offline-token-" + fmt.Sprintf("%d", time.Now().Unix()),
+		// #693: stable placeholder so dry-run output is idempotent (was: timestamp suffix made every dry-run diff differently).
+		Token:    "stub-offline-token-PLACEHOLDER",
 		Endpoint: fmt.Sprintf("http://127.0.0.1:%d/mcp", *port),
 		Name:     *name,
 	}

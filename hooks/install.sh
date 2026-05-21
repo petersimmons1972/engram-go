@@ -27,20 +27,47 @@ environment (e.g., export INSTINCT_ENABLED=0 in ~/.bashrc).
 
 Press ENTER to accept and continue, or Ctrl-C to abort.
 DISCLOSURE
-if ! read -r 2>/dev/null; then
-    echo "ERROR: installer requires an interactive terminal for consent."
-    echo "       Re-run from a TTY, or set INSTINCT_ENABLED=0 to skip collection."
+# #681: explicit TTY check BEFORE the prompt. The previous `read -r 2>/dev/null`
+# pattern was porous — `echo "" | bash hooks/install.sh` would silently treat
+# an empty line as consent. A stdin-redirected installer cannot give informed
+# consent and must refuse.
+if [ ! -t 0 ]; then
+    echo "ERROR: installer requires an interactive terminal for consent." >&2
+    echo "       stdin is not a TTY (was something piped in?). Re-run from a TTY," >&2
+    echo "       or set INSTINCT_ENABLED=0 to skip data collection entirely." >&2
+    exit 1
+fi
+if ! read -r; then
+    # Defensive: if we have a TTY but read still fails (EOF), refuse.
+    echo "ERROR: read failed — refusing to proceed without explicit consent." >&2
     exit 1
 fi
 
 echo "Installing instinct hooks..."
 
 # 1. Copy hook scripts
-mkdir -p "$HOOKS_DEST"
+mkdir -p "$HOOKS_DEST" "$HOOKS_DEST/lib"
 cp "$HOOKS_SRC/pre-tool-use.sh"  "$HOOKS_DEST/instinct-pre-tool-use.sh"
 cp "$HOOKS_SRC/post-tool-use.sh" "$HOOKS_DEST/instinct-post-tool-use.sh"
 chmod +x "$HOOKS_DEST/instinct-pre-tool-use.sh" "$HOOKS_DEST/instinct-post-tool-use.sh"
 echo "  Copied hooks to $HOOKS_DEST"
+
+# 1b. Install Phase 1 timing-v2 library (#396) and instrumented engram hooks.
+# These are measurement-only; they source timing-v2.sh and emit one TSV row per
+# invocation to ~/.claude/hook-timings-v2.tsv. Safe no-op if Engram is absent.
+if [ -f "$HOOKS_SRC/lib/timing-v2.sh" ]; then
+    cp "$HOOKS_SRC/lib/timing-v2.sh" "$HOOKS_DEST/lib/timing-v2.sh"
+    echo "  Installed timing-v2.sh (Phase 1 measurement, #396)"
+fi
+if [ -d "$HOOKS_SRC/engram" ]; then
+    for f in "$HOOKS_SRC/engram"/*.sh; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        cp "$f" "$HOOKS_DEST/$base"
+        chmod +x "$HOOKS_DEST/$base"
+    done
+    echo "  Installed engram hooks with timing-v2 instrumentation"
+fi
 
 # 2. Patch settings.json (idempotent via Python)
 python3 - <<PYEOF

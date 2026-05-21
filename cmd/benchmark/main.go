@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,7 +18,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/reporter"
 	"github.com/petersimmons1972/engram/internal/runner"
 	"github.com/petersimmons1972/engram/internal/scorer"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 
@@ -41,21 +42,33 @@ func main() {
 		force         = flag.Bool("force", false, "bypass result cache")
 		useLiveBuffer = flag.Bool("use-live-buffer", false, "use ~/.local/state/instinct/buffer.jsonl instead of fixture")
 		quiet         = flag.Bool("quiet", false, "suppress per-model progress output on stderr")
+		outputJSON    = flag.Bool("output-json", false, "emit final results JSON to stdout (suitable for pipelines; implies --quiet)")
 	)
-	_ = quiet // TODO: implement quiet mode (#324)
 	flag.Parse()
 
-	fmt.Printf("instinct-benchmark %s\n", Version)
+	if *outputJSON {
+		*quiet = true // --output-json implies --quiet so stdout carries only the JSON result
+	}
+
+	// #661 / #324: when --quiet is set, banner + progress output is silenced.
+	// The final results are written to disk regardless; --quiet only affects
+	// stdout/stderr noise so the binary can be composed into pipelines without
+	// poisoning the stream.
+	bannerOut := bannerWriter(*quiet, os.Stdout)
+	bannerErr := bannerWriter(*quiet, os.Stderr)
+	_ = bannerErr // reserved for routing remaining stderr progress lines (#324 phase 2)
+
+	_, _ = fmt.Fprintf(bannerOut, "instinct-benchmark %s\n", Version)
 
 	m, err := manifest.Load(*manifestPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid manifest: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: invalid manifest: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Manifest: %d included, %d excluded\n", len(m.Included()), len(m.Excluded()))
+	_, _ = fmt.Fprintf(bannerOut, "Manifest: %d included, %d excluded\n", len(m.Included()), len(m.Excluded()))
 
 	if *dryRun {
-		fmt.Println("Dry run complete — manifest valid.")
+		_, _ = fmt.Fprintln(bannerOut, "Dry run complete — manifest valid.")
 		os.Exit(0)
 	}
 
@@ -64,14 +77,14 @@ func main() {
 		liveBuffer := filepath.Join(os.Getenv("HOME"), ".local/state/instinct/buffer.jsonl")
 		if _, err := os.Stat(liveBuffer); err == nil {
 			eventSource = liveBuffer
-			fmt.Printf("Using live buffer: %s\n", liveBuffer)
+			_, _ = fmt.Fprintf(bannerOut, "Using live buffer: %s\n", liveBuffer)
 		} else {
-			fmt.Printf("Live buffer not found, falling back to fixture: %s\n", *fixturePath)
+			_, _ = fmt.Fprintf(bannerOut, "Live buffer not found, falling back to fixture: %s\n", *fixturePath)
 		}
 	}
 
 	gpuInfo := vram.Detect()
-	fmt.Printf("GPU: %s\n", gpuInfo.Label)
+	_, _ = fmt.Fprintf(bannerOut, "GPU: %s\n", gpuInfo.Label)
 	maxVRAM := gpuInfo.GB * vramHeadroom
 
 	client := ollama.NewClient(*ollamaURL)
@@ -79,14 +92,14 @@ func main() {
 
 	ollamaVersion, err := client.Version(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: cannot reach Ollama at %s: %v\n", *ollamaURL, err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: cannot reach Ollama at %s: %v\n", *ollamaURL, err)
 		os.Exit(1)
 	}
-	fmt.Printf("Ollama: %s\n\n", ollamaVersion)
+	_, _ = fmt.Fprintf(bannerOut, "Ollama: %s\n\n", ollamaVersion)
 
 	fixtureData, err := os.ReadFile(eventSource)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: cannot read event source %s: %v\n", eventSource, err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: cannot read event source %s: %v\n", eventSource, err)
 		os.Exit(1)
 	}
 	promptHash := sha256.Sum256([]byte(runner.SystemPrompt))
@@ -103,33 +116,33 @@ func main() {
 			}
 		}
 		if len(filtered) == 0 {
-			fmt.Fprintf(os.Stderr, "error: model %q not found in manifest\n", *singleModel)
+			_, _ = fmt.Fprintf(os.Stderr, "error: model %q not found in manifest\n", *singleModel)
 			os.Exit(1)
 		}
 		models = filtered
 	}
 
-	var allResults []types.ModelResult
+	var allResults []benchmark.ModelResult
 	completedCount := 0
 
 	for _, model := range models {
 		if !*quiet {
-			fmt.Fprintf(os.Stderr, "  %-35s", model.Name)
+			_, _ = fmt.Fprintf(os.Stderr, "  %-35s", model.Name)
 		}
 
 		if model.VRAMGB > maxVRAM {
-			result := types.ModelResult{
+			result := benchmark.ModelResult{
 				Model:  model.Name,
 				VRAMGB: model.VRAMGB,
 				Tier:   model.Tier,
 				Vendor: model.Vendor,
-				Score: types.Score{
-					Verdict:       types.VerdictSkippedVRAM,
+				Score: benchmark.Score{
+					Verdict:       benchmark.VerdictSkippedVRAM,
 					VerdictReason: fmt.Sprintf("requires %.1fGB VRAM, available %.1fGB (with headroom)", model.VRAMGB, maxVRAM),
 				},
 			}
 			if !*quiet {
-				fmt.Fprintf(os.Stderr, "SKIP (%.1fGB VRAM > %.1fGB available)\n", model.VRAMGB, maxVRAM)
+				_, _ = fmt.Fprintf(os.Stderr, "SKIP (%.1fGB VRAM > %.1fGB available)\n", model.VRAMGB, maxVRAM)
 			}
 			allResults = append(allResults, result)
 			continue
@@ -139,7 +152,7 @@ func main() {
 		if !*force {
 			if cached, ok, err := resultCache.Read(model.Name, cacheKey, 24*time.Hour); err == nil && ok {
 				if !*quiet {
-					fmt.Fprintf(os.Stderr, "cached  verdict=%-15s composite=%.2f\n", cached.Score.Verdict, cached.Score.Composite)
+					_, _ = fmt.Fprintf(os.Stderr, "cached  verdict=%-15s composite=%.2f\n", cached.Score.Verdict, cached.Score.Composite)
 				}
 				allResults = append(allResults, cached)
 				completedCount++
@@ -150,15 +163,15 @@ func main() {
 		runResult, err := runner.Run(ctx, client, model, eventSource, *numRuns)
 		if err != nil {
 			if !*quiet {
-				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
-			allResults = append(allResults, types.ModelResult{
+			allResults = append(allResults, benchmark.ModelResult{
 				Model:  model.Name,
 				VRAMGB: model.VRAMGB,
 				Tier:   model.Tier,
 				Vendor: model.Vendor,
-				Score: types.Score{
-					Verdict:       types.VerdictFailed,
+				Score: benchmark.Score{
+					Verdict:       benchmark.VerdictFailed,
 					VerdictReason: fmt.Sprintf("runner error: %v", err),
 				},
 			})
@@ -166,7 +179,7 @@ func main() {
 		}
 
 		score := scorer.Score(runResult)
-		modelResult := types.ModelResult{
+		modelResult := benchmark.ModelResult{
 			Model:  model.Name,
 			VRAMGB: model.VRAMGB,
 			Tier:   model.Tier,
@@ -175,19 +188,19 @@ func main() {
 		}
 
 		if !*quiet {
-			fmt.Fprintf(os.Stderr, "%-15s patterns=%-3d latency=%s\n",
+			_, _ = fmt.Fprintf(os.Stderr, "%-15s patterns=%-3d latency=%s\n",
 				score.Verdict, score.ValidPatterns, score.AvgLatency.Std().Round(time.Second))
 		}
 
 		if err := resultCache.Write(model.Name, cacheKey, modelResult); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: cache write failed for %s: %v\n", model.Name, err)
+			_, _ = fmt.Fprintf(os.Stderr, "  warning: cache write failed for %s: %v\n", model.Name, err)
 		}
 		allResults = append(allResults, modelResult)
 		completedCount++
 	}
 
 	if completedCount == 0 {
-		fmt.Fprintln(os.Stderr, "error: no models completed")
+		_, _ = fmt.Fprintln(os.Stderr, "error: no models completed")
 		os.Exit(2)
 	}
 
@@ -201,39 +214,61 @@ func main() {
 
 	md := reporter.RenderMarkdown(allResults, m, info)
 	if err := os.WriteFile(*docsPath, []byte(md), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "writing docs: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "writing docs: %v\n", err)
 	} else {
-		fmt.Printf("\nWrote %s\n", *docsPath)
+		_, _ = fmt.Fprintf(bannerOut, "\nWrote %s\n", *docsPath)
 	}
 
 	svgContent, err := reporter.RenderSVG(allResults)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rendering SVG: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "rendering SVG: %v\n", err)
 	} else {
 		if err := os.MkdirAll(filepath.Dir(*svgPath), 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "creating SVG dir: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "creating SVG dir: %v\n", err)
 		} else if err := os.WriteFile(*svgPath, []byte(svgContent), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "writing SVG: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "writing SVG: %v\n", err)
 		} else {
-			fmt.Printf("Wrote %s\n", *svgPath)
+			_, _ = fmt.Fprintf(bannerOut, "Wrote %s\n", *svgPath)
 		}
 	}
 
 	// Write full results JSON
 	allData, err := json.MarshalIndent(allResults, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: marshalling results: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: marshalling results: %v\n", err)
 		os.Exit(1)
 	}
 	if err := os.WriteFile(*resultsPath, allData, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "error: writing results to %s: %v\n", *resultsPath, err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: writing results to %s: %v\n", *resultsPath, err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Done. Results cached at %s\n", *resultsPath)
+	_, _ = fmt.Fprintf(bannerOut, "Done. Results cached at %s\n", *resultsPath)
+
+	// #680: when --output-json is set, also dump the results JSON to stdout so
+	// the binary can be composed into pipelines (e.g. `instinct-benchmark
+	// --output-json | jq '.[]|select(.score>0.9)'`).
+	if *outputJSON {
+		resultsBytes, err := os.ReadFile(*resultsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot read results for --output-json: %v\n", err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(resultsBytes)
+	}
 }
 
 func cacheKeyFor(base, ollamaVersion, modelName string) string {
 	h := sha256.Sum256([]byte(base + ":" + ollamaVersion + ":" + modelName))
 	return fmt.Sprintf("%x", h[:16])
+}
+
+// bannerWriter returns io.Discard when quiet is true, otherwise dst. Used to
+// route human-readable banner/progress output through a single writer that
+// can be silenced via --quiet (#661 / #324).
+func bannerWriter(quiet bool, dst io.Writer) io.Writer {
+	if quiet {
+		return io.Discard
+	}
+	return dst
 }

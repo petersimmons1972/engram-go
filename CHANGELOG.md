@@ -6,6 +6,40 @@ All notable changes to engram-go are documented here.
 
 ## [Unreleased] — v3.3.0
 
+### LME scratch-project TTL (PR #754)
+
+- **`project_ttl` sidecar table (migration 022):** Stores `created_at` and `expires_at` per project without altering the first-class `memories.project` column. `NULL expires_at` means durable (no expiry).
+- **`--scratch-ttl <duration>` flag (default 168h / 7 days):** Applied to each `lme-*` project at ingest time. Requires `--database-url` to write the `project_ttl` row; failure downgrades to a WARN and leaves the project durable.
+- **`longmemeval prune` subcommand:** Sweeps expired `lme-*` projects via `project_ttl.expires_at < now`, then calls `memory_delete_project` over MCP for each. Supports `--dry-run`, `--limit`, `--prefix`, and `--older-than`. Intended to run as a K8s CronJob (`deploy/lme-prune-cronjob.yaml`).
+- **`Backend` interface:** `SetProjectTTL` and `ListExpiredProjects` added. All test fakes updated.
+- **Operator backfill:** Existing `lme-*` projects with `NULL expires_at` can be stamped via `UPDATE project_ttl SET expires_at = created_at + INTERVAL '7 days' WHERE project LIKE 'lme-%' AND expires_at IS NULL`. See `docs/lme-benchmark-learnings.md §Operator: scratch retention`.
+
+---
+
+### Reliability (PR #808 — backend-lock hardening)
+
+- **`--exclusive-backend` contention guard (default true):** Prevents two concurrent `lme run` invocations from sharing the same vLLM endpoint and producing contaminated results. A PID-liveness lock file is written to `<lock-dir>/backend-<sha256(url)[:12]>.lock`.
+- **`--no-exclusive-backend`:** Disables the lock when parallel runs are intentional and result contamination is accepted.
+- **`--backend-lock-dir <dir>`:** Overrides the lock directory (default: `$XDG_RUNTIME_DIR/lme` or `/tmp/lme`).
+- **Exit code 75 (EX_TEMPFAIL):** Lock contention now exits 75 instead of 2, avoiding collision with the `flag` package's parse-error exit code. Runbooks and retry loops should treat exit 75 as "wait and retry."
+- **pid=0 deadlock fix:** `isProcessAlive(0)` now explicitly returns false. A corrupt or partially-written lock file (which `parseLockFile` represents as `pid=0`) is correctly treated as stale and reclaimed with a WARN log.
+- **Write-failure cleanup:** If writing the PID record to the lock file fails (e.g. read-only mount, quota exhaustion), the flock is released and the lock file is removed before returning an error. No zombie lock is left behind.
+- **Stale-reclaim atomicity (S1 fix):** The stale-lock reclaim path now opens the file *without* `O_TRUNC`, acquires the exclusive flock, and *then* truncates+writes under the lock. The previous order (O_TRUNC before flock) created a short TOCTOU race window.
+- **Credential redaction:** `rawURL` no longer appears verbatim in error strings or log lines. A new `redactURL()` helper strips user-info via `net/url`; unparseable URLs fall back to a 12-char SHA-256 prefix.
+
+---
+
+### Bug Fix — lme cleanup-policy (#751, PR #807)
+
+- **`--cleanup-policy` enum (default: `auto`):** The `lme run` stage now ships a three-value cleanup policy instead of the old unconditional delete. `auto` (new default) deletes only projects whose name matches the `lme-{runID}-*` prefix created by the current invocation; externally ingested or cache-reused projects are preserved. `always` restores the pre-fix unconditional-delete behavior. `never` preserves everything (useful for cross-experiment reuse such as Exp 10 → Exp 13).
+- **`--no-cleanup` deprecated:** The old boolean flag remains registered for backward compatibility and is silently coerced to `--cleanup-policy=never`. A `WARN: --no-cleanup is deprecated` message is emitted to stderr on use.
+- **Migration note:** Existing camp pipeline scripts that relied on `--no-cleanup` continue to work unchanged. Scripts that want the old unconditional-delete behavior must pass `--cleanup-policy=always` explicitly going forward.
+- **`--cleanup-policy=<invalid>` now rejected (PR #807 R2-B2):** Unrecognised values (e.g. `ALWAYS`, `Never`, empty string) exit 1 with `invalid --cleanup-policy` in stderr instead of silently falling through to `auto`.
+- **`--no-cleanup` + `--cleanup-policy` conflict error (PR #807 R2-B3):** Passing both flags now produces a clear conflict error and exits 1.
+- **RunID expanded to 64-bit entropy (PR #807 S7):** `newRunID()` now generates 8 random bytes (16 hex chars) instead of 3 (6 hex chars), reducing prefix-match collision risk from 1-in-16M to ~1-in-18-quintillion on shared infrastructure.
+- **Cleanup preserve log collapsed to single end-of-run summary (PR #807 S9):** Per-question "preserved" log lines replaced by one `cleanup-summary` line at the end of the run. Grep token: `cleanup-summary`.
+
+---
 ### Reliability (PR #611-fix2)
 
 - **Async embed on store (architecturally enforced):** `memory_store` and `memory_store_batch` return after the DB write completes (~10ms), regardless of embed pool state. Chunks are stored with NULL embeddings and the existing reembed worker backfills them asynchronously. New Prometheus counter `engram_store_embed_async_total` tracks call volume on the async path. Rollback: set `ENGRAM_STORE_EMBED_MODE=sync` to restore inline embedding without redeploying.
@@ -14,7 +48,7 @@ All notable changes to engram-go are documented here.
 
 ---
 
-## [Unreleased] — v3.2.0
+## [v3.2.0]
 
 ### Security (PR #594)
 - **Bearer auth on `/setup-token` and `/metrics`:** Added Authorization header requirement to prevent token enumeration and metrics exposure from unauthenticated clients.

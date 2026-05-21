@@ -189,7 +189,7 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 }
 
 // Recall calls memory_recall and returns ranked memory IDs.
-// The server returns {"results":[{"memory":{"id":"..."},"score":...},...]}
+// The server returns {"results":[{"memory":{"id":"..."},"score":...},...]} as JSON.
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
@@ -334,6 +334,10 @@ func (c *Client) DeleteProject(ctx context.Context, project string) error {
 		},
 	})
 	if err != nil {
+		if IsStaleSessionError(err) {
+			// Bug #642: SSE session expired server-side; cleanup is moot, not an error.
+			return nil
+		}
 		return err
 	}
 	if result.IsError {
@@ -366,16 +370,21 @@ func NewRestClient(baseURL, token string) *RestClient {
 }
 
 // QuickStore stores a single memory via POST /quick-store and returns its ID.
-// Retries once on 5xx (server-side pool init can transiently time out when
-// many projects are created concurrently; a brief pause and retry succeeds
-// because the pool entry is warm on the second attempt).
-func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string) (string, error) {
+// When expiresAt is non-nil, the server stamps project_ttl so the project can
+// be swept later by lme prune. Retries on 429 and 5xx with exponential backoff.
+func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string, expiresAt *time.Time) (string, error) {
 	body := map[string]any{
 		"content": content,
 		"project": project,
 		"tags":    tags,
 	}
-	data, _ := json.Marshal(body)
+	if expiresAt != nil {
+		body["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal QuickStore body: %w", err)
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 8; attempt++ {
@@ -408,7 +417,7 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			Error string `json:"error"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if decodeErr != nil {
 			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
 			continue
@@ -436,7 +445,10 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 		"project": project,
 		"limit":   limit,
 	}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal QuickRecall body: %w", err) // #710
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/quick-recall", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -448,7 +460,7 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		IDs []string `json:"ids"`

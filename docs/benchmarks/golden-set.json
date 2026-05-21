@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "description": "Starter golden set for engram-eval. Each query is paired with the memory IDs that should appear in the top-K recall. Add more rows as your test corpus grows.",
+    "schema": {
+      "query": "string — the user-facing query string passed to memory_recall",
+      "project": "string — project slug to recall from",
+      "relevant_ids": "string[] — memory IDs that MUST appear in the top-K to count as a hit",
+      "top_k": "int — how many results to fetch (default 10)"
+    },
+    "usage": "engram-eval --golden docs/benchmarks/golden-set.json --output-json | jq",
+    "regenerate": "Populate by recalling a representative query in production, capturing the top-K IDs, and adding them as the expected set. Closes #684."
+  },
+  "queries": [
+    {
+      "query": "what did we decide about JWT signing",
+      "project": "_example",
+      "relevant_ids": ["mem_replace_me_001", "mem_replace_me_002"],
+      "top_k": 10
+    },
+    {
+      "query": "session cookie expiry pattern",
+      "project": "_example",
+      "relevant_ids": ["mem_replace_me_003"],
+      "top_k": 5
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Optional webhook to receive engram-instinct timer-failure notifications.
+# Set to a URL that accepts a POST with text/plain body. Examples:
+#
+#   ENGRAM_ALERT_WEBHOOK=https://ntfy.sh/<your-private-topic>
+#   ENGRAM_ALERT_WEBHOOK=https://hooks.slack.com/services/T.../B.../...
+#   ENGRAM_ALERT_WEBHOOK=https://discord.com/api/webhooks/<id>/<token>
+#
+# Copy this file to /etc/default/engram-instinct-alert and set the value.
+# If unset or empty, the alert service journal-dumps but does not notify.
+# Closes #675.
+ENGRAM_ALERT_WEBHOOK=

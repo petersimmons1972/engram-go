@@ -1,4 +1,10 @@
-package types
+// Package benchmark contains data types for the LLM model benchmark pipeline.
+// These types were previously in internal/types (which is scoped to core Engram
+// memory structures) and were moved here to avoid coupling any consumer of
+// internal/types to campaign/evaluation tooling.
+//
+// See: https://github.com/petersimmons1972/engram-go/issues/771
+package benchmark
 
 import (
 	"encoding/json"
@@ -27,6 +33,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
+// Verdict classifies a model's benchmark run outcome.
 type Verdict string
 
 const (
@@ -39,6 +46,7 @@ const (
 	VerdictSkippedVRAM    Verdict = "skipped-vram"
 )
 
+// RunAttempt records a single inference run for one model.
 type RunAttempt struct {
 	Duration     Duration `json:"duration"`
 	RawContent   string   `json:"raw_content"`
@@ -47,6 +55,7 @@ type RunAttempt struct {
 	TimedOut     bool     `json:"timed_out"`
 }
 
+// RunResult aggregates all run attempts for one model.
 type RunResult struct {
 	Model        string       `json:"model"`
 	ModelDigest  string       `json:"model_digest"`
@@ -57,6 +66,7 @@ type RunResult struct {
 	SkipReason   string       `json:"skip_reason,omitempty"`
 }
 
+// Score holds the computed quality metrics for one model's run.
 type Score struct {
 	JSONValid     bool     `json:"json_valid"`
 	PatternCount  int      `json:"pattern_count"`
@@ -69,6 +79,7 @@ type Score struct {
 	VerdictReason string   `json:"verdict_reason"`
 }
 
+// ModelResult is the top-level result for one candidate model.
 type ModelResult struct {
 	Model  string  `json:"model"`
 	VRAMGB float64 `json:"vram_gb"`

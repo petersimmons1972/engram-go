@@ -45,7 +45,7 @@ func (b blockingStoreBackend) Begin(ctx context.Context) (db.Tx, error) {
 	return nil, ctx.Err()
 }
 
-func (b blockingStoreBackend) UpdateMemory(ctx context.Context, _ string, _ *string, _ []string, _ *int) (*types.Memory, error) {
+func (b blockingStoreBackend) UpdateMemory(ctx context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }

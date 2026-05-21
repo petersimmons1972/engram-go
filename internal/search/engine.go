@@ -538,6 +538,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		topK = 10
 	}
 
+	// Guard: ensure the current embedder matches the stored metadata before
+	// issuing any query. Without this check a dimension mismatch would produce
+	// silent nil/empty results (or a pgvector cross-dim panic) instead of the
+	// structured embed.PermanentError callers can inspect and act on.
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return nil, err
+	}
+
 	// Bound the embed call to embedRecallTimeout (default 500ms; configurable via
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS). On timeout or error, degrade gracefully to
 	// BM25+recency only — the vector leg is skipped but recall still returns useful
@@ -728,6 +736,8 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		switch detail {
 		case "id_only":
+			// Intentionally minimal: only the ID is returned. All other fields
+			// (Content, PatternConfidence, Tags, etc.) are stripped by design.
 			result.Memory = &types.Memory{ID: m.ID}
 		case "summary":
 			if m.Summary != nil {
@@ -936,6 +946,13 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if topK <= 0 {
 		topK = 10
 	}
+	// Guard: reject calls when the stored embedder name does not match the
+	// current client — same check wired into RecallWithOpts and StoreBatch.
+	// Without this, dimension or model mismatches return garbage silently.
+	if err := e.checkEmbedderMeta(ctx); err != nil {
+		return nil, err
+	}
+
 	// Embed call bounded by embedRecallTimeout, consistent with RecallWithOpts.
 	// RecallWithinMemory has no BM25 fallback (document chunk search is
 	// vector-only), so it returns an error on embed failure.
@@ -1096,8 +1113,9 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 // Correct updates mutable fields on an existing memory and returns the updated record.
 // When content is non-nil, the old chunks are deleted and new chunks are created so
 // the search index reflects the corrected text.
-func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error) {
-	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance)
+// patternConfidence: nil means "do not touch this field".
+func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, tags []string, importance *int, patternConfidence *float64) (*types.Memory, error) {
+	mem, err := e.backend.UpdateMemory(ctx, id, content, tags, importance, patternConfidence)
 	if err != nil {
 		return nil, err
 	}

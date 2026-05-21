@@ -18,10 +18,20 @@ func WriteCheckpoint[T any](path string, ch <-chan T) {
 		}
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
+	var encodeErrs int
 	for entry := range ch {
-		_ = enc.Encode(entry)
+		if err := enc.Encode(entry); err != nil {
+			encodeErrs++
+			// Log every individual failure so on-call can identify which entry
+			// was lost. #670: previously discarded silently — silent loss of
+			// expensive LLM-call results is unacceptable.
+			log.Printf("WARN WriteCheckpoint: encode failed for entry in %s: %v", path, err)
+		}
+	}
+	if encodeErrs > 0 {
+		log.Printf("WARN WriteCheckpoint: %d entries failed to encode in %s — results may be incomplete (#670)", encodeErrs, path)
 	}
 }
 
@@ -36,7 +46,7 @@ func ReadSkipSet(path string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
@@ -53,6 +63,37 @@ func ReadSkipSet(path string) (map[string]bool, error) {
 		}
 	}
 	return skip, scanner.Err()
+}
+
+// ReadScoredLabels returns a map from question_id to score_label for all
+// checkpoint-score.jsonl entries with status=="done". Error-status entries
+// are excluded. Returns empty map (not error) if the file does not exist.
+func ReadScoredLabels(path string) (map[string]string, error) {
+	labels := make(map[string]string)
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return labels, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	for scanner.Scan() {
+		var entry struct {
+			QuestionID string `json:"question_id"`
+			Status     string `json:"status"`
+			ScoreLabel string `json:"score_label"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if entry.Status == "done" && entry.QuestionID != "" {
+			labels[entry.QuestionID] = entry.ScoreLabel
+		}
+	}
+	return labels, scanner.Err()
 }
 
 // ReadAllIngest reads all entries from a checkpoint-ingest.jsonl file.
@@ -78,7 +119,7 @@ func readAll[T any](path string) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var out []T
 	scanner := bufio.NewScanner(f)

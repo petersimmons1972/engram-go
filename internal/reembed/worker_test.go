@@ -80,7 +80,7 @@ func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, er
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }
-func (noopBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int) (*types.Memory, error) {
+func (noopBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
 func (noopBackend) DeleteMemory(_ context.Context, _ string) (bool, error)            { return false, nil }
@@ -260,7 +260,13 @@ func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db
 }
 func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
 func (noopBackend) DeleteProject(_ context.Context, _ string) error                  { return nil }
-func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error              { return nil }
+func (noopBackend) SetProjectTTL(_ context.Context, _ string, _ time.Time, _ *time.Time) error {
+	return nil
+}
+func (noopBackend) ListExpiredProjects(_ context.Context, _ string, _ time.Time, _ int) ([]string, error) {
+	return nil, nil
+}
+func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
 
 // concurrentEmbedder records the peak number of Embed calls in-flight simultaneously.
 // Each call increments active, records the peak, then waits on the ready channel

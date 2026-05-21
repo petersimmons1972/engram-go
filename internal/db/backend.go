@@ -49,7 +49,8 @@ type Backend interface {
 	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)
 	// UpdateMemory updates mutable fields on an existing memory.
 	// Returns nil, nil if not found. Returns error if immutable.
-	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int) (*types.Memory, error)
+	// patternConfidence: nil means "leave unchanged"; non-nil writes the value.
+	UpdateMemory(ctx context.Context, id string, content *string, tags []string, importance *int, patternConfidence *float64) (*types.Memory, error)
 	// DeleteMemory hard-deletes a memory and its chunks/relationships by ID.
 	// Prefer SoftDeleteMemory for normal use — it preserves history and respects
 	// immutability. DeleteMemory is retained for internal rollback paths only
@@ -217,6 +218,16 @@ type Backend interface {
 	// DeleteProject hard-deletes all memories, chunks, relationships, episodes,
 	// and metadata for a project. Irreversible. Used for eval isolation project cleanup.
 	DeleteProject(ctx context.Context, project string) error
+
+	// ── Project TTL (#754) ──────────────────────────────────────────────────
+
+	// SetProjectTTL upserts the created_at and expires_at for a project into
+	// project_ttl. Pass nil expiresAt for a durable (non-expiring) project.
+	SetProjectTTL(ctx context.Context, project string, createdAt time.Time, expiresAt *time.Time) error
+	// ListExpiredProjects returns names of projects whose expires_at is non-NULL
+	// and before cutoff, optionally filtered to names with the given prefix and
+	// capped to limit rows (0 = unlimited).
+	ListExpiredProjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]string, error)
 
 	// ── Full-text search ────────────────────────────────────────────────────
 

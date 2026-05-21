@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/manifest"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 
@@ -23,7 +23,7 @@ type RunInfo struct {
 
 // RenderMarkdown produces the full docs/models.md content from scored results
 // and the loaded manifest. The manifest supplies the excluded-model table.
-func RenderMarkdown(results []types.ModelResult, m *manifest.Manifest, info RunInfo) string {
+func RenderMarkdown(results []benchmark.ModelResult, m *manifest.Manifest, info RunInfo) string {
 	if info.Timestamp.IsZero() {
 		info.Timestamp = time.Now().UTC()
 	}
@@ -58,10 +58,10 @@ func RenderMarkdown(results []types.ModelResult, m *manifest.Manifest, info RunI
 	}
 	b.WriteString("\n")
 
-	writeSection(&b, "## Recommended\n\n", results, types.VerdictRecommended)
-	writeSection(&b, "## Usable (may need prompt tuning)\n\n", results, types.VerdictUsable)
-	writeSection(&b, "## Not recommended\n\n", results, types.VerdictNotRecommended)
-	writeSection(&b, "## Failed\n\n", results, types.VerdictFailed, types.VerdictTimedOut, types.VerdictPullFailed)
+	writeSection(&b, "## Recommended\n\n", results, benchmark.VerdictRecommended)
+	writeSection(&b, "## Usable (may need prompt tuning)\n\n", results, benchmark.VerdictUsable)
+	writeSection(&b, "## Not recommended\n\n", results, benchmark.VerdictNotRecommended)
+	writeSection(&b, "## Failed\n\n", results, benchmark.VerdictFailed, benchmark.VerdictTimedOut, benchmark.VerdictPullFailed)
 
 	excluded := m.Excluded()
 	if len(excluded) > 0 {
@@ -92,8 +92,8 @@ func RenderMarkdown(results []types.ModelResult, m *manifest.Manifest, info RunI
 	return b.String()
 }
 
-func writeSection(b *strings.Builder, header string, results []types.ModelResult, verdicts ...types.Verdict) {
-	var rows []types.ModelResult
+func writeSection(b *strings.Builder, header string, results []benchmark.ModelResult, verdicts ...benchmark.Verdict) {
+	var rows []benchmark.ModelResult
 	for _, r := range results {
 		if slices.Contains(verdicts, r.Score.Verdict) {
 			rows = append(rows, r)
@@ -118,10 +118,10 @@ func writeSection(b *strings.Builder, header string, results []types.ModelResult
 // bestRecommended returns the recommended model with the lowest VRAM footprint,
 // breaking ties by composite score (descending). Provides the suggested default
 // for users who have not yet chosen a model.
-func bestRecommended(results []types.ModelResult) *types.ModelResult {
-	var candidates []types.ModelResult
+func bestRecommended(results []benchmark.ModelResult) *benchmark.ModelResult {
+	var candidates []benchmark.ModelResult
 	for _, r := range results {
-		if r.Score.Verdict == types.VerdictRecommended {
+		if r.Score.Verdict == benchmark.VerdictRecommended {
 			candidates = append(candidates, r)
 		}
 	}
@@ -137,9 +137,9 @@ func bestRecommended(results []types.ModelResult) *types.ModelResult {
 	return &candidates[0]
 }
 
-func firstRecommendedInTier(results []types.ModelResult, tier string) *types.ModelResult {
+func firstRecommendedInTier(results []benchmark.ModelResult, tier string) *benchmark.ModelResult {
 	for i := range results {
-		if results[i].Tier == tier && results[i].Score.Verdict == types.VerdictRecommended {
+		if results[i].Tier == tier && results[i].Score.Verdict == benchmark.VerdictRecommended {
 			return &results[i]
 		}
 	}

@@ -1,0 +1,74 @@
+# lme-prune-cronjob.yaml — weekly sweep of expired lme-* scratch projects (#754)
+#
+# Runs `longmemeval prune` every Sunday at 02:00 UTC.
+# Requires:
+#   - Secret "engram-lme" with keys: database-url, engram-url, engram-api-key
+#   - RBAC: no cluster permissions needed (contacts Postgres + Engram HTTP only)
+#   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval:latest (or pin to a SHA)
+#
+# Tune --limit on first run to verify blast radius before allowing unlimited.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lme-prune
+  namespace: engram
+  labels:
+    app.kubernetes.io/name: lme-prune
+    app.kubernetes.io/component: maintenance
+    app.kubernetes.io/part-of: engram
+spec:
+  schedule: "0 2 * * 0"  # Every Sunday at 02:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600  # 10 minutes max; prune is not long-running
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: lme-prune
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            fsGroup: 65532
+          containers:
+            - name: lme-prune
+              image: ghcr.io/petersimmons1972/engram-go/longmemeval:latest
+              imagePullPolicy: IfNotPresent
+              args:
+                - prune
+                - --prefix=lme-
+                - --limit=200       # cap per-run; remove once first run is verified
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: engram-lme
+                      key: database-url
+                - name: ENGRAM_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: engram-lme
+                      key: engram-url
+                - name: ENGRAM_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: engram-lme
+                      key: engram-api-key
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL

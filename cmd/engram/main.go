@@ -17,6 +17,7 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
+	"github.com/petersimmons1972/engram/internal/config"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/entity"
@@ -98,8 +99,10 @@ func run() error {
 	claudeSummarize := fs.Bool("claude-summarize", envBool("ENGRAM_CLAUDE_SUMMARIZE", false), "Use Claude for background summarization")
 	claudeConsolidate := fs.Bool("claude-consolidate", envBool("ENGRAM_CLAUDE_CONSOLIDATE", false), "Use Claude for near-duplicate merge during consolidation")
 	claudeRerank := fs.Bool("claude-rerank", envBool("ENGRAM_CLAUDE_RERANK", false), "Enable Claude re-ranking in memory recall")
-	port := fs.Int("port", envInt("ENGRAM_PORT", 8788), "MCP SSE port")
-	host := fs.String("host", envOr("ENGRAM_HOST", "0.0.0.0"), "Bind address")
+	// Canonical defaults come from internal/config — the single source of truth
+	// for ENGRAM_PORT and ENGRAM_HOST. (#729)
+	port := fs.Int("port", envInt(config.EnvKeyPort, config.DefaultPort), "MCP SSE port")
+	host := fs.String("host", envOr(config.EnvKeyHost, config.DefaultHost), "Bind address (default: loopback only; set 0.0.0.0 for LAN — #666)")
 	baseURL := fs.String("base-url", envOr("ENGRAM_BASE_URL", ""), "External URL advertised in SSE events (e.g. http://127.0.0.1:8788); defaults to http://<host>:<port>")
 	// #136: ENGRAM_API_KEY is intentionally NOT a CLI flag — secrets in CLI flags
 	// are visible in /proc/cmdline to any process on the host. Read from env only.
@@ -145,6 +148,20 @@ func run() error {
 		return err
 	}
 
+	// #692: --rate-limit / ENGRAM_RATE_LIMIT is deprecated in favor of
+	// --rate-limit-rps / ENGRAM_RATE_LIMIT_RPS. Emit to stderr (visible
+	// regardless of LOG_FORMAT) so the deprecation isn't buried in JSON logs.
+	if *rateLimit != 0 {
+		fmt.Fprintln(os.Stderr, "WARNING: --rate-limit / ENGRAM_RATE_LIMIT is deprecated; use --rate-limit-rps / ENGRAM_RATE_LIMIT_RPS instead. The legacy flag still works but will be removed in a future release. (#692)")
+		slog.Warn("deprecated flag in use", "flag", "--rate-limit", "use_instead", "--rate-limit-rps", "ref", "#692")
+	}
+
+	// A-3 (#666): refuse to start with non-loopback bind + rate limiter disabled.
+	if err := checkBindInterlock(*host, *rateLimitDisable); err != nil {
+		return err
+	}
+
+
 	if *versionFlag {
 		fmt.Printf("engram %s\n", Version)
 		os.Exit(0)
@@ -189,6 +206,14 @@ func run() error {
 	}
 	if strings.TrimSpace(*embedModel) == "" {
 		return fmt.Errorf("ENGRAM_EMBED_MODEL or --model is required (no compile-time default)")
+	}
+
+	// #686: emit a deprecation warning when ENGRAM_OLLAMA_MODEL is set but
+	// ENGRAM_EMBED_MODEL is not. The legacy name still works (envOr fallback
+	// at the flag definition above) but new configs should use the canonical
+	// name.
+	if os.Getenv("ENGRAM_EMBED_MODEL") == "" && os.Getenv("ENGRAM_OLLAMA_MODEL") != "" {
+		slog.Warn("ENGRAM_OLLAMA_MODEL is deprecated — use ENGRAM_EMBED_MODEL instead (#686). Will continue to honor the legacy name for backward compat.")
 	}
 
 	// Warn on inconsistent embed config before spending time connecting to Ollama. (#380)
@@ -284,6 +309,10 @@ func run() error {
 		return fmt.Errorf("shared pool: %w", err)
 	}
 	defer pgxPool.Close()
+
+	// #673: surface pgxpool saturation via Prometheus gauges. Exits when ctx
+	// is cancelled (SIGTERM handler).
+	db.StartPoolMetricsSampler(ctx, pgxPool)
 
 	retentionBackend, err := db.NewPostgresBackendWithPool(ctx, "default", pgxPool)
 	if err != nil {
@@ -526,7 +555,7 @@ func run() error {
 			"For local development, use --host=127.0.0.1 instead. (#550)")
 	}
 
-	slog.Info("engram ready", "host", *host, "port", *port,
+	slog.Info("engram ready", "version", Version, "host", *host, "port", *port,
 		"embed_model", *embedModel, "summarize_model", sumModel)
 
 	err = srv.Start(ctx, *host, *port, apiKey, *baseURL)
@@ -551,6 +580,25 @@ func run() error {
 	}
 
 	return err
+}
+
+// checkBindInterlock implements A-3 (#666): refuse to start when the server
+// is bound to a non-loopback interface AND rate limiting is disabled. The
+// combination is the LAN-brute-force foot-gun the security review flagged.
+//
+// Returns nil when:
+//   - host is loopback (any rate limit setting), OR
+//   - rate limiting is enabled (any host).
+// Returns a non-nil error otherwise; caller should treat as fatal.
+func checkBindInterlock(host string, rateLimitDisable bool) error {
+	loopbacks := map[string]bool{"127.0.0.1": true, "::1": true, "localhost": true}
+	if loopbacks[host] {
+		return nil
+	}
+	if !rateLimitDisable {
+		return nil
+	}
+	return fmt.Errorf("refusing to start: ENGRAM_RATE_LIMIT_DISABLE=true is forbidden when bound to non-loopback host %q (#666). Set ENGRAM_HOST=127.0.0.1 or unset ENGRAM_RATE_LIMIT_DISABLE", host)
 }
 
 func envOr(key, def string) string {

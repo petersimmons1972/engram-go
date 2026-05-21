@@ -19,6 +19,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -227,6 +228,11 @@ type Server struct {
 	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
 	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
 	tofuGranted atomic.Bool
+	// #707: when tofuGranted was first set. Used by the same-process re-grant
+	// path: if the legitimate first request raced (e.g. engram-setup crashed
+	// mid-parse), allow another grant after 60 seconds without requiring a
+	// process restart. atomic.Int64 holds unix epoch seconds.
+	tofuGrantedAt atomic.Int64
 
 	// serverPhase tracks startup lifecycle: 0=starting, 1=warming, 2=warm.
 	// /ready returns 503 until phaseWarm is stored. Advanced by the pre-warm goroutine
@@ -349,6 +355,11 @@ func NewServer(pool *EnginePool, cfg Config) *Server {
 	if v := os.Getenv("ENGRAM_TRUST_PROXY_HEADERS"); v == "1" || strings.EqualFold(v, "true") {
 		trustProxy = true
 		slog.Warn("ENGRAM_TRUST_PROXY_HEADERS is enabled — ensure a trusted reverse proxy terminates all inbound connections; direct clients can spoof X-Forwarded-For to bypass rate limiting")
+	}
+
+	// A-4 (#689): warn loudly when memory_delete_project is callable.
+	if v := os.Getenv("ENGRAM_ALLOW_PROJECT_DELETE"); v == "1" || strings.EqualFold(v, "true") {
+		slog.Warn("ENGRAM_ALLOW_PROJECT_DELETE is enabled — memory_delete_project is callable by any authenticated MCP client; restart without this env var to re-lock once your delete task is complete (#689)")
 	}
 
 	// Create embedder health probe with a 5-second cached check.
@@ -736,7 +747,19 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// #707: allow re-grant after 60s. If the prior grant succeeded but
+		// the client crashed/raced before receiving the response, the operator
+		// would otherwise have to restart the process. The time window keeps
+		// the "exactly once during bootstrap" semantics within a session.
+		if isLoopbackIP(rawPeer) {
+			if s.tofuGranted.Load() {
+				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
+					s.tofuGranted.Store(false)
+				}
+			}
+		}
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
 				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
@@ -881,7 +904,9 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 			}
 		}
 		if requestID == "" {
-			requestID = fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+			// #696: UUIDv4 — 122 bits of entropy, no timing-prediction window,
+			// no collision under sub-nanosecond concurrent requests (A-6 advisory).
+			requestID = uuid.NewString()
 		}
 
 		// Echo the request ID in the response header for client-side correlation (#555)
@@ -921,7 +946,7 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "unauthorized",
-				"hint":  "Bearer token mismatch — on the host machine run: cd ~/projects/engram-go && make setup  (or: go run ./cmd/engram-setup). Then run /mcp in Claude Code to reconnect.",
+				"hint":  buildBearerMismatchHint(r),
 			})
 			return
 		}
@@ -969,7 +994,19 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// #707: allow re-grant after 60s. If the prior grant succeeded but
+		// the client crashed/raced before receiving the response, the operator
+		// would otherwise have to restart the process. The time window keeps
+		// the "exactly once during bootstrap" semantics within a session.
+		if isLoopbackIP(rawPeer) {
+			if s.tofuGranted.Load() {
+				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
+					s.tofuGranted.Store(false)
+				}
+			}
+		}
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
 				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
@@ -1199,7 +1236,7 @@ func (s *Server) registerTools() {
 	}
 	tools := []toolDef{
 		// Core store operations
-		{"memory_store", "Store a focused memory (<=10k chars)" + embedSuffix,
+		{"memory_store", "Store a focused memory (<=10k chars). Optional: pattern_confidence (float 0.0–1.0) for caller-provided confidence that a detected pattern is genuine." + embedSuffix,
 			handleMemoryStore},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
 			handleMemoryStoreDocument},
@@ -1207,7 +1244,7 @@ func (s *Server) registerTools() {
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
 			}},
-		{"memory_store_batch", "Store multiple memories in one call" + embedSuffix,
+		{"memory_store_batch", "Store multiple memories in one call. Each item supports the same optional fields as memory_store, including pattern_confidence (float 0.0–1.0) for per-item caller-provided confidence. If any item fails validation the entire batch is rejected." + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
 		{"memory_recall", "Recall memories by semantic + full-text query" + embedSuffix,
@@ -1226,7 +1263,7 @@ func (s *Server) registerTools() {
 		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
 			noConfig(handleMemoryExpand)},
 		// Mutations
-		{"memory_correct", "Update content, tags, or importance on an existing memory",
+		{"memory_correct", "Update content, tags, importance, or pattern_confidence (float 0.0–1.0) on an existing memory. Omit pattern_confidence to leave it unchanged. Only-promote-never-nullify rule: omit 'tags' entirely to preserve the existing valid_from; sending tags=[...] recalculates valid_from from date: tags; sending tags=[] clears valid_from to null. See docs/tools.md#memory_correct and issue #765.",
 			noConfig(handleMemoryCorrect)},
 		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
 			noConfig(handleMemoryForget)},
@@ -1251,7 +1288,7 @@ func (s *Server) registerTools() {
 			handleMemoryConsolidate},
 		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
 			handleMemorySleep},
-		{"memory_delete_project", "Delete all memories and project data for an eval isolation project. Not for normal use.",
+		{"memory_delete_project", "Delete all memories and project data for a project. IRREVERSIBLE. Requires server started with ENGRAM_ALLOW_PROJECT_DELETE=1 AND a confirm argument exactly matching the project argument (#689). Not for normal use.",
 			noConfig(handleMemoryDeleteProject)},
 		// Episodes
 		{"memory_episode_start", "Start a named episode to group memories from this session",
@@ -1521,10 +1558,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Content    string   `json:"content"`
-		Project    string   `json:"project"`
-		Tags       []string `json:"tags"`
-		Importance int      `json:"importance"`
+		Content    string     `json:"content"`
+		Project    string     `json:"project"`
+		Tags       []string   `json:"tags"`
+		Importance int        `json:"importance"`
+		ExpiresAt  *time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
@@ -1542,6 +1580,10 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateQuickStoreInput(body.Content, project, body.Tags, body.Importance); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
+		writeJSONError(w, http.StatusBadRequest, "expires_at must be a future timestamp")
 		return
 	}
 
@@ -1591,6 +1633,16 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+
+	// #837: if expires_at was provided, stamp project_ttl via the engine pool.
+	// Best-effort: failure is logged but does not affect the store response.
+	if body.ExpiresAt != nil {
+		if h, poolErr := s.pool.Get(r.Context(), project); poolErr != nil {
+			slog.Warn("quick-store: pool.Get failed for SetProjectTTL", "project", project, "err", poolErr)
+		} else if ttlErr := h.Engine.Backend().SetProjectTTL(r.Context(), project, time.Now().UTC(), body.ExpiresAt); ttlErr != nil {
+			slog.Warn("quick-store: SetProjectTTL failed", "project", project, "err", ttlErr)
+		}
+	}
 }
 
 // handleQuickRecall is a sessionless REST endpoint that recalls memories by
@@ -1780,4 +1832,19 @@ func reloadRuntimeConfig(cfg *RuntimeConfig) {
 	if len(reloadedKeys) > 0 {
 		slog.Info("config reloaded via SIGHUP", "changed_keys", reloadedKeys)
 	}
+}
+
+// buildBearerMismatchHint returns a verbose, deployment-specific hint only
+// when the request originates from loopback. External callers get a generic
+// message so the server doesn't leak filesystem paths or the project name
+// to unauthenticated network clients (#704).
+func buildBearerMismatchHint(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+		return "Bearer token mismatch — on the host machine run: cd ~/projects/engram-go && make setup  (or: go run ./cmd/engram-setup). Then run /mcp in Claude Code to reconnect."
+	}
+	return "Bearer token mismatch — check your client configuration."
 }

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block accidental staging of credential files — closes #657
+# Install: git config core.hooksPath .githooks
+set -euo pipefail
+
+# Patterns that must never be committed
+BLOCKED_PATTERNS=(
+  '\.env$'
+  '\.env\.'
+  '\.env\.machine-identity$'
+  '\.env\.bak\.'
+  '\.env\.pre-'
+)
+
+staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+blocked=()
+while IFS= read -r file; do
+  for pattern in "${BLOCKED_PATTERNS[@]}"; do
+    if echo "$file" | grep -qE "$pattern"; then
+      # Allow .env.example explicitly
+      if [ "$file" = ".env.example" ]; then
+        continue
+      fi
+      blocked+=("$file")
+      break
+    fi
+  done
+done <<< "$staged_files"
+
+if [ ${#blocked[@]} -gt 0 ]; then
+  echo "ERROR: Attempt to commit credential file(s):" >&2
+  for f in "${blocked[@]}"; do
+    echo "  - $f" >&2
+  done
+  echo "" >&2
+  echo "These files are gitignored for a reason. Remove them from staging:" >&2
+  echo "  git reset HEAD ${blocked[*]}" >&2
+  exit 1
+fi
+
+exit 0

@@ -4,6 +4,8 @@
 package types
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,6 +109,30 @@ func ValidateRelationType(s string) bool {
 	return validRelationTypes[s]
 }
 
+// ValidatePatternConfidence validates a caller-provided float confidence value.
+// Valid range is [0.0, 1.0] inclusive. NaN and Inf are rejected.
+// Returns (f, nil) on success, (0, error) on invalid input.
+//
+// Unlike ValidateImportance (which silently clamps), this function returns an
+// error so the caller can surface the problem to the MCP client rather than
+// silently accepting an out-of-range value — silent clamping is what caused
+// the original int-truncation defect this field was created to replace.
+func ValidatePatternConfidence(f float64) (float64, error) {
+	if math.IsNaN(f) {
+		return 0, fmt.Errorf("pattern_confidence must be a number, got NaN")
+	}
+	if math.IsInf(f, 0) {
+		return 0, fmt.Errorf("pattern_confidence must be finite, got %v", f)
+	}
+	if f < 0.0 {
+		return 0, fmt.Errorf("pattern_confidence must be >= 0.0, got %v", f)
+	}
+	if f > 1.0 {
+		return 0, fmt.Errorf("pattern_confidence must be <= 1.0, got %v", f)
+	}
+	return f, nil
+}
+
 // ValidateImportance clamps n to the valid importance range [0, 4].
 // 0 = critical (never pruned), 4 = trivial (auto-pruned).
 func ValidateImportance(n int) int {
@@ -182,6 +208,13 @@ type Memory struct {
 
 	// InvalidationReason records why the memory was soft-deleted.
 	InvalidationReason *string `json:"invalidation_reason,omitempty"`
+
+	// PatternConfidence is the caller-provided float belief [0.0, 1.0] that a
+	// detected pattern is genuine. Set by the instinct consolidator (Track E1).
+	// nil means "no confidence data provided" — NOT the same as lowest confidence.
+	// Semantically distinct from Importance (static 0-4 priority) and
+	// DynamicImportance (engine-learned spaced-repetition score).
+	PatternConfidence *float64 `json:"pattern_confidence,omitempty"`
 
 	// DynamicImportance is the learned importance score updated via spaced repetition.
 	// Starts at (5-Importance)/3 and drifts up on positive feedback, down on decay.
@@ -371,3 +404,4 @@ type AggregateRow struct {
 	Oldest time.Time `json:"oldest"`
 	Newest time.Time `json:"newest"`
 }
+

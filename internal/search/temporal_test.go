@@ -79,13 +79,13 @@ func TestTemporalVersioning_History(t *testing.T) {
 
 	// First update — should create a version snapshot.
 	newContent := "We no longer deploy on Fridays"
-	updated, err := engine.Correct(ctx, m.ID, &newContent, nil, nil)
+	updated, err := engine.Correct(ctx, m.ID, &newContent, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, updated)
 
 	// Second update.
 	newContent2 := "Deployments happen Monday through Thursday only"
-	updated2, err := engine.Correct(ctx, m.ID, &newContent2, nil, nil)
+	updated2, err := engine.Correct(ctx, m.ID, &newContent2, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, updated2)
 

@@ -1,0 +1,13 @@
+# GitGuardian configuration.
+# See https://docs.gitguardian.com/internal-repositories-monitoring/ggshield/ggshield-configuration
+
+version: 2
+
+# Paths to exclude from scanning. The check-secrets guard's own test fixtures
+# are by design strings shaped like secrets — flagging them defeats the test.
+paths-ignore:
+  - "scripts/check-secrets.test.sh"
+
+# Tighten generic-detector thresholds — we are an open-source project; many
+# value-like strings (hex hashes, IDs) are public and intentional.
+# (Defaults are fine for everything except the test-fixture path above.)

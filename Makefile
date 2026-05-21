@@ -2,14 +2,29 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills install-instinct
 
 ## Show available make targets
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
+
+## Ensure the external Docker networks required by docker-compose.yml exist.
+## Idempotent: networks are created with `external: true` semantics matching the
+## compose declaration (so existing user networks are preserved). #660 fix.
+ensure-networks:
+	@docker network inspect litellm_default >/dev/null 2>&1 || { \
+		echo "creating litellm_default network..."; \
+		docker network create litellm_default; \
+	}
+	@docker network inspect ai-network >/dev/null 2>&1 || { \
+		echo "creating ai-network network..."; \
+		docker network create ai-network; \
+	}
+	@echo "✓ external networks ready"
+
 ## Start engram — requires POSTGRES_PASSWORD and ENGRAM_API_KEY in .env — run 'make init' first.
-up: check-env
+up: check-env ensure-networks
 	@if ! grep -qs '^POSTGRES_PASSWORD=' .env 2>/dev/null && [ -z "$$POSTGRES_PASSWORD" ]; then \
 	    echo "ERROR: POSTGRES_PASSWORD is not set. Run 'make init' to generate one."; \
 	    exit 1; \
@@ -42,10 +57,13 @@ build:
 
 ## Build Go binaries with version injection
 go-build:
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram ./cmd/engram
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-setup ./cmd/engram-setup
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o engram-eval ./cmd/eval
-	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o instinct-benchmark ./cmd/benchmark
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram ./cmd/engram
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram-setup ./cmd/engram-setup
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o engram-eval ./cmd/eval
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o instinct-benchmark ./cmd/benchmark
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o instinct ./cmd/instinct
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o longmemeval ./cmd/longmemeval
+	go build -trimpath -ldflags "-s -w -X main.Version=$(BUILD_VERSION)" -o starter ./cmd/starter
 
 ## Tail container logs
 logs:
@@ -84,9 +102,12 @@ init:
 	    docker volume create engram_pgdata; \
 	    echo "✓ Created Docker volume engram_pgdata"; \
 	fi
-	@if ! docker volume inspect ollama_storage >/dev/null 2>&1; then \
-	    docker volume create ollama_storage; \
-	    echo "✓ Created Docker volume ollama_storage"; \
+	@# #698: the Compose file declares `ollama_storage` as an alias for the
+	@# external volume `ollama_ollama_storage`. Probe + create the external name
+	@# so what `docker volume ls` shows matches what the docs say.
+	@if ! docker volume inspect ollama_ollama_storage >/dev/null 2>&1; then \
+	    docker volume create ollama_ollama_storage; \
+	    echo "✓ Created Docker volume ollama_ollama_storage"; \
 	fi
 
 ## Verify .env contains no placeholder values before deploying.
@@ -97,7 +118,8 @@ check-env:
 	@if [ ! -f .env ] || ! grep -qsE '^POSTGRES_PASSWORD=.+' .env || ! grep -qsE '^ENGRAM_API_KEY=.+' .env; then \
 	    echo "ERROR: .env missing or has empty credentials. Run 'make init'."; exit 1; \
 	fi
-	@echo "✓ .env credentials look set"
+	@# #701: route diagnostic to stderr so `make up > /dev/null` is clean
+	@echo "✓ .env credentials look set" >&2
 
 ## Configure MCP client — fetches current bearer token and writes mcpServers.engram in ~/.claude.json
 ## Run this after: first install, container restart (if key changed), or key rotation.
@@ -123,6 +145,12 @@ test-explore-soak:
 status:
 	@bash infra/status.sh $(if $(NO_REMOTE),--no-remote,)
 
+## Build and install Phase 1 instinct binaries to ~/bin
+install-instinct:
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-consolidate ./cmd/instinct
+	go build -ldflags "-X main.Version=$(BUILD_VERSION)" -o $(HOME)/bin/instinct-audit-go ./cmd/audit
+	@echo "✓ Installed: instinct-consolidate, instinct-audit-go"
+
 ## Install bundled Claude Code skills to ~/.claude/skills/
 install-skills:
 	@mkdir -p ~/.claude/skills
@@ -133,3 +161,18 @@ install-skills:
 ## Run retrieval evaluation harness
 eval:
 	go run ./cmd/eval/main.go $(EVAL_ARGS)
+
+## Force a Postgres backup now (A-2 / #658).
+backup-now:
+	docker compose exec postgres-backup sh -c 'ts=$$(date +%Y%m%d-%H%M%S); out=/backups/engram-manual-$$ts.dump; pg_dump -h postgres -U engram -Fc engram > "$$out" && echo "✓ wrote $$out ($$(du -h $$out | cut -f1))"'
+
+## Restore-drill the most recent backup into a throwaway DB.
+backup-restore-drill:
+	@latest=$$(ls -t backups/engram-*.dump 2>/dev/null | head -1); \
+	if [ -z "$$latest" ]; then echo "no backups found in ./backups/"; exit 1; fi; \
+	echo "restoring $$latest into engram_restore_test ..."; \
+	docker compose exec postgres createdb -U engram engram_restore_test 2>/dev/null || true; \
+	docker compose exec -T postgres pg_restore -U engram -d engram_restore_test --clean --if-exists < $$latest; \
+	docker compose exec postgres psql -U engram -d engram_restore_test -c "SELECT count(*) AS restored_memories FROM memories;"; \
+	docker compose exec postgres dropdb -U engram engram_restore_test; \
+	echo "✓ restore drill passed"

@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# #702: prefer xh (project convention per ~/CLAUDE.md "CLI Tool Preferences");
+# fall back to curl. Caller passes flags as if it were curl.
+_http_get() {
+    if command -v xh >/dev/null 2>&1; then
+        xh --pretty=none "$@"
+    else
+        curl -s "$@"
+    fi
+}
 # verify-recall-fetch.sh — diagnose recall→fetch orphans (engram-go#634 fix#1)
 #
 # Calls /quick-recall for a query, then calls memory_fetch (via /mcp POST) for
@@ -55,9 +64,9 @@ fi
 
 curl_auth() {
     if [[ -n "$AUTH_HEADER" ]]; then
-        curl -s -H "$AUTH_HEADER" "$@"
+        _http_get -H "$AUTH_HEADER" "$@"
     else
-        curl -s "$@"
+        _http_get "$@"
     fi
 }
 

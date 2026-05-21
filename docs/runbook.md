@@ -223,6 +223,70 @@ docker logs engram-reembed | grep -i "exhausted\|retries\|failed"
 
 ---
 
+## engram_db_pool_* (pgxpool saturation)
+
+**A-2 sibling / #673**. The shared pgxpool exposes six gauges sampled every 5 seconds by `db.StartPoolMetricsSampler`:
+
+- `engram_db_pool_acquired_conns` — currently in use
+- `engram_db_pool_idle_conns` — sitting idle
+- `engram_db_pool_total_conns` — acquired + idle
+- `engram_db_pool_max_conns` — configured ceiling
+- `engram_db_pool_acquire_count_total` — cumulative successful acquires
+- `engram_db_pool_acquire_duration_seconds_total` — cumulative wall-time blocked acquiring
+
+**Saturation signal**: `acquired_conns / max_conns` approaching 1.0 means callers will start blocking. The first thing to check when query latency rises.
+
+**Diagnostic**:
+```bash
+# Live gauges
+curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics   | grep '^engram_db_pool_'
+
+# Slow queries that may be holding connections
+docker exec engram-postgres psql -U engram -d engram -c   "SELECT pid, now()-query_start AS age, state, substring(query,1,80) FROM pg_stat_activity WHERE state='active' ORDER BY age DESC LIMIT 10;"
+```
+
+If `acquired_conns` is near `max_conns` for sustained periods, the pool is too small or queries are too slow. Raise `MaxConns` in `internal/db/postgres.go:configureSharedPool` or fix the slow query (Postgres Diagnostics section below).
+
+## engram_audit_drift_alerts_total
+
+**#695**. Increments every time a canonical-query snapshot's RBO-vs-previous score drops below the configured `alert_threshold`. The companion slog.Error line gives the project + query + score; the metric gives a queryable signal for Grafana alerts.
+
+**Investigate when**:
+- Counter rate increases noticeably (sustained drift across multiple snapshots)
+- A specific project's counter increments — recall ranking has shifted for that project
+
+**Likely causes**:
+- Embedding model changed (`memory_migrate_embedder` was run)
+- Adaptive weights diverged (`memory_weight_tune` adjusted ranking inputs)
+- Large bulk ingest changed the relative scoring of the audited query
+
+**Diagnostic**:
+```bash
+# Recent snapshots for a specific canonical query
+docker exec engram-postgres psql -U engram -d engram -c   "SELECT created_at, rbo_vs_prev, jaccard_at_5 FROM audit_snapshots WHERE query_id=<id> ORDER BY created_at DESC LIMIT 10;"
+```
+
+If drift is expected (post-migration), reset the baseline by deleting old snapshots for the affected queries. If unexpected, treat as a recall-quality regression and investigate via `memory_diagnose`.
+
+## Embed Circuit Breaker State Transitions
+
+**#676**. Every state transition is logged at INFO (HALF_OPEN, CLOSED) or WARN (OPEN). Search `journalctl -u engram-go` for `embed circuit breaker` to see the full transition history.
+
+The companion gauge `engram_embed_circuit_state` (0=CLOSED, 1=HALF_OPEN, 2=OPEN) gives the current state for Prometheus alerts.
+
+When OPEN: `memory_recall` degrades to BM25+recency until the next probe attempt. The log line includes `next_probe_at` so on-call knows when recovery will be tried automatically.
+
+## Reembed Worker Healthchecks
+
+**#672**. Each `engram-reembed-*` container now has a Docker HEALTHCHECK that probes Postgres reachability via `pg_isready`. `docker ps` shows healthy/unhealthy based on that probe.
+
+**What this detects**:
+- Network partition between reembed worker and engram-postgres
+- Postgres unreachable / not accepting connections
+
+**What this does NOT detect** (still — same caveat as before):
+- A deadlocked worker that holds DB connections but no longer processes chunks. For that, watch `engram_chunks_pending_reembed` (see top of this runbook).
+
 ## Entity Extraction Drops
 
 **Meaning:** When `ENGRAM_ENTITY_PROJECTS` is set and `ANTHROPIC_API_KEY` is present, entities are extracted from new memories asynchronously. If Claude API calls fail, extraction is skipped for that memory.
@@ -316,6 +380,56 @@ If the Ollama container gets tight on memory, let `qwen3-coder:30b` fall out fir
 | Session disconnections | High `engram_episodes_ended_by_reaper_total` | Network instability, firewall dropping long-lived connections | Check network, increase keepalive timeout |
 | Panic in logs | `engram_worker_panics_total` >0 | Software bug | File GitHub issue with logs and `.env` settings |
 | Setup-token returns 403 | Can't get token from outside localhost | Not in RFC1918 or Docker bridge | Use correct host IP, set `ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1` |
+
+---
+
+## Postgres Backups
+
+**A-2 / #658**. The `postgres-backup` sidecar container (defined in `docker-compose.yml`)
+takes a nightly `pg_dump -Fc` of the `engram` database to `./backups/`, with
+14-day retention. Combined with `synchronous_commit=on` on the primary, this
+covers two failure modes:
+
+- **Crash / OOM / power**: in-flight commits are durable (sync_commit=on).
+- **Operator error / logical corruption / volume loss**: the most recent
+  nightly dump is restorable.
+
+**Verify a backup exists**:
+
+```bash
+ls -la backups/engram-*.dump | tail -5
+```
+
+If no recent file, check the sidecar logs:
+
+```bash
+docker logs engram-postgres-backup --tail 30
+```
+
+**Force a backup now** (e.g. before a migration or `memory_delete_project`):
+
+```bash
+make backup-now
+```
+
+**Restore drill** — do this ONCE before trusting the backup path. Restores into
+a throwaway database; does not touch primary.
+
+```bash
+make backup-restore-drill
+```
+
+The drill creates `engram_restore_test`, restores the most recent dump, runs a
+sanity query, and drops the test DB. If it fails, your backup chain is broken
+and `synchronous_commit=on` is the only durability you actually have.
+
+**What this does NOT protect against**: logical/semantic corruption that
+propagates into the backup window before being noticed. If a bug writes garbage
+embeddings or a bad `memory_correct` overwrites a real memory, the nightly
+dumps will faithfully capture the corrupted state. Within 14 days every backup
+contains the bug. Detecting silent semantic corruption requires either WAL
+archiving with PITR (deliberately out of scope per A-2 advisory) or
+application-level audit logging of mutations.
 
 ---
 

@@ -60,7 +60,9 @@ func configureSharedPool(cfg *pgxpool.Config) {
 	cfg.MaxConns = 50
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 3 * time.Minute
-	cfg.HealthCheckPeriod = 30 * time.Second
+	// 15s health-check so the pool detects dead connections within one
+	// GlobalReembedder poll interval after a Postgres restart (#645).
+	cfg.HealthCheckPeriod = 15 * time.Second
 }
 
 // registerTypesAfterConnect registers custom type codecs that every connection
@@ -508,6 +510,7 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		retrievalPrecision         *float64
 		episodeID                  *string
 		documentID                 *string
+		patternConfidence          *float64
 		rank                       float64
 	)
 	// Column order matches the live DB schema (search_vector was added between
@@ -516,7 +519,8 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 	//   last_accessed, created_at, updated_at, search_vector, immutable, expires_at,
 	//   summary, content_hash, storage_mode, valid_from, valid_to, invalidation_reason,
 	//   dynamic_importance, retrieval_interval_hrs, next_review_at, times_retrieved,
-	//   times_useful, retrieval_precision, episode_id, document_id (+rank appended by FTSSearch query).
+	//   times_useful, retrieval_precision, episode_id, document_id,
+	//   pattern_confidence (+rank appended by FTSSearch query).
 	if err := row.Scan(
 		&id, &content, &memType, &proj, &tags,
 		&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
@@ -524,7 +528,8 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		&immutable, &expiresAt, &summary, &contentHash, &storageMode,
 		&validFrom, &validTo, &invalidationReason,
 		&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
-		&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &documentID, &rank,
+		&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &documentID,
+		&patternConfidence, &rank,
 	); err != nil {
 		return FTSResult{}, err
 	}
@@ -568,6 +573,7 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		ValidFrom:            validFrom,
 		ValidTo:              validTo,
 		InvalidationReason:   invalidationReason,
+		PatternConfidence:    patternConfidence,
 		DynamicImportance:    dynamicImportance,
 		RetrievalIntervalHrs: retrievalIntervalHrs,
 		NextReviewAt:         nextReviewAt,
@@ -607,8 +613,9 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		TimesRetrieved       int
 		TimesUseful          int
 		RetrievalPrecision   *float64
-		EpisodeID            *string // nullable FK
-		DocumentID           *string // nullable FK (010_documents)
+		EpisodeID            *string  // nullable FK
+		DocumentID           *string  // nullable FK (010_documents)
+		PatternConfidence    *float64 // nullable (021_pattern_confidence)
 	}
 	var r raw
 	// Column order matches the live DB schema. search_vector was added between
@@ -622,6 +629,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 	//   times_retrieved, times_useful, retrieval_precision,  (007_retrieval)
 	//   episode_id                                           (008_episodes)
 	//   document_id                                          (010_documents)
+	//   pattern_confidence                                   (021_pattern_confidence)
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
@@ -630,7 +638,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		&r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
 		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
 		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
-		&r.DocumentID,
+		&r.DocumentID, &r.PatternConfidence,
 	)
 	if err != nil {
 		return nil, err
@@ -678,6 +686,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		ValidFrom:            r.ValidFrom,
 		ValidTo:              r.ValidTo,
 		InvalidationReason:   r.InvalidationReason,
+		PatternConfidence:    r.PatternConfidence,
 		DynamicImportance:    r.DynamicImportance,
 		RetrievalIntervalHrs: r.RetrievalIntervalHrs,
 		NextReviewAt:         r.NextReviewAt,

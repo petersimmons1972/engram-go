@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 func TestLoadConfig_EnvVars(t *testing.T) {
@@ -59,6 +63,39 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.minEvents != 20 {
 		t.Errorf("default minEvents = %d, want 20", cfg.minEvents)
 	}
+}
+
+// TestEnvDuration verifies the envDuration helper used for INSTINCT_LLM_TIMEOUT.
+// Ref: #732.
+func TestEnvDuration(t *testing.T) {
+	t.Run("returns_default_when_unset", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_MISSING", "")
+		got := envDuration("ENVTEST_DUR_MISSING", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default)", got)
+		}
+	})
+	t.Run("parses_valid_duration", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_VALID", "2m")
+		got := envDuration("ENVTEST_DUR_VALID", 30*time.Second)
+		if got != 2*time.Minute {
+			t.Errorf("envDuration() = %v, want 2m", got)
+		}
+	})
+	t.Run("returns_default_on_invalid_value", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_BAD", "notaduration")
+		got := envDuration("ENVTEST_DUR_BAD", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default on bad input)", got)
+		}
+	})
+	t.Run("instinct_llm_timeout_sets_llm_timeout", func(t *testing.T) {
+		t.Setenv("INSTINCT_LLM_TIMEOUT", "90s")
+		got := envDuration("INSTINCT_LLM_TIMEOUT", 30*time.Second)
+		if got != 90*time.Second {
+			t.Errorf("INSTINCT_LLM_TIMEOUT = %v, want 90s", got)
+		}
+	})
 }
 
 func TestLoadAndRotate_BelowMinEvents(t *testing.T) {
@@ -196,6 +233,11 @@ func TestGroupBySession(t *testing.T) {
 
 // ── Engram client tests ───────────────────────────────────────────────────────
 
+// newTestEngramServer builds a hybridEngram backed by an in-process MCP SSE
+// test server.  The REST client within the hybrid is pointed at a no-op REST
+// spy server that accepts all /quick-store and /quick-recall requests.
+// Individual tests that need to inspect REST behaviour replace he.rest with
+// their own httptest.Server.
 func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 	t.Helper()
 
@@ -208,6 +250,8 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 			mcpmcp.TextContent{Type: "text", Text: `{"episode_id":"ep-test-123"}`},
 		}}, nil
 	})
+	// memory_ingest is no longer called by the hybrid client (ingest uses REST),
+	// but keep the handler so existing tests that registered expectations still compile.
 	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{}`},
@@ -218,11 +262,13 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 			mcpmcp.TextContent{Type: "text", Text: `{}`},
 		}}, nil
 	})
+	// memory_store is no longer called by the hybrid (store uses REST).
 	mcpServer.AddTool(mcpmcp.NewTool("memory_store"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{"id":"mem-abc"}`},
 		}}, nil
 	})
+	// memory_recall is no longer called by the hybrid (recall uses REST).
 	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
 		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{
 			mcpmcp.TextContent{Type: "text", Text: `{"memories":[{"id":"mem-abc","importance":0.5,"tags":["instinct","sig-test"]}]}`},
@@ -235,17 +281,34 @@ func newTestEngramServer(t *testing.T) (engramAPI, func()) {
 	})
 
 	ts := server.NewTestServer(mcpServer)
-	e, err := newSSEEngram(ts.URL, "")
+
+	// REST spy: accepts /quick-store and /quick-recall for tests that don't need
+	// to inspect REST traffic.  Tests that do inspect it replace he.rest inline.
+	restSpy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/quick-store":
+			_, _ = w.Write([]byte(`{"ok":true,"id":"mem-abc"}`))
+		case "/quick-recall":
+			_, _ = w.Write([]byte(`{"results":[{"id":"mem-abc","tags":["instinct","sig-test"],"importance":0.5}]}`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+
+	he, err := newHybridEngram(ts.URL, "", restSpy.URL)
 	if err != nil {
-		t.Fatalf("newSSEEngram: %v", err)
+		t.Fatalf("newHybridEngram: %v", err)
 	}
+
 	ctx := context.Background()
-	if err := e.connect(ctx); err != nil {
+	if err := he.connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	return e, func() {
-		e.close()
+	return he, func() {
+		he.close()
 		ts.Close()
+		restSpy.Close()
 	}
 }
 
@@ -309,17 +372,37 @@ func TestEngramClient_Correct(t *testing.T) {
 	}
 }
 
-// ── Haiku client tests ────────────────────────────────────────────────────────
+// ── Detect pipeline tests (replaces former callHaiku tests) ──────────────────
+//
+// These are integration tests of the full llmclient.AnthropicClient → consolidator.Detect
+// path, run from the main package to exercise the wiring.
 
-func TestCallHaiku_ValidPatterns(t *testing.T) {
+func newTestAnthropicClient(t *testing.T, endpoint string) llmclient.LLMClient {
+	t.Helper()
+	c, err := llmclient.NewAnthropicClient(llmclient.Config{
+		APIKey:   "sk-ant-fake",
+		Endpoint: endpoint,
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewAnthropicClient: %v", err)
+	}
+	return c
+}
+
+func TestDetectPipeline_ValidPatterns(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"User runs tests after edits\",\"domain\":\"testing\",\"evidence\":\"edit then test 3x\",\"tag_signature\":\"sig-edit-test\"}]"}],"usage":{"input_tokens":10,"output_tokens":50}}`)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Edit", ToolOutputSummary: "saved", ExitStatus: 0}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Edit", ToolOutputSummary: "saved", ExitStatus: 0}}
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 1 {
 		t.Fatalf("want 1 pattern, got %d", len(patterns))
 	}
@@ -328,15 +411,19 @@ func TestCallHaiku_ValidPatterns(t *testing.T) {
 	}
 }
 
-func TestCallHaiku_SkipsInvalidPatterns(t *testing.T) {
+func TestDetectPipeline_SkipsInvalidPatterns(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"ok\",\"domain\":\"git\",\"evidence\":\"x\",\"tag_signature\":\"sig-ok\"},{\"type\":\"correction\",\"description\":\"bad\",\"domain\":\"bash\",\"evidence\":\"y\"}]"}],"usage":{"input_tokens":5,"output_tokens":20}}`)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Bash", ToolOutputSummary: "err", ExitStatus: 1}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "err", ExitStatus: 1}}
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 1 {
 		t.Fatalf("want 1 valid pattern (invalid skipped), got %d", len(patterns))
 	}
@@ -345,26 +432,37 @@ func TestCallHaiku_SkipsInvalidPatterns(t *testing.T) {
 	}
 }
 
-func TestCallHaiku_APIError(t *testing.T) {
+func TestDetectPipeline_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}))
 	defer srv.Close()
 
-	events := []Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
-	patterns := callHaiku(context.Background(), "sk-ant-fake", events, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
+	// After #772, Anthropic 500 wraps ErrBackendUnavailable. The consolidator
+	// treats ErrBackendUnavailable as a graceful skip (nil, nil) — transient
+	// infra failure should not crash the pipeline. Assert no error returned.
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Errorf("Detect() should gracefully skip on Anthropic 500 (ErrBackendUnavailable), got: %v", err)
+	}
 	if len(patterns) != 0 {
-		t.Errorf("want 0 patterns on API error, got %d", len(patterns))
+		t.Errorf("Detect() should return empty patterns on 500, got: %v", patterns)
 	}
 }
 
-func TestCallHaiku_EmptyResponse(t *testing.T) {
+func TestDetectPipeline_EmptyResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[]"}],"usage":{"input_tokens":5,"output_tokens":2}}`)
 	}))
 	defer srv.Close()
 
-	patterns := callHaiku(context.Background(), "sk-ant-fake", []Event{}, srv.URL+"/v1/messages")
+	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
+	patterns, err := consolidator.Detect(context.Background(), c, []consolidator.Event{{ToolName: "Bash"}})
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
 	if len(patterns) != 0 {
 		t.Errorf("want 0 patterns for empty response, got %d", len(patterns))
 	}
@@ -496,6 +594,72 @@ func TestWriteEpisodeDoesNotDuplicateIngests(t *testing.T) {
 	}
 }
 
+// TestWriteEpisodeMultiEventDoesNotShareContext verifies that each ingest call
+// receives its own independent timeout budget. A slow mock (3s per call) with
+// N=5 events must all succeed: if a shared context were used the later events
+// would be starved after the first call consumed the budget.
+func TestWriteEpisodeMultiEventDoesNotShareContext(t *testing.T) {
+	const (
+		n           = 5
+		callDelay   = 3 * time.Second
+		minExpected = time.Duration(n) * callDelay
+	)
+
+	var ingested int
+
+	slowMock := &slowIngestEngram{
+		mockEngram: &mockEngram{},
+		delay:      callDelay,
+		ingestFn: func() {
+			ingested++
+		},
+	}
+
+	events := make([]Event, n)
+	for i := range events {
+		events[i] = Event{SessionID: "s1", ProjectID: "p1", ToolName: "Bash"}
+	}
+
+	start := time.Now()
+	// Use a context with a budget well beyond N×delay so the outer deadline
+	// never fires; only per-call timeouts (mcpCallTimeout=15s) matter here.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if err := writeEpisode(ctx, slowMock, "s1", "p1", events); err != nil {
+		t.Fatalf("writeEpisode: %v", err)
+	}
+
+	elapsed := time.Since(start)
+	if ingested != n {
+		t.Errorf("ingested %d events, want %d — some were context-canceled", ingested, n)
+	}
+	if elapsed < minExpected {
+		t.Errorf("elapsed %v < %v — calls may not have actually waited (test validity check)", elapsed, minExpected)
+	}
+}
+
+// slowIngestEngram wraps mockEngram and adds a configurable delay to ingest.
+type slowIngestEngram struct {
+	*mockEngram
+	delay    time.Duration
+	ingestFn func()
+}
+
+func (s *slowIngestEngram) ingest(ctx context.Context, e Event, p, sess string) error {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	if s.ingestFn != nil {
+		s.ingestFn()
+	}
+	return nil
+}
+
 func TestUpsertPattern_GlobalPromotion(t *testing.T) {
 	// Existing pattern at 0.7, step up to 0.9 (>= 0.8), events span 2 projects → promote globally
 	e := &mockEngram{recalled: &recallResult{id: "mem-123", confidence: 0.7}}
@@ -531,9 +695,8 @@ func TestRun_NoopWhenBelowMin(t *testing.T) {
 
 func TestRun_ProcessesBuffer(t *testing.T) {
 	mcpServer := server.NewMCPServer("test-engram", "1.0.0", server.WithToolCapabilities(true))
-	var ingestCount int
 
-	for _, name := range []string{"memory_episode_start", "memory_episode_end", "memory_store", "memory_correct"} {
+	for _, name := range []string{"memory_episode_start", "memory_episode_end", "memory_correct"} {
 		n := name
 		text := `{}`
 		if n == "memory_episode_start" {
@@ -544,15 +707,24 @@ func TestRun_ProcessesBuffer(t *testing.T) {
 			return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: txt}}}, nil
 		})
 	}
-	mcpServer.AddTool(mcpmcp.NewTool("memory_ingest"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
-		ingestCount++
-		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{}`}}}, nil
-	})
-	mcpServer.AddTool(mcpmcp.NewTool("memory_recall"), func(ctx context.Context, req mcpmcp.CallToolRequest) (*mcpmcp.CallToolResult, error) {
-		return &mcpmcp.CallToolResult{Content: []mcpmcp.Content{mcpmcp.TextContent{Type: "text", Text: `{"memories":[]}`}}}, nil
-	})
 	ts := server.NewTestServer(mcpServer)
 	defer ts.Close()
+
+	// REST spy: counts /quick-store calls (ingest + store) and handles /quick-recall.
+	var storeCount int
+	restSpy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/quick-store":
+			storeCount++
+			fmt.Fprint(w, `{"ok":true,"id":"mem-1"}`)
+		case "/quick-recall":
+			fmt.Fprint(w, `{"results":[]}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer restSpy.Close()
 
 	haikuSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"content":[{"type":"text","text":"[{\"type\":\"workflow\",\"description\":\"test\",\"domain\":\"git\",\"evidence\":\"e\",\"tag_signature\":\"sig-t\"}]"}],"usage":{"input_tokens":5,"output_tokens":10}}`)
@@ -571,14 +743,17 @@ func TestRun_ProcessesBuffer(t *testing.T) {
 		minEvents:     3,
 		engramURL:     ts.URL,
 		engramToken:   "",
+		engramRESTURL: restSpy.URL,
 		anthropicKey:  "sk-fake",
 		haikuEndpoint: haikuSrv.URL + "/v1/messages",
 	}
 	if err := run(context.Background(), cfg); err != nil {
 		t.Fatalf("run() error: %v", err)
 	}
-	if ingestCount != 3 {
-		t.Errorf("want 3 ingest calls, got %d", ingestCount)
+	// storeCount = 3 ingest calls + 1 store call for the detected pattern.
+	// At minimum the 3 ingest calls must have reached the REST server.
+	if storeCount < 3 {
+		t.Errorf("want >= 3 REST /quick-store calls (ingest), got %d", storeCount)
 	}
 	if _, err := os.Stat(buf); !os.IsNotExist(err) {
 		t.Errorf("buffer should have been rotated")

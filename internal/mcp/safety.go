@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,6 +29,11 @@ var (
 		"approval required", "review required", "deployment pipeline", "migration review", "without approval",
 	}
 	productionHints = []string{"production", "prod", "primary", "main branch", "main"}
+
+	// #709: word-boundary regex for main-branch detection. Matches
+	// "main" as a standalone word, "main branch", "origin/main", "master".
+	// Rejects "domain/main-cluster", "mainframe", "remains", etc.
+	mainBranchRe = regexp.MustCompile(`(?i)(?:^|\s)(main|master)\b|\bmain branch\b|\borigin/main\b`)
 	deleteHints     = []string{"delete from", "delete ", "truncate", "drop ", "destroy", "recreate"}
 	ddlHints        = []string{"create index", "alter table", "ddl", "schema", "migration", "index "}
 	forcePushHints  = []string{"git push --force", "push --force", "force push"}
@@ -197,7 +203,10 @@ func classifyAction(action string) actionProfile {
 		p.Production = true
 		p.Signals = append(p.Signals, "production_scope")
 	}
-	if containsAny(lower, []string{" main", "main branch", " origin/main", " master"}) {
+	// #709: word-boundary matching prevents false positives like "domain/main"
+	// or "mainframe" while still catching the intended phrases. Pre-compiled
+	// regex at package scope (mainBranchRe in this file) is the source of truth.
+	if mainBranchRe.MatchString(lower) {
 		p.MainBranch = true
 		p.Signals = append(p.Signals, "protected_branch")
 	}

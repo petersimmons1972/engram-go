@@ -44,6 +44,103 @@ var (
 	resolvedDecay   decayConfig
 )
 
+// weightConfig holds the resolved env-var knobs for composite scoring weights.
+// It is populated exactly once via weightConfigOnce.
+type weightConfig struct {
+	vector    float64 // ENGRAM_W_COSINE;     default weightVector
+	bm25      float64 // ENGRAM_W_BM25;       default weightBM25
+	recency   float64 // ENGRAM_W_RECENCY;    default weightRecency
+	precision float64 // ENGRAM_W_PRECISION;  default weightPrecision
+}
+
+var (
+	weightConfigOnce sync.Once
+	resolvedWeights  weightConfig
+)
+
+// temporalWeightConfig holds the resolved env-var knobs for TemporalWeights.
+// It is populated exactly once via temporalWeightConfigOnce.
+type temporalWeightConfig struct {
+	vector    float64 // ENGRAM_W_TEMPORAL_COSINE;    default temporalWeightVector
+	bm25      float64 // ENGRAM_W_TEMPORAL_BM25;      default temporalWeightBM25
+	recency   float64 // ENGRAM_W_TEMPORAL_RECENCY;   default temporalWeightRecency
+	precision float64 // ENGRAM_W_TEMPORAL_PRECISION; default temporalWeightPrecision
+}
+
+var (
+	temporalWeightConfigOnce sync.Once
+	resolvedTemporalWeights  temporalWeightConfig
+)
+
+// kuWeightConfig holds the resolved env-var knobs for KnowledgeUpdateWeights.
+// It is populated exactly once via kuWeightConfigOnce.
+type kuWeightConfig struct {
+	vector    float64 // ENGRAM_W_KU_COSINE;    default kuWeightVector
+	bm25      float64 // ENGRAM_W_KU_BM25;      default kuWeightBM25
+	recency   float64 // ENGRAM_W_KU_RECENCY;   default kuWeightRecency
+	precision float64 // ENGRAM_W_KU_PRECISION; default kuWeightPrecision
+}
+
+var (
+	kuWeightConfigOnce sync.Once
+	resolvedKUWeights  kuWeightConfig
+)
+
+// loadTemporalWeightConfig reads ENGRAM_W_TEMPORAL_* env vars. Each is
+// independently optional; missing or invalid values fall back to the
+// compile-time temporal constants.
+func loadTemporalWeightConfig() {
+	resolvedTemporalWeights = temporalWeightConfig{
+		vector:    envconf.FloatBounded("ENGRAM_W_TEMPORAL_COSINE", temporalWeightVector, 0.0, 1.0),
+		bm25:      envconf.FloatBounded("ENGRAM_W_TEMPORAL_BM25", temporalWeightBM25, 0.0, 1.0),
+		recency:   envconf.FloatBounded("ENGRAM_W_TEMPORAL_RECENCY", temporalWeightRecency, 0.0, 1.0),
+		precision: envconf.FloatBounded("ENGRAM_W_TEMPORAL_PRECISION", temporalWeightPrecision, 0.0, 1.0),
+	}
+}
+
+// temporalWeightCfg returns the resolved temporal weight configuration, loading it on first call.
+func temporalWeightCfg() temporalWeightConfig {
+	temporalWeightConfigOnce.Do(loadTemporalWeightConfig)
+	return resolvedTemporalWeights
+}
+
+// loadKUWeightConfig reads ENGRAM_W_KU_* env vars. Each is independently
+// optional; missing or invalid values fall back to the compile-time KU constants.
+func loadKUWeightConfig() {
+	resolvedKUWeights = kuWeightConfig{
+		vector:    envconf.FloatBounded("ENGRAM_W_KU_COSINE", kuWeightVector, 0.0, 1.0),
+		bm25:      envconf.FloatBounded("ENGRAM_W_KU_BM25", kuWeightBM25, 0.0, 1.0),
+		recency:   envconf.FloatBounded("ENGRAM_W_KU_RECENCY", kuWeightRecency, 0.0, 1.0),
+		precision: envconf.FloatBounded("ENGRAM_W_KU_PRECISION", kuWeightPrecision, 0.0, 1.0),
+	}
+}
+
+// kuWeightCfg returns the resolved KU weight configuration, loading it on first call.
+func kuWeightCfg() kuWeightConfig {
+	kuWeightConfigOnce.Do(loadKUWeightConfig)
+	return resolvedKUWeights
+}
+
+// loadWeightConfig reads ENGRAM_W_COSINE, ENGRAM_W_BM25, ENGRAM_W_RECENCY,
+// and ENGRAM_W_PRECISION. Each is independently optional: unset variables fall
+// back to the compile-time constants. Values outside [0.0, 1.0] are rejected
+// with a warning and the constant default is used instead. The function never
+// panics — a bad env var degrades gracefully.
+func loadWeightConfig() {
+	resolvedWeights = weightConfig{
+		vector:    envconf.FloatBounded("ENGRAM_W_COSINE", weightVector, 0.0, 1.0),
+		bm25:      envconf.FloatBounded("ENGRAM_W_BM25", weightBM25, 0.0, 1.0),
+		recency:   envconf.FloatBounded("ENGRAM_W_RECENCY", weightRecency, 0.0, 1.0),
+		precision: envconf.FloatBounded("ENGRAM_W_PRECISION", weightPrecision, 0.0, 1.0),
+	}
+}
+
+// weightCfg returns the resolved weight configuration, loading it on first call.
+func weightCfg() weightConfig {
+	weightConfigOnce.Do(loadWeightConfig)
+	return resolvedWeights
+}
+
 // ResetDecayConfigForTesting resets the decay config sync.Once so tests can inject different env var values.
 func ResetDecayConfigForTesting() {
 	decayConfigOnce = sync.Once{}
@@ -91,13 +188,18 @@ type Weights struct {
 	Precision float64
 }
 
-// DefaultWeights returns the compile-time weight constants.
+// DefaultWeights returns the effective composite scoring weights.
+// Values are read once from ENGRAM_W_COSINE, ENGRAM_W_BM25, ENGRAM_W_RECENCY,
+// and ENGRAM_W_PRECISION; each falls back to the compile-time constant when the
+// variable is absent or invalid.  The resolved values are cached via sync.Once
+// so callers pay no per-query overhead.
 func DefaultWeights() Weights {
+	cfg := weightCfg()
 	return Weights{
-		Vector:    weightVector,
-		BM25:      weightBM25,
-		Recency:   weightRecency,
-		Precision: weightPrecision,
+		Vector:    cfg.vector,
+		BM25:      cfg.bm25,
+		Recency:   cfg.recency,
+		Precision: cfg.precision,
 	}
 }
 
@@ -105,12 +207,15 @@ func DefaultWeights() Weights {
 // asking about current or changed state (e.g., "where does X live currently?").
 // Recency is higher than the default (0.22 vs 0.15) but below the full temporal
 // profile (0.30), preserving semantic relevance for partially-updated facts.
+// Override individual weights via ENGRAM_W_KU_COSINE, ENGRAM_W_KU_BM25,
+// ENGRAM_W_KU_RECENCY, ENGRAM_W_KU_PRECISION.
 func KnowledgeUpdateWeights() Weights {
+	cfg := kuWeightCfg()
 	return Weights{
-		Vector:    kuWeightVector,
-		BM25:      kuWeightBM25,
-		Recency:   kuWeightRecency,
-		Precision: kuWeightPrecision,
+		Vector:    cfg.vector,
+		BM25:      cfg.bm25,
+		Recency:   cfg.recency,
+		Precision: cfg.precision,
 	}
 }
 
@@ -118,12 +223,15 @@ func KnowledgeUpdateWeights() Weights {
 // query is classified as time-anchored (via IsTemporalQuery). Recency is raised
 // to 0.30 so that chronologically recent sessions rank above semantically similar
 // but older sessions — directly targeting temporal-reasoning benchmark failures.
+// Override individual weights via ENGRAM_W_TEMPORAL_COSINE, ENGRAM_W_TEMPORAL_BM25,
+// ENGRAM_W_TEMPORAL_RECENCY, ENGRAM_W_TEMPORAL_PRECISION.
 func TemporalWeights() Weights {
+	cfg := temporalWeightCfg()
 	return Weights{
-		Vector:    temporalWeightVector,
-		BM25:      temporalWeightBM25,
-		Recency:   temporalWeightRecency,
-		Precision: temporalWeightPrecision,
+		Vector:    cfg.vector,
+		BM25:      cfg.bm25,
+		Recency:   cfg.recency,
+		Precision: cfg.precision,
 	}
 }
 

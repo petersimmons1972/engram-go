@@ -148,7 +148,7 @@ func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 		log.Printf("WARN write hypotheses.jsonl: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	for _, s := range scores {
 		if err := enc.Encode(longmemeval.HypothesisLine{QuestionID: s.QuestionID, Hypothesis: s.Hypothesis}); err != nil {
@@ -165,7 +165,7 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 		log.Printf("WARN write retrieval_log.jsonl: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 
 	for _, s := range scores {
@@ -206,10 +206,16 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		Incorrect        int `json:"incorrect"`
 		Total            int `json:"total"`
 	}
+	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
+	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
+	for _, s := range scores {
+		deduped[s.QuestionID] = s
+	}
+
 	overall := &byType{}
 	byQType := make(map[string]*byType)
 
-	for _, s := range scores {
+	for _, s := range deduped {
 		if s.Status != "done" {
 			continue
 		}
@@ -235,7 +241,7 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		"overall":      overall,
 		"by_type":      byQType,
 		"run_id":       cfg.RunID,
-		"total_scored": len(scores),
+		"total_scored": len(deduped),
 	}
 
 	data, err := json.MarshalIndent(report, "", "  ")
@@ -259,4 +265,10 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		fmt.Printf("Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
 		fmt.Printf("Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
 	}
+}
+
+// normalizeLabel canonicalises a score label: trims surrounding whitespace
+// and upper-cases the remainder. Empty input returns empty output.
+func normalizeLabel(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
 }

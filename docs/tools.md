@@ -1,4 +1,4 @@
-# All 43 Tools
+# MCP Tool Reference
 
 You open a session. The codebase is the same as yesterday but you have no memory of it. Before writing a line, you need to know: what decisions did we make about auth? Are there any known bugs in this module? What was the next thing we planned to do?
 
@@ -6,13 +6,23 @@ Three calls answer that — one to recall recent context, one targeted at the wo
 
 <p align="center"><img src="assets/svg/session-workflow.svg" alt="Agent session workflow" width="900"></p>
 
-<p align="center"><img src="assets/svg/tools-reference.svg" alt="43 MCP Tools reference" width="900"></p>
+<p align="center"><img src="assets/svg/tools-reference.svg" alt="MCP Tool Reference" width="900"></p>
 
 ---
 
 ## MCP Tool Profiles
 
-By default, engram exposes **20 core tools** in its MCP surface. An additional 29 maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`.
+By default, engram exposes <!-- count:visible-default -->17<!-- /count --> tools in its `tools/list` MCP surface. An additional <!-- count:hidden -->29<!-- /count --> maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`. When `ANTHROPIC_API_KEY` is set, <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) are also registered, bringing the visible total to <!-- count:visible-with-ai -->21<!-- /count -->.
+
+The three canonical numbers used throughout this doc:
+
+| Term | Default | With `ANTHROPIC_API_KEY` |
+|------|---------|---------------------------|
+| **Visible in `tools/list`** | 17 | 21 |
+| **Hidden (callable via `tools/call`)** | 29 | 29 |
+| **Total callable** | <!-- count:total-callable-default -->46<!-- /count --> | <!-- count:total-callable-with-ai -->50<!-- /count --> |
+
+The unconditional registry has <!-- count:unconditional -->46<!-- /count --> entries; subtracting the hidden set yields the visible default.
 
 ### Hidden Tools (callable but not listed)
 
@@ -100,6 +110,8 @@ memory_store(
 | Medium | 2 | 1.0× | Never |
 | Low | 3 | 0.67× | Never |
 | Trivial | 4 | 0.33× | After 30 days |
+
+> **Two scales, do not confuse them.** `importance` itself is an integer 0–4 (5 discrete levels). The **multiplier** column above shows the runtime scoring effect (~0.33× to ~1.67×, derived as `max(0.1, (5 - importance) / 3)`). If you have seen a range like "5-100" or "0.33–1.67" referenced elsewhere, that is the multiplier or its percent form, not the input you pass to `memory_store`. The only other numeric memory field, `pattern_confidence`, is a float 0.0–1.0.
 
 Set `importance=0` (Critical) sparingly. A constraint that must never be violated — never use raw SQL outside the repository layer, never store tokens in localStorage — belongs here. Most decisions belong at High or Medium. If everything is Critical, nothing is.
 
@@ -204,7 +216,18 @@ Reach for this when you want to audit a category — "what decisions have we rec
 Tell the system which results were useful. Over time, this strengthens the graph edges between memories that surface together helpfully and weakens edges that lead to irrelevant results.
 
 ```python
-memory_feedback(memory_ids="id1,id2,id3", helpful=True, project="my-app")
+memory_feedback(
+    event_id="<UUID from memory_recall response>",
+    memory_ids=["id1", "id2", "id3"],
+    project="my-app"
+)
+
+# To record a retrieval miss (no edge boost applied) — see CLAUDE.md "Retrieval Miss Handling":
+memory_feedback(
+    event_id="<UUID from memory_recall response>",
+    memory_ids=[],
+    failure_class="vocabulary_mismatch"   # or aggregation_failure, stale_ranking, missing_content, scope_mismatch, other
+)
 ```
 
 This is the only mechanism for the knowledge graph to learn from usage rather than from explicit connections you create. You do not have to call it — but projects where it is used regularly return better results over time.
@@ -226,6 +249,31 @@ memory_correct(
     project="my-app"
 )
 ```
+
+**Accepted parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `memory_id` | string | yes | ID of the memory to update |
+| `project` | string | yes | Project namespace the memory belongs to; must match the project used at store time |
+| `new_content` | string | no | Replacement content; omit to leave content unchanged |
+| `tags` | array of strings | no | Replacement tag set; see tag-and-valid_from rules below |
+| `importance` | integer 0–4 | no | Replacement importance value; must be 0–4. Out-of-range returns a tool-result error (`isError: true`) with message `importance must be 0-4`. Symmetric with `memory_store` validation. |
+
+> **Only-promote-never-nullify rule (issue #779):** `memory_correct` can set or recalculate `valid_from` via `date:` tags, but it can never clear it except through an explicit empty tag list. Sending no `tags` argument at all leaves `valid_from` untouched — it is never nullified by a field you did not send. In practice: omit `tags` to update only `content` or `importance` without disturbing `valid_from`. This asymmetry is intentional; it prevents accidental date-erasure when the caller only cares about the content. The sole exception is `tags: []` (empty array), which explicitly clears `valid_from` — see issue #765 for the recalculation logic.
+
+**Tag and valid_from rules (issue #765):**
+
+`valid_from` is derived from `date:YYYY-MM-DD` tags. On every `memory_correct` call that includes a `tags` argument, `valid_from` is recalculated from the supplied tag set:
+
+- **Omit `tags`** — `valid_from` is left unchanged. Use this when you only want to update content or importance.
+- **`tags: ["date:2024-06-01", ...]`** — `valid_from` is set to `2024-06-01`.
+- **`tags: []`** — `valid_from` is cleared to `NULL` (no date tag in the empty set).
+- **`tags: null`** — treated identically to omitting `tags`; `valid_from` is preserved. This is a JSON deserialization constraint: `null` and an absent key both produce `nil` after `json.Unmarshal` into `map[string]any`. To explicitly clear `valid_from`, send `"tags": []` (empty array).
+
+> **For typed-language SDKs (Go, Rust, Java):** A nil/null pointer field serialized to JSON usually emits `"tags":null`, which is treated as omitting `tags` (preserves `valid_from`). To CLEAR `valid_from`, serialize `tags` as an empty array `[]`, not `null`. Go SDKs should tag the field with `json:",omitempty"` if "no field" is the intended default.
+
+> **Behavior changes:** This recalculation behavior was introduced with issue #765. Prior to that fix, tags could be updated without recalculating `valid_from`, causing stale date values.
 
 Use `memory_correct` rather than `memory_forget` when you want to track that a change happened and why. If you just need a record gone — because it contains wrong security advice or outdated credentials — use `memory_forget`.
 
@@ -249,7 +297,7 @@ Explicitly link two memories with a typed relationship. The knowledge graph trav
 memory_connect(
     source_id="auth-decision-id",
     target_id="session-bug-id",
-    rel_type="causes",
+    relation_type="caused_by",
     weight=0.9,
     project="my-app"
 )
@@ -652,6 +700,70 @@ This tool is read-only — it does not migrate any data. Review the output, then
 
 **Previous:** [Connecting Your IDE](connecting.md) | **Next:** [Claude Advisor](claude-advisor.md)
 
+## AI-Enhanced Tools
+
+These four tools require `ANTHROPIC_API_KEY` to be set in `.env`. They synthesise answers from memory using Claude, complementing the local-only recall tools.
+
+### memory_ask
+
+Answer a question using stored memories as context. Returns the answer plus numbered citations to the memories used.
+
+```python
+memory_ask(
+    question="What did we decide about JWT signing?",
+    project="my-app",      # required
+    top_k=10               # optional, default 0 (uses server default)
+)
+```
+
+Use when you want a direct answer with traceable sources. Faster than `memory_explore` because it does one recall + one synthesis pass; less thorough when the answer needs iterative refinement.
+
+### memory_reason
+
+Recall memories and synthesize a grounded answer using Claude. Similar to `memory_ask` but without the numbered-citation contract — returns prose with inline references.
+
+```python
+memory_reason(
+    question="Why did we switch from JWT to session cookies?",
+    project="my-app"
+)
+```
+
+### memory_explore
+
+Iterative recall + score + synthesis loop. Runs up to `max_iterations` rounds of "recall, evaluate, re-query" until confidence threshold is met or budget is exhausted. Use for open-ended questions where one recall is unlikely to surface everything relevant.
+
+```python
+memory_explore(
+    question="What patterns have caused outages in the past year?",
+    project="my-app",            # optional, defaults to "default"
+    max_iterations=5,            # optional, 1–10, default from server (ENGRAM_EXPLORE_MAX_ITERS)
+    confidence_threshold=0.75,   # optional, default 0.75 — stop when synthesis confidence >= this
+    token_budget=20000,          # optional, default from server (ENGRAM_EXPLORE_TOKEN_BUDGET)
+    include_trace=False          # optional, default false — when true, returns the per-iteration trace
+)
+```
+
+Returns a single grounded answer plus (if `include_trace=True`) the full search/score/synthesis trace.
+
+### memory_query_document
+
+Query a large document stored in memory using regex/substring matching or semantic recall, and synthesize an answer with Claude. Use for documents stored via `memory_store_document` or `memory_ingest_document_stream` that are too large for `memory_recall` alone.
+
+```python
+memory_query_document(
+    memory_id="mem_abc...",      # required — the document memory ID
+    project="my-app",            # required
+    question="What does this say about retry semantics?",
+    semantic=False,              # optional, default false — true for semantic recall over chunks
+    filter={"regex": "retry|backoff"},  # optional — pre-filter spans by regex
+    window_chars=4000,           # optional, default 4000 — context window around each match
+    token_budget=6000            # optional, default 6000 — total tokens for synthesis
+)
+```
+
+Returns the relevant spans + a Claude-synthesised answer.
+
 ---
 
-*43 tools total: 38 registered unconditionally + 5 AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`, `memory_diagnose`) when `ANTHROPIC_API_KEY` is set.*
+*Canonical surface: <!-- count:unconditional -->46<!-- /count --> tools registered unconditionally (<!-- count:visible-default -->17<!-- /count --> visible in `tools/list`, <!-- count:hidden -->29<!-- /count --> hidden but callable via `tools/call`), + <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools when `ANTHROPIC_API_KEY` is set (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`). `memory_diagnose` is unconditional + hidden, not AI-gated.*
