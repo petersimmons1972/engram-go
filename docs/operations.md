@@ -175,6 +175,12 @@ docker exec engram-postgres psql -U engram -d engram -c "SELECT COUNT(*) FROM me
 curl -s http://localhost:8788/sse
 ```
 
+> ⚠️ **Heredoc stdin warning:** `docker exec` without `-i` silently discards
+> stdin — multi-statement heredocs appear to succeed (exit 0) but never run.
+> Use `docker exec -i ...` for inline SQL, or preferably use
+> `scripts/psql-exec.sh <file.sql>` which uses `docker cp` + `psql -f`
+> (unambiguous, no stdin). See issue #646.
+
 If the SSE endpoint returns nothing or hangs, check whether the Go container started correctly (`docker compose ps`) and whether PostgreSQL is accepting connections (`docker compose logs engram-postgres`). Most startup failures are PostgreSQL not finishing its initialization before the Go process tries to connect — restart with `docker compose restart engram-go-app` once PostgreSQL is ready.
 
 ---
