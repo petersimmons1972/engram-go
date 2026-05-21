@@ -1558,10 +1558,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Content    string   `json:"content"`
-		Project    string   `json:"project"`
-		Tags       []string `json:"tags"`
-		Importance int      `json:"importance"`
+		Content    string     `json:"content"`
+		Project    string     `json:"project"`
+		Tags       []string   `json:"tags"`
+		Importance int        `json:"importance"`
+		ExpiresAt  *time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
@@ -1579,6 +1580,10 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateQuickStoreInput(body.Content, project, body.Tags, body.Importance); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
+		writeJSONError(w, http.StatusBadRequest, "expires_at must be a future timestamp")
 		return
 	}
 
@@ -1628,6 +1633,16 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+
+	// #837: if expires_at was provided, stamp project_ttl via the engine pool.
+	// Best-effort: failure is logged but does not affect the store response.
+	if body.ExpiresAt != nil {
+		if h, poolErr := s.pool.Get(r.Context(), project); poolErr != nil {
+			slog.Warn("quick-store: pool.Get failed for SetProjectTTL", "project", project, "err", poolErr)
+		} else if ttlErr := h.Engine.Backend().SetProjectTTL(r.Context(), project, time.Now().UTC(), body.ExpiresAt); ttlErr != nil {
+			slog.Warn("quick-store: SetProjectTTL failed", "project", project, "err", ttlErr)
+		}
+	}
 }
 
 // handleQuickRecall is a sessionless REST endpoint that recalls memories by

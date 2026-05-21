@@ -8,10 +8,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/search"
@@ -250,4 +253,154 @@ func TestQuickStoreHandler_InvalidProjectName(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, w.Code)
 		})
 	}
+}
+
+// ttlCaptureBackend embeds storeBackend and records SetProjectTTL calls.
+type ttlCaptureBackend struct {
+	storeBackend
+	mu              sync.Mutex
+	capturedProject string
+	capturedExpires *time.Time
+	returnErr       error
+}
+
+var _ db.Backend = (*ttlCaptureBackend)(nil)
+
+func (b *ttlCaptureBackend) SetProjectTTL(_ context.Context, project string, _ time.Time, expiresAt *time.Time) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.capturedProject = project
+	if expiresAt != nil {
+		t := *expiresAt
+		b.capturedExpires = &t
+	}
+	return b.returnErr
+}
+
+// newQuickStoreServerWithBackend builds a *Server that uses the given backend,
+// letting tests observe SetProjectTTL calls.
+func newQuickStoreServerWithBackend(t *testing.T, backend db.Backend) *Server {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	pool := NewEnginePool(factory)
+	cfg := testConfig()
+	return &Server{pool: pool, cfg: cfg, embedderHealth: cfg.EmbedderHealth}
+}
+
+// TestQuickStoreHandler_ExpiresAt_FutureTimestamp verifies that a POST with a
+// future expires_at stores the memory and calls SetProjectTTL with the given time.
+func TestQuickStoreHandler_ExpiresAt_FutureTimestamp(t *testing.T) {
+	backend := &ttlCaptureBackend{}
+	s := newQuickStoreServerWithBackend(t, backend)
+
+	future := time.Now().UTC().Add(48 * time.Hour)
+	body, _ := json.Marshal(map[string]any{
+		"content":    "lme session content",
+		"project":    "lme-run1-q001",
+		"tags":       []string{"lme"},
+		"expires_at": future.Format(time.RFC3339),
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, true, resp["ok"])
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	require.Equal(t, "lme-run1-q001", backend.capturedProject, "SetProjectTTL should be called with the correct project")
+	require.NotNil(t, backend.capturedExpires, "SetProjectTTL should receive a non-nil expiresAt")
+	delta := backend.capturedExpires.Sub(future)
+	if delta < 0 {
+		delta = -delta
+	}
+	require.Less(t, delta, 2*time.Second, "captured expiresAt should be within 2s of the requested value")
+}
+
+// TestQuickStoreHandler_ExpiresAt_PastTimestamp verifies that a past expires_at
+// is rejected with 400 before the store is written.
+func TestQuickStoreHandler_ExpiresAt_PastTimestamp(t *testing.T) {
+	backend := &ttlCaptureBackend{}
+	s := newQuickStoreServerWithBackend(t, backend)
+
+	past := time.Now().UTC().Add(-1 * time.Hour)
+	body, _ := json.Marshal(map[string]any{
+		"content":    "lme session content",
+		"project":    "lme-run1-q001",
+		"expires_at": past.Format(time.RFC3339),
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	require.Empty(t, backend.capturedProject, "SetProjectTTL must not be called when expires_at is in the past")
+}
+
+// TestQuickStoreHandler_ExpiresAt_Absent verifies that omitting expires_at stores
+// the memory successfully without calling SetProjectTTL.
+func TestQuickStoreHandler_ExpiresAt_Absent(t *testing.T) {
+	backend := &ttlCaptureBackend{}
+	s := newQuickStoreServerWithBackend(t, backend)
+
+	body, _ := json.Marshal(map[string]any{
+		"content": "ordinary memory",
+		"project": "global",
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	require.Empty(t, backend.capturedProject, "SetProjectTTL must not be called when expires_at is absent")
+}
+
+// TestQuickStoreHandler_ExpiresAt_TTLError verifies that a SetProjectTTL error
+// does not fail the store — the response is still 200 (best-effort semantics).
+func TestQuickStoreHandler_ExpiresAt_TTLError(t *testing.T) {
+	backend := &ttlCaptureBackend{returnErr: errors.New("simulated TTL write failure")}
+	s := newQuickStoreServerWithBackend(t, backend)
+
+	future := time.Now().UTC().Add(24 * time.Hour)
+	body, _ := json.Marshal(map[string]any{
+		"content":    "lme session content",
+		"project":    "lme-run1-q002",
+		"expires_at": future.Format(time.RFC3339),
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	// Store must succeed even when TTL stamping fails.
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, true, resp["ok"])
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	require.Equal(t, "lme-run1-q002", backend.capturedProject, "SetProjectTTL must be called even when it returns an error")
 }
