@@ -16,6 +16,10 @@ type ModelSpec struct {
 	Port      int      `json:"port"`
 	Image     string   `json:"image"`
 	ExtraArgs     []string `json:"extraArgs,omitempty"`
+	// EnvVars holds KEY=VALUE pairs passed verbatim to the container environment.
+	// Matches the CRD schema field envVars. Included in the policy hash so that
+	// adding or changing env vars (e.g. VLLM_API_KEY) triggers a watcher reconcile.
+	EnvVars       []string `json:"envVars,omitempty"`
 	GpuDriver     string   `json:"gpuDriver,omitempty"`
 	RenderDevice  string   `json:"renderDevice,omitempty"`
 }

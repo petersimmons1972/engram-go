@@ -17,6 +17,10 @@ type ModelSpec struct {
 	Port      int      `json:"port"`
 	Image     string   `json:"image"`
 	ExtraArgs  []string `json:"extraArgs,omitempty"`
+	// EnvVars holds additional KEY=VALUE pairs injected into the container environment.
+	// Use for secrets (e.g. VLLM_API_KEY) that should not appear in CLI args or
+	// container labels. Values are sourced from the GPUHost CRD spec field envVars.
+	EnvVars      []string `json:"envVars,omitempty"`
 	GpuDriver  string   `json:"gpuDriver,omitempty"`  // nvidia (default) or rocm
 	RenderDevice string `json:"renderDevice,omitempty"` // e.g. /dev/dri/renderD128 (rocm only)
 	// StopTimeoutSec is seconds to wait for graceful SIGTERM before SIGKILL.

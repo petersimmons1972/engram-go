@@ -190,13 +190,15 @@ func (d *DockerManager) Ensure(ctx context.Context, spec ModelSpec, policyVersio
 
 	// Build create body.
 	portStr := strconv.Itoa(spec.Port) + "/tcp"
+	containerEnv := []string{
+		"HF_HOME=/mnt/ai-models/hf-cache",
+		"HUGGING_FACE_HUB_TOKEN=" + os.Getenv("HUGGING_FACE_HUB_TOKEN"),
+	}
+	containerEnv = append(containerEnv, spec.EnvVars...)
 	body := map[string]any{
 		"Image": spec.Image,
 		"Cmd":   modelArgs(spec),
-		"Env": []string{
-			"HF_HOME=/mnt/ai-models/hf-cache",
-			"HUGGING_FACE_HUB_TOKEN=" + os.Getenv("HUGGING_FACE_HUB_TOKEN"),
-		},
+		"Env":   containerEnv,
 		"ExposedPorts": map[string]any{portStr: map[string]any{}},
 		"Labels": map[string]string{
 			labelManaged:       "true",
@@ -374,8 +376,12 @@ func healthConfig(spec ModelSpec) map[string]any {
 			"Retries":     2,                         // 2 consecutive = GPU thread dead (filters transient 429s)
 		}
 	case "vllm":
+		curlCmd := fmt.Sprintf(`curl -sf http://localhost:%d/v1/models | grep -q '"id"'`, spec.Port)
+		if apiKey := envValue(spec.EnvVars, "VLLM_API_KEY"); apiKey != "" {
+			curlCmd = fmt.Sprintf(`curl -sf -H 'Authorization: Bearer %s' http://localhost:%d/v1/models | grep -q '"id"'`, apiKey, spec.Port)
+		}
 		return map[string]any{
-			"Test":        []string{"CMD-SHELL", fmt.Sprintf(`curl -sf http://localhost:%d/v1/models | grep -q '"id"'`, spec.Port)},
+			"Test":        []string{"CMD-SHELL", curlCmd},
 			"Interval":    int64(30 * time.Second),
 			"Timeout":     int64(10 * time.Second),
 			"StartPeriod": int64(180 * time.Second),
@@ -395,4 +401,17 @@ func healthConfig(spec ModelSpec) map[string]any {
 
 func urlEncode(s string) string {
 	return strings.NewReplacer("/", "%2F", ":", "%3A").Replace(s)
+}
+
+// envValue returns the value for the given key from a KEY=VALUE env slice,
+// or "" if the key is not present. Used to extract VLLM_API_KEY for the
+// health check without exposing the key in container labels.
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return e[len(prefix):]
+		}
+	}
+	return ""
 }

@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,33 @@ import (
 
 const policyFile = "/data/policy.json"
 
+// mtlsClient returns an http.Client configured with mTLS client certificates
+// from /run/secrets/ (Docker secrets mount). Falls back to default transport
+// when certs are absent — allowing unauthenticated controller access in dev.
+//
+// Server cert verification uses the system CA pool (controller uses Let's Encrypt).
+// The custom ai-fleet-ca in /run/secrets/ca.crt is for client cert issuance only —
+// it is NOT used as a RootCA here.
+func mtlsClient() *http.Client {
+	const (
+		certFile = "/run/secrets/client.crt"
+		keyFile  = "/run/secrets/client.key"
+	)
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		// Certs not available — plain client (dev mode).
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	tlsCfg := &tls.Config{
+		// RootCAs intentionally nil — use system pool (Let's Encrypt trusted).
+		Certificates: []tls.Certificate{cert},
+	}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
+}
+
 // FetchPolicy calls GET /policy/{hostname} on the controller.
 func FetchPolicy(ctx context.Context, controllerURL, hostname string) (*Policy, error) {
 	// Controller expects the bare hostname (strip any port).
@@ -25,7 +53,7 @@ func FetchPolicy(ctx context.Context, controllerURL, hostname string) (*Policy, 
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := mtlsClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch policy: %w", err)
@@ -85,7 +113,7 @@ func PostStatus(ctx context.Context, controllerURL string, report StatusReport) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := mtlsClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("post status", "err", err)
