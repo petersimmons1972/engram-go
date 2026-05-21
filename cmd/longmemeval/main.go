@@ -67,14 +67,11 @@ type Config struct {
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
 
-	// #754: scratch TTL. Applied at ingest time to project_ttl.expires_at so
-	// the `prune` subcommand can sweep expired lme-* projects later. Zero
-	// means "use the package default (168h / 7 days)".
+	// #754/#837: scratch TTL. Applied at ingest time via the /quick-store
+	// expires_at field so the `prune` subcommand can sweep expired lme-*
+	// projects later. Zero means durable (no expiry).
 	ScratchTTL time.Duration
 
-	// DatabaseURL is consulted by ingest to write project_ttl rows. Falls back
-	// to env DATABASE_URL.
-	DatabaseURL string
 }
 
 func main() {
@@ -175,7 +172,6 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// #754: TTL stamped on per-question scratch projects at ingest time. The
 	// prune subcommand sweeps anything older than this.
 	fs.DurationVar(&cfg.ScratchTTL, "scratch-ttl", defaultScratchTTL(), "TTL applied to ephemeral lme-* projects at ingest time (e.g. 168h = 7 days); 0 = durable, no expiry")
-	fs.StringVar(&cfg.DatabaseURL, "database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN; required when --scratch-ttl > 0 so ingest can write project_ttl rows")
 
 	// prune has its own flag set and early return — it does not share the
 	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
