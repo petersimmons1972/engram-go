@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 . ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
+. ~/.claude/hooks/lib/timing-v2.sh 2>/dev/null || true
 # PreToolUse hook: fast connectivity check before any mcp__engram__* call.
 # If Engram responds healthy → silent exit 0 (<100ms).
 # If Engram is down → kick off a background restart, emit a systemMessage,

@@ -1,21 +1,75 @@
 #!/usr/bin/env bash
-# PostToolUse hook: capture tool calls to instinct buffer (~/projects/instinct/consolidator/).
-# Runs alongside telemetry-emit.sh on the same PostToolUse event — different sinks:
-#   this hook  → ~/.local/state/instinct/buffer.jsonl → engram-go instinct daemon
-#   telemetry  → ~/.claude/events/<date>.jsonl → analytics/session replay
-set -euo pipefail
+# instinct-post-tool-use.sh.v2 — Tri-state dispatcher with auto-revert sentinel.
+#
+# Architecture:
+#   INSTINCT_BACKEND=python|go|off  (default: python; Phase 3c flips to go)
+#   INSTINCT_ENABLED=0              — hard kill switch, <50ms exit 0, no work done
+#
+# Auto-revert sentinel (Risk #1 mitigation):
+#   If the go binary fails (rc!=0, timeout, or binary missing), sentinel file
+#   ${BUFFER_DIR}/.go-broken is created. On subsequent invocations with
+#   INSTINCT_BACKEND=go, if sentinel exists the hook FORCES python instead.
+#   Sentinel is NOT auto-cleared — manual operator clearance is required:
+#     rm ~/.local/state/instinct/.go-broken
+#   This is intentional: the operator must confirm the issue is investigated
+#   before re-enabling the go path.
+#
+# Safety contract:
+#   - ALWAYS exit 0 to Claude Code. Every code path. Every failure mode.
+#   - set -u ONLY. NOT -e, NOT pipefail. Explicit || true where needed.
+#     (set -e would propagate failures past the safety wrappers)
+#   - Buffer write block (lines 19-100 of live hook) preserved verbatim.
+#
+# Backend paths:
+#   python: ~/projects/instinct/consolidator/.venv/bin/python -m instinct.run
+#   go:     ~/bin/instinct-consolidate  (built by Track B Makefile)
+#   off:    skip consolidator entirely; only buffer write happens
+#
+# Phase history:
+#   Phase 1: created as .v2 sibling (this file); NOT the live hook
+#   Phase 3a: installed as the live hook (Phase 3a step)
+#   Phase 3c: default flipped from python to go
 
-# Kill switch
+set -u  # NOT -e, NOT pipefail
+
+# ---------------------------------------------------------------------------
+# Kill switch — hard exit, <50ms, no work done
+# ---------------------------------------------------------------------------
 [[ "${INSTINCT_ENABLED:-1}" == "0" ]] && exit 0
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 BUFFER_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/instinct"
 BUFFER_FILE="$BUFFER_DIR/buffer.jsonl"
 LOG_FILE="$BUFFER_DIR/run.log"
-CONSOLIDATOR="$HOME/projects/instinct/consolidator/.venv/bin/python"
-CONSOLIDATOR_MODULE="$HOME/projects/instinct/consolidator"
 MAX_BUFFER_BYTES="${INSTINCT_MAX_BUFFER_BYTES:-1048576}"
 MAX_BUFFER_EVENTS="${INSTINCT_MAX_BUFFER_EVENTS:-2000}"
 
+# Tri-state backend selection. Phase 3c edit: change 'python' to 'go'.
+BACKEND="${INSTINCT_BACKEND:-python}"
+CONSOLIDATOR_TIMEOUT="${INSTINCT_CONSOLIDATOR_TIMEOUT:-30}"
+
+# Sentinel file: presence forces auto-revert from go to python
+SENTINEL="$BUFFER_DIR/.go-broken"
+
+# ---------------------------------------------------------------------------
+# Auto-revert: if sentinel exists and backend is go, force python
+# ---------------------------------------------------------------------------
+if [[ -f "$SENTINEL" && "$BACKEND" == "go" ]]; then
+    BACKEND="python"
+    # Log the auto-revert; use subshell with flock to avoid log corruption
+    (
+        if flock -w 0.1 -x 9; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: auto-revert — sentinel present, forcing python backend" >> "$LOG_FILE"
+        fi
+    ) 9>"$BUFFER_DIR/.run.lock" || true
+fi
+
+# ---------------------------------------------------------------------------
+# === BUFFER WRITE BLOCK (verbatim from live hook lines 19-100) ===
+# Do NOT modify this block without diffing against the live hook.
+# ---------------------------------------------------------------------------
 mkdir -p "$BUFFER_DIR"
 
 # Read stdin — contains the tool call JSON
@@ -98,32 +152,102 @@ os.replace(tmp, path)
 PYEOF
     fi
 ) 9>"$BUFFER_DIR/.buffer.lock"
+# === END BUFFER WRITE BLOCK ===
 
-# Trigger consolidator every N events
+# ---------------------------------------------------------------------------
+# Consolidator dispatch — tri-state
+# ---------------------------------------------------------------------------
 count=$(wc -l < "$BUFFER_FILE" 2>/dev/null || echo 0)
 threshold="${INSTINCT_CONSOLIDATE_EVERY:-20}"
+
 if (( count % threshold == 0 )); then
-    if [[ -x "$CONSOLIDATOR" ]]; then
-        # Resolve ANTHROPIC_API_KEY: env var takes precedence, then known key file
-        _api_key="${ANTHROPIC_API_KEY:-}"
-        if [[ -z "$_api_key" ]]; then
-            _key_file="$HOME/.config/gmail-job-tracker/anthropic_api_key"
-            [[ -r "$_key_file" ]] && _api_key=$(tr -d '\n' < "$_key_file")
-        fi
-        (
-            flock -n 9 || exit 0
-            PYTHONPATH="$CONSOLIDATOR_MODULE" \
-                ANTHROPIC_API_KEY="$_api_key" \
-                "$CONSOLIDATOR" -m instinct.run >> "$LOG_FILE" 2>&1
-        ) 9>"$BUFFER_DIR/.run.lock" &
-        disown $!
-    else
-        (
-            if flock -w 0.1 -x 9; then
-                echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: WARN consolidator not found at $CONSOLIDATOR — run: cd ~/projects/instinct/consolidator && uv sync" >> "$LOG_FILE"
+    case "$BACKEND" in
+
+        off)
+            # Off backend: skip consolidator entirely. Buffer write already done above.
+            : ;;
+
+        python)
+            _consolidator="$HOME/projects/instinct/consolidator/.venv/bin/python"
+            _consolidator_module="$HOME/projects/instinct/consolidator"
+            if [[ -x "$_consolidator" ]]; then
+                # Resolve ANTHROPIC_API_KEY: env var takes precedence, then known key file
+                _api_key="${ANTHROPIC_API_KEY:-}"
+                if [[ -z "$_api_key" ]]; then
+                    _key_file="$HOME/.config/gmail-job-tracker/anthropic_api_key"
+                    [[ -r "$_key_file" ]] && _api_key=$(tr -d '\n' < "$_key_file") || true
+                fi
+                (
+                    flock -n 9 || exit 0
+                    PYTHONPATH="$_consolidator_module" \
+                        ANTHROPIC_API_KEY="$_api_key" \
+                        "$_consolidator" -m instinct.run >> "$LOG_FILE" 2>&1
+                ) 9>"$BUFFER_DIR/.run.lock" &
+                disown $! || true
+            else
+                (
+                    if flock -w 0.1 -x 9; then
+                        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: WARN consolidator not found at $_consolidator — run: cd ~/projects/instinct/consolidator && uv sync" >> "$LOG_FILE"
+                    fi
+                ) 9>"$BUFFER_DIR/.run.lock" || true
             fi
-        ) 9>"$BUFFER_DIR/.run.lock"
-    fi
+            ;;
+
+        go)
+            _go_bin="$HOME/bin/instinct-consolidate"
+            if [[ ! -x "$_go_bin" ]]; then
+                touch "$SENTINEL" || true
+                (
+                    if flock -w 0.1 -x 9; then
+                        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: go binary missing at $_go_bin — sentinel set; manual clearance: rm $SENTINEL" >> "$LOG_FILE"
+                    fi
+                ) 9>"$BUFFER_DIR/.run.lock" || true
+            else
+                # Resolve ANTHROPIC_API_KEY: env var takes precedence, then known key file
+                _api_key="${ANTHROPIC_API_KEY:-}"
+                if [[ -z "$_api_key" ]]; then
+                    _key_file="$HOME/.config/gmail-job-tracker/anthropic_api_key"
+                    [[ -r "$_key_file" ]] && _api_key=$(tr -d '\n' < "$_key_file") || true
+                fi
+                _rc=0
+                # Option A: bounded wait for the dispatch lock. The previous
+                # idiom `flock -n 9 || exit 0` inside this subshell swallowed
+                # lock-busy as exit 0, which the outer `_rc=$?` then read as
+                # success — masking the sentinel mechanism for a legitimate
+                # failure mode (concurrent invocation already running). Using
+                # `flock -w` waits briefly; if the lock cannot be acquired in
+                # time, flock exits 1, the subshell propagates that, and the
+                # outer code path correctly trips the sentinel. We do NOT use
+                # background-and-disown here because the synchronous exit
+                # code is the whole point of the sentinel mechanism for go.
+                (
+                    flock -w 0.5 -x 9 || exit 1
+                    ANTHROPIC_API_KEY="$_api_key" \
+                        timeout "$CONSOLIDATOR_TIMEOUT" "$_go_bin" >> "$LOG_FILE" 2>&1
+                ) 9>"$BUFFER_DIR/.run.lock"
+                _rc=$?
+                # timeout exits 124 on kill; flock-busy exits 1; any non-zero
+                # means failure → sentinel.
+                if [[ $_rc -ne 0 ]]; then
+                    touch "$SENTINEL" || true
+                    (
+                        if flock -w 0.1 -x 9; then
+                            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: go binary failed rc=$_rc — sentinel set; manual clearance: rm $SENTINEL" >> "$LOG_FILE"
+                        fi
+                    ) 9>"$BUFFER_DIR/.run.lock" || true
+                fi
+            fi
+            ;;
+
+        *)
+            # Unknown backend: log and skip. ALWAYS exit 0.
+            (
+                if flock -w 0.1 -x 9; then
+                    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: unknown INSTINCT_BACKEND='$BACKEND' — skipping consolidator; valid: python|go|off" >> "$LOG_FILE"
+                fi
+            ) 9>"$BUFFER_DIR/.run.lock" || true
+            ;;
+    esac
 fi
 
 exit 0

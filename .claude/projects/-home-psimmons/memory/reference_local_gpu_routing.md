@@ -12,7 +12,7 @@ originSessionId: d78f1ef0-76f8-4af6-bca5-fb99755d3d8d
 |-----|----------------------|-------------|------|------|--------|
 | **W6800** (gfx1030) | `w6800` | `precision:11434` (Docker `ollama-w6800`) | 32 GB | Heavy coding + embedding | `qwen3-coder:30b` (25.3 GB loaded), `jina-embeddings-v4-Q8_0` (4.7 GB loaded) |
 | **MI-50** (gfx906, Vega20) | `mi50` | `precision:11436` (Docker `ollama-mi50.service`) | 16 GB HBM2 | Coding only | `qwen2.5-coder:14b-instruct-q6_K` (13.4 GB loaded, ~30 tok/s, 100% offload) |
-| **RX 7900 XT** (gfx1100, leviathan display card) | `leviathan-7900xt` | `engram-ollama:11434` (leviathan Docker) | 20 GB (display takes ~4 GB) | Backup embedding + small utility | `jina-embeddings-v4-Q8_0` (4.0 GB after KV tuning), `llama3.2:3b` (lazy-loaded) |
+| **RX 7900 XT** (gfx1100, leviathan display card) | (no olla endpoint as of 2026-05-19) | `ai-fleet-embed-7900xt:8004` (leviathan Docker, Infinity ROCm) | 20 GB **— 8 GB reserved for desktop, 12 GB inference ceiling** | Primary bge-m3 embedding for engram-reembed-7900xt | `BAAI/bge-m3` (Infinity, capped via `--batch-size 8`) |
 
 **Retired 2026-05-07:** the host-binary `ollama.service` on `precision:11435`. Stopped + disabled. Don't restart it — `precision:11434` Docker now serves all W6800 traffic.
 
@@ -33,7 +33,7 @@ originSessionId: d78f1ef0-76f8-4af6-bca5-fb99755d3d8d
 3. **No CPU inference, ever.** Verify `size_vram > 0` before relying on a local model.
 4. **Clean VRAM fit ≤80 %**, except MI-50 where pushing to ~90 % is acceptable (single-tenant by design).
 5. **MI-50 needs `ollama/ollama:0.6.8-rocm` Docker image.** Newer ollama ROCm builds dropped gfx906 from rocBLAS; the 0.6.8-rocm tag is the known-good. Don't upgrade without re-verifying GPU offload.
-6. **leviathan-7900xt KV tuning is intentional, not default.** `OLLAMA_NUM_PARALLEL=2`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`. Cut jina VRAM 8.9 GB → 4.0 GB. Defined in `~/projects/engram-go/docker-compose.local.yml` (committed `08a1f22`, merged engram-go PR #619 as `ff5d01bf`). Don't revert without confirming display headroom is still adequate.
+6. **leviathan-7900xt KV tuning is intentional, not default.** (Historical — applied when 7900 XT ran ollama+jina. Superseded 2026-05-19 by ai-fleet Infinity migration: ollama on leviathan is gone, model is `BAAI/bge-m3` in `ai-fleet-embed-7900xt`, VRAM cap enforced via `--batch-size 8` in the GPUHost CRD + `reservedMemoryGB: 8`. See [[leviathan-7900xt-8gb-desktop-reserve]] and aifleet PR #43.)
 
 ## Task → GPU routing (default)
 

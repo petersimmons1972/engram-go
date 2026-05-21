@@ -151,16 +151,119 @@ check_dns() {
   } > "$out" 2>&1
 }
 
+# ── AI fleet — direct endpoint probes (no Docker health status) ─────────────
+# Rule: every check must verify the actual API response, not Docker's cached status.
+# leviathan.petersimmons.com has Cloudflare AAAA records blocking non-443 ports;
+# use localhost for local containers to avoid IPv6 Cloudflare routing.
+check_ai_fleet() {
+  local out="$TMPDIR_HC/ai_fleet"
+  {
+    echo "=== AI Fleet ==="
+
+    # embed: leviathan 7900XT — DECOMMISSIONED (issue #25: gfx1100 PyTorch VRAM OOM)
+    # Re-enable this check when issue #25 is resolved and model is re-added to fleet.
+    # echo "⏸️  embed  | leviathan 7900XT :8004     decommissioned (issue #25)"
+
+    # embed: precision W6800 — internal hostname routes on LAN
+    resp=$(curl -sf --max-time 8 -X POST http://precision.petersimmons.com:8005/v1/embeddings \
+      -H 'Content-Type: application/json' \
+      -d '{"model":"BAAI/bge-m3","input":["probe"]}' 2>/dev/null)
+    dim=$(echo "$resp" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['data'][0]['embedding']))" 2>/dev/null)
+    if [ "$dim" = "1024" ]; then
+      echo "✅ embed  | precision W6800 :8005      dim=$dim"
+    else
+      echo "❌ embed  | precision W6800 :8005      no response or hung (dim=${dim:-?})"
+    fi
+
+    # embed: olla proxy — must route and return a real embedding
+    resp=$(curl -sf --max-time 8 -X POST https://olla.petersimmons.com/olla/openai/v1/embeddings \
+      -H 'Content-Type: application/json' \
+      -d '{"model":"BAAI/bge-m3","input":["probe"]}' 2>/dev/null)
+    dim=$(echo "$resp" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['data'][0]['embedding']))" 2>/dev/null)
+    if [ "$dim" = "1024" ]; then
+      echo "✅ embed  | olla proxy (routed)        dim=$dim"
+    else
+      echo "❌ embed  | olla proxy (routed)        routing failed or all endpoints down"
+    fi
+
+    # inference: oblivion vLLM — verify a model is listed; detect stuck startup
+    # If not serving after VLLM_START_TIMEOUT_MIN minutes, flag as STUCK not "loading"
+    VLLM_START_TIMEOUT_MIN=15
+    resp=$(curl -sf --max-time 8 http://oblivion.petersimmons.com:8000/v1/models 2>/dev/null)
+    model=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null)
+    if [ -n "$model" ]; then
+      echo "✅ infer  | oblivion vLLM :8000        model=$model"
+    else
+      # Get container start time from controller registry to detect hung startup
+      container_start=$(kubectl port-forward -n ai-fleet deploy/ai-fleet-controller 18080:8080 >/dev/null 2>&1 &         PF2=$! ; sleep 2 ;         curl -sf --max-time 5 http://localhost:18080/registry 2>/dev/null           | python3 -c "
+import json,sys,datetime
+data=json.load(sys.stdin)
+hosts=data if isinstance(data,list) else data.get('hosts',data.get('registry',[data]))
+for h in (hosts if isinstance(hosts,list) else [hosts]):
+    if 'oblivion' in str(h.get('host','')):
+        ls=h.get('lastSeen','')
+        print(ls[:19] if ls else '')
+" 2>/dev/null ; kill $PF2 2>/dev/null ; wait $PF2 2>/dev/null)
+      if [ -n "$container_start" ] && [ "$container_start" != "0" ]; then
+        start_epoch=$(date -d "$container_start" +%s 2>/dev/null || echo 0)
+        now_epoch=$(date +%s)
+        age_min=$(( (now_epoch - start_epoch) / 60 ))
+        if [ "$age_min" -lt 0 ] || [ "$start_epoch" -eq 0 ]; then
+          echo "❌ infer  | oblivion vLLM :8000        not serving (container not started)"
+        elif [ "$age_min" -gt "$VLLM_START_TIMEOUT_MIN" ]; then
+          echo "❌ infer  | oblivion vLLM :8000        STUCK — not serving after ${age_min}min (wrong image or bad flags)"
+        else
+          echo "⏳ infer  | oblivion vLLM :8000        loading (${age_min}min elapsed, timeout=${VLLM_START_TIMEOUT_MIN}min)"
+        fi
+      else
+        echo "❌ infer  | oblivion vLLM :8000        not serving (no container)"
+      fi
+    fi
+
+    # MCP: engram-go local
+    resp=$(curl -sf --max-time 5 http://localhost:8788/health 2>/dev/null)
+    if echo "$resp" | python3 -c "import json,sys; assert json.load(sys.stdin).get('status')=='ok'" 2>/dev/null; then
+      echo "✅ mcp    | engram-go :8788            ok"
+    else
+      echo "❌ mcp    | engram-go :8788            $(echo "$resp" | head -c 60)"
+    fi
+
+    # proxy: olla internal health
+    resp=$(curl -sf --max-time 5 https://olla.petersimmons.com/internal/health 2>/dev/null)
+    if echo "$resp" | python3 -c "import json,sys; s=json.load(sys.stdin).get('status',''); assert s in ('ok','healthy')" 2>/dev/null; then
+      echo "✅ proxy  | olla /internal/health      ok"
+    else
+      echo "❌ proxy  | olla /internal/health      $(echo "$resp" | head -c 60)"
+    fi
+
+    # GPU: 7900XT VRAM — informational, not pass/fail (zombie detection)
+    kfd_pids=$(docker run --rm --device /dev/kfd --device /dev/dri/renderD128 \
+      rocm/pytorch:latest rocm-smi --showpids 2>/dev/null | grep -c '^[0-9]' 2>/dev/null || echo 0)
+    vram_pct=$(docker run --rm --device /dev/kfd --device /dev/dri/renderD128 \
+      rocm/pytorch:latest rocm-smi 2>/dev/null \
+      | awk '/[0-9]+Mhz/{for(i=1;i<=NF;i++){if($i~/^[0-9]+%$/){gsub(/%/,"",$i);print $i;exit}}}' 2>/dev/null || echo "?")
+    echo "ℹ️  gpu   | 7900XT KFD procs=$kfd_pids  VRAM≈${vram_pct}%"
+
+    # reembed backlog
+    backlog=$(docker exec engram-postgres psql -U engram engram -t -A \
+      -c "SELECT count(*) FROM chunks WHERE embedding IS NULL AND project LIKE 'lme-c3d9f1-%'" \
+      2>/dev/null | tr -d ' ')
+    [ -n "$backlog" ] && echo "ℹ️  reemb | lme-c3d9f1 null embeddings  $backlog"
+
+  } > "$out" 2>&1
+}
+
 # ── Launch all probes in parallel ────────────────────────────────────────────
 check_k8s &
 check_public_services &
 check_trunas &
 check_proxmox &
 check_dns &
+check_ai_fleet &
 wait
 
 # ── Print results in deterministic order ────────────────────────────────────
-for section in k8s public_services trunas proxmox dns; do
+for section in k8s public_services trunas proxmox dns ai_fleet; do
   f="$TMPDIR_HC/${section}"
   [ -f "$f" ] && cat "$f" && echo ""
 done
