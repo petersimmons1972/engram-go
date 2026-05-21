@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -147,6 +151,115 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// R2-B1: runRun must return ExitCodeLockContention (75), not 2, on lock
+// contention. We test this via (a) a source-level structural guard that the
+// literal `2` is not used as the lock-contention exit code, and (b) a
+// subprocess test that wires runRun through a locked backend.
+// ---------------------------------------------------------------------------
+
+// TestRunRun_LockContention_ExitCode75_StructuralGuard asserts that run.go
+// does NOT contain `return 2` as the lock-contention exit path. This is a
+// source-level regression guard — the functional assertion is in
+// TestRunRun_LockContention_ExitCode75_Subprocess below.
+func TestRunRun_LockContention_ExitCode75_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	// The lock-contention branch must use ExitCodeLockContention, not a
+	// literal 2. We check that ExitCodeLockContention is referenced and
+	// that the pattern `return 2` does not appear in the lock-contention
+	// block (i.e., adjacent to lockErr != nil check).
+	if !strings.Contains(text, "ExitCodeLockContention") {
+		t.Error("run.go missing ExitCodeLockContention — lock-contention exit code not wired (#808 R2-B1)")
+	}
+	// Detect the old bug: `return 2` immediately after the lockErr check.
+	// We look for the pattern in the lock-acquisition block context.
+	if strings.Contains(text, "return 2") {
+		t.Error("run.go still contains `return 2` — must use ExitCodeLockContention (#808 R2-B1)")
+	}
+}
+
+// TestRunRun_LockContention_ExitCode75_Subprocess verifies that when runRun
+// finds the backend locked, the process exits with ExitCodeLockContention (75).
+// Uses the lockHelper subprocess to hold the lock, then spawns a second
+// subprocess that calls runRun via a minimal Config pointing at the same URL.
+func TestRunRun_LockContention_ExitCode75_Subprocess(t *testing.T) {
+	if os.Getenv("LME_LOCK_HELPER") != "" {
+		lockHelperMain()
+		return
+	}
+	if os.Getenv("LME_RUNRUN_HELPER") != "" {
+		runRunLockHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	url := "http://runrun-exit75:8000/v1"
+
+	// First subprocess: hold the lock.
+	cmd1 := exec.Command(os.Args[0], "-test.run=TestRunRun_LockContention_ExitCode75_Subprocess")
+	cmd1.Env = append(os.Environ(),
+		"LME_LOCK_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+		"LME_LOCK_HOLD=1s",
+	)
+	if err := cmd1.Start(); err != nil {
+		t.Fatalf("start lock-holder: %v", err)
+	}
+	defer func() { _ = cmd1.Process.Kill() }()
+
+	// Wait for lockfile to appear.
+	lockPath := backendLockPath(dir, url)
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(lockPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Second subprocess: calls runRun with the locked backend. Must exit 75.
+	cmd2 := exec.Command(os.Args[0], "-test.run=TestRunRun_LockContention_ExitCode75_Subprocess")
+	cmd2.Env = append(os.Environ(),
+		"LME_RUNRUN_HELPER=1",
+		"LME_LOCK_DIR="+dir,
+		"LME_LOCK_URL="+url,
+	)
+	err := cmd2.Run()
+	var exitErr *exec.ExitError
+	if ok := asExitError(err, &exitErr); !ok {
+		t.Fatalf("runRun subprocess should exit non-zero; got: %v", err)
+	}
+	if exitErr.ExitCode() != ExitCodeLockContention {
+		t.Errorf("runRun exit code = %d, want ExitCodeLockContention (%d) (#808 R2-B1)",
+			exitErr.ExitCode(), ExitCodeLockContention)
+	}
+}
+
+// runRunLockHelper is the subprocess entry for TestRunRun_LockContention_ExitCode75_Subprocess.
+// It calls runRun with a minimal Config pointing at the locked backend URL.
+// The data file and out dir are intentionally invalid — runRun must exit at
+// the lock-acquisition step before reaching them.
+func runRunLockHelper() {
+	dir := os.Getenv("LME_LOCK_DIR")
+	url := os.Getenv("LME_LOCK_URL")
+	outDir, _ := os.MkdirTemp("", "lme-runrun-test-*")
+	defer os.RemoveAll(outDir)
+	cfg := &Config{
+		LLMBaseURL:       url,
+		ExclusiveBackend: true,
+		BackendLockDir:   dir,
+		OutDir:           outDir,
+		DataFile:         "/dev/null",
+		Workers:          1,
+	}
+	code := runRun(cfg)
+	os.Exit(code)
+}
+
+// ---------------------------------------------------------------------------
 // DisableQueryRewrite — structural guard
 // ---------------------------------------------------------------------------
 
@@ -161,5 +274,122 @@ func TestDisableQueryRewrite_StructuralGuard(t *testing.T) {
 	text := string(src)
 	if !strings.Contains(text, "cfg.DisableQueryRewrite") {
 		t.Error("run.go missing cfg.DisableQueryRewrite gate — rewrite bypass flag not wired")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H15 — paraphrase union structural guards
+// ---------------------------------------------------------------------------
+
+// TestQueryParaphrasePassesFlag_StructuralGuard verifies that run.go gates the
+// paraphrase-union logic on cfg.QueryParaphrasePasses and calls both
+// GenerateParaphrases and DeduplicateIDs — the core H15 union mechanism.
+func TestQueryParaphrasePassesFlag_StructuralGuard(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	checks := []struct {
+		substr string
+		label  string
+	}{
+		{"cfg.QueryParaphrasePasses", "H15 flag gate"},
+		{"GenerateParaphrases", "H15 paraphrase call"},
+		{"DeduplicateIDs", "H15 dedup union"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.substr) {
+			t.Errorf("run.go missing %s (%q)", c.label, c.substr)
+		}
+	}
+}
+
+// TestQueryParaphrasePassesFlag_DefaultZero verifies that the Config field
+// defaults to 0 (off) so existing runs are unaffected.
+func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	// The flag registration must use default value 0.
+	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
+		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R2-B2: preservedLog — deadlock-free collection (mutex-protected slice)
+// ---------------------------------------------------------------------------
+
+// TestPreservedLog_NoDeadlockOnHighCount verifies that N concurrent goroutines
+// can each append a name to a preservedLog without blocking, even when N far
+// exceeds any channel buffer size. This is the regression guard for R2-B2
+// (#807): the old chan-based approach deadlocked when preserved-project count
+// exceeded cfg.Workers*2.
+func TestPreservedLog_NoDeadlockOnHighCount(t *testing.T) {
+	const N = 100
+	pl := &preservedLog{}
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			pl.add(fmt.Sprintf("project-%03d", n))
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(5 * time.Second):
+		t.Fatal("preservedLog.add deadlocked under high concurrency (R2-B2 regression)")
+	}
+
+	names := pl.names()
+	if len(names) != N {
+		t.Errorf("preservedLog collected %d names, want %d", len(names), N)
+	}
+}
+
+// TestPreservedLog_NamesReturnsCopy verifies that mutating the returned slice
+// does not affect the underlying preservedLog state.
+func TestPreservedLog_NamesReturnsCopy(t *testing.T) {
+	pl := &preservedLog{}
+	pl.add("alpha")
+	pl.add("beta")
+
+	got := pl.names()
+	got[0] = "mutated"
+
+	got2 := pl.names()
+	for _, n := range got2 {
+		if n == "mutated" {
+			t.Error("names() returned a slice sharing the backing array — mutations affect internal state")
+		}
+	}
+}
+
+// TestCleanupSummary_TokenIsCleanupSummary verifies the greppable log token
+// used for the end-of-run preserved-project summary is exactly "cleanup-summary"
+// as specified in S9 (#807 Round 3). (Source-level structural guard.)
+func TestCleanupSummary_TokenIsCleanupSummary(t *testing.T) {
+	src, err := os.ReadFile("run.go")
+	if err != nil {
+		t.Fatalf("read run.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "cleanup-summary") {
+		t.Error("run.go missing 'cleanup-summary' log token (S9 #807 Round 3 spec)")
+	}
+	// Ensure the old token is gone.
+	if strings.Contains(text, "INFO run: preserved") {
+		t.Error("run.go still contains old log token 'INFO run: preserved' — should be replaced by 'cleanup-summary'")
 	}
 }

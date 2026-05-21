@@ -1,7 +1,7 @@
 // Package consolidator owns the domain logic for pattern detection: prompt
 // construction, LLM call dispatch, and response parsing/validation.
 //
-// The LLM client (transport layer) is injected via the instinctllm.LLMClient interface
+// The LLM client (transport layer) is injected via the llmclient.LLMClient interface
 // so backends (Anthropic, Olla) can be swapped without touching this package.
 package consolidator
 
@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // Event is one tool-use record from the PostToolUse hook buffer.
@@ -119,7 +119,7 @@ func stripMarkdownFences(text string) string {
 //     — graceful degradation so the consolidator never crashes on bad LLM output.
 //
 // Zero events short-circuits before calling the LLM.
-func Detect(ctx context.Context, client instinctllm.LLMClient, events []Event) ([]Pattern, error) {
+func Detect(ctx context.Context, client llmclient.LLMClient, events []Event) ([]Pattern, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}
@@ -131,7 +131,7 @@ func Detect(ctx context.Context, client instinctllm.LLMClient, events []Event) (
 		// …) is treated as "skip this batch, don't crash" — the consolidator
 		// runs every N events and should tolerate transient infra failure.
 		// Real parse/protocol errors still propagate.
-		if errors.Is(err, instinctllm.ErrBackendUnavailable) {
+		if errors.Is(err, llmclient.ErrBackendUnavailable) {
 			slog.Info("consolidator: LLM backend unavailable, skipping batch", "err", err)
 			return nil, nil
 		}

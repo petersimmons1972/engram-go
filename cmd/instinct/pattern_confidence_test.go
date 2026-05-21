@@ -161,6 +161,42 @@ func TestInstinctReadsPatternConfidence(t *testing.T) {
 	}
 }
 
+// TestMemoryStorePatternConfidenceExplicitZero verifies that store() sends
+// pattern_confidence=0.0 explicitly — distinct from an absent field — so
+// that Engram can distinguish "no confidence supplied" from "confidence is
+// zero".  Ref: #726 (R1.N3).
+func TestMemoryStorePatternConfidenceExplicitZero(t *testing.T) {
+	cap := &capturedArgs{}
+	e, cleanup := newCapturingServer(t, "memory_store", `{"id":"mem-zero"}`, cap)
+	defer cleanup()
+
+	p := Pattern{
+		Type:         "workflow",
+		Description:  "zero confidence test",
+		Domain:       "git",
+		Evidence:     "seen 1x",
+		TagSignature: "sig-zero",
+	}
+	if _, err := e.store(context.Background(), p, 0.0, "proj1"); err != nil {
+		t.Fatalf("store() error: %v", err)
+	}
+	if cap.args == nil {
+		t.Fatal("no args captured for memory_store call")
+	}
+	// pattern_confidence must be present and exactly 0.0, not absent.
+	raw, exists := cap.args["pattern_confidence"]
+	if !exists {
+		t.Fatal("store() with confidence=0.0 must send pattern_confidence field (distinct from absent)")
+	}
+	pc, ok := raw.(float64)
+	if !ok {
+		t.Fatalf("pattern_confidence type = %T, want float64", raw)
+	}
+	if pc != 0.0 {
+		t.Errorf("pattern_confidence = %v, want 0.0", pc)
+	}
+}
+
 // TestInstinctBackwardCompatNilPatternConfidence verifies that recall()
 // gracefully handles old records that have no pattern_confidence field
 // by falling back to importance.

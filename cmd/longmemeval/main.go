@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -25,11 +26,14 @@ type Config struct {
 	RunID      string
 	ServerURL  string
 	APIKey     string
-	NoCleanup  bool
+	NoCleanup     bool          // Deprecated: use CleanupPolicy=never
+	CleanupPolicy CleanupPolicy // "auto" | "always" | "never" (default: auto)
 	Retries    int
 	OutDir     string
 	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
 	LLMModel   string // model name for LLMBaseURL endpoint
+	EnableThinking bool   // enable chain-of-thought for models that support it (Qwen3)
+	LLMMaxTokens   int    // output token budget; 0 → default (2048 thinking-off, 8192 thinking-on)
 
 	// score-efficient flags
 	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
@@ -52,14 +56,33 @@ type Config struct {
 	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
 
-	// H15: dual-query preference recall
+	// H16: question_date injection
+	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
+
+	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
+	TemporalPromptAug bool // inject H-M5 ordering instruction and H-M1 entity enumeration step into temporal-reasoning prompts (default off)
+
+	// H15: paraphrased multi-pass BM25 union
+	QueryParaphrasePasses int // Haiku paraphrase variants to generate per query; union retrieved IDs (default 0 = off)
+
+	// H15: dual-query preference recall (lme-h8h12h15 branch)
 	DualPreferenceRecall bool // run a second subject-anchor recall for preference questions and union results
 
-	// H8: exhaustive aggregation recall
+	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
 
-	// H12: enumerate-first generation prompt
+	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	EnumerateFirst bool // inject enumerate-then-total instruction for aggregation questions (default off)
+
+	// #749: contention guard
+	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
+	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
+
+	// #754/#837: scratch TTL. Applied at ingest time via the /quick-store
+	// expires_at field so the `prune` subcommand can sweep expired lme-*
+	// projects later. Zero means durable (no expiry).
+	ScratchTTL time.Duration
+
 }
 
 func main() {
@@ -77,6 +100,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
 	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
 	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
+	_, _ = fmt.Fprintln(w, "  prune           Delete expired lme-* scratch projects (TTL sweep, #754)")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Common flags (see <subcommand> --help for the full set):")
@@ -89,7 +113,18 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
 	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
 	_, _ = fmt.Fprintln(w, "  --retries <n>           Retry count for generation + Engram calls (default 1)")
-	_, _ = fmt.Fprintln(w, "  --no-cleanup            Skip project deletion after run stage")
+	_, _ = fmt.Fprintln(w, "  --cleanup-policy <val>  Project cleanup after run: auto (default), always, never")
+	_, _ = fmt.Fprintln(w, "                          auto: delete only projects created by this run invocation")
+	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
+	_, _ = fmt.Fprintln(w, "                          never: preserve all projects (use if reusing data in a follow-up experiment)")
+	_, _ = fmt.Fprintln(w, "  --no-cleanup            DEPRECATED: alias for --cleanup-policy=never")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Backend contention guard (--exclusive-backend is on by default):")
+	_, _ = fmt.Fprintln(w, "  --exclusive-backend         Guard the vLLM endpoint with a PID-liveness lockfile (default true)")
+	_, _ = fmt.Fprintln(w, "  --no-exclusive-backend      Disable backend lock; accept result contamination from parallel runs")
+	_, _ = fmt.Fprintln(w, "  --backend-lock-dir <dir>    Override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)")
+	_, _ = fmt.Fprintln(w, "  Lock file path: <lock-dir>/backend-<sha256(normalized_url)[:12]>.lock")
+	_, _ = fmt.Fprintln(w, "  Exit 75 (EX_TEMPFAIL): backend lock held by another lme run — wait and retry")
 }
 
 // dispatch parses args and runs the requested subcommand. Returns the process
@@ -117,11 +152,17 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	defaultURL, defaultKey := mcpDefaults()
 	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
 	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
-	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Skip Engram project deletion after run stage")
+	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
+	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
+	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
+	// Deprecated: --no-cleanup is an alias for --cleanup-policy=never. Emits a deprecation WARN at parse time.
+	fs.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "DEPRECATED: use --cleanup-policy=never instead")
 	fs.IntVar(&cfg.Retries, "retries", 1, "Retry count for generation and Engram calls")
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
+	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
@@ -129,12 +170,33 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
-	// H15
+	// H16: prepend question_date as first line of temporal-reasoning prompts
+	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")
+	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
+	fs.BoolVar(&cfg.TemporalPromptAug, "temporal-prompt-aug", false, "inject ordering and entity-enumeration instructions into temporal-reasoning prompts: asks the model to list events chronologically and enumerate all matching events before committing to an answer (default off)")
+	// H15: paraphrased multi-pass BM25 union
+	fs.IntVar(&cfg.QueryParaphrasePasses, "query-paraphrase-passes", 0, "number of paraphrased query variants to generate per question and union with the primary recall pass; 0 = off (default); each variant is generated by Haiku emphasising different verbs and synonyms")
+	// H15: dual-query preference recall (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", false, "H15: run a second subject-anchor recall for preference questions and union both result sets (default off)")
-	// H8
+	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
-	// H12
+	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.EnumerateFirst, "enumerate-first", false, "H12: inject enumerate-then-total generation instruction for aggregation questions (default off)")
+	// #749: contention guard. --no-exclusive-backend is the negation flag.
+	// Default is exclusive=true; --no-exclusive-backend sets it false.
+	var noExclusiveBackend bool
+	cfg.ExclusiveBackend = true // default on
+	fs.BoolVar(&noExclusiveBackend, "no-exclusive-backend", false, "disable the backend lock; use when you accept result contamination from parallel runs")
+	fs.StringVar(&cfg.BackendLockDir, "backend-lock-dir", "", "override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)")
+	// #754: TTL stamped on per-question scratch projects at ingest time. The
+	// prune subcommand sweeps anything older than this.
+	fs.DurationVar(&cfg.ScratchTTL, "scratch-ttl", defaultScratchTTL(), "TTL applied to ephemeral lme-* projects at ingest time (e.g. 168h = 7 days); 0 = durable, no expiry")
+
+	// prune has its own flag set and early return — it does not share the
+	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
+	if subcommand == "prune" {
+		return dispatchPrune(args[2:], stdout, stderr)
+	}
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {
@@ -182,6 +244,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	switch subcommand {
 	case "ingest", "run", "score", "all":
 		// known subcommand — fall through to flag parsing
+	case "prune":
+		// handled above; dispatch never reaches here for prune
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n", subcommand)
 		printUsage(stderr)
@@ -190,6 +254,34 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
+	}
+	if noExclusiveBackend {
+		cfg.ExclusiveBackend = false
+	}
+
+	// B2 (#807): validate --cleanup-policy against the known enum set.
+	// Must fire before any other validation so the error is clearly attributable.
+	switch cfg.CleanupPolicy {
+	case CleanupPolicyAuto, CleanupPolicyAlways, CleanupPolicyNever:
+		// valid
+	default:
+		_, _ = fmt.Fprintf(stderr, "invalid --cleanup-policy %q: must be one of auto|always|never\n", cfg.CleanupPolicy)
+		return 1
+	}
+
+	// B3 (#807): --no-cleanup is deprecated; coerce to CleanupPolicyNever and warn.
+	// If user explicitly set a non-default policy alongside --no-cleanup, reject
+	// the combination — silently overwriting would hide intent bugs.
+	if cfg.NoCleanup {
+		if cfg.CleanupPolicy != CleanupPolicyAuto {
+			// User passed both --no-cleanup and an explicit --cleanup-policy.
+			_, _ = fmt.Fprintf(stderr,
+				"conflicting flags: --no-cleanup is deprecated alias for --cleanup-policy=never; cannot combine with --cleanup-policy=%s\n",
+				cfg.CleanupPolicy)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
+		cfg.CleanupPolicy = CleanupPolicyNever
 	}
 
 	if cfg.DataFile == "" {
@@ -233,7 +325,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 }
 
 func newRunID() string {
-	b := make([]byte, 3)
+	// S7 (#807): 8 bytes = 16 hex chars = 64 bits; reduces prefix-match collision
+	// risk on shared infra from 1/16M (24-bit) to ~1/18E (64-bit). Callers treat
+	// RunID as an opaque string so length change is backward-compatible.
+	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

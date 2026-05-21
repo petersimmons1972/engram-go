@@ -9,6 +9,55 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+// TestWriteScoreReport_ScoreErrorCountsAsIncorrect is the regression guard for
+// issue #793: a ScoreEntry with ScoreLabel="SCORE_ERROR" and Status="done" must
+// fall to the default/Incorrect bucket in writeScoreReport, never silently
+// inflating CORRECT or PARTIALLY_CORRECT counts.
+func TestWriteScoreReport_ScoreErrorCountsAsIncorrect(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "score-error-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "SCORE_ERROR", Status: "done"},
+		{QuestionID: "q3", QuestionType: "single-session-user", ScoreLabel: "SCORE_ERROR", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+
+	overall, ok := report["overall"].(map[string]any)
+	if !ok {
+		t.Fatalf("overall not a map: %v", report["overall"])
+	}
+
+	gotTotal := int(overall["total"].(float64))
+	gotCorrect := int(overall["correct"].(float64))
+	gotPartial := int(overall["partially_correct"].(float64))
+	gotIncorrect := int(overall["incorrect"].(float64))
+
+	if gotTotal != 3 {
+		t.Errorf("overall.total = %d, want 3", gotTotal)
+	}
+	if gotCorrect != 1 {
+		t.Errorf("overall.correct = %d, want 1 (SCORE_ERROR must not inflate correct count)", gotCorrect)
+	}
+	if gotPartial != 0 {
+		t.Errorf("overall.partially_correct = %d, want 0 (SCORE_ERROR must not inflate partial count)", gotPartial)
+	}
+	if gotIncorrect != 2 {
+		t.Errorf("overall.incorrect = %d, want 2 (both SCORE_ERROR entries must count as incorrect)", gotIncorrect)
+	}
+}
+
 func TestWriteScoreReport_DeduplicatesByQuestionID(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir, RunID: "dedup-test"}

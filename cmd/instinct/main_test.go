@@ -15,7 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/petersimmons1972/engram/cmd/instinct/consolidator"
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 func TestLoadConfig_EnvVars(t *testing.T) {
@@ -63,6 +63,39 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.minEvents != 20 {
 		t.Errorf("default minEvents = %d, want 20", cfg.minEvents)
 	}
+}
+
+// TestEnvDuration verifies the envDuration helper used for INSTINCT_LLM_TIMEOUT.
+// Ref: #732.
+func TestEnvDuration(t *testing.T) {
+	t.Run("returns_default_when_unset", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_MISSING", "")
+		got := envDuration("ENVTEST_DUR_MISSING", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default)", got)
+		}
+	})
+	t.Run("parses_valid_duration", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_VALID", "2m")
+		got := envDuration("ENVTEST_DUR_VALID", 30*time.Second)
+		if got != 2*time.Minute {
+			t.Errorf("envDuration() = %v, want 2m", got)
+		}
+	})
+	t.Run("returns_default_on_invalid_value", func(t *testing.T) {
+		t.Setenv("ENVTEST_DUR_BAD", "notaduration")
+		got := envDuration("ENVTEST_DUR_BAD", 30*time.Second)
+		if got != 30*time.Second {
+			t.Errorf("envDuration() = %v, want 30s (default on bad input)", got)
+		}
+	})
+	t.Run("instinct_llm_timeout_sets_llm_timeout", func(t *testing.T) {
+		t.Setenv("INSTINCT_LLM_TIMEOUT", "90s")
+		got := envDuration("INSTINCT_LLM_TIMEOUT", 30*time.Second)
+		if got != 90*time.Second {
+			t.Errorf("INSTINCT_LLM_TIMEOUT = %v, want 90s", got)
+		}
+	})
 }
 
 func TestLoadAndRotate_BelowMinEvents(t *testing.T) {
@@ -341,12 +374,12 @@ func TestEngramClient_Correct(t *testing.T) {
 
 // ── Detect pipeline tests (replaces former callHaiku tests) ──────────────────
 //
-// These are integration tests of the full instinctllm.AnthropicClient → consolidator.Detect
+// These are integration tests of the full llmclient.AnthropicClient → consolidator.Detect
 // path, run from the main package to exercise the wiring.
 
-func newTestAnthropicClient(t *testing.T, endpoint string) instinctllm.LLMClient {
+func newTestAnthropicClient(t *testing.T, endpoint string) llmclient.LLMClient {
 	t.Helper()
-	c, err := instinctllm.NewAnthropicClient(instinctllm.Config{
+	c, err := llmclient.NewAnthropicClient(llmclient.Config{
 		APIKey:   "sk-ant-fake",
 		Endpoint: endpoint,
 		Timeout:  5 * time.Second,
@@ -407,10 +440,15 @@ func TestDetectPipeline_APIError(t *testing.T) {
 
 	c := newTestAnthropicClient(t, srv.URL+"/v1/messages")
 	events := []consolidator.Event{{ToolName: "Bash", ToolOutputSummary: "ok", ExitStatus: 0}}
-	// On 500, AnthropicClient returns error; Detect propagates it; pipeline logs and skips.
-	_, err := consolidator.Detect(context.Background(), c, events)
-	if err == nil {
-		t.Error("Detect() should propagate Anthropic 500 as error")
+	// After #772, Anthropic 500 wraps ErrBackendUnavailable. The consolidator
+	// treats ErrBackendUnavailable as a graceful skip (nil, nil) — transient
+	// infra failure should not crash the pipeline. Assert no error returned.
+	patterns, err := consolidator.Detect(context.Background(), c, events)
+	if err != nil {
+		t.Errorf("Detect() should gracefully skip on Anthropic 500 (ErrBackendUnavailable), got: %v", err)
+	}
+	if len(patterns) != 0 {
+		t.Errorf("Detect() should return empty patterns on 500, got: %v", patterns)
 	}
 }
 

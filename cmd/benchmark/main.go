@@ -18,7 +18,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/reporter"
 	"github.com/petersimmons1972/engram/internal/runner"
 	"github.com/petersimmons1972/engram/internal/scorer"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 
@@ -122,7 +122,7 @@ func main() {
 		models = filtered
 	}
 
-	var allResults []types.ModelResult
+	var allResults []benchmark.ModelResult
 	completedCount := 0
 
 	for _, model := range models {
@@ -131,13 +131,13 @@ func main() {
 		}
 
 		if model.VRAMGB > maxVRAM {
-			result := types.ModelResult{
+			result := benchmark.ModelResult{
 				Model:  model.Name,
 				VRAMGB: model.VRAMGB,
 				Tier:   model.Tier,
 				Vendor: model.Vendor,
-				Score: types.Score{
-					Verdict:       types.VerdictSkippedVRAM,
+				Score: benchmark.Score{
+					Verdict:       benchmark.VerdictSkippedVRAM,
 					VerdictReason: fmt.Sprintf("requires %.1fGB VRAM, available %.1fGB (with headroom)", model.VRAMGB, maxVRAM),
 				},
 			}
@@ -165,13 +165,13 @@ func main() {
 			if !*quiet {
 				_, _ = fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
-			allResults = append(allResults, types.ModelResult{
+			allResults = append(allResults, benchmark.ModelResult{
 				Model:  model.Name,
 				VRAMGB: model.VRAMGB,
 				Tier:   model.Tier,
 				Vendor: model.Vendor,
-				Score: types.Score{
-					Verdict:       types.VerdictFailed,
+				Score: benchmark.Score{
+					Verdict:       benchmark.VerdictFailed,
 					VerdictReason: fmt.Sprintf("runner error: %v", err),
 				},
 			})
@@ -179,7 +179,7 @@ func main() {
 		}
 
 		score := scorer.Score(runResult)
-		modelResult := types.ModelResult{
+		modelResult := benchmark.ModelResult{
 			Model:  model.Name,
 			VRAMGB: model.VRAMGB,
 			Tier:   model.Tier,

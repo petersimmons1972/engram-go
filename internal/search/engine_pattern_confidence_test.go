@@ -222,10 +222,10 @@ func TestEngineCorrectWithNonNilContentRechunks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mem, "Correct must return the updated memory")
 
-	require.True(t, back.captureCorrectBackend.pcSet, "UpdateMemory must be called")
-	require.NotNil(t, back.captureCorrectBackend.capturedPC,
+	require.True(t, back.pcSet, "UpdateMemory must be called")
+	require.NotNil(t, back.capturedPC,
 		"patternConfidence must be non-nil when a value is passed on the re-chunking path")
-	require.InDelta(t, 0.5, *back.captureCorrectBackend.capturedPC, 1e-9,
+	require.InDelta(t, 0.5, *back.capturedPC, 1e-9,
 		"patternConfidence must be passed through unchanged on the re-chunking path")
 
 	back.mu.Lock()

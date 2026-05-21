@@ -5,7 +5,7 @@ import (
 	"html/template"
 	"strings"
 
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 // Visual identity: instinct — Cassandre geometric streamline moderne
@@ -54,7 +54,7 @@ type svgData struct {
 // RenderSVG produces the docs/assets/svg/model-tiers.svg content from scored
 // results. Models are bucketed by tier into horizontal rows; recommended models
 // use the accent colour at full opacity, others are dimmed.
-func RenderSVG(results []types.ModelResult) (string, error) {
+func RenderSVG(results []benchmark.ModelResult) (string, error) {
 	tiers := []struct {
 		label string
 		y     int
@@ -68,7 +68,7 @@ func RenderSVG(results []types.ModelResult) (string, error) {
 	var data svgData
 	for _, tier := range tiers {
 		st := svgTier{Label: tier.label, Y: tier.y}
-		var models []types.ModelResult
+		var models []benchmark.ModelResult
 		for _, r := range results {
 			if r.Tier == tier.label {
 				models = append(models, r)
@@ -81,11 +81,11 @@ func RenderSVG(results []types.ModelResult) (string, error) {
 		spacing := 670 / (len(models) + 1)
 		for j, m := range models {
 			color := "#4FAAFF"
-			if m.Score.Verdict != types.VerdictRecommended {
+			if m.Score.Verdict != benchmark.VerdictRecommended {
 				color = "#1E3A5F"
 			}
 			opacity := fmt.Sprintf("%.1f", 0.3+(m.Score.Composite/10.0))
-			if m.Score.Verdict == types.VerdictRecommended {
+			if m.Score.Verdict == benchmark.VerdictRecommended {
 				opacity = "0.9"
 			}
 			short := m.Model

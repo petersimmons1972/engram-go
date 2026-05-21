@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,10 +17,15 @@ import (
 	"time"
 )
 
+// ErrDisallowedModel is a permanent error returned when the model name is not
+// in the allowlist. The retry loop must not sleep on this error.
+var ErrDisallowedModel = errors.New("disallowed model")
+
 // debugOAIRequests gates verbose request/response logging for OAI calls.
 // Set LME_DEBUG_REQUESTS=1 to enable. Logs request body size and full response
 // body on non-200, so 400 errors include the vLLM error detail.
 var debugOAIRequests = os.Getenv("LME_DEBUG_REQUESTS") == "1"
+
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
@@ -56,13 +63,6 @@ func GenerateOpus(ctx context.Context, prompt string, retries int) (string, erro
 	return generate(ctx, prompt, "opus", retries)
 }
 
-// GenerateForModel calls generate with the given model alias. model must be
-// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
-// unknown value causes generate → runClaude to return an error immediately.
-func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
-	return generate(ctx, prompt, model, retries)
-}
-
 func generate(ctx context.Context, prompt, model string, retries int) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -72,6 +72,10 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 			return out, nil
 		}
 		lastErr = err
+		// Permanent validation errors must not be retried.
+		if errors.Is(err, ErrDisallowedModel) {
+			break
+		}
 		if attempt >= retries {
 			break
 		}
@@ -83,6 +87,14 @@ func generate(ctx context.Context, prompt, model string, retries int) (string, e
 		}
 	}
 	return "", lastErr
+}
+
+// GenerateForModel calls generate with the given model alias. model must be
+// one of the values in validClaudeModels ("opus", "sonnet", "haiku"); an
+// unknown value causes generate → runClaude to return ErrDisallowedModel
+// immediately without retrying.
+func GenerateForModel(ctx context.Context, prompt, model string, retries int) (string, error) {
+	return generate(ctx, prompt, model, retries)
 }
 
 // validClaudeModels is the allowlist for the --model flag passed to
@@ -103,7 +115,7 @@ func isValidClaudeModel(model string) bool {
 
 func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	if !isValidClaudeModel(model) {
-		return "", fmt.Errorf("claude: refusing to invoke with disallowed model %q (allowed: opus, sonnet, haiku) (#678)", model)
+		return "", fmt.Errorf("%w: %q (allowed: opus, sonnet, haiku) (#678)", ErrDisallowedModel, model)
 	}
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
@@ -139,14 +151,33 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	return out, nil
 }
 
+// OAIOptions controls generation quality parameters for OpenAI-compatible endpoints.
+// Zero values fall back to conservative defaults safe for all models.
+type OAIOptions struct {
+	// EnableThinking enables chain-of-thought reasoning for models that support it
+	// (e.g. Qwen3). Improves answer quality significantly; use higher MaxTokens.
+	// Do NOT enable for Nemotron v3 — causes HTTP 400 (vLLM GH#39103).
+	EnableThinking bool
+	// MaxTokens caps the output token budget. Default 2048 is fine for
+	// enable_thinking=false; use ≥8192 when thinking is enabled.
+	MaxTokens int
+}
+
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
 // the claude CLI. baseURL is the API root (e.g. "http://oblivion:8000/v1").
 // Retry/backoff behaviour mirrors generate().
+// Calls with conservative defaults (thinking off, 2048 tokens).
 func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int) (string, error) {
+	return GenerateOAIWithOpts(ctx, prompt, baseURL, model, retries, OAIOptions{})
+}
+
+// GenerateOAIWithOpts is the full-featured variant; use when you need thinking mode or
+// a larger token budget.
+func GenerateOAIWithOpts(ctx context.Context, prompt, baseURL, model string, retries int, opts OAIOptions) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAI(ctx, prompt, baseURL, model)
+		out, err := callOAI(ctx, prompt, baseURL, model, opts)
 		if err == nil {
 			return out, nil
 		}
@@ -164,13 +195,23 @@ func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int
 	return "", lastErr
 }
 
-func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error) {
+func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 
+	// Truncate prompt to last 480000 chars (~120k tokens) to avoid vLLM context overflow (status 400).
+	// We keep the END of the prompt because the question is at the end.
+	const maxPromptChars = 480_000
+	if len(prompt) > maxPromptChars {
+		slog.Warn("prompt truncated to fit context window",
+			"original_chars", len(prompt),
+			"truncated_chars", maxPromptChars)
+		prompt = prompt[len(prompt)-maxPromptChars:]
+	}
+
 	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
 	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
-	reqBody, err := buildOAIRequestBody(model, prompt)
+	reqBody, err := buildOAIRequestBody(model, prompt, opts)
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
 	}
@@ -359,16 +400,6 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 // user's preferences rather than answer the question directly — answering directly
 // was the root cause of 0/30 on that category in v9 (engram-go#741 follow-up).
 func GenerationPromptForType(question, questionType, questionDate string, contextBlocks []string) string {
-	return GenerationPromptForTypeEnumerate(question, questionType, questionDate, contextBlocks, false)
-}
-
-// GenerationPromptForTypeEnumerate is like GenerationPromptForType but accepts
-// an enumerateFirst flag (H12). When enumerateFirst is true AND the question
-// matches the aggregation pattern, the generation prompt instructs the model to
-// enumerate each relevant event from the retrieved blocks before stating a count.
-// For non-aggregation questions the flag is a no-op so all other question types
-// are unaffected.
-func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
 	if questionType == "temporal-reasoning" {
 		return temporalGenerationPrompt(question, questionDate, contextBlocks)
 	}
@@ -385,17 +416,59 @@ Question (asked on %s): %s
 
 Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`, questionDate, ctx, questionDate, question)
 	}
-	if enumerateFirst && IsAggregationQuestion(question) {
-		return GenerationPromptEnumerateFirst(question, questionDate, contextBlocks)
-	}
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
 
-// GenerationPromptEnumerateFirst returns a generation prompt that instructs the
-// model to enumerate each relevant event from the memory blocks individually
-// before computing a total. H12 mechanism: forces an explicit intermediate
+// GenerationPromptForTypeWithTemporalAug is like GenerationPromptForType but
+// applies the Exp-14 H-M5+H-M1 combined prompt augmentation for
+// temporal-reasoning questions when temporalPromptAug is true.
+//   - H-M5 (chrono-sort forcing): for ordering questions, instructs the model
+//     to list all relevant events in chronological order before answering.
+//   - H-M1 (entity enumeration): for entity-ambiguous questions with a
+//     relative-time anchor, instructs the model to enumerate all events of
+//     the target type before committing to the most temporally precise one.
+//
+// For all other question types, or when temporalPromptAug is false, the
+// standard GenerationPromptForType output is returned unchanged.
+// Activated by --temporal-prompt-aug (Config.TemporalPromptAug). Off by default.
+func GenerationPromptForTypeWithTemporalAug(question, questionType, questionDate string, contextBlocks []string, temporalPromptAug bool) string {
+	if temporalPromptAug && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithAug(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptForTypeWithDateInjection is like GenerationPromptForType but
+// applies the H16 date-injection variant for temporal-reasoning questions.
+// When injectQuestionDate is true and the question type is "temporal-reasoning",
+// the prompt is prepended with "Today's date is: {questionDate}" so relative-time
+// anchors resolve unambiguously. For all other question types the flag is a no-op
+// and the standard prompt is returned unchanged.
+func GenerationPromptForTypeWithDateInjection(question, questionType, questionDate string, contextBlocks []string, injectQuestionDate bool) string {
+	if injectQuestionDate && questionType == "temporal-reasoning" {
+		return temporalGenerationPromptWithDateInjection(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptForTypeEnumerate (H12, lme-h8h12h15) is like
+// GenerationPromptForType but accepts an enumerateFirst flag. When
+// enumerateFirst is true AND the question matches the aggregation pattern, the
+// generation prompt instructs the model to enumerate each relevant event from
+// the retrieved blocks before stating a count. For non-aggregation questions
+// the flag is a no-op so other question types are unaffected.
+func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
+	if enumerateFirst && questionType != "temporal-reasoning" && questionType != "single-session-preference" && IsAggregationQuestion(question) {
+		return GenerationPromptEnumerateFirst(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptEnumerateFirst (H12) returns a generation prompt that
+// instructs the model to enumerate each relevant event from the memory blocks
+// individually before computing a total. Forces an explicit intermediate
 // enumeration pass that prevents the model from returning a session count
-// instead of an entity count (Case 5 failure mode from in-context-all-failure-mechanics.md).
+// instead of an entity count.
 func GenerationPromptEnumerateFirst(question, questionDate string, contextBlocks []string) string {
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
 	return fmt.Sprintf(`You are answering questions about a person's conversation history.
@@ -501,17 +574,24 @@ func ParseScoreLabel(raw string) (label, explanation string) {
 	}
 
 	// Pass 2: scan all lines for first label occurrence.
+	// Note: firstLineIdx != i is always true when the if-block below is entered —
+	// Pass 1 already tried firstLineIdx and found no match, so Pass 2 cannot
+	// match there either. The guard is removed to reduce cognitive overhead (#760).
 	for i, l := range allLines {
 		upper := strings.ToUpper(strings.TrimSpace(l))
 		for _, v := range validLabels {
 			if upper == v {
 				label = v
 				// Explanation is whatever follows on subsequent lines.
+				// When the label is on the last line (rationale-first format like
+				// "rationale\nCORRECT"), post is empty and the pre-label text
+				// becomes the explanation instead — this is intentional (#759).
 				if i+1 < len(allLines) {
 					explanation = strings.TrimSpace(strings.Join(allLines[i+1:], "\n"))
 				}
-				// Also capture any pre-label text as part of explanation if first line had content.
-				if firstLineIdx >= 0 && firstLineIdx != i {
+				// Capture any pre-label text as part of explanation.
+				// firstLineIdx != i is guaranteed (Pass 1 eliminated firstLineIdx).
+				if firstLineIdx >= 0 {
 					pre := strings.TrimSpace(strings.Join(allLines[firstLineIdx:i], "\n"))
 					if pre != "" && explanation != "" {
 						explanation = pre + "\n" + explanation
@@ -544,10 +624,22 @@ func needsChatTemplateKwargs(model string) bool {
 }
 
 // buildOAIRequestBody marshals the OpenAI chat completion request body for
-// the given model + prompt. Only includes chat_template_kwargs for models
-// that understand it (currently vLLM Nemotron). Extracted from callOAI so
-// the model-gating decision is unit-testable. #671.
-func buildOAIRequestBody(model, prompt string) ([]byte, error) {
+// the given model + prompt. Accepts OAIOptions to control thinking mode and
+// token budget. Only includes chat_template_kwargs when opts.EnableThinking
+// is set or the model is Nemotron. Extracted from callOAI so the
+// model-gating decision is unit-testable. #671.
+func buildOAIRequestBody(model, prompt string, opts OAIOptions) ([]byte, error) {
+	maxTokens := 2048
+	if opts.MaxTokens > 0 {
+		maxTokens = opts.MaxTokens
+	} else if opts.EnableThinking {
+		maxTokens = 8192
+	}
+	// Qwen3 docs: temperature=0.6 for thinking mode, lower for non-thinking.
+	temperature := 0.2
+	if opts.EnableThinking {
+		temperature = 0.6
+	}
 	body := struct {
 		Model              string         `json:"model"`
 		Messages           []oaiMessage   `json:"messages"`
@@ -561,11 +653,15 @@ func buildOAIRequestBody(model, prompt string) ([]byte, error) {
 			{Role: "system", Content: "You are a precise QA assistant. Answer concisely using only the provided memory context."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   2048,
-		Temperature: 0.2,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
 		TopP:        0.95,
 	}
-	if needsChatTemplateKwargs(model) {
+	if opts.EnableThinking {
+		// enable_thinking=true: full chain-of-thought in reasoning_content, answer in content.
+		// Nemotron v3 does not support enable_thinking — do NOT pass EnableThinking=true for that model.
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
+	} else if needsChatTemplateKwargs(model) {
 		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
 	return json.Marshal(body)
@@ -767,10 +863,6 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 	}
 	type resultMessage struct {
 		Content []resultContent `json:"content"`
-	}
-	type resultSuccess struct {
-		Type    string        `json:"type"`
-		Message resultMessage `json:"message"`
 	}
 	type resultErrorDetail struct {
 		Type    string `json:"type"`

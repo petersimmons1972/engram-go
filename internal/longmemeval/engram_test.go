@@ -55,7 +55,7 @@ func TestRestClient_QuickStore_HappyPath(t *testing.T) {
 
 	rc := longmemeval.NewRestClient(srv.URL, "")
 	ctx := context.Background()
-	id, err := rc.QuickStore(ctx, "proj-1", "content here", []string{"tag1"})
+	id, err := rc.QuickStore(ctx, "proj-1", "content here", []string{"tag1"}, nil)
 	if err != nil {
 		t.Fatalf("QuickStore: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRestClient_QuickStore_RateLimitRetry(t *testing.T) {
 	// Use a short-timeout context so we don't wait real exponential backoff.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	id, err := rc.QuickStore(ctx, "proj-x", "hello", nil)
+	id, err := rc.QuickStore(ctx, "proj-x", "hello", nil, nil)
 	if err != nil {
 		t.Fatalf("QuickStore after retry: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRestClient_QuickStore_ServerError(t *testing.T) {
 	rc := longmemeval.NewRestClient(srv.URL, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	id, err := rc.QuickStore(ctx, "p", "c", nil)
+	id, err := rc.QuickStore(ctx, "p", "c", nil, nil)
 	if err != nil {
 		t.Fatalf("QuickStore after 500+retry: %v", err)
 	}
@@ -138,6 +138,71 @@ func TestRestClient_QuickRecall_HappyPath(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != "id-1" {
 		t.Errorf("ids = %v, want [id-1, id-2]", ids)
+	}
+}
+
+// TestRestClient_QuickStore_ExpiresAt_Set verifies that a non-nil expiresAt is
+// serialized as "expires_at" (RFC3339) in the POST body.
+func TestRestClient_QuickStore_ExpiresAt_Set(t *testing.T) {
+	future := time.Now().UTC().Add(72 * time.Hour)
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "mem-ttl"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	id, err := rc.QuickStore(context.Background(), "proj-ttl", "content", nil, &future)
+	if err != nil {
+		t.Fatalf("QuickStore: %v", err)
+	}
+	if id != "mem-ttl" {
+		t.Errorf("id = %q, want mem-ttl", id)
+	}
+	raw, ok := gotBody["expires_at"]
+	if !ok {
+		t.Fatal("expires_at field missing from request body")
+	}
+	parsed, err := time.Parse(time.RFC3339, raw.(string))
+	if err != nil {
+		t.Fatalf("expires_at is not RFC3339: %v", err)
+	}
+	delta := parsed.Sub(future)
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > 2*time.Second {
+		t.Errorf("expires_at delta = %v, want < 2s", delta)
+	}
+}
+
+// TestRestClient_QuickStore_ExpiresAt_Nil verifies that a nil expiresAt does NOT
+// include an "expires_at" key in the POST body (not null — fully absent).
+func TestRestClient_QuickStore_ExpiresAt_Nil(t *testing.T) {
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "mem-no-ttl"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	id, err := rc.QuickStore(context.Background(), "proj-no-ttl", "content", nil, nil)
+	if err != nil {
+		t.Fatalf("QuickStore: %v", err)
+	}
+	if id != "mem-no-ttl" {
+		t.Errorf("id = %q, want mem-no-ttl", id)
+	}
+	if _, ok := gotBody["expires_at"]; ok {
+		t.Error("expires_at must be absent from request body when expiresAt is nil")
 	}
 }
 

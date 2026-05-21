@@ -111,6 +111,8 @@ memory_store(
 | Low | 3 | 0.67× | Never |
 | Trivial | 4 | 0.33× | After 30 days |
 
+> **Two scales, do not confuse them.** `importance` itself is an integer 0–4 (5 discrete levels). The **multiplier** column above shows the runtime scoring effect (~0.33× to ~1.67×, derived as `max(0.1, (5 - importance) / 3)`). If you have seen a range like "5-100" or "0.33–1.67" referenced elsewhere, that is the multiplier or its percent form, not the input you pass to `memory_store`. The only other numeric memory field, `pattern_confidence`, is a float 0.0–1.0.
+
 Set `importance=0` (Critical) sparingly. A constraint that must never be violated — never use raw SQL outside the repository layer, never store tokens in localStorage — belongs here. Most decisions belong at High or Medium. If everything is Critical, nothing is.
 
 ---
@@ -247,6 +249,31 @@ memory_correct(
     project="my-app"
 )
 ```
+
+**Accepted parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `memory_id` | string | yes | ID of the memory to update |
+| `project` | string | yes | Project namespace the memory belongs to; must match the project used at store time |
+| `new_content` | string | no | Replacement content; omit to leave content unchanged |
+| `tags` | array of strings | no | Replacement tag set; see tag-and-valid_from rules below |
+| `importance` | integer 0–4 | no | Replacement importance value; must be 0–4. Out-of-range returns a tool-result error (`isError: true`) with message `importance must be 0-4`. Symmetric with `memory_store` validation. |
+
+> **Only-promote-never-nullify rule (issue #779):** `memory_correct` can set or recalculate `valid_from` via `date:` tags, but it can never clear it except through an explicit empty tag list. Sending no `tags` argument at all leaves `valid_from` untouched — it is never nullified by a field you did not send. In practice: omit `tags` to update only `content` or `importance` without disturbing `valid_from`. This asymmetry is intentional; it prevents accidental date-erasure when the caller only cares about the content. The sole exception is `tags: []` (empty array), which explicitly clears `valid_from` — see issue #765 for the recalculation logic.
+
+**Tag and valid_from rules (issue #765):**
+
+`valid_from` is derived from `date:YYYY-MM-DD` tags. On every `memory_correct` call that includes a `tags` argument, `valid_from` is recalculated from the supplied tag set:
+
+- **Omit `tags`** — `valid_from` is left unchanged. Use this when you only want to update content or importance.
+- **`tags: ["date:2024-06-01", ...]`** — `valid_from` is set to `2024-06-01`.
+- **`tags: []`** — `valid_from` is cleared to `NULL` (no date tag in the empty set).
+- **`tags: null`** — treated identically to omitting `tags`; `valid_from` is preserved. This is a JSON deserialization constraint: `null` and an absent key both produce `nil` after `json.Unmarshal` into `map[string]any`. To explicitly clear `valid_from`, send `"tags": []` (empty array).
+
+> **For typed-language SDKs (Go, Rust, Java):** A nil/null pointer field serialized to JSON usually emits `"tags":null`, which is treated as omitting `tags` (preserves `valid_from`). To CLEAR `valid_from`, serialize `tags` as an empty array `[]`, not `null`. Go SDKs should tag the field with `json:",omitempty"` if "no field" is the intended default.
+
+> **Behavior changes:** This recalculation behavior was introduced with issue #765. Prior to that fix, tags could be updated without recalculating `valid_from`, causing stale date values.
 
 Use `memory_correct` rather than `memory_forget` when you want to track that a change happened and why. If you just need a record gone — because it contains wrong security advice or outdated credentials — use `memory_forget`.
 

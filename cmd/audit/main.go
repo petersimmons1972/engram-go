@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/instinctllm"
+	"github.com/petersimmons1972/engram/internal/llmclient"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=<ver>".
@@ -25,8 +25,8 @@ func main() {
 func run() int {
 	llmBackend := flag.String("llm-backend", envOr("LLM_BACKEND", "anthropic"), "LLM backend: anthropic or olla")
 	timeout := flag.Duration("timeout", defaultTimeout, "Per-inference timeout")
-	engramBase := flag.String("engram", "", "Engram base URL (overrides config)")
-	engramToken := flag.String("token", "", "Engram Bearer token (overrides config)")
+	engramBase := flag.String("engram", "", "Engram base URL (overrides ENGRAM_URL env var and ~/.claude/mcp_servers.json)")
+	engramToken := flag.String("token", "", "Engram Bearer token (overrides ENGRAM_TOKEN env var and ~/.claude/mcp_servers.json)")
 	flag.Parse()
 
 	// Resolve Engram coordinates.
@@ -42,7 +42,7 @@ func run() int {
 	// Pass Backend explicitly via Config instead of setting LLM_BACKEND in the
 	// process environment — keeps configuration in the call chain and avoids
 	// race-unsafe global state under parallel tests (Blocker 3).
-	client, err := instinctllm.NewClient(instinctllm.Config{
+	client, err := llmclient.NewClient(llmclient.Config{
 		Backend: *llmBackend,
 		Timeout: *timeout,
 	})
@@ -60,7 +60,7 @@ func run() int {
 
 // runAudit fetches patterns, judges each, and writes the JSON report to out.
 // Extracted from run() so it can be tested without exec.
-func runAudit(base, token string, client instinctllm.LLMClient, timeout time.Duration, out io.Writer) error {
+func runAudit(base, token string, client llmclient.LLMClient, timeout time.Duration, out io.Writer) error {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}

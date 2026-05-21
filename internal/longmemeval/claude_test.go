@@ -35,7 +35,7 @@ func TestParseScoreLabel_Valid(t *testing.T) {
 func TestParseScoreLabel_Invalid(t *testing.T) {
 	label, _ := longmemeval.ParseScoreLabel("I'm not sure about this one.")
 	if label != "SCORE_ERROR" {
-		t.Errorf("unrecognised label default = %q, want SCORE_ERROR", label)
+		t.Errorf("unrecognised label default = %q, want SCORE_ERROR (not PARTIALLY_CORRECT — #753)", label)
 	}
 }
 
@@ -163,7 +163,9 @@ func TestScoreOAI_ReturnsCorrect(t *testing.T) {
 	}
 }
 
-func TestScoreOAI_HTTPError_ReturnsSCORE_ERROR(t *testing.T) {
+func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
+	// Pre-#753: ScoreOAI returned PARTIALLY_CORRECT on HTTP error, masking infra failures.
+	// Post-#753: ScoreOAI returns SCORE_ERROR so errors are visible in score reports.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -175,7 +177,7 @@ func TestScoreOAI_HTTPError_ReturnsSCORE_ERROR(t *testing.T) {
 		t.Error("expected error for HTTP 503, got nil")
 	}
 	if result.Label != "SCORE_ERROR" {
-		t.Errorf("label = %q, want SCORE_ERROR on transport error", result.Label)
+		t.Errorf("label = %q, want SCORE_ERROR on HTTP error (not PARTIALLY_CORRECT — #753)", result.Label)
 	}
 }
 
@@ -411,6 +413,79 @@ func TestGenerate_RequiresClaude(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// ParseScoreLabel — #753 regression guards for rubric error inflating v9 baseline
+// ---------------------------------------------------------------------------
+
+// TestParseScoreLabel_OldFormatRationale verifies that the pre-fix rubric format
+// (rationale before label, as generated before commit 423343a) is handled by
+// the scan-all-lines pass and does NOT default to PARTIALLY_CORRECT.
+// This is a regression guard against reverting the rubric prompt structure.
+func TestParseScoreLabel_OldFormatRationale(t *testing.T) {
+	// Old format: rationale first, label buried at end — no longer generated
+	// but ParseScoreLabel must handle it gracefully (find the label, not error).
+	old := "The hypothesis closely matches the gold answer in key facts.\nCORRECT"
+	label, _ := longmemeval.ParseScoreLabel(old)
+	if label != "CORRECT" {
+		t.Errorf("ParseScoreLabel(old-format rationale-first) = %q, want CORRECT", label)
+	}
+}
+
+// TestParseScoreLabel_TruncatedNoLabel verifies that when max_tokens is too low
+// and the response is cut off before a label appears, SCORE_ERROR is returned
+// rather than PARTIALLY_CORRECT (pre-fix behaviour).
+func TestParseScoreLabel_TruncatedNoLabel(t *testing.T) {
+	truncated := "The hypothesis matches several facts from the gold answer such as the date"
+	// Note: no label anywhere — simulates truncation before label was emitted
+	label, _ := longmemeval.ParseScoreLabel(truncated)
+	if label != "SCORE_ERROR" {
+		t.Errorf("ParseScoreLabel(truncated, no label) = %q, want SCORE_ERROR", label)
+	}
+}
+
+// TestParseScoreLabel_LabelLastLine verifies explanation semantics when the label
+// is on the last line (rationale-first / old format like "rationale\nCORRECT").
+// When no post-label lines exist, ParseScoreLabel uses the pre-label text as the
+// explanation — this is intentional: the preamble IS the rationale. (#759)
+func TestParseScoreLabel_LabelLastLine(t *testing.T) {
+	raw := "The answer matches the gold facts exactly.\nCORRECT"
+	label, expl := longmemeval.ParseScoreLabel(raw)
+	if label != "CORRECT" {
+		t.Errorf("label = %q, want CORRECT", label)
+	}
+	// Pre-label rationale becomes the explanation in last-line-label format.
+	if expl == "" {
+		t.Errorf("explanation is empty; want pre-label rationale as explanation (#759)")
+	}
+	if !strings.Contains(expl, "matches") {
+		t.Errorf("explanation = %q; want pre-label rationale text (#759)", expl)
+	}
+}
+
+// TestParseScoreLabel_ScoreErrorPropagation verifies that ParseScoreLabel returns
+// SCORE_ERROR (not CORRECT or PARTIALLY_CORRECT) when no valid label is found.
+// Guards the pipeline contract: SCORE_ERROR hits the default/Incorrect bucket in
+// writeScoreReport (cmd/longmemeval/score.go) — never silently inflates scores. (#761)
+func TestParseScoreLabel_ScoreErrorPropagation(t *testing.T) {
+	inputs := []string{
+		// Truncated response — context window ran out before label was emitted.
+		"The hypothesis mentions the correct city but the explanation was cut",
+		// Garbled output — label-like text embedded inside a longer word.
+		"The result is INCORRECTLY stated in the hypothesis.",
+		// Empty string — no content at all.
+		"",
+	}
+	for _, raw := range inputs {
+		label, _ := longmemeval.ParseScoreLabel(raw)
+		if label == "CORRECT" || label == "PARTIALLY_CORRECT" {
+			t.Errorf("ParseScoreLabel(%q) = %q; want SCORE_ERROR, not a valid label — would silently inflate score counts (#761)", raw, label)
+		}
+		if label != "SCORE_ERROR" {
+			t.Errorf("ParseScoreLabel(%q) = %q, want SCORE_ERROR (#761)", raw, label)
+		}
+	}
+}
+
 func TestPreferenceRecallQuery_TransformsLiteralQuestion(t *testing.T) {
 	cases := []struct {
 		question        string
@@ -468,13 +543,23 @@ func TestContextTopKForType(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// H12 — Enumerate-first generation prompt
-// ---------------------------------------------------------------------------
-
-// TestEnumerateFirstPrompt_ContainsEnumerationInstruction verifies that when
-// --enumerate-first is requested for an aggregation question, the generation
-// prompt contains an explicit enumerate-before-summing instruction.
+func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
+	prompt := longmemeval.GenerationPromptForType(
+		"How many weeks ago did I attend the baking class?",
+		"temporal-reasoning",
+		"2024-03-15",
+		[]string{"Session date: 2024-02-22\nUser attended a baking class at a local culinary school."},
+	)
+	if !strings.Contains(prompt, "step") && !strings.Contains(prompt, "Step") {
+		t.Errorf("temporal prompt must include step-by-step arithmetic guidance, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "2024-03-15") {
+		t.Errorf("temporal prompt must include question date for arithmetic, got:\n%s", prompt)
+	}
+	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
+		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
+	}
+}
 func TestEnumerateFirstPrompt_ContainsEnumerationInstruction(t *testing.T) {
 	question := "How many doctor visits did I have last year?"
 	contextBlocks := []string{
@@ -562,22 +647,3 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 	}
 }
 
-// TestGenerationPromptForType_TemporalType_HasArithmeticGuidance is kept
-// unchanged — verifies temporal prompts still work after H12 refactor.
-func TestGenerationPromptForType_TemporalType_HasArithmeticGuidance(t *testing.T) {
-	prompt := longmemeval.GenerationPromptForType(
-		"How many weeks ago did I attend the baking class?",
-		"temporal-reasoning",
-		"2024-03-15",
-		[]string{"Session date: 2024-02-22\nUser attended a baking class at a local culinary school."},
-	)
-	if !strings.Contains(prompt, "step") && !strings.Contains(prompt, "Step") {
-		t.Errorf("temporal prompt must include step-by-step arithmetic guidance, got:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "2024-03-15") {
-		t.Errorf("temporal prompt must include question date for arithmetic, got:\n%s", prompt)
-	}
-	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
-		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
-	}
-}

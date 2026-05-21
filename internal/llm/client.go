@@ -2,6 +2,7 @@
 // the summarize and consolidate packages. It targets LiteLLM's
 // /v1/chat/completions endpoint, which is also compatible with direct OpenAI
 // and any other provider LiteLLM proxies.
+// See also: internal/llmclient — the multi-backend (Anthropic + Olla) completion client used by instinct and audit.
 package llm
 
 import (

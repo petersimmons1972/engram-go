@@ -5,14 +5,14 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/scorer"
-	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
-func attempt(content string, thinking string, dur time.Duration, timedOut bool) types.RunAttempt {
-	return types.RunAttempt{
+func attempt(content string, thinking string, dur time.Duration, timedOut bool) benchmark.RunAttempt {
+	return benchmark.RunAttempt{
 		RawContent:   content,
 		ThinkingText: thinking,
-		Duration:     types.Duration(dur),
+		Duration:     benchmark.Duration(dur),
 		TimedOut:     timedOut,
 	}
 }
@@ -22,15 +22,15 @@ const emptyPatterns = `{"patterns":[]}`
 const invalidJSON = `not json`
 
 func TestScore_Recommended(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt(validPattern, "", 10*time.Second, false),
 			attempt(validPattern, "", 11*time.Second, false),
 			attempt(validPattern, "", 12*time.Second, false),
 		},
 	}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictRecommended {
+	if s.Verdict != benchmark.VerdictRecommended {
 		t.Errorf("want Recommended, got %s (reason: %s)", s.Verdict, s.VerdictReason)
 	}
 	if s.ValidPatterns != 1 {
@@ -42,65 +42,65 @@ func TestScore_Recommended(t *testing.T) {
 }
 
 func TestScore_Failed_InvalidJSON(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt(invalidJSON, "", 5*time.Second, false),
 			attempt(invalidJSON, "", 5*time.Second, false),
 			attempt(invalidJSON, "", 5*time.Second, false),
 		},
 	}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictFailed {
+	if s.Verdict != benchmark.VerdictFailed {
 		t.Errorf("want Failed, got %s", s.Verdict)
 	}
 }
 
 func TestScore_NotRecommended_ThinkingLeak(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt(validPattern, "some thinking content", 10*time.Second, false),
 			attempt(validPattern, "", 10*time.Second, false),
 			attempt(validPattern, "", 10*time.Second, false),
 		},
 	}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictNotRecommended {
+	if s.Verdict != benchmark.VerdictNotRecommended {
 		t.Errorf("want NotRecommended (thinking leak), got %s", s.Verdict)
 	}
 }
 
 func TestScore_Usable_ZeroPatterns(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt(emptyPatterns, "", 8*time.Second, false),
 			attempt(emptyPatterns, "", 8*time.Second, false),
 			attempt(emptyPatterns, "", 8*time.Second, false),
 		},
 	}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictUsable {
+	if s.Verdict != benchmark.VerdictUsable {
 		t.Errorf("want Usable, got %s", s.Verdict)
 	}
 }
 
 func TestScore_TimedOut(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt("", "", 300*time.Second, true),
 			attempt("", "", 300*time.Second, true),
 			attempt("", "", 300*time.Second, true),
 		},
 	}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictTimedOut {
+	if s.Verdict != benchmark.VerdictTimedOut {
 		t.Errorf("want TimedOut, got %s", s.Verdict)
 	}
 }
 
 func TestScore_SkippedVRAM(t *testing.T) {
-	result := types.RunResult{Skipped: true, SkipReason: "requires 17GB, available 8GB"}
+	result := benchmark.RunResult{Skipped: true, SkipReason: "requires 17GB, available 8GB"}
 	s := scorer.Score(result)
-	if s.Verdict != types.VerdictSkippedVRAM {
+	if s.Verdict != benchmark.VerdictSkippedVRAM {
 		t.Errorf("want SkippedVRAM, got %s", s.Verdict)
 	}
 	if s.VerdictReason != "requires 17GB, available 8GB" {
@@ -109,8 +109,8 @@ func TestScore_SkippedVRAM(t *testing.T) {
 }
 
 func TestScore_Composite(t *testing.T) {
-	result := types.RunResult{
-		Runs: []types.RunAttempt{
+	result := benchmark.RunResult{
+		Runs: []benchmark.RunAttempt{
 			attempt(validPattern, "", 10*time.Second, false),
 			attempt(validPattern, "", 10*time.Second, false),
 			attempt(validPattern, "", 10*time.Second, false),
@@ -126,10 +126,10 @@ func TestScore_Composite(t *testing.T) {
 func TestValidPattern_TagSignatureRegex(t *testing.T) {
 	good := `{"patterns":[{"type":"workflow","description":"x","domain":"bash","evidence":"y","tag_signature":"sig-git-diff-pr","confidence":0.8}]}`
 	bad := `{"patterns":[{"type":"workflow","description":"x","domain":"bash","evidence":"y","tag_signature":"SIG INVALID","confidence":0.8}]}`
-	if r := scorer.Score(types.RunResult{Runs: []types.RunAttempt{attempt(good, "", 5*time.Second, false), attempt(good, "", 5*time.Second, false), attempt(good, "", 5*time.Second, false)}}); r.ValidPatterns != 1 {
+	if r := scorer.Score(benchmark.RunResult{Runs: []benchmark.RunAttempt{attempt(good, "", 5*time.Second, false), attempt(good, "", 5*time.Second, false), attempt(good, "", 5*time.Second, false)}}); r.ValidPatterns != 1 {
 		t.Errorf("good tag_signature: want 1 valid, got %d", r.ValidPatterns)
 	}
-	if r := scorer.Score(types.RunResult{Runs: []types.RunAttempt{attempt(bad, "", 5*time.Second, false), attempt(bad, "", 5*time.Second, false), attempt(bad, "", 5*time.Second, false)}}); r.ValidPatterns != 0 {
+	if r := scorer.Score(benchmark.RunResult{Runs: []benchmark.RunAttempt{attempt(bad, "", 5*time.Second, false), attempt(bad, "", 5*time.Second, false), attempt(bad, "", 5*time.Second, false)}}); r.ValidPatterns != 0 {
 		t.Errorf("bad tag_signature: want 0 valid, got %d", r.ValidPatterns)
 	}
 }

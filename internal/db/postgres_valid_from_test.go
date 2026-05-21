@@ -62,3 +62,66 @@ func TestStoreMemory_NilValidFromStaysNil(t *testing.T) {
 	require.NotNil(t, got)
 	require.Nil(t, got.ValidFrom, "valid_from must remain NULL when not set on the struct")
 }
+
+// TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate verifies the behavior
+// described in issue #765: if memory_correct sends tags that no longer include
+// a date: tag, valid_from is cleared to NULL. This supersedes the old
+// "only promote, never nullify" policy. Callers that want to preserve an
+// existing valid_from must omit the tags argument entirely.
+func TestUpdateMemory_ClearsValidFromWhenTagsHaveNoDate(t *testing.T) {
+	proj := uniqueProject("update-vf-clear")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	// 1. Store a memory with a date: tag — ValidFrom should be set.
+	originalDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	m := &types.Memory{
+		ID:         types.NewMemoryID(),
+		Content:    "test content for clear",
+		Project:    proj,
+		MemoryType: types.MemoryTypeContext,
+		Importance: 1,
+		Tags:       []string{"date:2024-06-15", "foo"},
+		ValidFrom:  &originalDate,
+	}
+	require.NoError(t, b.StoreMemory(ctx, m))
+
+	// 2. Call UpdateMemory with tags that have NO date: tag.
+	newTags := []string{"foo", "bar"}
+	updated, err := b.UpdateMemory(ctx, m.ID, nil, newTags, nil, nil)
+	require.NoError(t, err)
+
+	// 3. ValidFrom must be NULL — always recalculate when new tags change.
+	require.Nil(t, updated.ValidFrom,
+		"ValidFrom must be NULL when new tags omit date: (see issue #765)")
+}
+
+// TestUpdateMemory_PromotesValidFromOnDateTagChange is the paired positive case:
+// when new tags include a different date: tag, ValidFrom is updated to match.
+func TestUpdateMemory_PromotesValidFromOnDateTagChange(t *testing.T) {
+	proj := uniqueProject("update-vf-promote")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	originalDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	m := &types.Memory{
+		ID:         types.NewMemoryID(),
+		Content:    "test content for promote",
+		Project:    proj,
+		MemoryType: types.MemoryTypeContext,
+		Importance: 1,
+		Tags:       []string{"date:2024-01-01"},
+		ValidFrom:  &originalDate,
+	}
+	require.NoError(t, b.StoreMemory(ctx, m))
+
+	// Update with a new date: tag — ValidFrom must be promoted to the new date.
+	newTags := []string{"date:2024-12-31"}
+	updated, err := b.UpdateMemory(ctx, m.ID, nil, newTags, nil, nil)
+	require.NoError(t, err)
+
+	expectedNew := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
+	require.NotNil(t, updated.ValidFrom)
+	require.True(t, updated.ValidFrom.Equal(expectedNew),
+		"ValidFrom must equal new 2024-12-31, got %s", updated.ValidFrom)
+}

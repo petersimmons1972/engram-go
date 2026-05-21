@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -64,7 +65,6 @@ func ingestWorker(cfg *Config, work <-chan longmemeval.Item, out chan<- longmeme
 	}
 }
 
-
 func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestClient, item longmemeval.Item) (entry longmemeval.IngestEntry) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -77,6 +77,14 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 	}()
 
 	project := projectName(cfg.RunID, item.QuestionID)
+
+	// #837: compute expiresAt once per question. Passed to every QuickStore call;
+	// SetProjectTTL is idempotent (ON CONFLICT DO UPDATE) so repeated upserts are safe.
+	var expiresAt *time.Time
+	if cfg.ScratchTTL > 0 {
+		t := time.Now().UTC().Add(cfg.ScratchTTL)
+		expiresAt = &t
+	}
 
 	// Collect non-empty sessions with their IDs.
 	type sessionEntry struct {
@@ -107,7 +115,7 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 
 	memoryMap := make(map[string]string, len(sessions))
 	for i, s := range sessions {
-		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags)
+		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags, expiresAt)
 		if err != nil {
 			return longmemeval.IngestEntry{
 				QuestionID: item.QuestionID,
