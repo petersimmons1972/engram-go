@@ -38,7 +38,7 @@ func TestNeedsChatTemplateKwargs(t *testing.T) {
 // does NOT contain "chat_template_kwargs" when the model is not in the
 // vLLM family.
 func TestBuildOAIRequest_OmitsKwargsForNonNemotron(t *testing.T) {
-	body, err := buildOAIRequestBody("gpt-4o-mini", "prompt")
+	body, err := buildOAIRequestBody("gpt-4o-mini", "prompt", OAIOptions{})
 	if err != nil {
 		t.Fatalf("buildOAIRequestBody: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestBuildOAIRequest_OmitsKwargsForNonNemotron(t *testing.T) {
 }
 
 func TestBuildOAIRequest_IncludesKwargsForNemotron(t *testing.T) {
-	body, err := buildOAIRequestBody("nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4", "prompt")
+	body, err := buildOAIRequestBody("nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4", "prompt", OAIOptions{})
 	if err != nil {
 		t.Fatalf("buildOAIRequestBody: %v", err)
 	}

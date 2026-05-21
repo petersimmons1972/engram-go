@@ -354,7 +354,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {
-		hypothesis, err = longmemeval.GenerateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries)
+		maxTok := cfg.LLMMaxTokens
+		if maxTok == 0 && cfg.EnableThinking {
+			maxTok = 8192 // thinking mode default: room for reasoning chain + answer
+		}
+		opts := longmemeval.OAIOptions{EnableThinking: cfg.EnableThinking, MaxTokens: maxTok}
+		hypothesis, err = longmemeval.GenerateOAIWithOpts(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
 	} else {
 		hypothesis, err = longmemeval.GenerateForModel(ctx, prompt, cfg.GenerationModel, cfg.Retries)
 	}

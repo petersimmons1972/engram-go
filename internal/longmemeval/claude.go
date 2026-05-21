@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -150,14 +151,33 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 	return out, nil
 }
 
+// OAIOptions controls generation quality parameters for OpenAI-compatible endpoints.
+// Zero values fall back to conservative defaults safe for all models.
+type OAIOptions struct {
+	// EnableThinking enables chain-of-thought reasoning for models that support it
+	// (e.g. Qwen3). Improves answer quality significantly; use higher MaxTokens.
+	// Do NOT enable for Nemotron v3 — causes HTTP 400 (vLLM GH#39103).
+	EnableThinking bool
+	// MaxTokens caps the output token budget. Default 2048 is fine for
+	// enable_thinking=false; use ≥8192 when thinking is enabled.
+	MaxTokens int
+}
+
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
 // the claude CLI. baseURL is the API root (e.g. "http://oblivion:8000/v1").
 // Retry/backoff behaviour mirrors generate().
+// Calls with conservative defaults (thinking off, 2048 tokens).
 func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int) (string, error) {
+	return GenerateOAIWithOpts(ctx, prompt, baseURL, model, retries, OAIOptions{})
+}
+
+// GenerateOAIWithOpts is the full-featured variant; use when you need thinking mode or
+// a larger token budget.
+func GenerateOAIWithOpts(ctx context.Context, prompt, baseURL, model string, retries int, opts OAIOptions) (string, error) {
 	var lastErr error
 	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAI(ctx, prompt, baseURL, model)
+		out, err := callOAI(ctx, prompt, baseURL, model, opts)
 		if err == nil {
 			return out, nil
 		}
@@ -175,13 +195,23 @@ func GenerateOAI(ctx context.Context, prompt, baseURL, model string, retries int
 	return "", lastErr
 }
 
-func callOAI(ctx context.Context, prompt, baseURL, model string) (string, error) {
+func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
 
+	// Truncate prompt to last 480000 chars (~120k tokens) to avoid vLLM context overflow (status 400).
+	// We keep the END of the prompt because the question is at the end.
+	const maxPromptChars = 480_000
+	if len(prompt) > maxPromptChars {
+		slog.Warn("prompt truncated to fit context window",
+			"original_chars", len(prompt),
+			"truncated_chars", maxPromptChars)
+		prompt = prompt[len(prompt)-maxPromptChars:]
+	}
+
 	// oaiMessage omits Reasoning — sending it (even empty) causes HTTP 400 on
 	// vLLM's Nemotron v3 reasoning parser (vLLM GH#39103).
-	reqBody, err := buildOAIRequestBody(model, prompt)
+	reqBody, err := buildOAIRequestBody(model, prompt, opts)
 	if err != nil {
 		return "", fmt.Errorf("marshal OAI request: %w", err)
 	}
@@ -558,10 +588,22 @@ func needsChatTemplateKwargs(model string) bool {
 }
 
 // buildOAIRequestBody marshals the OpenAI chat completion request body for
-// the given model + prompt. Only includes chat_template_kwargs for models
-// that understand it (currently vLLM Nemotron). Extracted from callOAI so
-// the model-gating decision is unit-testable. #671.
-func buildOAIRequestBody(model, prompt string) ([]byte, error) {
+// the given model + prompt. Accepts OAIOptions to control thinking mode and
+// token budget. Only includes chat_template_kwargs when opts.EnableThinking
+// is set or the model is Nemotron. Extracted from callOAI so the
+// model-gating decision is unit-testable. #671.
+func buildOAIRequestBody(model, prompt string, opts OAIOptions) ([]byte, error) {
+	maxTokens := 2048
+	if opts.MaxTokens > 0 {
+		maxTokens = opts.MaxTokens
+	} else if opts.EnableThinking {
+		maxTokens = 8192
+	}
+	// Qwen3 docs: temperature=0.6 for thinking mode, lower for non-thinking.
+	temperature := 0.2
+	if opts.EnableThinking {
+		temperature = 0.6
+	}
 	body := struct {
 		Model              string         `json:"model"`
 		Messages           []oaiMessage   `json:"messages"`
@@ -575,11 +617,15 @@ func buildOAIRequestBody(model, prompt string) ([]byte, error) {
 			{Role: "system", Content: "You are a precise QA assistant. Answer concisely using only the provided memory context."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   2048,
-		Temperature: 0.2,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
 		TopP:        0.95,
 	}
-	if needsChatTemplateKwargs(model) {
+	if opts.EnableThinking {
+		// enable_thinking=true: full chain-of-thought in reasoning_content, answer in content.
+		// Nemotron v3 does not support enable_thinking — do NOT pass EnableThinking=true for that model.
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
+	} else if needsChatTemplateKwargs(model) {
 		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
 	return json.Marshal(body)
