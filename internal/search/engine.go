@@ -670,6 +670,17 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		baseWeights = KnowledgeUpdateWeights()
 	}
 
+	// For temporal queries, pre-collect the candidate slice once so
+	// CompositeScoreWithRankNorm can compute the date range across the full set.
+	// This avoids an O(n²) re-scan: candidateDateRange runs once via the slice.
+	var temporalCandidates []*types.Memory
+	if tempQuery {
+		temporalCandidates = make([]*types.Memory, 0, len(memories))
+		for _, m := range memories {
+			temporalCandidates = append(temporalCandidates, m)
+		}
+	}
+
 	// Composite scoring per memory.
 	results := make([]types.SearchResult, 0)
 	for id, m := range memories {
@@ -704,7 +715,16 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			MemoryType:         m.MemoryType,
 			IsPreferenceQuery:  prefQuery,
 		}
-		score := CompositeScoreWithWeights(input, baseWeights)
+		var score float64
+		if tempQuery {
+			var validFrom time.Time
+			if m.ValidFrom != nil {
+				validFrom = *m.ValidFrom
+			}
+			score = CompositeScoreWithRankNorm(input, baseWeights, validFrom, temporalCandidates)
+		} else {
+			score = CompositeScoreWithWeights(input, baseWeights)
+		}
 
 		result := types.SearchResult{
 			Memory:     m,

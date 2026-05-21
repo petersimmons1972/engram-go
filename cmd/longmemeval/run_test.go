@@ -393,3 +393,111 @@ func TestCleanupSummary_TokenIsCleanupSummary(t *testing.T) {
 		t.Error("run.go still contains old log token 'INFO run: preserved' — should be replaced by 'cleanup-summary'")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// buildRecallQuery — F2 temporal classifier signal preservation
+// ---------------------------------------------------------------------------
+
+// temporalSignalWords mirrors the set in internal/search/query_signal.go.
+// We don't import search here (different package), so we enumerate a subset
+// of the well-known signals that should appear in the rewritten query.
+var temporalSignalWords = []string{
+	"recent", "recently", "ago", "last", "when", "since", "before", "after",
+	"first", "latest", "earliest", "previous", "prior",
+}
+
+func hasTemporalSignal(q string) bool {
+	lower := strings.ToLower(q)
+	for _, w := range temporalSignalWords {
+		// word-boundary check: preceded/followed by non-alpha or string edge
+		idx := strings.Index(lower, w)
+		if idx < 0 {
+			continue
+		}
+		before := idx == 0 || !isAlpha(lower[idx-1])
+		after := idx+len(w) >= len(lower) || !isAlpha(lower[idx+len(w)])
+		if before && after {
+			return true
+		}
+	}
+	return false
+}
+
+func isAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// TestBuildRecallQuery_TemporalReasoningPreservesSignal is the F2 regression
+// test. Before the fix, buildRecallQuery strips all temporal words from the
+// interrogative prefix and returns a bare semantic fragment — causing
+// isTemporalQuery() on the server to return false and apply DefaultWeights.
+// After the fix, the returned query must begin with a temporal signal word
+// ("recent") so TemporalWeights fire on the server side.
+func TestBuildRecallQuery_TemporalReasoningPreservesSignal(t *testing.T) {
+	cases := []struct {
+		name     string
+		question string
+		// wantSemanticFragment is a substring that must appear in the result
+		// to confirm the semantic content was not lost.
+		wantSemanticFragment string
+	}{
+		{
+			name:                 "days-ago interrogative",
+			question:             "How many days ago did I attend the baking class?",
+			wantSemanticFragment: "baking class",
+		},
+		{
+			name:                 "weeks-ago interrogative",
+			question:             "How many weeks ago did I start learning guitar?",
+			wantSemanticFragment: "guitar",
+		},
+		{
+			name:                 "when-did interrogative",
+			question:             "When did I visit my grandmother in Portland?",
+			wantSemanticFragment: "grandmother",
+		},
+		{
+			name:                 "months-ago interrogative",
+			question:             "How many months ago was I promoted at work?",
+			wantSemanticFragment: "promoted",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildRecallQuery(tc.question, "temporal-reasoning", false)
+
+			// F2 contract: the result must carry a temporal signal word so that
+			// isTemporalQuery() returns true on the Engram server.
+			if !hasTemporalSignal(got) {
+				t.Errorf("buildRecallQuery(%q) = %q — no temporal signal word found; isTemporalQuery will return false (F2 regression)", tc.question, got)
+			}
+
+			// Semantic content must be preserved.
+			if !strings.Contains(strings.ToLower(got), strings.ToLower(tc.wantSemanticFragment)) {
+				t.Errorf("buildRecallQuery(%q) = %q — missing expected semantic fragment %q", tc.question, got, tc.wantSemanticFragment)
+			}
+		})
+	}
+}
+
+// TestBuildRecallQuery_TemporalReasoningDisableRewrite verifies that when
+// DisableQueryRewrite is true the raw question is returned unchanged (no
+// "recent " prefix is prepended).
+func TestBuildRecallQuery_TemporalReasoningDisableRewrite(t *testing.T) {
+	q := "How many days ago did I attend the baking class?"
+	got := buildRecallQuery(q, "temporal-reasoning", true)
+	if got != q {
+		t.Errorf("with disableRewrite=true, buildRecallQuery should return question unchanged; got %q", got)
+	}
+}
+
+// TestBuildRecallQuery_NonTemporalUnchanged verifies that non-temporal question
+// types are not prefixed with "recent ".
+func TestBuildRecallQuery_NonTemporalUnchanged(t *testing.T) {
+	q := "What is my favorite restaurant?"
+	got := buildRecallQuery(q, "single-hop-factual", false)
+	if got != q {
+		t.Errorf("non-temporal question should be returned unchanged; got %q, want %q", got, q)
+	}
+}

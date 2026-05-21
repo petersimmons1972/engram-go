@@ -4,8 +4,10 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/envconf"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 const (
@@ -330,6 +332,124 @@ func CompositeScoreRRF(in ScoreInput, w Weights, rrfBase float64) float64 {
 	}
 	if in.IsPreferenceQuery && in.MemoryType == "preference" {
 		raw *= 1.8
+	}
+	return raw * boost
+}
+
+// RankNormalizedRecency computes a [0,1] recency score by rank-normalizing
+// validFrom within the candidate set's date range [minDate, maxDate].
+//
+// This replaces the absolute exponential RecencyDecay for temporal queries where
+// content spans multiple years (e.g., LME 2022–2024 sessions evaluated in 2026).
+// At those timescales exp(-0.01 * h) collapses to ~1e-77, making the recency
+// signal numerically zero. Rank normalization preserves relative ordering:
+//
+//   - validFrom == maxDate → 1.0 (most recent in set)
+//   - validFrom == minDate → 0.0 (oldest in set)
+//   - maxDate == minDate   → 0.5 (all equal: neutral)
+func RankNormalizedRecency(validFrom, minDate, maxDate time.Time) float64 {
+	span := maxDate.Sub(minDate)
+	if span <= 0 {
+		// Single candidate or all same date: neutral score.
+		return 0.5
+	}
+	score := float64(validFrom.Sub(minDate)) / float64(span)
+	// Clamp to [0, 1] as a defensive measure against out-of-range inputs.
+	if score < 0 {
+		return 0.0
+	}
+	if score > 1 {
+		return 1.0
+	}
+	return score
+}
+
+// RankNormalizedRecencyWithFallback is like RankNormalizedRecency but handles a
+// zero validFrom by falling back to RecencyDecay computed from createdAt.
+// A zero validFrom means valid_from was nil/unset at ingest time.
+func RankNormalizedRecencyWithFallback(validFrom, createdAt, minDate, maxDate time.Time) float64 {
+	if validFrom.IsZero() {
+		hours := time.Since(createdAt).Hours()
+		return RecencyDecay(hours)
+	}
+	return RankNormalizedRecency(validFrom, minDate, maxDate)
+}
+
+// candidateDateRange scans a slice of Memory pointers and returns the min and max
+// valid_from timestamps across the set. Memories with a zero/nil ValidFrom are
+// excluded from the range computation (they fall back to RecencyDecay).
+// Returns zero times when no valid ValidFrom values are found.
+func candidateDateRange(candidates []*types.Memory) (minDate, maxDate time.Time) {
+	first := true
+	for _, m := range candidates {
+		if m == nil || m.ValidFrom == nil || m.ValidFrom.IsZero() {
+			continue
+		}
+		vf := *m.ValidFrom
+		if first {
+			minDate = vf
+			maxDate = vf
+			first = false
+			continue
+		}
+		if vf.Before(minDate) {
+			minDate = vf
+		}
+		if vf.After(maxDate) {
+			maxDate = vf
+		}
+	}
+	return minDate, maxDate
+}
+
+// CompositeScoreWithRankNorm is like CompositeScoreWithWeights but uses
+// RankNormalizedRecency for the recency component instead of RecencyDecay.
+//
+// validFrom is the memory's ValidFrom timestamp (may be zero for fallback).
+// candidates is the full candidate set — used to compute the date range for
+// rank normalization. The function pre-computes minDate/maxDate across the
+// set on each call.
+//
+// Single-candidate rule: when len(candidates)==1 and it has a valid ValidFrom,
+// recency is 1.0 (the single result is always fully recency-boosted; there is
+// no other candidate to rank against).
+//
+// Used when TemporalWeights are in effect so that relative ordering across
+// multi-year candidate sets is preserved (absolute decay collapses at LME timescales).
+func CompositeScoreWithRankNorm(in ScoreInput, w Weights, validFrom time.Time, candidates []*types.Memory) float64 {
+	var recency float64
+	if validFrom.IsZero() {
+		// No valid_from on this memory: fall back to absolute decay.
+		recency = RecencyDecay(in.HoursSince)
+	} else if len(candidates) == 1 {
+		// Single candidate: fully recency-boosted — no relative ordering possible.
+		recency = 1.0
+	} else {
+		minDate, maxDate := candidateDateRange(candidates)
+		if minDate.IsZero() {
+			// No candidates have valid_from: fall back.
+			recency = RecencyDecay(in.HoursSince)
+		} else {
+			recency = RankNormalizedRecency(validFrom, minDate, maxDate)
+		}
+	}
+
+	var boost float64
+	if in.DynamicImportance != nil {
+		boost = math.Max(0.1, *in.DynamicImportance)
+	} else {
+		boost = ImportanceBoost(in.Importance)
+	}
+	precision := 0.5
+	if in.RetrievalPrecision != nil {
+		precision = *in.RetrievalPrecision
+	}
+	raw := w.Vector*in.Cosine + w.BM25*in.BM25 + w.Recency*recency + w.Precision*precision
+	if in.EpisodeMatch {
+		raw *= 1.15
+	}
+	if in.IsPreferenceQuery && in.MemoryType == "preference" {
+		raw *= 1.35
 	}
 	return raw * boost
 }
