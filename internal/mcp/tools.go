@@ -21,7 +21,7 @@ import (
 
 // Config holds server-wide configuration passed to tool handlers.
 type Config struct {
-	LiteLLMURL               string
+	RouterURL                string
 	EmbedModel               string
 	SummarizeModel           string
 	SummarizeEnabled         bool

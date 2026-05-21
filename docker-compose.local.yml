@@ -91,7 +91,8 @@ services:
         required: true
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=http://ollama:11434/v1
+      - ENGRAM_ROUTER_URL=http://ollama:11434/v1
+      # LITELLM_URL is accepted as a deprecated fallback
       - LITELLM_API_KEY=
       - ENGRAM_EMBED_URL=http://ollama:11434/v1
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
@@ -133,7 +134,8 @@ services:
         required: false
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/engram?sslmode=disable
-      - LITELLM_URL=${LITELLM_URL:-http://ollama:11434/v1}
+      - ENGRAM_ROUTER_URL=${ENGRAM_ROUTER_URL:-${LITELLM_URL:-http://ollama:11434/v1}}
+      # LITELLM_URL is accepted as a deprecated fallback
       - LITELLM_API_KEY=
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-0}

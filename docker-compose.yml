@@ -127,7 +127,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
       # OpenAI-compatible upstream (olla load balancer; LiteLLM container retired 2026-05-05)
-      - LITELLM_URL=${LITELLM_URL:-http://olla:40114/olla/openai}
+      # LITELLM_URL is accepted as a deprecated fallback
+      - ENGRAM_ROUTER_URL=${ENGRAM_ROUTER_URL:-${LITELLM_URL:-http://olla:40114/olla/openai}}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       # Embedding service — Infinity/bge-m3 on oblivion (2026-05-08: switched from vLLM/jina-v5, 14x throughput)
       # #668: default placeholder — set ENGRAM_EMBED_URL in .env to your real embed endpoint
@@ -185,7 +186,8 @@ services:
     # so W6800 wins the FOR UPDATE SKIP LOCKED race on new work. Override via .env.
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
-      - LITELLM_URL=${REEMBED_7900XT_URL:-http://172.23.0.1:8004}
+      - ENGRAM_ROUTER_URL=${REEMBED_7900XT_URL:-http://172.23.0.1:8004}
+      # LITELLM_URL is accepted as a deprecated fallback
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}
@@ -210,7 +212,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
       # #668: default placeholder — set REEMBED_W6800_URL in .env to your real W6800 host
-      - LITELLM_URL=${REEMBED_W6800_URL:-http://example.invalid:8005}
+      - ENGRAM_ROUTER_URL=${REEMBED_W6800_URL:-http://example.invalid:8005}
+      # LITELLM_URL is accepted as a deprecated fallback
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - ENGRAM_EMBED_MODEL=${ENGRAM_EMBED_MODEL:-BAAI/bge-m3}
       - ENGRAM_EMBED_DIMENSIONS=${ENGRAM_EMBED_DIMENSIONS:-1024}

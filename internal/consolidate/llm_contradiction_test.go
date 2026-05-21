@@ -224,7 +224,7 @@ func TestDetectContradictions_LLMPassCatchesAffirmative(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       true,
-		LiteLLMURL:                      srv.URL,
+		RouterURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 		LLMMaxCalls:                     10,
 	})
@@ -304,7 +304,7 @@ func TestDetectContradictions_LLMPassDisabled(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       false, // disabled
-		LiteLLMURL:                      srv.URL,
+		RouterURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 	})
 	require.NoError(t, err)
@@ -372,7 +372,7 @@ func TestDetectContradictions_LLMMaxCalls(t *testing.T) {
 		InferRelationshipsMinSimilarity: 0.5,
 		InferRelationshipsLimit:         100,
 		LLMContradictionDetection:       true,
-		LiteLLMURL:                      srv.URL,
+		RouterURL:                      srv.URL,
 		OllamaModel:                     "llama3.2:3b",
 		LLMMaxCalls:                     2, // cap at 2 regardless of pairs available
 	})

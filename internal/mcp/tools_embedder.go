@@ -36,7 +36,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// override the server default; if present, apply the same SSRF guard used at
 	// startup (#291). Only literal private IPs are blocked — hostnames are allowed
 	// because they resolve to container IPs by design and are not attacker-controlled.
-	ollamaURL := cfg.LiteLLMURL
+	ollamaURL := cfg.RouterURL
 	if raw := getString(args, "ollama_url", ""); raw != "" {
 		if err := netutil.ValidateUpstreamURL(raw); err != nil {
 			return nil, fmt.Errorf("invalid ollama_url %q: %w", raw, err)
@@ -114,7 +114,7 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 // handleMemoryExportAll exports all memories to markdown files in output_path.
 
 func handleMemoryModels(ctx context.Context, _ *EnginePool, _ mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
-	installed, err := fetchLiteLLMModels(ctx, cfg.LiteLLMURL)
+	installed, err := fetchLiteLLMModels(ctx, cfg.RouterURL)
 	if err != nil {
 		// Non-fatal: return registry with installed=false for all entries.
 		installed = map[string]bool{}
@@ -233,8 +233,8 @@ func handleMemoryEmbeddingEval(ctx context.Context, _ *EnginePool, req mcpgo.Cal
 		return nil, fmt.Errorf("memory_embedding_eval: model_a and model_b must differ")
 	}
 
-	clientA := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, modelA, "", cfg.EmbedDimensions)
-	clientB := embed.NewLiteLLMClientNoProbe(cfg.LiteLLMURL, modelB, "", cfg.EmbedDimensions)
+	clientA := embed.NewLiteLLMClientNoProbe(cfg.RouterURL, modelA, "", cfg.EmbedDimensions)
+	clientB := embed.NewLiteLLMClientNoProbe(cfg.RouterURL, modelB, "", cfg.EmbedDimensions)
 
 	type embedResult struct {
 		sentence string

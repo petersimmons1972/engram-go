@@ -391,7 +391,7 @@ func TestHealthProbe_OllamaDegraded_Returns200WithDegradedField(t *testing.T) {
 	b.Store(true)
 	s := &Server{
 		cfg: Config{
-			LiteLLMURL:      unreachableOllama,
+			RouterURL:      unreachableOllama,
 			EmbedDegraded: true, // set as if startup probe failed
 		},
 		embedDegraded: b,
@@ -428,7 +428,7 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 	b.Store(true)
 	s := &Server{
 		cfg: Config{
-			LiteLLMURL:      fakeOllama.URL,
+			RouterURL:      fakeOllama.URL,
 			EmbedDegraded: true, // startup probe failed, but Ollama recovered
 		},
 		embedDegraded: b,
@@ -517,7 +517,7 @@ func TestHealthProbe_IgnoresExpiredRequestContext(t *testing.T) {
 	// Build a minimal Server pointing at the fake Ollama. No PgPool, so the
 	// Postgres probe is skipped and only the Ollama probe exercises the context.
 	s := &Server{
-		cfg:           Config{LiteLLMURL: fakeOllama.URL},
+		cfg:           Config{RouterURL: fakeOllama.URL},
 		embedDegraded: &atomic.Bool{},
 	}
 
