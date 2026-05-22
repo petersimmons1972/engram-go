@@ -24,8 +24,30 @@ if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then
     exit 0
 fi
 
-TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
-    | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
+# Resolve Bearer token in priority order:
+# 1. ~/.config/engram/api_key  — written by `make init`, most reliable
+# 2. ENGRAM_API_KEY in ~/projects/engram-go/.env — lower trust
+# 3. /setup-token unauthenticated (TOFU one-time bootstrap only)
+# The TOFU grant is consumed on first use; after bootstrap, disk keys are required.
+TOKEN=""
+
+# Source 1: ~/.config/engram/api_key
+if [[ -z "$TOKEN" && -f "$HOME/.config/engram/api_key" ]]; then
+    TOKEN=$(tr -d '[:space:]' < "$HOME/.config/engram/api_key" 2>/dev/null || true)
+fi
+
+# Source 2: ~/projects/engram-go/.env (ENGRAM_API_KEY=...)
+if [[ -z "$TOKEN" && -f "$HOME/projects/engram-go/.env" ]]; then
+    TOKEN=$(grep -m1 '^ENGRAM_API_KEY=' "$HOME/projects/engram-go/.env" 2>/dev/null \
+        | cut -d= -f2- | tr -d '[:space:]' || true)
+fi
+
+# Source 3: /setup-token unauthenticated (TOFU bootstrap fallback)
+if [[ -z "$TOKEN" ]]; then
+    TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
+        | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
+fi
+
 [[ -z "$TOKEN" ]] && { echo "⚠️  engram-flush-fallback: no token — skipping flush"; exit 0; }
 
 # Parse, snapshot, flush entries — lock held minimally (#398)
