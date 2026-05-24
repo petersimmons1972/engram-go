@@ -397,16 +397,49 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 	return nil, fmt.Errorf("litellm embed: exhausted %d attempts, last error: %w (status %d)", maxAttempts, lastErr, lastStatusCode)
 }
 
-// Probe checks if the LiteLLM endpoint is healthy and reachable. It makes a
-// single /v1/embeddings request with a minimal input and returns (true, "") on
-// success or (false, reason) on failure. The caller is responsible for context
-// timeout/cancellation.
+// Probe checks if the LiteLLM endpoint is healthy and advertising the configured
+// embedding model. It uses GET /v1/models instead of a real embeddings request
+// so post-store degraded checks do not false-negative on cold but healthy GPU
+// backends. The caller is responsible for context timeout/cancellation.
 func (c *LiteLLMClient) Probe(ctx context.Context) (ok bool, reason string) {
-	_, err := c.Embed(ctx, "probe")
-	if err == nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models", nil)
+	if err != nil {
+		return false, fmt.Sprintf("embed_probe: build request: %v", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("embed_probe: request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("embed_probe: HTTP %d", resp.StatusCode)
+	}
+
+	var modelsResp infinityModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return false, fmt.Sprintf("embed_probe: decode /v1/models: %v", err)
+	}
+
+	for _, m := range modelsResp.Data {
+		if m.ID != c.model {
+			continue
+		}
+		s := m.Stats
+		if s.QueueFraction > 1.0 && s.ResultsPending == 0 && s.QueueAbsolute > 0 {
+			return false, fmt.Sprintf(
+				"embed_probe: GPU thread hung (model=%s queue_fraction=%.4f results_pending=%d queue_absolute=%d)",
+				m.ID, s.QueueFraction, s.ResultsPending, s.QueueAbsolute,
+			)
+		}
 		return true, ""
 	}
-	return false, fmt.Sprintf("embed_probe: %v", err)
+
+	return false, fmt.Sprintf("embed_probe: model %q not advertised by /v1/models", c.model)
 }
 
 // InfinityModelStats holds per-model GPU queue statistics from the Infinity

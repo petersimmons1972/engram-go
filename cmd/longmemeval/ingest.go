@@ -113,6 +113,16 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 		})
 	}
 
+	// If no non-empty sessions were found, return error instead of fake "done"
+	if len(sessions) == 0 {
+		return longmemeval.IngestEntry{
+			QuestionID: item.QuestionID,
+			Project:    project,
+			Status:     "error",
+			Error:      "no non-empty sessions found in haystack",
+		}
+	}
+
 	memoryMap := make(map[string]string, len(sessions))
 	for i, s := range sessions {
 		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags, expiresAt)
