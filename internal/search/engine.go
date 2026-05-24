@@ -1003,6 +1003,30 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	return out, nil
 }
 
+// embedderAliases maps known alternative name strings for the same underlying
+// model to a single canonical form. This allows GGUF filenames (as reported by
+// llama.cpp / olla) and HuggingFace IDs (as reported by Infinity / LiteLLM) to
+// be treated as compatible without triggering a false embedder_mismatch error.
+//
+// Rules: every alias for a model family must map to the same canonical string.
+// When adding a new quant variant, add it here — do not add fuzzy matching.
+var embedderAliases = map[string]string{
+	// BAAI/bge-m3 — official embedding model (2026-05-08+)
+	"bge-m3-Q8_0.gguf":   "BAAI/bge-m3",
+	"bge-m3-Q4_K_M.gguf": "BAAI/bge-m3",
+	"bge-m3":             "BAAI/bge-m3",
+	"BAAI/bge-m3":        "BAAI/bge-m3",
+}
+
+// canonicalEmbedderName returns the canonical model identifier for s.
+// If s has no alias entry, it is returned unchanged.
+func canonicalEmbedderName(s string) string {
+	if c, ok := embedderAliases[s]; ok {
+		return c
+	}
+	return s
+}
+
 // checkEmbedderMeta ensures the stored embedder name matches the current client,
 // or registers it if this is the first store for the project.
 func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
@@ -1018,7 +1042,7 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 		return e.backend.SetMeta(ctx, e.project, "embedder_dimensions",
 			fmt.Sprintf("%d", emb.Dimensions()))
 	}
-	if storedName != emb.Name() {
+	if canonicalEmbedderName(storedName) != canonicalEmbedderName(emb.Name()) {
 		return &embed.PermanentError{
 			Code:        "embedder_mismatch",
 			Stored:      storedName,
