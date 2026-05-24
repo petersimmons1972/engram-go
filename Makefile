@@ -131,10 +131,10 @@ setup:
 setup-dry-run:
 	go run ./cmd/engram-setup --dry-run
 
-## Run tests (requires test-postgres to be running)
+## Run tests — spins up test-postgres, runs tests, always tears down after (pass or fail)
 test:
 	docker compose --profile test up -d test-postgres
-	go test -race ./...
+	@trap 'docker compose --profile test down' EXIT; go test -race ./...
 
 ## Run the explore-context soak test (50 synthetic questions, p95 iters ≤4, p95 tokens ≤15K)
 test-explore-soak:
