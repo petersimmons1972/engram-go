@@ -17,8 +17,10 @@ import (
 
 // Client wraps the MCP SSE client with retry logic for eval use.
 type Client struct {
-	mcp     *client.Client
-	retries int
+	mcp       *client.Client
+	retries   int
+	serverURL string
+	apiKey    string
 }
 
 func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
@@ -53,7 +55,39 @@ func Connect(ctx context.Context, serverURL, apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize MCP: %w", err)
 	}
-	return &Client{mcp: c, retries: 1}, nil
+	return &Client{mcp: c, retries: 1, serverURL: serverURL, apiKey: apiKey}, nil
+}
+
+// Connect re-establishes the MCP SSE connection using the stored server URL and
+// API key. Called by Recall before each retry attempt because a dead SSE
+// connection fails identically to a live one — reconnect is required to recover
+// from the mcp-go SSE drop race (issue #861).
+func (c *Client) Connect(ctx context.Context) error {
+	sseURL := strings.TrimRight(c.serverURL, "/") + "/sse"
+	headers := map[string]string{}
+	if c.apiKey != "" {
+		headers["Authorization"] = "Bearer " + c.apiKey
+	}
+	newMCP, err := client.NewSSEMCPClient(sseURL, transport.WithHeaders(headers))
+	if err != nil {
+		return err
+	}
+	if err := newMCP.Start(ctx); err != nil {
+		return err
+	}
+	_, err = newMCP.Initialize(ctx, mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo:      mcp.Implementation{Name: "longmemeval", Version: "1.0.0"},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("initialize MCP: %w", err)
+	}
+	// Close the old connection before replacing it to avoid leaking goroutines.
+	_ = c.mcp.Close()
+	c.mcp = newMCP
+	return nil
 }
 
 // Store stores one session as a memory and returns the memory ID.
@@ -190,21 +224,30 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 
 // Recall calls memory_recall and returns ranked memory IDs.
 // The server returns {"results":[{"memory":{"id":"..."},"score":...},...]} as JSON.
+//
+// On failure, Recall reconnects before retrying (issue #861): the mcp-go SSE
+// server silently drops responses under a client-teardown race, leaving the
+// connection in a state where every subsequent call fails identically. A bare
+// retry on the same connection will not recover; reconnect is required.
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
-		ids, err := c.recall(ctx, project, query, topK)
-		if err == nil {
-			return ids, nil
-		}
-		lastErr = err
-		if attempt < c.retries {
+		if attempt > 0 {
+			// Reconnect — previous connection may be dead (SSE drop race).
+			if err := c.Connect(ctx); err != nil {
+				return nil, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
+			}
 			select {
 			case <-time.After(5 * time.Second):
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
 		}
+		ids, err := c.recall(ctx, project, query, topK)
+		if err == nil {
+			return ids, nil
+		}
+		lastErr = err
 	}
 	return nil, lastErr
 }
@@ -218,6 +261,10 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int) ([
 				"project": project,
 				"top_k":   topK,
 				"detail":  "summary",
+				// Handle mode returns lightweight IDs + metadata instead of the
+				// full SearchResult graph. LongMemEval only needs ranked IDs, and
+				// this avoids oversized tool payloads on dense queries.
+				"mode": "handle",
 			},
 		},
 	})
