@@ -477,3 +477,102 @@ func TestSearchEngine_EmbedderDimensionsMismatchReturnsPermanentError(t *testing
 	require.Contains(t, pe.Remediation, "memory_migrate_embedder",
 		"Remediation should mention memory_migrate_embedder")
 }
+
+// TestSearchEngine_EmbedderNameAliasesAreCompatible verifies that known aliases
+// of the same underlying model (e.g. GGUF filename vs HuggingFace ID) are treated
+// as compatible rather than triggering an embedder_mismatch error (#855).
+func TestSearchEngine_EmbedderNameAliasesAreCompatible(t *testing.T) {
+	ctx := context.Background()
+
+	// Subtest 1: bge-m3-Q8_0.gguf (stored by llama.cpp) vs BAAI/bge-m3 (incoming
+	// from Infinity/LiteLLM) — same model, different name conventions.
+	t.Run("gguf_filename_and_hf_id_are_compatible", func(t *testing.T) {
+		project := uniqueProject("test-embedder-alias-gguf-hf")
+
+		backend1, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+		require.NoError(t, err)
+		t.Cleanup(func() { backend1.Close() })
+
+		// First engine uses the GGUF filename (as llama.cpp reports it).
+		engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "bge-m3-Q8_0.gguf", dims: 1024}, project,
+			"http://ollama:11434", "llama3.2", false, nil, 0)
+		t.Cleanup(func() { engine1.Close() })
+
+		m := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     "stored with gguf filename embedder",
+			MemoryType:  types.MemoryTypePattern,
+			Importance:  1,
+			StorageMode: "focused",
+		}
+		err = engine1.Store(ctx, m)
+		require.NoError(t, err, "initial store with gguf filename should succeed")
+
+		backend2, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+		require.NoError(t, err)
+		t.Cleanup(func() { backend2.Close() })
+
+		// Second engine uses the HuggingFace ID (as Infinity/LiteLLM reports it).
+		engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "BAAI/bge-m3", dims: 1024}, project,
+			"http://ollama:11434", "llama3.2", false, nil, 0)
+		t.Cleanup(func() { engine2.Close() })
+
+		m2 := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     "stored with hf id embedder",
+			MemoryType:  types.MemoryTypePattern,
+			Importance:  1,
+			StorageMode: "focused",
+		}
+		// This MUST succeed — both names refer to the same BAAI/bge-m3 model.
+		err = engine2.Store(ctx, m2)
+		require.NoError(t, err, "store with HuggingFace ID should succeed when GGUF filename is stored (same model)")
+	})
+
+	// Subtest 2: genuinely different models must still be rejected.
+	t.Run("different_models_are_still_rejected", func(t *testing.T) {
+		project := uniqueProject("test-embedder-alias-different")
+
+		backend1, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+		require.NoError(t, err)
+		t.Cleanup(func() { backend1.Close() })
+
+		engine1 := search.New(ctx, backend1, &fakeClientWithName{name: "BAAI/bge-m3", dims: 1024}, project,
+			"http://ollama:11434", "llama3.2", false, nil, 0)
+		t.Cleanup(func() { engine1.Close() })
+
+		m := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     "stored with bge-m3",
+			MemoryType:  types.MemoryTypePattern,
+			Importance:  1,
+			StorageMode: "focused",
+		}
+		err = engine1.Store(ctx, m)
+		require.NoError(t, err, "initial store should succeed")
+
+		backend2, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+		require.NoError(t, err)
+		t.Cleanup(func() { backend2.Close() })
+
+		// Different model entirely — must still be rejected.
+		engine2 := search.New(ctx, backend2, &fakeClientWithName{name: "text-embedding-3-small", dims: 1536}, project,
+			"http://ollama:11434", "llama3.2", false, nil, 0)
+		t.Cleanup(func() { engine2.Close() })
+
+		m2 := &types.Memory{
+			ID:          types.NewMemoryID(),
+			Content:     "stored with text-embedding-3-small",
+			MemoryType:  types.MemoryTypePattern,
+			Importance:  1,
+			StorageMode: "focused",
+		}
+		err = engine2.Store(ctx, m2)
+		require.Error(t, err, "store with a genuinely different model should be rejected")
+		require.True(t, errors.Is(err, embed.ErrPermanent),
+			"error should wrap embed.ErrPermanent, got %v", err)
+		var pe *embed.PermanentError
+		require.True(t, errors.As(err, &pe))
+		require.Equal(t, "embedder_mismatch", pe.Code)
+	})
+}
