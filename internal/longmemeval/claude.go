@@ -499,7 +499,7 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. If the answer is not explicitly present, provide your best inference from the strongest matching context.`, questionDate, ctx, questionDate, question)
+Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. IMPORTANT: You MUST always provide a specific answer — never say "not mentioned", "not found in context", "cannot be determined", "not explicitly stated", or any similar refusal. If the answer is not directly stated, infer the most likely answer from the available context clues and state it directly. Output only the answer with no uncertainty hedging.`, questionDate, ctx, questionDate, question)
 }
 
 // ScoringPrompt builds the judge prompt for answer scoring.

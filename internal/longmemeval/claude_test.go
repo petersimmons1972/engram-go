@@ -556,8 +556,8 @@ func TestGenerationPrompt_TemporalType_HasArithmeticGuidance(t *testing.T) {
 	if !strings.Contains(prompt, "2024-03-15") {
 		t.Errorf("temporal prompt must include question date for arithmetic, got:\n%s", prompt)
 	}
-	if !strings.Contains(strings.ToLower(prompt), "do not invent") && !strings.Contains(strings.ToLower(prompt), "do not fabricate") {
-		t.Errorf("temporal prompt must explicitly forbid inventing events, got:\n%s", prompt)
+	if !strings.Contains(strings.ToLower(prompt), "you must provide") && !strings.Contains(strings.ToLower(prompt), "cannot be determined") {
+		t.Errorf("temporal prompt must require a specific answer and prohibit refusals, got:\n%s", prompt)
 	}
 }
 func TestEnumerateFirstPrompt_ContainsEnumerationInstruction(t *testing.T) {

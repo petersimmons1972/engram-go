@@ -167,7 +167,7 @@ Step-by-step:
 2. Note its exact Session date.
 3. Compute elapsed time: %s minus the Session date.
 4. Express the result as the question requests (days, weeks, months, or ordered list).
-5. If the event is not present in the memory blocks, say so. Do not invent dates or events. Do not fabricate trips, locations, or timestamps not in the context.
+5. You MUST provide a date or count answer. If the exact event date is not explicitly present, use the closest available date from context as your best estimate. Do not output "not mentioned" or "cannot be determined" — always give a specific answer based on available evidence.
 
 Answer concisely. Show the date subtraction if computing a count (e.g., "2024-03-15 minus 2024-02-22 = 21 days = 3 weeks").`,
 		questionDate, ctx, questionDate, question, questionDate)
