@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -56,6 +58,79 @@ func TestDispatch_UnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown subcommand") {
 		t.Errorf("expected 'unknown subcommand' in stderr, got %q", stderr.String())
+	}
+}
+
+func TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ENGRAM_API_KEY", "engram-secret-for-help-test")
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch(run --help) exit = %d, want 0", exit)
+	}
+
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "-api-key") {
+		t.Fatalf("help output missing -api-key flag: %q", combined)
+	}
+	if strings.Contains(combined, "engram-secret-for-help-test") {
+		t.Fatalf("help output leaked resolved API key:\n%s", combined)
+	}
+}
+
+func TestDispatch_SpecialSubcommandsReturnControlledHelpAndParseExitCodes(t *testing.T) {
+	if os.Getenv("LONGMEMEVAL_DISPATCH_HELPER") == "1" {
+		args := strings.Split(os.Getenv("LONGMEMEVAL_DISPATCH_ARGS"), "\n")
+		os.Exit(dispatch(args, os.Stdout, os.Stderr))
+	}
+
+	tests := []struct {
+		name     string
+		args     []string
+		wantExit int
+		wantText string
+	}{
+		{name: "score-efficient help", args: []string{"longmemeval", "score-efficient", "--help"}, wantExit: 0, wantText: "Usage of score-efficient:"},
+		{name: "score-batch help", args: []string{"longmemeval", "score-batch", "--help"}, wantExit: 0, wantText: "Usage of score-batch:"},
+		{name: "sample-prepare help", args: []string{"longmemeval", "sample-prepare", "--help"}, wantExit: 0, wantText: "Usage of sample-prepare:"},
+		{name: "sample-analyze help", args: []string{"longmemeval", "sample-analyze", "--help"}, wantExit: 0, wantText: "Usage of sample-analyze:"},
+		{name: "route-discover help", args: []string{"longmemeval", "route-discover", "--help"}, wantExit: 0, wantText: "Usage of route-discover:"},
+		{name: "score-efficient parse error", args: []string{"longmemeval", "score-efficient", "--badflag"}, wantExit: 2, wantText: "flag provided but not defined"},
+		{name: "score-batch parse error", args: []string{"longmemeval", "score-batch", "--badflag"}, wantExit: 2, wantText: "flag provided but not defined"},
+		{name: "sample-prepare parse error", args: []string{"longmemeval", "sample-prepare", "--badflag"}, wantExit: 2, wantText: "flag provided but not defined"},
+		{name: "sample-analyze parse error", args: []string{"longmemeval", "sample-analyze", "--badflag"}, wantExit: 2, wantText: "flag provided but not defined"},
+		{name: "route-discover parse error", args: []string{"longmemeval", "route-discover", "--badflag"}, wantExit: 2, wantText: "flag provided but not defined"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=TestDispatch_SpecialSubcommandsReturnControlledHelpAndParseExitCodes")
+			cmd.Env = append(os.Environ(),
+				"LONGMEMEVAL_DISPATCH_HELPER=1",
+				"LONGMEMEVAL_DISPATCH_ARGS="+strings.Join(tc.args, "\n"),
+			)
+			out, err := cmd.CombinedOutput()
+
+			if tc.wantExit == 0 {
+				if err != nil {
+					t.Fatalf("subprocess err = %v, output=%s", err, out)
+				}
+			} else {
+				var exitErr *exec.ExitError
+				if !asExitError(err, &exitErr) {
+					t.Fatalf("want exit %d, err=%v, output=%s", tc.wantExit, err, out)
+				}
+				if exitErr.ExitCode() != tc.wantExit {
+					t.Fatalf("exit = %d, want %d, output=%s", exitErr.ExitCode(), tc.wantExit, out)
+				}
+			}
+
+			if !strings.Contains(string(out), tc.wantText) {
+				t.Fatalf("output missing %q:\n%s", tc.wantText, out)
+			}
+		})
 	}
 }
 

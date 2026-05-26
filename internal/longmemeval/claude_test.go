@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"sync/atomic"
@@ -392,11 +393,11 @@ func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
 	}
 }
 
-// TestGenerate_RequiresClaude is skipped in short mode.
+// TestGenerate_RequiresClaude is an opt-in integration test.
 func TestGenerate_RequiresClaude(t *testing.T) {
-	// #678: the claude binary is an undocumented prerequisite for this test.
-	// In CI it is not in PATH; skip rather than fail. Locally (with claude
-	// installed) the test still exercises the real code path.
+	if os.Getenv("LME_CLAUDE_INTEGRATION") != "1" {
+		t.Skip("set LME_CLAUDE_INTEGRATION=1 to run real claude --print integration test (#891)")
+	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Skip("claude binary not in PATH — skipping (#678)")
 	}
@@ -646,4 +647,3 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 		}
 	}
 }
-

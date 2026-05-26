@@ -88,6 +88,12 @@ func main() {
 	os.Exit(dispatch(os.Args, os.Stdout, os.Stderr))
 }
 
+var (
+	runIngestFn = runIngest
+	runRunFn    = runRun
+	runScoreFn  = runScore
+)
+
 // printUsage writes the top-level usage banner.
 func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: longmemeval <subcommand> [flags]")
@@ -129,6 +135,16 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  Exit 75 (EX_TEMPFAIL): backend lock held by another lme run — wait and retry")
 }
 
+func parseFlagSet(fs *flag.FlagSet, args []string) int {
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	return -1
+}
+
 // dispatch parses args and runs the requested subcommand. Returns the process
 // exit code. Extracted from main() so it is testable without spawning a
 // subprocess. Writers are injected so tests can capture output.
@@ -153,7 +169,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
 	defaultURL, defaultKey := mcpDefaults()
 	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
+	resolvedAPIKey := envOr("ENGRAM_API_KEY", defaultKey)
+	var apiKeyOverride string
+	fs.StringVar(&apiKeyOverride, "api-key", "", "Engram API key")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
 	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
 	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
@@ -202,7 +220,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	// score-efficient has its own flag set and early return.
 	if subcommand == "score-efficient" {
-		sefs := flag.NewFlagSet("score-efficient", flag.ExitOnError)
+		sefs := flag.NewFlagSet("score-efficient", flag.ContinueOnError)
+		sefs.SetOutput(stderr)
 		sefs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
 		sefs.IntVar(&cfg.Workers, "workers", 4, "parallel workers")
 		sefs.StringVar(&cfg.OutDir, "out", ".", "output directory")
@@ -212,7 +231,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
-		_ = sefs.Parse(args[2:])
+		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
+			return exit
+		}
 		if cfg.DataFile == "" {
 			_, _ = fmt.Fprintln(stderr, "--data is required")
 			return 1
@@ -225,14 +246,17 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	// score-batch has its own flag set and early return.
 	if subcommand == "score-batch" {
-		sbfs := flag.NewFlagSet("score-batch", flag.ExitOnError)
+		sbfs := flag.NewFlagSet("score-batch", flag.ContinueOnError)
+		sbfs.SetOutput(stderr)
 		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
 		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
 		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
 		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sbfs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sbfs.StringVar(&cfg.ScorerBatchAPIKey, "api-key-anthropic", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key (env: ANTHROPIC_API_KEY)")
-		_ = sbfs.Parse(args[2:])
+		if exit := parseFlagSet(sbfs, args[2:]); exit >= 0 {
+			return exit
+		}
 		if cfg.DataFile == "" {
 			_, _ = fmt.Fprintln(stderr, "--data is required")
 			return 1
@@ -244,7 +268,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if subcommand == "sample-prepare" {
-		spfs := flag.NewFlagSet("sample-prepare", flag.ExitOnError)
+		spfs := flag.NewFlagSet("sample-prepare", flag.ContinueOnError)
+		spfs.SetOutput(stderr)
 		var sp samplePrepareConfig
 		spfs.StringVar(&sp.DataFile, "data", "", "path to LongMemEval cohort JSON")
 		spfs.StringVar(&sp.Source, "source", "", "source results directory containing checkpoint-ingest.jsonl")
@@ -254,7 +279,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		spfs.BoolVar(&sp.CopyRun, "copy-run", false, "copy matching checkpoint-run.jsonl rows from source")
 		spfs.BoolVar(&sp.CopyScore, "copy-score", false, "copy matching checkpoint-score.jsonl rows from source")
 		spfs.StringVar(&sp.Description, "description", "", "description recorded in sample_manifest.json")
-		_ = spfs.Parse(args[2:])
+		if exit := parseFlagSet(spfs, args[2:]); exit >= 0 {
+			return exit
+		}
 		result, err := prepareSample(sp)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "sample-prepare: %v\n", err)
@@ -267,11 +294,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if subcommand == "sample-analyze" {
-		safs := flag.NewFlagSet("sample-analyze", flag.ExitOnError)
+		safs := flag.NewFlagSet("sample-analyze", flag.ContinueOnError)
+		safs.SetOutput(stderr)
 		var sa sampleAnalyzeConfig
 		safs.StringVar(&sa.DataFile, "data", "", "path to LongMemEval cohort JSON")
 		safs.StringVar(&sa.ResultsDir, "results", "", "results directory containing checkpoints")
-		_ = safs.Parse(args[2:])
+		if exit := parseFlagSet(safs, args[2:]); exit >= 0 {
+			return exit
+		}
 		summary, err := analyzeSample(sa)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "sample-analyze: %v\n", err)
@@ -284,7 +314,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if subcommand == "route-discover" {
-		rdfs := flag.NewFlagSet("route-discover", flag.ExitOnError)
+		rdfs := flag.NewFlagSet("route-discover", flag.ContinueOnError)
+		rdfs.SetOutput(stderr)
 		var rd routeDiscoverConfig
 		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", "https://ai-fleet.petersimmons.com"), "AI Flight Controller base URL")
 		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", "https://olla.petersimmons.com"), "Olla base URL")
@@ -294,7 +325,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		rdfs.StringVar(&rd.FleetKey, "fleet-key", envOr("LME_FLEET_KEY", ""), "AI Flight Controller mTLS client key")
 		rdfs.StringVar(&rd.FleetCA, "fleet-ca", envOr("LME_FLEET_CA", ""), "AI Flight Controller CA certificate")
 		rdfs.DurationVar(&rd.RequestLimit, "timeout", 10*time.Second, "request timeout for discovery calls")
-		_ = rdfs.Parse(args[2:])
+		if exit := parseFlagSet(rdfs, args[2:]); exit >= 0 {
+			return exit
+		}
 		result, err := discoverRoute(rd)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "route-discover: %v\n", err)
@@ -317,8 +350,13 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := fs.Parse(args[2:]); err != nil {
-		return 2
+	if exit := parseFlagSet(fs, args[2:]); exit >= 0 {
+		return exit
+	}
+	if apiKeyOverride != "" {
+		cfg.APIKey = apiKeyOverride
+	} else {
+		cfg.APIKey = resolvedAPIKey
 	}
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
@@ -375,16 +413,16 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	switch subcommand {
 	case "ingest":
-		runIngest(cfg)
+		runIngestFn(cfg)
 	case "run":
 		// #703: surface non-zero exit when runRun reports any errors.
-		if exit := runRun(cfg); exit != 0 {
+		if exit := runRunFn(cfg); exit != 0 {
 			return exit
 		}
 	case "score":
-		runScore(cfg)
+		runScoreFn(cfg)
 	case "all":
-		runAll(cfg)
+		return runAll(cfg)
 	}
 	return 0
 }
