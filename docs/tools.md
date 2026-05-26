@@ -12,7 +12,7 @@ Three calls answer that — one to recall recent context, one targeted at the wo
 
 ## MCP Tool Profiles
 
-By default, engram exposes <!-- count:visible-default -->17<!-- /count --> tools in its `tools/list` MCP surface. An additional <!-- count:hidden -->29<!-- /count --> maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`. When `ANTHROPIC_API_KEY` is set, <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) are also registered, bringing the visible total to <!-- count:visible-with-ai -->21<!-- /count -->.
+By default, engram exposes <!-- count:visible-default -->18<!-- /count --> tools in its `tools/list` MCP surface. An additional <!-- count:hidden -->28<!-- /count --> maintenance and operational tools are registered but hidden from `tools/list` — they do not appear in AI client context but remain callable via `POST /mcp tools/call`. When `ANTHROPIC_API_KEY` is set, <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) are also registered, bringing the visible total to <!-- count:visible-with-ai -->22<!-- /count -->.
 
 The three canonical numbers used throughout this doc:
 
@@ -766,4 +766,4 @@ Returns the relevant spans + a Claude-synthesised answer.
 
 ---
 
-*Canonical surface: <!-- count:unconditional -->46<!-- /count --> tools registered unconditionally (<!-- count:visible-default -->17<!-- /count --> visible in `tools/list`, <!-- count:hidden -->29<!-- /count --> hidden but callable via `tools/call`), + <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools when `ANTHROPIC_API_KEY` is set (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`). `memory_diagnose` is unconditional + hidden, not AI-gated.*
+*Canonical surface: <!-- count:unconditional -->46<!-- /count --> tools registered unconditionally (<!-- count:visible-default -->18<!-- /count --> visible in `tools/list`, <!-- count:hidden -->28<!-- /count --> hidden but callable via `tools/call`), + <!-- count:ai-enhanced -->4<!-- /count --> AI-enhanced tools when `ANTHROPIC_API_KEY` is set (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`). `memory_diagnose` is unconditional + hidden, not AI-gated.*
