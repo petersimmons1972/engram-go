@@ -17,10 +17,10 @@ func TestPrune_SelectsOnlyExpiredPrefixed(t *testing.T) {
 	now := time.Now()
 
 	entries := []projectTTLEntry{
-		{Name: "lme-abc-q001", ExpiresAt: ptr(now.Add(-time.Hour))},   // expired, prefixed ✓
-		{Name: "lme-abc-q002", ExpiresAt: ptr(now.Add(time.Hour))},    // not expired
-		{Name: "other-project", ExpiresAt: ptr(now.Add(-time.Hour))},  // expired, wrong prefix
-		{Name: "lme-abc-q003", ExpiresAt: nil},                        // NULL expires_at = durable
+		{Name: "lme-abc-q001", ExpiresAt: ptr(now.Add(-time.Hour))},     // expired, prefixed ✓
+		{Name: "lme-abc-q002", ExpiresAt: ptr(now.Add(time.Hour))},      // not expired
+		{Name: "other-project", ExpiresAt: ptr(now.Add(-time.Hour))},    // expired, wrong prefix
+		{Name: "lme-abc-q003", ExpiresAt: nil},                          // NULL expires_at = durable
 		{Name: "lme-abc-q004", ExpiresAt: ptr(now.Add(-2 * time.Hour))}, // expired, prefixed ✓
 	}
 
@@ -79,9 +79,9 @@ func TestPrune_DryRunNoMutation(t *testing.T) {
 func TestPrune_NullExpiresAtPreserved(t *testing.T) {
 	now := time.Now()
 	entries := []projectTTLEntry{
-		{Name: "lme-abc-q001", ExpiresAt: nil},                         // durable
-		{Name: "lme-abc-q002", ExpiresAt: nil},                         // durable
-		{Name: "lme-abc-q003", ExpiresAt: ptr(now.Add(-time.Hour))},    // expired
+		{Name: "lme-abc-q001", ExpiresAt: nil},                      // durable
+		{Name: "lme-abc-q002", ExpiresAt: nil},                      // durable
+		{Name: "lme-abc-q003", ExpiresAt: ptr(now.Add(-time.Hour))}, // expired
 	}
 
 	got := selectExpiredProjects(entries, "lme-", 0, now)
@@ -218,6 +218,50 @@ func TestPrune_ScratchTTLFlagRegistered(t *testing.T) {
 	combined := stdout.String() + stderr.String()
 	if !strings.Contains(combined, "scratch-ttl") && !strings.Contains(combined, "older-than") {
 		t.Errorf("prune subcommand help must mention TTL-related flags; got: %q", combined)
+	}
+}
+
+func TestPrune_APIKeyDefaultsDoNotLeakInHelp(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		setup    func(t *testing.T) string
+		secretOf string
+	}{
+		{
+			name: "env",
+			setup: func(t *testing.T) string {
+				const secret = "prune-env-secret-must-not-print"
+				t.Setenv("ENGRAM_API_KEY", secret)
+				t.Setenv("HOME", t.TempDir())
+				return secret
+			},
+			secretOf: "ENGRAM_API_KEY",
+		},
+		{
+			name: "mcp",
+			setup: func(t *testing.T) string {
+				const secret = "prune-mcp-secret-must-not-print"
+				home := t.TempDir()
+				t.Setenv("ENGRAM_API_KEY", "")
+				t.Setenv("HOME", home)
+				writeClaudeMCPConfig(t, home, secret)
+				return secret
+			},
+			secretOf: "Claude MCP bearer token",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			secret := tc.setup(t)
+			var stdout, stderr strings.Builder
+			exit := dispatch([]string{"longmemeval", "prune", "--help"}, &stdout, &stderr)
+			if exit != 0 {
+				t.Fatalf("prune --help exit = %d, want 0; stderr=%q", exit, stderr.String())
+			}
+			combined := stdout.String() + stderr.String()
+			if strings.Contains(combined, secret) {
+				t.Fatalf("prune --help leaked %s in output:\n%s", tc.secretOf, combined)
+			}
+		})
 	}
 }
 

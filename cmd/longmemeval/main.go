@@ -151,9 +151,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.DataFile, "data", "", "Path to longmemeval_m_cleaned.json (required)")
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
-	defaultURL, defaultKey := mcpDefaults()
-	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
+	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
+	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
 	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
 	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
@@ -318,8 +317,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err := fs.Parse(args[2:]); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return 2
 	}
+	applySharedDefaults(cfg, fs)
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
 	}
@@ -384,7 +387,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	case "score":
 		runScore(cfg)
 	case "all":
-		runAll(cfg)
+		return runAll(cfg)
 	}
 	return 0
 }
@@ -403,6 +406,35 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultAPIKey() string {
+	_, token := mcpDefaults()
+	return envOr("ENGRAM_API_KEY", token)
+}
+
+func defaultServerURL() string {
+	url, _ := mcpDefaults()
+	return envOr("ENGRAM_URL", url)
+}
+
+func applySharedDefaults(cfg *Config, fs *flag.FlagSet) {
+	if !flagWasProvided(fs, "api-key") {
+		cfg.APIKey = defaultAPIKey()
+	}
+	if !flagWasProvided(fs, "url") {
+		cfg.ServerURL = defaultServerURL()
+	}
+}
+
+func flagWasProvided(fs *flag.FlagSet, name string) bool {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			provided = true
+		}
+	})
+	return provided
 }
 
 // mcpDefaults reads the engram URL and Bearer token from ~/.claude/mcp_servers.json,

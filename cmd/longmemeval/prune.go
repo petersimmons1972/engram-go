@@ -243,9 +243,8 @@ func dispatchPrune(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print projects that would be deleted but make no changes")
 	fs.IntVar(&cfg.Limit, "limit", 0, "cap deletions to this many projects per invocation; 0 = no cap")
 	fs.StringVar(&cfg.DatabaseURL, "database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (env: DATABASE_URL)")
-	defaultURL, defaultKey := mcpDefaults()
-	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", envOr("ENGRAM_API_KEY", defaultKey), "Engram API key")
+	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
+	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(stderr, "Usage: longmemeval prune [flags]")
@@ -261,6 +260,12 @@ func dispatchPrune(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if !flagWasProvided(fs, "api-key") {
+		cfg.APIKey = defaultAPIKey()
+	}
+	if !flagWasProvided(fs, "url") {
+		cfg.ServerURL = defaultServerURL()
 	}
 
 	return runPrune(cfg, stdout, stderr)
