@@ -107,7 +107,7 @@ After `make setup`:
 /mcp
 ```
 
-All <!-- count:visible-default -->17<!-- /count --> visible tools (+ <!-- count:hidden -->29<!-- /count --> hidden maintenance tools, callable via `tools/call`) activate immediately. Four optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) activate when `ANTHROPIC_API_KEY` is set in `.env`. `memory_diagnose` is a built-in hidden tool, not AI-gated.
+All <!-- count:visible-default -->18<!-- /count --> visible tools (+ <!-- count:hidden -->28<!-- /count --> hidden maintenance tools, callable via `tools/call`) activate immediately. Four optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) activate when `ANTHROPIC_API_KEY` is set in `.env`. `memory_diagnose` is a built-in hidden tool, not AI-gated.
 
 ### Important: RFC1918 and `/setup-token`
 
@@ -156,7 +156,7 @@ For a narrower allowlist, copy the `permissions.allow` snippet logged by engram 
 
 <p align="center"><img src="docs/architecture.svg" alt="Engram Architecture" width="900"></p>
 
-Your AI client speaks MCP over SSE. Engram registers <!-- count:total-callable-default -->46<!-- /count --> tools by default (<!-- count:visible-default -->17<!-- /count --> visible in `tools/list` + <!-- count:hidden -->29<!-- /count --> hidden but callable via `tools/call`), all running entirely locally. Four AI-enhanced tools (<!-- count:ai-enhanced -->4<!-- /count -->) activate when `ANTHROPIC_API_KEY` is set, bringing the total to <!-- count:total-callable-with-ai -->50<!-- /count -->. PostgreSQL with pgvector stores everything. Ollama (local) runs the embeddings.
+Your AI client speaks MCP over SSE. Engram registers <!-- count:total-callable-default -->46<!-- /count --> tools by default (<!-- count:visible-default -->18<!-- /count --> visible in `tools/list` + <!-- count:hidden -->28<!-- /count --> hidden but callable via `tools/call`), all running entirely locally. Four AI-enhanced tools (<!-- count:ai-enhanced -->4<!-- /count -->) activate when `ANTHROPIC_API_KEY` is set, bringing the total to <!-- count:total-callable-with-ai -->50<!-- /count -->. PostgreSQL with pgvector stores everything. Ollama (local) runs the embeddings.
 
 ---
 

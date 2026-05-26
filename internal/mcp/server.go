@@ -297,7 +297,6 @@ func hiddenToolNames() map[string]bool {
 		"memory_audit_compare":           true,
 		"memory_weight_history":          true,
 		// Embedder management
-		"memory_migrate_embedder":        true,
 		"memory_embedding_eval":          true,
 		"memory_models":                  true,
 		// Consolidation & maintenance
