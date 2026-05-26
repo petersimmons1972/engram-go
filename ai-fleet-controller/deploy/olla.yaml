@@ -17,7 +17,7 @@ data:
 
     proxy:
       engine: "olla"
-      load_balancer: "least-connections"
+      load_balancer: "priority"
       profile: "auto"
       connection_timeout: 60s
       response_timeout: 900s
@@ -44,7 +44,7 @@ data:
           - url: "http://leviathan.petersimmons.com:8004"
             name: "leviathan-7900xt-infinity"
             type: "openai"
-            priority: 150
+            priority: 25
 
           # GB10 Grace-Blackwell — bge-m3 via Infinity port 8003 (down — will reconnect when restored)
           - url: "http://oblivion.petersimmons.com:8003"
