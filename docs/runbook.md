@@ -6,10 +6,10 @@ This page documents Engram's observable metrics and how to interpret them. Each 
 
 ## Metrics Overview
 
-Engram exports Prometheus metrics on port 8788 at `/metrics`. The canonical set appears below. All metrics are prefixed `engram_`.
+Engram exports Prometheus metrics on port 8788 at `/metrics`. The endpoint requires `Authorization: Bearer $ENGRAM_API_KEY`. The canonical set appears below. All metrics are prefixed `engram_`.
 
 ```bash
-curl http://localhost:8788/metrics
+curl -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics
 ```
 
 ---
@@ -115,19 +115,22 @@ docker logs engram-go-app 2>&1 | grep -i panic
 
 **Endpoint:** `GET /health`
 
-**Contract:** Returns `{"status":"ok"}` when the server is ready. No authentication required.
+**Contract:** Returns dependency health for PostgreSQL and the embedding router. No authentication required.
 
 ```bash
 curl http://localhost:8788/health
+curl http://localhost:8788/ready
 ```
 
 **Status codes:**
-- `200 OK` — Server is healthy and ready
-- `503 Service Unavailable` — Server is initializing or degraded
+- `GET /health` `200 OK` — dependencies are reachable, or the embedding router is in startup-degraded mode.
+- `GET /health` `503 Service Unavailable` — PostgreSQL is unavailable, or a previously healthy embedding router is now unreachable.
+- `GET /ready` `200 OK` — startup warmup is complete and the server is ready for traffic.
+- `GET /ready` `503 Service Unavailable` — startup warmup is still in progress or embedding is not ready.
 
 **When health is degraded:**
 
-The server is starting up, migrations are running, or a component failed to initialize. Typically resolves within seconds. If it persists:
+The server is starting up, migrations are running, or a component failed to initialize. In Kubernetes, start with `make status-k8s`; for local Docker, use `make status`. If it persists:
 
 ```bash
 # Check startup logs

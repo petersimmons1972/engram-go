@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
@@ -101,6 +102,44 @@ func TestSearchEngine_Recall(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 	require.Equal(t, m.ID, results[0].Memory.ID)
+}
+
+func TestSearchEngine_RecallWithOptsDateBounds(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-recall-date-bounds"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	inWindowDate := time.Date(2023, 5, 9, 0, 0, 0, 0, time.UTC)
+	outOfWindowDate := time.Date(2023, 6, 9, 0, 0, 0, 0, time.UTC)
+	inWindow := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "dentist appointment included by date window",
+		MemoryType:  types.MemoryTypeContext,
+		StorageMode: "focused",
+		ValidFrom:   &inWindowDate,
+	}
+	outOfWindow := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "dentist appointment excluded by date window",
+		MemoryType:  types.MemoryTypeContext,
+		StorageMode: "focused",
+		ValidFrom:   &outOfWindowDate,
+	}
+	require.NoError(t, engine.Store(ctx, inWindow))
+	require.NoError(t, engine.Store(ctx, outOfWindow))
+
+	since := time.Date(2023, 5, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	results, err := engine.RecallWithOpts(ctx, "dentist appointment", 10, "summary", search.RecallOpts{
+		DateSince:  &since,
+		DateBefore: &before,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.Equal(t, inWindow.ID, results[0].Memory.ID)
+	for _, result := range results {
+		require.NotEqual(t, outOfWindow.ID, result.Memory.ID)
+	}
 }
 
 func TestSearchEngine_List(t *testing.T) {

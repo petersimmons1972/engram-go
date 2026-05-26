@@ -65,6 +65,10 @@ type RecallOpts struct {
 	// non-nil pointer. It is set to true if the embed operation timed out or
 	// returned an error, causing fallback to BM25+recency. Nil = do not populate.
 	EmbedDegraded *bool
+	// DateSince and DateBefore scope retrieval by memory valid_from timestamps.
+	// Nil bounds leave that side unbounded.
+	DateSince  *time.Time
+	DateBefore *time.Time
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -139,19 +143,19 @@ const defaultEmbedRecallTimeoutMS = 500
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
-	backend              db.Backend
-	embedMu              sync.RWMutex // protects embedder; use getEmbedder() for all reads
-	embedder             embed.Client
-	project              string
-	ollamaURL            string
-	targetDims           int             // MRL truncation target; 0 = model native output
-	ctx                  context.Context // parent lifecycle context — passed to workers via StartWithContext
-	summarizer           *summarize.Worker
-	reembedder           *reembed.Worker
-	decayer              *DecayWorker
-	weightCache          *WeightCache       // nil when no pgxpool available (pre-migration or test)
-	globalReembedder     globalNotifier     // non-nil after SetGlobalReembedder; woken on chunk store
-	PreferenceExtractor  PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
+	backend             db.Backend
+	embedMu             sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedder            embed.Client
+	project             string
+	ollamaURL           string
+	targetDims          int             // MRL truncation target; 0 = model native output
+	ctx                 context.Context // parent lifecycle context — passed to workers via StartWithContext
+	summarizer          *summarize.Worker
+	reembedder          *reembed.Worker
+	decayer             *DecayWorker
+	weightCache         *WeightCache        // nil when no pgxpool available (pre-migration or test)
+	globalReembedder    globalNotifier      // non-nil after SetGlobalReembedder; woken on chunk store
+	PreferenceExtractor PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
@@ -576,7 +580,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// ANN vector search via pgvector HNSW index — skipped when embed degraded.
 	var vecHits []db.VectorHit
 	if queryVec != nil {
-		vecHits, err = e.backend.VectorSearch(ctx, e.project, queryVec, topK*3)
+		vecHits, err = e.backend.VectorSearchWithDateRange(ctx, e.project, queryVec, topK*3, opts.DateSince, opts.DateBefore)
 		if err != nil {
 			return nil, err
 		}
@@ -589,7 +593,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 	ftsCh := make(chan ftsResult, 1)
 	go func() {
-		res, err := e.backend.FTSSearch(ctx, e.project, query, topK*3, nil, nil)
+		res, err := e.backend.FTSSearch(ctx, e.project, query, topK*3, opts.DateSince, opts.DateBefore)
 		select {
 		case ftsCh <- ftsResult{res, err}:
 		case <-ctx.Done():

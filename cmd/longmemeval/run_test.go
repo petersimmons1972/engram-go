@@ -501,3 +501,54 @@ func TestBuildRecallQuery_NonTemporalUnchanged(t *testing.T) {
 		t.Errorf("non-temporal question should be returned unchanged; got %q, want %q", got, q)
 	}
 }
+
+func TestTemporalRecallWindow_RelativeAgo(t *testing.T) {
+	since, before := temporalRecallWindow(
+		"What did I buy 3 weeks ago?",
+		"temporal-reasoning",
+		"2023/05/30 (Tue) 23:50",
+	)
+	if since == nil || before == nil {
+		t.Fatal("temporalRecallWindow returned nil bounds")
+	}
+	target := time.Date(2023, 5, 9, 0, 0, 0, 0, time.UTC)
+	if target.Before(*since) || !target.Before(*before) {
+		t.Fatalf("window [%s, %s) does not contain target %s", since.Format(time.RFC3339), before.Format(time.RFC3339), target.Format(time.RFC3339))
+	}
+	if !since.Before(*before) {
+		t.Fatalf("since must be before before: since=%s before=%s", since.Format(time.RFC3339), before.Format(time.RFC3339))
+	}
+}
+
+func TestTemporalRecallWindow_HowManyAgoDoesNotFilter(t *testing.T) {
+	since, before := temporalRecallWindow(
+		"How many weeks ago did I attend the dentist appointment?",
+		"temporal-reasoning",
+		"2023/05/30 (Tue) 23:50",
+	)
+	if since != nil || before != nil {
+		t.Fatalf("how-many temporal questions should not pre-filter unknown target dates: since=%v before=%v", since, before)
+	}
+}
+
+func TestSelectContextIDsReservesSecondarySlots(t *testing.T) {
+	retrieved := []string{"p1", "p2", "p3", "p4", "s1", "s2"}
+	secondary := []string{"s1", "s2"}
+	got := selectContextIDs(retrieved, secondary, 4)
+
+	want := []string{"p1", "p2", "p3", "s1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selectContextIDs() = %v, want %v", got, want)
+	}
+}
+
+func TestSelectContextIDsLeavesIncludedSecondaryInPlace(t *testing.T) {
+	retrieved := []string{"p1", "s1", "p2", "p3"}
+	secondary := []string{"s1", "s2"}
+	got := selectContextIDs(retrieved, secondary, 4)
+
+	want := []string{"p1", "s1", "p2", "p3"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selectContextIDs() = %v, want %v", got, want)
+	}
+}

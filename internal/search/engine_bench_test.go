@@ -62,12 +62,12 @@ func syntheticMemories(ids []string) []*types.Memory {
 		imp := 2
 		dynImp := 2.5
 		mems[i] = &types.Memory{
-			ID:               id,
-			Content:          fmt.Sprintf("Memory content for %s: some meaningful text about a topic.", id),
-			Importance:       imp,
+			ID:                id,
+			Content:           fmt.Sprintf("Memory content for %s: some meaningful text about a topic.", id),
+			Importance:        imp,
 			DynamicImportance: &dynImp,
-			LastAccessed:     now,
-			CreatedAt:        now,
+			LastAccessed:      now,
+			CreatedAt:         now,
 		}
 	}
 	return mems
@@ -104,6 +104,10 @@ func newStubBackend(numResults, relsPerResult int) *stubBackend {
 // ── db.Backend interface — methods used by RecallWithOpts ────────────────────
 
 func (s *stubBackend) VectorSearch(_ context.Context, _ string, _ []float32, limit int) ([]db.VectorHit, error) {
+	return s.VectorSearchWithDateRange(context.Background(), "", nil, limit, nil, nil)
+}
+
+func (s *stubBackend) VectorSearchWithDateRange(_ context.Context, _ string, _ []float32, limit int, _, _ *time.Time) ([]db.VectorHit, error) {
 	n := s.numResults * 3 // engine requests topK*3
 	if limit < n {
 		n = limit
@@ -214,7 +218,9 @@ func (s *stubBackend) GetChunksForMemories(_ context.Context, _ []string) ([]*ty
 	return nil, nil
 }
 
-func (s *stubBackend) ChunkHashExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+func (s *stubBackend) ChunkHashExists(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
 
 func (s *stubBackend) DeleteChunksForMemory(_ context.Context, _ string) error { return nil }
 
@@ -396,7 +402,7 @@ func (s *stubBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bo
 func (s *stubBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
 	return false, nil
 }
-func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error) { return "", nil }
+func (s *stubBackend) GetDocument(_ context.Context, _ string) (string, error)  { return "", nil }
 func (s *stubBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error { return nil }
 
 func (s *stubBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) {

@@ -20,15 +20,9 @@ func runScore(cfg *Config) {
 		itemMap[item.QuestionID] = item
 	}
 
-	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
+	ingestMap, err := loadIngestMap(cfg.OutDir)
 	if err != nil {
 		log.Fatalf("read ingest checkpoint: %v", err)
-	}
-	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
-	for _, e := range ingestEntries {
-		if e.Status == "done" {
-			ingestMap[e.QuestionID] = e
-		}
 	}
 
 	runEntries, err := longmemeval.ReadAllRun(filepath.Join(cfg.OutDir, "checkpoint-run.jsonl"))
@@ -83,6 +77,20 @@ func runScore(cfg *Config) {
 	}
 	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
 	log.Printf("score: complete")
+}
+
+func loadIngestMap(outDir string) (map[string]longmemeval.IngestEntry, error) {
+	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(outDir, "checkpoint-ingest.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
+	for _, e := range ingestEntries {
+		if e.Status == "done" {
+			ingestMap[e.QuestionID] = e
+		}
+	}
+	return ingestMap, nil
 }
 
 func scoreWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.RunEntry, out chan<- longmemeval.ScoreEntry) {

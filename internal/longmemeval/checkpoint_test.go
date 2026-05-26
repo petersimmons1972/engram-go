@@ -76,6 +76,26 @@ func TestReadScoredLabels(t *testing.T) {
 	}
 }
 
+func TestReadScoredLabels_LastWriteWinsClearsDoneLabel(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "score-*.jsonl")
+	fmt.Fprintln(f, `{"question_id":"a","status":"done","score_label":"CORRECT"}`)
+	fmt.Fprintln(f, `{"question_id":"a","status":"error","score_label":"","error":"retry failed"}`)
+	fmt.Fprintln(f, `{"question_id":"b","status":"error","score_label":"","error":"first failed"}`)
+	fmt.Fprintln(f, `{"question_id":"b","status":"done","score_label":"INCORRECT"}`)
+	f.Close()
+
+	labels, err := longmemeval.ReadScoredLabels(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := labels["a"]; ok {
+		t.Error("later error entry must clear stale done label")
+	}
+	if labels["b"] != "INCORRECT" {
+		t.Errorf("later done entry should win for b; got %q", labels["b"])
+	}
+}
+
 func TestReadAllIngest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ingest.jsonl")

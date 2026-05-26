@@ -138,3 +138,14 @@ func TestDualPreferenceRecall_AnchorIsolatesGoldItem(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferenceSubjectAnchorQueryPreservesPreferenceSignal(t *testing.T) {
+	question := "Can you recommend a conference about AI in healthcare?"
+	query := longmemeval.PreferenceSubjectAnchorQuery(question)
+
+	for _, want := range []string{"user preference", "conference", "AI", "healthcare", "like", "dislike"} {
+		if !strings.Contains(query, want) {
+			t.Errorf("PreferenceSubjectAnchorQuery(%q) = %q, missing %q", question, query, want)
+		}
+	}
+}

@@ -2,7 +2,7 @@
 
 BUILD_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status install-skills install-instinct
+.PHONY: help up down down-safe restart logs build build-postgres go-build test setup setup-dry-run init check-env test-explore-soak status status-k8s install-skills install-instinct
 
 ## Show available make targets
 help:
@@ -140,10 +140,14 @@ test:
 test-explore-soak:
 	go test ./bench/... -v -run TestExploreContext -timeout 60s
 
-## Show live health of every stack layer (postgres, engram-go, olla, reembed workers, precision host)
+## Show local Docker health of every stack layer (postgres, engram-go, olla, reembed workers, precision host)
 ## Pass NO_REMOTE=1 to skip SSH probes: make status NO_REMOTE=1
 status:
 	@bash infra/status.sh $(if $(NO_REMOTE),--no-remote,)
+
+## Show live Kubernetes health for the engram namespace
+status-k8s:
+	@bash infra/status-k8s.sh
 
 ## Build and install Phase 1 instinct binaries to ~/bin
 install-instinct:

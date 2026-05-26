@@ -1,5 +1,6 @@
 //go:build !windows
 // +build !windows
+
 // engram-go targets Linux and macOS only. syscall.Flock / LOCK_EX / LOCK_NB /
 // EWOULDBLOCK are POSIX-only and do not exist on Windows. A no-op stub is not
 // provided because engram-go has no Windows CI and a silent no-op would mask
@@ -209,10 +210,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		dir = defaultLockDir()
 	}
 	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
-		// Non-fatal: if we can't create the dir, skip locking and warn.
-		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
-		log.Printf("WARN backend lock: cannot create lock dir %q: %v — skipping lock", dir, mkErr)
-		return noop, nil
+		return nil, fmt.Errorf("backend lock: cannot create lock dir %q: %w", dir, mkErr)
 	}
 
 	lockPath := backendLockPath(dir, rawURL)
@@ -220,9 +218,7 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 	// Open (or create) the lock file.
 	fd, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if openErr != nil {
-		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
-		log.Printf("WARN backend lock: cannot open lock file %q: %v — skipping lock", lockPath, openErr)
-		return noop, nil
+		return nil, fmt.Errorf("backend lock: cannot open lock file %q: %w", lockPath, openErr)
 	}
 
 	// Attempt non-blocking exclusive flock.
@@ -255,11 +251,8 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 
 	// EWOULDBLOCK — someone else holds the flock. Check liveness.
 	if flockErr != syscall.EWOULDBLOCK {
-		// Unexpected flock error; skip locking with a warning.
 		_ = fd.Close()
-		// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
-		log.Printf("WARN backend lock: flock error on %q: %v — skipping lock", lockPath, flockErr)
-		return noop, nil
+		return nil, fmt.Errorf("backend lock: flock error on %q: %w", lockPath, flockErr)
 	}
 
 	// Read the current lock file contents to get PID/start/invocation.
@@ -289,17 +282,13 @@ func acquireBackendLock(cfg *BackendLockConfig, rawURL string) (release func(), 
 		_ = fd.Close()
 		fd2, openErr2 := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 		if openErr2 != nil {
-			// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
-			log.Printf("WARN backend lock: reclaim open failed: %v — skipping lock", openErr2)
-			return noop, nil
+			return nil, fmt.Errorf("backend lock: reclaim open %q failed: %w", lockPath, openErr2)
 		}
 		// Acquire flock (blocking is fine — we've decided to reclaim a dead lock).
 		flockErr2 := syscall.Flock(int(fd2.Fd()), syscall.LOCK_EX)
 		if flockErr2 != nil {
 			_ = fd2.Close()
-			// TODO(#808-S3): migrate to slog when slog is wired into cmd/longmemeval.
-			log.Printf("WARN backend lock: reclaim flock failed: %v — skipping lock", flockErr2)
-			return noop, nil
+			return nil, fmt.Errorf("backend lock: reclaim flock %q failed: %w", lockPath, flockErr2)
 		}
 		// Truncate and write under the lock.
 		if truncErr := fd2.Truncate(0); truncErr != nil {

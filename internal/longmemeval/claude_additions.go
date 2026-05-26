@@ -67,6 +67,16 @@ func ExtractSubjectAnchor(question string) string {
 	return strings.Join(keep, " ")
 }
 
+// PreferenceSubjectAnchorQuery keeps the H15 domain anchor while preserving the
+// preference signal required for extracted-preference memories to be eligible.
+func PreferenceSubjectAnchorQuery(question string) string {
+	anchor := ExtractSubjectAnchor(question)
+	if strings.TrimSpace(anchor) == "" {
+		anchor = question
+	}
+	return "user preference " + anchor + " like dislike use avoid"
+}
+
 // aggregationRe (H8) matches count-shaped questions that require
 // population-level retrieval rather than a single top-scoring session.
 var aggregationRe = regexp.MustCompile(

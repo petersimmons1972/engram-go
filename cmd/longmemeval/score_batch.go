@@ -34,6 +34,11 @@ func runScoreBatch(cfg *Config) int {
 	for _, r := range runEntries {
 		runMap[r.QuestionID] = r
 	}
+	ingestMap, err := loadIngestMap(cfg.OutDir)
+	if err != nil {
+		log.Printf("ERROR score-batch: read ingest checkpoint: %v", err)
+		return 1
+	}
 
 	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-score.jsonl")
 	labels, err := longmemeval.ReadScoredLabels(ckptPath)
@@ -117,7 +122,7 @@ func runScoreBatch(cfg *Config) int {
 		log.Printf("ERROR score-batch: read final scores: %v", err)
 		return 1
 	}
-	writeOutputs(cfg, itemMap, make(map[string]longmemeval.IngestEntry), runMap, allScores)
+	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
 	log.Printf("score-batch: complete")
 	return 0
 }

@@ -230,6 +230,10 @@ func (c *Client) storeBatch(ctx context.Context, project string, items []BatchIt
 // connection in a state where every subsequent call fails identically. A bare
 // retry on the same connection will not recover; reconnect is required.
 func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {
+	return c.RecallWithDateRange(ctx, project, query, topK, nil, nil)
+}
+
+func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
@@ -243,7 +247,7 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 				return nil, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, project, query, topK)
+		ids, err := c.recall(ctx, project, query, topK, since, before)
 		if err == nil {
 			return ids, nil
 		}
@@ -252,20 +256,27 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 	return nil, lastErr
 }
 
-func (c *Client) recall(ctx context.Context, project, query string, topK int) ([]string, error) {
+func (c *Client) recall(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+	args := map[string]any{
+		"query":   query,
+		"project": project,
+		"top_k":   topK,
+		"detail":  "summary",
+		// Handle mode returns lightweight IDs + metadata instead of the
+		// full SearchResult graph. LongMemEval only needs ranked IDs, and
+		// this avoids oversized tool payloads on dense queries.
+		"mode": "handle",
+	}
+	if since != nil {
+		args["since"] = since.UTC().Format(time.RFC3339)
+	}
+	if before != nil {
+		args["before"] = before.UTC().Format(time.RFC3339)
+	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "memory_recall",
-			Arguments: map[string]any{
-				"query":   query,
-				"project": project,
-				"top_k":   topK,
-				"detail":  "summary",
-				// Handle mode returns lightweight IDs + metadata instead of the
-				// full SearchResult graph. LongMemEval only needs ranked IDs, and
-				// this avoids oversized tool payloads on dense queries.
-				"mode": "handle",
-			},
+			Name:      "memory_recall",
+			Arguments: args,
 		},
 	})
 	if err != nil {

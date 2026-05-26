@@ -194,6 +194,27 @@ func TestBackendLock_NoExclusiveBackend(t *testing.T) {
 	}
 }
 
+func TestBackendLock_LockDirErrorFailsClosed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(dir, []byte("file"), 0o600); err != nil {
+		t.Fatalf("write lock dir placeholder: %v", err)
+	}
+	cfg := &BackendLockConfig{
+		ExclusiveBackend: true,
+		BackendLockDir:   filepath.Join(dir, "child"),
+	}
+	release, err := acquireBackendLock(cfg, "http://oblivion:8000/v1")
+	if err == nil {
+		if release != nil {
+			release()
+		}
+		t.Fatal("acquireBackendLock should fail closed when lock dir cannot be created")
+	}
+	if !strings.Contains(err.Error(), "cannot create lock dir") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestBackendLock_DefaultLockDirFallback verifies that when BackendLockDir is
 // empty and XDG_RUNTIME_DIR is unset, the fallback /tmp/lme path is used.
 func TestBackendLock_DefaultLockDirFallback(t *testing.T) {

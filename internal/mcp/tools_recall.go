@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -205,6 +206,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
 	mode := getString(args, "mode", cfg.RecallDefaultMode)
+	since, before, err := parseRecallDateBounds(args)
+	if err != nil {
+		return nil, err
+	}
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames, err := toStringSlice(args["projects"])
@@ -212,6 +217,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, fmt.Errorf("projects: %w", err)
 	}
 	if len(projectNames) > 0 {
+		if since != nil || before != nil {
+			return mcpgo.NewToolResultError("since/before date filters are only supported for single-project recall"), nil
+		}
 		// Expand wildcard "*" to all known projects.
 		if len(projectNames) == 1 && projectNames[0] == "*" {
 			h0, err := pool.Get(ctx, project)
@@ -277,6 +285,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	rerank := getBool(args, "rerank", false)
 	var opts search.RecallOpts
+	opts.DateSince = since
+	opts.DateBefore = before
 	// Claude reranker is opt-in via rerank=true.
 	claudeRerankEnabled := cfg.ClaudeRerankEnabled
 	if cfg.RuntimeConfig != nil {
@@ -329,11 +339,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				}
 			}
 		}
-	} else if opts.CurrentEpisodeID != "" {
-		// Episode context present: use RecallWithOpts so the 1.15× episode
-		// boost applies, then record the retrieval event manually (mirrors
-		// RecallWithEvent internals so the feedback loop and precision signal
-		// continue to work on this path).
+	} else if opts.CurrentEpisodeID != "" || opts.DateSince != nil || opts.DateBefore != nil {
+		// Custom recall options present: use RecallWithOpts so episode boosts
+		// and/or date bounds apply, then record the retrieval event manually
+		// (mirrors RecallWithEvent internals so the feedback loop and precision
+		// signal continue to work on this path).
 		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err
@@ -399,6 +409,36 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 	out["degraded"] = degradedMap(embedDegraded || !ok, reason)
 	return toolResult(out)
+}
+
+func parseRecallDateBounds(args map[string]any) (*time.Time, *time.Time, error) {
+	since, err := parseRecallTimeArg(args, "since")
+	if err != nil {
+		return nil, nil, err
+	}
+	before, err := parseRecallTimeArg(args, "before")
+	if err != nil {
+		return nil, nil, err
+	}
+	if since != nil && before != nil && !since.Before(*before) {
+		return nil, nil, fmt.Errorf("since must be before before")
+	}
+	return since, before, nil
+}
+
+func parseRecallTimeArg(args map[string]any, key string) (*time.Time, error) {
+	raw := strings.TrimSpace(getString(args, key, ""))
+	if raw == "" {
+		return nil, nil
+	}
+	layouts := []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"}
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, raw)
+		if err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("%s must be RFC3339 or YYYY-MM-DD", key)
 }
 
 // structuredEmbedDegradedError returns a structured error result when the

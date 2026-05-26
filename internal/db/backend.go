@@ -104,6 +104,9 @@ type Backend interface {
 	// VectorSearch returns the nearest chunks to queryVec by cosine distance,
 	// using the HNSW index. Returns at most limit results.
 	VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error)
+	// VectorSearchWithDateRange is VectorSearch scoped by parent memory
+	// valid_from timestamps. Nil bounds leave that side unbounded.
+	VectorSearchWithDateRange(ctx context.Context, project string, queryVec []float32, limit int, since, before *time.Time) ([]VectorHit, error)
 	// SearchChunksWithinMemory returns the nearest chunks by cosine distance,
 	// scoped to a single memory. Used by A5 memory_query_document's semantic path.
 	SearchChunksWithinMemory(ctx context.Context, embedding []float32, memoryID string, topK int) ([]*types.Chunk, error)
@@ -339,11 +342,11 @@ type Tx interface {
 
 // ListOptions filters for ListMemories.
 type ListOptions struct {
-	MemoryType       *string  // nil means all types
-	Tags             []string // match ANY tag
-	ImportanceCeiling *int    // include importance <= this value
-	Limit            int
-	Offset           int
+	MemoryType        *string  // nil means all types
+	Tags              []string // match ANY tag
+	ImportanceCeiling *int     // include importance <= this value
+	Limit             int
+	Offset            int
 }
 
 // ConnectedResult is one row from GetConnected.

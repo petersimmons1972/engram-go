@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,6 +81,76 @@ func buildRecallQuery(question, questionType string, disableRewrite bool) string
 	default:
 		return question
 	}
+}
+
+var relativeAgoRe = regexp.MustCompile(`(?i)\b(\d+)\s+(day|days|week|weeks|month|months|year|years)\s+ago\b`)
+
+func temporalRecallWindow(question, questionType, questionDate string) (*time.Time, *time.Time) {
+	if questionType != "temporal-reasoning" {
+		return nil, nil
+	}
+	anchor, ok := parseLongMemEvalQuestionDate(questionDate)
+	if !ok {
+		return nil, nil
+	}
+	lower := strings.ToLower(strings.TrimSpace(question))
+	// Questions like "How many weeks ago..." require finding the target date
+	// first; treating "weeks ago" as a filter would discard the answer.
+	if strings.HasPrefix(lower, "how many") {
+		return nil, nil
+	}
+	if strings.Contains(lower, "yesterday") {
+		target := dateOnly(anchor).AddDate(0, 0, -1)
+		before := target.AddDate(0, 0, 1)
+		return &target, &before
+	}
+	match := relativeAgoRe.FindStringSubmatch(lower)
+	if len(match) != 3 {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(match[1])
+	if err != nil || n <= 0 {
+		return nil, nil
+	}
+	target := dateOnly(anchor)
+	padDays := 0
+	switch match[2] {
+	case "day", "days":
+		target = target.AddDate(0, 0, -n)
+		padDays = 1
+	case "week", "weeks":
+		target = target.AddDate(0, 0, -7*n)
+		padDays = 3
+	case "month", "months":
+		target = target.AddDate(0, -n, 0)
+		padDays = 7
+	case "year", "years":
+		target = target.AddDate(-n, 0, 0)
+		padDays = 30
+	default:
+		return nil, nil
+	}
+	since := target.AddDate(0, 0, -padDays)
+	before := target.AddDate(0, 0, padDays+1)
+	return &since, &before
+}
+
+func parseLongMemEvalQuestionDate(questionDate string) (time.Time, bool) {
+	fields := strings.Fields(questionDate)
+	if len(fields) == 0 {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{"2006/01/02", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, fields[0], time.UTC); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func dateOnly(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // runRun executes the run stage. Returns the process exit code: 0 on success,
@@ -289,7 +360,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// query matches event noun-phrases rather than "how many weeks ago did...".
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
-	retrievedIDs, err := mcpClient.Recall(ctx, ingest.Project, recallQuery, cfg.RecallTopK)
+	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
+	recall := func(query string, topK int) ([]string, error) {
+		return mcpClient.RecallWithDateRange(ctx, ingest.Project, query, topK, since, before)
+	}
+	retrievedIDs, err := recall(recallQuery, cfg.RecallTopK)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID: item.QuestionID,
@@ -297,14 +372,16 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			Error:      fmt.Sprintf("recall: %v", err),
 		}
 	}
+	var secondaryContextIDs []string
 
 	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
 	// the object noun-phrase for count-shaped questions and union with primary.
 	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
 		const aggregationSweepTopK = 500
 		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
-		sweepIDs, sweepErr := mcpClient.Recall(ctx, ingest.Project, sweepQuery, aggregationSweepTopK)
+		sweepIDs, sweepErr := recall(sweepQuery, aggregationSweepTopK)
 		if sweepErr == nil {
+			secondaryContextIDs = append(secondaryContextIDs, sweepIDs...)
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
 		} else {
 			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
@@ -318,9 +395,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		if anchorTopK < 1 {
 			anchorTopK = 1
 		}
-		anchor := longmemeval.ExtractSubjectAnchor(item.Question)
-		anchorIDs, anchorErr := mcpClient.Recall(ctx, ingest.Project, anchor, anchorTopK)
+		anchor := longmemeval.PreferenceSubjectAnchorQuery(item.Question)
+		anchorIDs, anchorErr := recall(anchor, anchorTopK)
 		if anchorErr == nil {
+			secondaryContextIDs = append(secondaryContextIDs, anchorIDs...)
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
 		} else {
 			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
@@ -339,11 +417,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
 		} else {
 			for _, pq := range paraphrases {
-				pIDs, pErr := mcpClient.Recall(ctx, ingest.Project, pq, cfg.RecallTopK)
+				pIDs, pErr := recall(pq, cfg.RecallTopK)
 				if pErr != nil {
 					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
 					continue
 				}
+				secondaryContextIDs = append(secondaryContextIDs, pIDs...)
 				retrievedIDs = append(retrievedIDs, pIDs...)
 			}
 			retrievedIDs = longmemeval.DeduplicateIDs(retrievedIDs)
@@ -361,8 +440,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if contextLimit > len(retrievedIDs) {
 		contextLimit = len(retrievedIDs)
 	}
+	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
 	contextBlocks := make([]string, 0, contextLimit)
-	for _, id := range retrievedIDs[:contextLimit] {
+	for _, id := range contextIDs {
 		content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
 		if err != nil {
 			log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
@@ -431,6 +511,66 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		RetrievedIDs: retrievedIDs,
 		Status:       "done",
 	}
+}
+
+func selectContextIDs(retrievedIDs, secondaryIDs []string, limit int) []string {
+	if limit <= 0 || len(retrievedIDs) == 0 {
+		return nil
+	}
+	if limit > len(retrievedIDs) {
+		limit = len(retrievedIDs)
+	}
+	out := make([]string, 0, limit)
+	seen := make(map[string]bool, limit)
+	for _, id := range retrievedIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		out = append(out, id)
+		seen[id] = true
+		if len(out) == limit {
+			break
+		}
+	}
+	if len(secondaryIDs) == 0 || len(out) == 0 {
+		return out
+	}
+	reserve := (limit + 3) / 4
+	if reserve < 1 {
+		reserve = 1
+	}
+	if reserve > 3 {
+		reserve = 3
+	}
+	filled := 0
+	countedSecondary := make(map[string]bool, len(secondaryIDs))
+	for _, id := range secondaryIDs {
+		if id != "" && seen[id] && !countedSecondary[id] {
+			countedSecondary[id] = true
+			filled++
+			if filled == reserve {
+				return out
+			}
+		}
+	}
+	replaced := 0
+	for _, id := range secondaryIDs {
+		if id == "" || seen[id] || countedSecondary[id] {
+			continue
+		}
+		slot := len(out) - 1 - replaced
+		if slot < 0 {
+			break
+		}
+		delete(seen, out[slot])
+		out[slot] = id
+		seen[id] = true
+		replaced++
+		if filled+replaced == reserve {
+			break
+		}
+	}
+	return out
 }
 
 // runEntryLogLine formats a single RunEntry as a one-line log message.

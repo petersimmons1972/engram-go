@@ -21,17 +21,17 @@ import (
 
 // Config holds flags shared across all subcommands.
 type Config struct {
-	DataFile   string
-	Workers    int
-	RunID      string
-	ServerURL  string
-	APIKey     string
-	NoCleanup     bool          // Deprecated: use CleanupPolicy=never
-	CleanupPolicy CleanupPolicy // "auto" | "always" | "never" (default: auto)
-	Retries    int
-	OutDir     string
-	LLMBaseURL string // OpenAI-compatible base URL; bypasses claude CLI when set
-	LLMModel   string // model name for LLMBaseURL endpoint
+	DataFile       string
+	Workers        int
+	RunID          string
+	ServerURL      string
+	APIKey         string
+	NoCleanup      bool          // Deprecated: use CleanupPolicy=never
+	CleanupPolicy  CleanupPolicy // "auto" | "always" | "never" (default: auto)
+	Retries        int
+	OutDir         string
+	LLMBaseURL     string // OpenAI-compatible base URL; bypasses claude CLI when set
+	LLMModel       string // model name for LLMBaseURL endpoint
 	EnableThinking bool   // enable chain-of-thought for models that support it (Qwen3)
 	LLMMaxTokens   int    // output token budget; 0 → default (2048 thinking-off, 8192 thinking-on)
 
@@ -46,15 +46,15 @@ type Config struct {
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
 
 	// generation flags
-	GenerationModel  string // claude model alias for answer generation (default "sonnet")
-	ContextTopKBump  bool   // raise all contextTopK categories to 15 when true
+	GenerationModel string // claude model alias for answer generation (default "sonnet")
+	ContextTopKBump bool   // raise all contextTopK categories to 15 when true
 
 	// retrieval ablation flags
-	RecallTopK           int  // memories recalled before context trim (default 100)
-	ContextTopKOverride  int  // explicit context topK; 0 = per-type default
-	ChronoSort           bool // sort context blocks by Session date ascending before prompt assembly
-	DisableQueryRewrite  bool // use raw question as recall query; skip temporal/preference rewriting
-	MaxBlockChars        int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+	RecallTopK          int  // memories recalled before context trim (default 100)
+	ContextTopKOverride int  // explicit context topK; 0 = per-type default
+	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
+	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
+	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
 
 	// H16: question_date injection
 	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
@@ -82,7 +82,6 @@ type Config struct {
 	// expires_at field so the `prune` subcommand can sweep expired lme-*
 	// projects later. Zero means durable (no expiry).
 	ScratchTTL time.Duration
-
 }
 
 func main() {
@@ -100,6 +99,9 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  all             Run ingest → run → score in one invocation")
 	_, _ = fmt.Fprintln(w, "  score-efficient Score with olla OAI backend; preserves CORRECT items by default")
 	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
+	_, _ = fmt.Fprintln(w, "  sample-prepare  Prepare a no-ingest representative sample output directory")
+	_, _ = fmt.Fprintln(w, "  sample-analyze  Summarize existing sample checkpoints without generation/scoring")
+	_, _ = fmt.Fprintln(w, "  route-discover  Resolve Olla/OpenAI flags from AI Flight Controller + Olla")
 	_, _ = fmt.Fprintln(w, "  prune           Delete expired lme-* scratch projects (TTL sweep, #754)")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
@@ -239,6 +241,69 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			cfg.RunID = newRunID()
 		}
 		return runScoreBatch(cfg)
+	}
+
+	if subcommand == "sample-prepare" {
+		spfs := flag.NewFlagSet("sample-prepare", flag.ExitOnError)
+		var sp samplePrepareConfig
+		spfs.StringVar(&sp.DataFile, "data", "", "path to LongMemEval cohort JSON")
+		spfs.StringVar(&sp.Source, "source", "", "source results directory containing checkpoint-ingest.jsonl")
+		spfs.StringVar(&sp.OutDir, "out", "", "output directory for the prepared sample")
+		spfs.IntVar(&sp.Limit, "limit", 0, "maximum items to include; 0 = no global limit")
+		spfs.IntVar(&sp.MaxPerType, "max-per-type", 0, "maximum items per question_type; 0 = no per-type limit")
+		spfs.BoolVar(&sp.CopyRun, "copy-run", false, "copy matching checkpoint-run.jsonl rows from source")
+		spfs.BoolVar(&sp.CopyScore, "copy-score", false, "copy matching checkpoint-score.jsonl rows from source")
+		spfs.StringVar(&sp.Description, "description", "", "description recorded in sample_manifest.json")
+		_ = spfs.Parse(args[2:])
+		result, err := prepareSample(sp)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "sample-prepare: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return 0
+	}
+
+	if subcommand == "sample-analyze" {
+		safs := flag.NewFlagSet("sample-analyze", flag.ExitOnError)
+		var sa sampleAnalyzeConfig
+		safs.StringVar(&sa.DataFile, "data", "", "path to LongMemEval cohort JSON")
+		safs.StringVar(&sa.ResultsDir, "results", "", "results directory containing checkpoints")
+		_ = safs.Parse(args[2:])
+		summary, err := analyzeSample(sa)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "sample-analyze: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(summary)
+		return 0
+	}
+
+	if subcommand == "route-discover" {
+		rdfs := flag.NewFlagSet("route-discover", flag.ExitOnError)
+		var rd routeDiscoverConfig
+		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", "https://ai-fleet.petersimmons.com"), "AI Flight Controller base URL")
+		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", "https://olla.petersimmons.com"), "Olla base URL")
+		rdfs.StringVar(&rd.Model, "model", envOr("LME_ROUTE_MODEL", ""), "required model name; empty selects the first compatible live model")
+		rdfs.StringVar(&rd.Purpose, "purpose", envOr("LME_ROUTE_PURPOSE", "generation"), "route purpose: generation, scoring, or embedding")
+		rdfs.StringVar(&rd.FleetCert, "fleet-cert", envOr("LME_FLEET_CERT", ""), "AI Flight Controller mTLS client certificate")
+		rdfs.StringVar(&rd.FleetKey, "fleet-key", envOr("LME_FLEET_KEY", ""), "AI Flight Controller mTLS client key")
+		rdfs.StringVar(&rd.FleetCA, "fleet-ca", envOr("LME_FLEET_CA", ""), "AI Flight Controller CA certificate")
+		rdfs.DurationVar(&rd.RequestLimit, "timeout", 10*time.Second, "request timeout for discovery calls")
+		_ = rdfs.Parse(args[2:])
+		result, err := discoverRoute(rd)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "route-discover: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return 0
 	}
 
 	switch subcommand {

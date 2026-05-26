@@ -62,6 +62,11 @@ func runScoreEfficient(cfg *Config) int {
 	for _, r := range runEntries {
 		runMap[r.QuestionID] = r
 	}
+	ingestMap, err := loadIngestMap(cfg.OutDir)
+	if err != nil {
+		log.Printf("ERROR read ingest checkpoint: %v", err)
+		return 1
+	}
 
 	ckptPath := filepath.Join(cfg.OutDir, "checkpoint-score.jsonl")
 	labels, err := longmemeval.ReadScoredLabels(ckptPath)
@@ -73,12 +78,14 @@ func runScoreEfficient(cfg *Config) int {
 	preserveMode := cfg.PreserveCorrect && !cfg.ForceRescore
 	skip, _ := buildPreserveSkipSet(labels, preserveMode)
 
-	// Decide backend: olla OAI or Haiku subprocess fallback
+	// Decide backend: configured OAI scorer only. Switching judges on health
+	// failure makes score comparisons ambiguous, so fail closed instead.
 	useOAI := cfg.ScorerURL != "" && ollaHealthCheck(cfg.ScorerURL)
 	if useOAI {
 		log.Printf("score-efficient: backend=olla url=%s model=%s", cfg.ScorerURL, cfg.ScorerModel)
 	} else {
-		log.Printf("score-efficient: olla unavailable — fallback to claude --print --model haiku")
+		log.Printf("ERROR score-efficient: scorer unavailable or not configured; set --scorer-url/--scorer-model and verify /models")
+		return 1
 	}
 
 	work := make(chan longmemeval.RunEntry, len(runEntries))
@@ -122,7 +129,7 @@ func runScoreEfficient(cfg *Config) int {
 		log.Printf("ERROR read final scores: %v", err)
 		return 1
 	}
-	writeOutputs(cfg, itemMap, make(map[string]longmemeval.IngestEntry), runMap, allScores)
+	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
 	log.Printf("score-efficient: complete")
 	return 0
 }
@@ -138,14 +145,16 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 		}
 		var result longmemeval.ScoreResult
 		var err error
-		if useOAI {
-			result, err = longmemeval.ScoreOAIEfficient(ctx,
-				item.Question, string(item.Answer), r.Hypothesis,
-				cfg.ScorerURL, cfg.ScorerModel, cfg.Retries, cfg.ScorerMaxTokens)
-		} else {
-			result, err = longmemeval.Score(ctx,
-				item.Question, string(item.Answer), r.Hypothesis, cfg.Retries)
-		}
+		result, err = longmemeval.ScoreOAIEfficient(
+			ctx,
+			item.Question,
+			string(item.Answer),
+			r.Hypothesis,
+			cfg.ScorerURL,
+			cfg.ScorerModel,
+			cfg.Retries,
+			cfg.ScorerMaxTokens,
+		)
 		if err != nil {
 			out <- longmemeval.ScoreEntry{
 				QuestionID:   r.QuestionID,

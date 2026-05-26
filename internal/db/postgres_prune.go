@@ -259,11 +259,11 @@ func (b *PostgresBackend) FTSSearch(ctx context.Context, project, query string, 
 	var timeWhere []string
 	if since != nil {
 		args = append(args, since)
-		timeWhere = append(timeWhere, fmt.Sprintf("m.created_at>=$%d", len(args)))
+		timeWhere = append(timeWhere, fmt.Sprintf("m.valid_from>=$%d", len(args)))
 	}
 	if before != nil {
 		args = append(args, before)
-		timeWhere = append(timeWhere, fmt.Sprintf("m.created_at<=$%d", len(args)))
+		timeWhere = append(timeWhere, fmt.Sprintf("m.valid_from<$%d", len(args)))
 	}
 	for _, c := range timeWhere {
 		baseQ += " AND " + c

@@ -3,10 +3,11 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/types"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 // chunkCols is an explicit column list for chunks SELECTs. Using SELECT c.*
@@ -245,6 +246,10 @@ func efSearchForLimit(limit int) int {
 }
 
 func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, queryVec []float32, limit int) ([]VectorHit, error) {
+	return b.VectorSearchWithDateRange(ctx, project, queryVec, limit, nil, nil)
+}
+
+func (b *PostgresBackend) VectorSearchWithDateRange(ctx context.Context, project string, queryVec []float32, limit int, since, before *time.Time) ([]VectorHit, error) {
 	// When the requested limit exceeds the HNSW default ef_search, the index
 	// silently returns fewer rows than requested. Wrap in a transaction so that
 	// SET LOCAL hnsw.ef_search is scoped to this query only and does not bleed
@@ -265,10 +270,13 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 			       c.embedding <=> $1::vector AS distance,
 			       c.chunk_text, c.chunk_index, c.section_heading
 			FROM chunks c
+			JOIN memories m ON m.id = c.memory_id AND m.project = c.project
 			WHERE c.project = $2 AND c.embedding IS NOT NULL
+			  AND ($4::timestamptz IS NULL OR m.valid_from >= $4::timestamptz)
+			  AND ($5::timestamptz IS NULL OR m.valid_from < $5::timestamptz)
 			ORDER BY c.embedding <=> $1::vector
 			LIMIT $3`,
-			pgvector.NewVector(queryVec), project, limit,
+			pgvector.NewVector(queryVec), project, limit, since, before,
 		)
 		if err != nil {
 			return nil, err
@@ -282,10 +290,13 @@ func (b *PostgresBackend) VectorSearch(ctx context.Context, project string, quer
 		       c.embedding <=> $1::vector AS distance,
 		       c.chunk_text, c.chunk_index, c.section_heading
 		FROM chunks c
+		JOIN memories m ON m.id = c.memory_id AND m.project = c.project
 		WHERE c.project = $2 AND c.embedding IS NOT NULL
+		  AND ($4::timestamptz IS NULL OR m.valid_from >= $4::timestamptz)
+		  AND ($5::timestamptz IS NULL OR m.valid_from < $5::timestamptz)
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $3`,
-		pgvector.NewVector(queryVec), project, limit,
+		pgvector.NewVector(queryVec), project, limit, since, before,
 	)
 	if err != nil {
 		return nil, err
@@ -383,5 +394,3 @@ func (b *PostgresBackend) EnqueueChunkLeases(ctx context.Context, chunkIDs []str
 	`, chunkIDs)
 	return err
 }
-
-

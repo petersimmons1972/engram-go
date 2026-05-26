@@ -121,15 +121,15 @@ func SummarizeOneWithClaude(ctx context.Context, backend db.Backend, memoryID st
 
 // Worker is a background goroutine that fills summary IS NULL rows.
 type Worker struct {
-	backend             db.Backend
-	project             string
-	ollamaURL           string
-	model               string
-	enabled             bool
-	claudeClient        ClaudeCompleter
-	cancel              context.CancelFunc
-	done                chan struct{}
-	modelNotFoundUntil  time.Time // backoff expiry after ErrModelNotFound (#151)
+	backend            db.Backend
+	project            string
+	ollamaURL          string
+	model              string
+	enabled            bool
+	claudeClient       ClaudeCompleter
+	cancel             context.CancelFunc
+	done               chan struct{}
+	modelNotFoundUntil time.Time // backoff expiry after ErrModelNotFound (#151)
 }
 
 // NewWorker creates a Worker. enabled=false makes Start a no-op.
@@ -181,7 +181,7 @@ func (w *Worker) Stop() {
 	}
 }
 
-const batchTimeout = 5 * time.Minute // max time for one runOnce iteration (#120)
+const batchTimeout = 10 * time.Minute // max time for one runOnce iteration (#120, #870)
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)

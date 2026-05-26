@@ -65,9 +65,10 @@ func ReadSkipSet(path string) (map[string]bool, error) {
 	return skip, scanner.Err()
 }
 
-// ReadScoredLabels returns a map from question_id to score_label for all
-// checkpoint-score.jsonl entries with status=="done". Error-status entries
-// are excluded. Returns empty map (not error) if the file does not exist.
+// ReadScoredLabels returns the latest score label by question_id for
+// checkpoint-score.jsonl. A later non-done entry clears an earlier done label,
+// matching append-only checkpoint last-write-wins semantics. Returns an empty
+// map (not error) if the file does not exist.
 func ReadScoredLabels(path string) (map[string]string, error) {
 	labels := make(map[string]string)
 	f, err := os.Open(path)
@@ -89,9 +90,14 @@ func ReadScoredLabels(path string) (map[string]string, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
 		}
-		if entry.Status == "done" && entry.QuestionID != "" {
-			labels[entry.QuestionID] = entry.ScoreLabel
+		if entry.QuestionID == "" {
+			continue
 		}
+		if entry.Status == "done" {
+			labels[entry.QuestionID] = entry.ScoreLabel
+			continue
+		}
+		delete(labels, entry.QuestionID)
 	}
 	return labels, scanner.Err()
 }

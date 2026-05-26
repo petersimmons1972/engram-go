@@ -44,10 +44,16 @@ There is no recovery from `-v` without a backup. The flag exists for development
 
 These are the server's internal API. Most users never call them directly — `make setup` and the Docker health checks handle them automatically. But they are useful to know when you are debugging a startup problem or building an integration.
 
-**`GET /health`** — returns `{"status":"ok"}` with no authentication required. Used for Docker healthchecks and external readiness probes:
+**`GET /health`** — returns dependency health for PostgreSQL and the embedding router with no authentication required. A `200` response means the server can answer diagnostics; a `503` response means PostgreSQL is unavailable or a previously healthy embedding router is now unreachable:
 
 ```bash
 curl http://localhost:8788/health
+```
+
+**`GET /ready`** — returns startup readiness with no authentication required. Kubernetes readiness probes should use this endpoint because it stays `503` until startup warmup is complete:
+
+```bash
+curl http://localhost:8788/ready
 ```
 
 **`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Requires `Authorization: Bearer <ENGRAM_API_KEY>`. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
