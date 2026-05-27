@@ -396,14 +396,13 @@ LME benchmark runs create ephemeral `lme-<run-id>` projects. Without cleanup the
 
 ### Stamping TTL at ingest time
 
-Pass `--scratch-ttl <duration>` and `--database-url <dsn>` to `longmemeval ingest`:
+Pass `--scratch-ttl <duration>` to `longmemeval ingest`:
 
 ```
 longmemeval ingest \
-  --data-file questions.json \
-  --out-dir /tmp/lme-run-001 \
-  --scratch-ttl 168h \
-  --database-url "${DATABASE_URL}"
+  --data questions.json \
+  --out /tmp/lme-run-001 \
+  --scratch-ttl 168h
 ```
 
 The default TTL is **168 h (7 days)** — long enough to re-run scoring without re-ingesting; short enough to prevent unbounded growth.

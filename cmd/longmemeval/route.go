@@ -195,7 +195,7 @@ func fetchOllaModels(ctx context.Context, client *http.Client, url string) ([]st
 		}
 	}
 	if len(models) == 0 {
-		return nil, errors.New("Olla returned no models")
+		return nil, errors.New("olla returned no models")
 	}
 	return models, nil
 }

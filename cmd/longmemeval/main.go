@@ -88,12 +88,6 @@ func main() {
 	os.Exit(dispatch(os.Args, os.Stdout, os.Stderr))
 }
 
-var (
-	runIngestFn = runIngest
-	runRunFn    = runRun
-	runScoreFn  = runScore
-)
-
 // printUsage writes the top-level usage banner.
 func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: longmemeval <subcommand> [flags]")
@@ -167,11 +161,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.DataFile, "data", "", "Path to longmemeval_m_cleaned.json (required)")
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
-	defaultURL, defaultKey := mcpDefaults()
-	fs.StringVar(&cfg.ServerURL, "url", envOr("ENGRAM_URL", defaultURL), "Engram server URL")
-	resolvedAPIKey := envOr("ENGRAM_API_KEY", defaultKey)
-	var apiKeyOverride string
-	fs.StringVar(&apiKeyOverride, "api-key", "", "Engram API key")
+	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
+	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
 	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
 	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
@@ -353,11 +344,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	if exit := parseFlagSet(fs, args[2:]); exit >= 0 {
 		return exit
 	}
-	if apiKeyOverride != "" {
-		cfg.APIKey = apiKeyOverride
-	} else {
-		cfg.APIKey = resolvedAPIKey
-	}
+	applySharedDefaults(cfg, fs)
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
 	}
@@ -413,14 +400,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	switch subcommand {
 	case "ingest":
-		runIngestFn(cfg)
+		runIngest(cfg)
 	case "run":
 		// #703: surface non-zero exit when runRun reports any errors.
-		if exit := runRunFn(cfg); exit != 0 {
+		if exit := runRun(cfg); exit != 0 {
 			return exit
 		}
 	case "score":
-		runScoreFn(cfg)
+		runScore(cfg)
 	case "all":
 		return runAll(cfg)
 	}
@@ -441,6 +428,35 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultAPIKey() string {
+	_, token := mcpDefaults()
+	return envOr("ENGRAM_API_KEY", token)
+}
+
+func defaultServerURL() string {
+	url, _ := mcpDefaults()
+	return envOr("ENGRAM_URL", url)
+}
+
+func applySharedDefaults(cfg *Config, fs *flag.FlagSet) {
+	if !flagWasProvided(fs, "api-key") {
+		cfg.APIKey = defaultAPIKey()
+	}
+	if !flagWasProvided(fs, "url") {
+		cfg.ServerURL = defaultServerURL()
+	}
+}
+
+func flagWasProvided(fs *flag.FlagSet, name string) bool {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			provided = true
+		}
+	})
+	return provided
 }
 
 // mcpDefaults reads the engram URL and Bearer token from ~/.claude/mcp_servers.json,

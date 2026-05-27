@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -210,7 +209,8 @@ func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
 			}
 		}
 		if score, ok := scoreMap[item.QuestionID]; ok {
-			if score.Status == "done" {
+			switch score.Status {
+			case "done":
 				summary.Scored++
 				row.Scored++
 				switch score.ScoreLabel {
@@ -224,7 +224,7 @@ func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
 					summary.Incorrect++
 					row.Incorrect++
 				}
-			} else if score.Status == "error" {
+			case "error":
 				summary.ScoreErrors++
 			}
 		}
@@ -344,13 +344,4 @@ func copyFilteredJSONL(src, dst string, idSet map[string]bool) error {
 		}
 	}
 	return scanner.Err()
-}
-
-func sortedTypeNames(byType map[string]sampleTypeRow) []string {
-	names := make([]string, 0, len(byType))
-	for name := range byType {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

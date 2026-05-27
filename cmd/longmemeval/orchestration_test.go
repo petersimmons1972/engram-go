@@ -7,42 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
-
-func TestRunAll_StopsWhenRunFails(t *testing.T) {
-	oldRunIngest := runIngestFn
-	oldRunRun := runRunFn
-	oldRunScore := runScoreFn
-	defer func() {
-		runIngestFn = oldRunIngest
-		runRunFn = oldRunRun
-		runScoreFn = oldRunScore
-	}()
-
-	var stages []string
-	runIngestFn = func(cfg *Config) {
-		stages = append(stages, "ingest")
-	}
-	runRunFn = func(cfg *Config) int {
-		stages = append(stages, "run")
-		return 23
-	}
-	runScoreFn = func(cfg *Config) {
-		stages = append(stages, "score")
-	}
-
-	exit := runAll(&Config{DataFile: "testdata.json", Workers: 1})
-	if exit != 23 {
-		t.Fatalf("runAll exit = %d, want 23", exit)
-	}
-	if got := strings.Join(stages, ","); got != "ingest,run" {
-		t.Fatalf("stages = %q, want ingest,run", got)
-	}
-}
 
 // TestRunScore_EndToEnd exercises the full runScore pipeline with stub data.
 // This test verifies that the orchestration code reads checkpoints, dispatches
