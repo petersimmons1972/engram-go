@@ -30,30 +30,38 @@ require_kubectl() {
 
 probe_deploy() {
   local name="$1"
-  local ready available desired
+  local ready available desired images detail
   ready=$(kubectl -n "$NAMESPACE" get deploy "$name" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
   available=$(kubectl -n "$NAMESPACE" get deploy "$name" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
   desired=$(kubectl -n "$NAMESPACE" get deploy "$name" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)
+  images=$(kubectl -n "$NAMESPACE" get deploy "$name" -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"="}{.image}{" "}{end}' 2>/dev/null || true)
   ready="${ready:-0}"
   available="${available:-0}"
   desired="${desired:-0}"
+  images="${images:-unknown}"
+  detail="ready=${ready}/${desired}, available=${available}/${desired}, image=${images% }"
   if [ "$ready" = "$desired" ] && [ "$available" = "$desired" ] && [ "$desired" != "0" ]; then
-    print_row "$name" "OK" "ready=${ready}/${desired}, available=${available}/${desired}"
+    print_row "$name" "OK" "$detail"
   else
-    print_row "$name" "WARN" "ready=${ready}/${desired}, available=${available}/${desired}"
+    print_row "$name" "WARN" "$detail"
   fi
 }
 
 probe_pod_restarts() {
   local selector="$1"
   local label="$2"
-  local rows
-  rows=$(kubectl -n "$NAMESPACE" get pods -l "$selector" -o jsonpath='{range .items[*]}{.metadata.name}{" restarts="}{range .status.containerStatuses[*]}{.restartCount}{" "}{end}{"age="}{.metadata.creationTimestamp}{"\n"}{end}' 2>/dev/null || true)
+  local rows status
+  rows=$(kubectl -n "$NAMESPACE" get pods -l "$selector" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .status.containerStatuses[*]}{.name}{":"}{.restartCount}{":prev="}{.lastState.terminated.reason}{":exit="}{.lastState.terminated.exitCode}{" "}{end}{"\n"}{end}' 2>/dev/null || true)
   if [ -z "$rows" ]; then
     print_row "$label pods" "WARN" "no pods found for selector ${selector}"
     return
   fi
-  print_row "$label pods" "INFO" "$rows"
+  status="OK"
+  if echo "$rows" | grep -Eq ':[1-9][0-9]*:prev='; then
+    status="WARN"
+  fi
+  rows=$(echo "$rows" | sed -e 's/prev=:exit=/prev=none:exit=none/g' -e 's/:exit= /:exit=none /g')
+  print_row "$label pods" "$status" "$rows"
 }
 
 probe_local_http() {
@@ -79,6 +87,50 @@ probe_recent_warnings() {
   fi
 }
 
+probe_metrics() {
+  local body code pending acquired max status detail ratio
+  if [ -z "${ENGRAM_API_KEY:-}" ]; then
+    print_row "metrics auth" "WARN" "skipped; set ENGRAM_API_KEY to probe authenticated /metrics"
+    return
+  fi
+
+  body=$(mktemp)
+  code=$(curl -sS --max-time "$PROBE_TIMEOUT" -o "$body" -w "%{http_code}" \
+    -H "Authorization: Bearer ${ENGRAM_API_KEY}" \
+    "http://127.0.0.1:${LOCAL_PORT}/metrics" 2>/dev/null || echo "000")
+  if [ "$code" != "200" ]; then
+    print_row "metrics auth" "WARN" "HTTP ${code}; verify ENGRAM_API_KEY and any active port-forward"
+    rm -f "$body"
+    return
+  fi
+
+  pending=$(awk '$1 == "engram_chunks_pending_reembed" {print $2; found=1; exit} END {if (!found) print "missing"}' "$body")
+  status="OK"
+  detail="pending=${pending}"
+  if [ "$pending" = "missing" ]; then
+    status="WARN"
+  elif [ "$pending" -gt 0 ] 2>/dev/null; then
+    status="WARN"
+  fi
+  print_row "metrics backlog" "$status" "$detail"
+
+  acquired=$(awk '$1 == "engram_db_pool_acquired_conns" {print $2; found=1; exit} END {if (!found) print "missing"}' "$body")
+  max=$(awk '$1 == "engram_db_pool_max_conns" {print $2; found=1; exit} END {if (!found) print "missing"}' "$body")
+  status="OK"
+  detail="acquired=${acquired}, max=${max}"
+  if [ "$acquired" = "missing" ] || [ "$max" = "missing" ] || [ "$max" = "0" ]; then
+    status="WARN"
+  else
+    ratio=$(awk -v acquired="$acquired" -v max="$max" 'BEGIN { if (max > 0) printf "%.2f", acquired / max; else print "nan" }')
+    detail="${detail}, saturation=${ratio}"
+    if awk -v ratio="$ratio" 'BEGIN { exit !(ratio >= 0.80) }'; then
+      status="WARN"
+    fi
+  fi
+  print_row "metrics db pool" "$status" "$detail"
+  rm -f "$body"
+}
+
 require_kubectl
 print_header
 print_row "context" "INFO" "$(kubectl config current-context 2>/dev/null || echo unknown)"
@@ -88,6 +140,7 @@ probe_pod_restarts "app=engram-go" "engram-go"
 probe_pod_restarts "app=engram-reembed" "engram-reembed"
 probe_local_http "/health"
 probe_local_http "/ready"
+probe_metrics
 probe_recent_warnings
 echo ""
 echo "Metrics require Bearer auth: curl -H \"Authorization: Bearer \$ENGRAM_API_KEY\" http://127.0.0.1:${LOCAL_PORT}/metrics"
