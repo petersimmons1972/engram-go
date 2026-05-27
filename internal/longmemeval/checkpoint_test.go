@@ -39,6 +39,47 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteCheckpointCreatesPrivateFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-score.jsonl")
+
+	ch := make(chan longmemeval.ScoreEntry, 1)
+	ch <- longmemeval.ScoreEntry{QuestionID: "q001", Status: "done"}
+	close(ch)
+
+	longmemeval.WriteCheckpoint(path, ch)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat checkpoint: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("checkpoint mode = %o, want 600", got)
+	}
+}
+
+func TestWriteCheckpointTightensExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-run.jsonl")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatalf("seed checkpoint: %v", err)
+	}
+
+	ch := make(chan longmemeval.RunEntry, 1)
+	ch <- longmemeval.RunEntry{QuestionID: "q001", Status: "done"}
+	close(ch)
+
+	longmemeval.WriteCheckpoint(path, ch)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat checkpoint: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("checkpoint mode = %o, want 600", got)
+	}
+}
+
 func TestReadSkipSet_Missing(t *testing.T) {
 	skip, err := longmemeval.ReadSkipSet("/tmp/nonexistent-ckpt-xyz.jsonl")
 	if err != nil {

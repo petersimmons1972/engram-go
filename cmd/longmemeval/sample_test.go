@@ -103,6 +103,46 @@ func TestPrepareSampleAppliesMaxPerType(t *testing.T) {
 	}
 }
 
+func TestPrepareSampleCreatesPrivateArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source")
+	out := filepath.Join(dir, "out")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dataPath := filepath.Join(dir, "cohort.json")
+	writeItems(t, dataPath, []longmemeval.Item{
+		{QuestionID: "q1", QuestionType: "temporal-reasoning", Question: "When?", Answer: "A"},
+	})
+	writeCheckpointFile(t, filepath.Join(source, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q1", Project: "lme-old-q1", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(source, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q1", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(source, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q1", Status: "done", ScoreLabel: "CORRECT"},
+	})
+
+	if _, err := prepareSample(samplePrepareConfig{
+		DataFile:  dataPath,
+		Source:    source,
+		OutDir:    out,
+		CopyRun:   true,
+		CopyScore: true,
+	}); err != nil {
+		t.Fatalf("prepareSample: %v", err)
+	}
+
+	assertMode(t, out, 0o700)
+	assertMode(t, filepath.Join(out, "data.json"), 0o600)
+	assertMode(t, filepath.Join(out, "checkpoint-ingest.jsonl"), 0o600)
+	assertMode(t, filepath.Join(out, "checkpoint-run.jsonl"), 0o600)
+	assertMode(t, filepath.Join(out, "checkpoint-score.jsonl"), 0o600)
+	assertMode(t, filepath.Join(out, "sample_manifest.json"), 0o600)
+}
+
 func TestAnalyzeSampleSummarizesScoresAndRetrievalCoverage(t *testing.T) {
 	dir := t.TempDir()
 	dataPath := filepath.Join(dir, "data.json")
