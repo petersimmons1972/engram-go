@@ -113,7 +113,10 @@ func runScoreBatch(cfg *Config) int {
 		close(ckptCh)
 		// WriteCheckpoint is designed for goroutine use but works synchronously
 		// when the channel is already closed.
-		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+		if err := longmemeval.WriteCheckpoint(ckptPath, ckptCh); err != nil {
+			log.Printf("ERROR score-batch checkpoint write failed: %v", err)
+			return 1
+		}
 	}
 
 	// Load all scores and write output files.

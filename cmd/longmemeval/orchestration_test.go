@@ -134,6 +134,46 @@ func TestRunScore_SkipsAlreadyDone(t *testing.T) {
 	}
 }
 
+func TestRunScore_AllAttemptedRowsFailReturnsNonZero(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+		{QuestionID: "q002", QuestionType: "single-session-user", Question: "?", Answer: "B"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+		longmemeval.IngestEntry{QuestionID: "q002", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "wrong", Status: "done"},
+		longmemeval.RunEntry{QuestionID: "q002", Hypothesis: "wrong", Status: "done"},
+	})
+
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "judge unavailable", http.StatusInternalServerError)
+	}))
+	defer llmSrv.Close()
+
+	cfg := &Config{
+		DataFile:   dataPath,
+		OutDir:     dir,
+		Workers:    1,
+		Retries:    0,
+		RunID:      "testrun",
+		LLMBaseURL: llmSrv.URL,
+		LLMModel:   "test-model",
+	}
+	if exit := runScore(cfg); exit == 0 {
+		t.Fatal("runScore returned 0 after every attempted score row failed")
+	}
+}
+
 // writeCheckpointFile writes a JSONL checkpoint file from a slice of values.
 func writeCheckpointFile(t *testing.T, path string, items []any) {
 	t.Helper()

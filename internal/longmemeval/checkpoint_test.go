@@ -1,9 +1,11 @@
 package longmemeval_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -44,6 +46,65 @@ func TestReadSkipSet_Missing(t *testing.T) {
 	}
 	if len(skip) != 0 {
 		t.Errorf("expected empty skip set, got %d entries", len(skip))
+	}
+}
+
+func TestCheckpointReadersFailClosedOnMalformedJSONL(t *testing.T) {
+	dir := t.TempDir()
+
+	tests := []struct {
+		name string
+		read func(string) error
+	}{
+		{
+			name: "skip set",
+			read: func(path string) error {
+				_, err := longmemeval.ReadSkipSet(path)
+				return err
+			},
+		},
+		{
+			name: "scored labels",
+			read: func(path string) error {
+				_, err := longmemeval.ReadScoredLabels(path)
+				return err
+			},
+		},
+		{
+			name: "all ingest",
+			read: func(path string) error {
+				_, err := longmemeval.ReadAllIngest(path)
+				return err
+			},
+		},
+		{
+			name: "all run",
+			read: func(path string) error {
+				_, err := longmemeval.ReadAllRun(path)
+				return err
+			},
+		},
+		{
+			name: "all score",
+			read: func(path string) error {
+				_, err := longmemeval.ReadAllScore(path)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(tt.name, " ", "-")+".jsonl")
+			data := []byte("{\"question_id\":\"q001\",\"status\":\"done\"}\n{bad-json\n")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := tt.read(path); err == nil {
+				t.Fatal("expected malformed checkpoint line to fail closed")
+			}
+		})
 	}
 }
 
@@ -117,4 +178,18 @@ func TestReadAllIngest(t *testing.T) {
 	if len(entries) != 1 || entries[0].Project != "lme-x-q001" {
 		t.Errorf("unexpected entries: %+v", entries)
 	}
+}
+
+func TestWriteCheckpointReturnsOpenError(t *testing.T) {
+	ch := make(chan longmemeval.IngestEntry)
+	close(ch)
+
+	err := longmemeval.WriteCheckpoint(filepath.Join(t.TempDir(), "missing", "ckpt.jsonl"), ch)
+	if err == nil {
+		t.Fatal("expected open failure to be returned")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	t.Fatalf("expected not-exist error, got %v", err)
 }

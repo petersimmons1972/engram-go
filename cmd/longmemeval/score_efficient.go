@@ -105,11 +105,12 @@ func runScoreEfficient(cfg *Config) int {
 	log.Printf("score-efficient: skipped=%d(CORRECT) queued=%d", skipped, queued)
 
 	ckptCh := make(chan longmemeval.ScoreEntry, cfg.Workers*2)
+	writerErr := make(chan error, 1)
 	var wgWriter sync.WaitGroup
 	wgWriter.Add(1)
 	go func() {
 		defer wgWriter.Done()
-		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+		writerErr <- longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
 	var wg sync.WaitGroup
@@ -123,6 +124,10 @@ func runScoreEfficient(cfg *Config) int {
 	wg.Wait()
 	close(ckptCh)
 	wgWriter.Wait()
+	if err := <-writerErr; err != nil {
+		log.Printf("ERROR score-efficient checkpoint write failed: %v", err)
+		return 1
+	}
 
 	allScores, err := longmemeval.ReadAllScore(ckptPath)
 	if err != nil {

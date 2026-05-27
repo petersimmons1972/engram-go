@@ -15,8 +15,9 @@ func TestRunAllWithStagesStopsBeforeScoreWhenRunFails(t *testing.T) {
 			calls = append(calls, "run")
 			return 7
 		},
-		score: func(*Config) {
+		score: func(*Config) int {
 			calls = append(calls, "score")
+			return 0
 		},
 	}
 
@@ -41,8 +42,9 @@ func TestRunAllWithStagesRunsScoreAfterSuccessfulRun(t *testing.T) {
 			calls = append(calls, "run")
 			return 0
 		},
-		score: func(*Config) {
+		score: func(*Config) int {
 			calls = append(calls, "score")
+			return 0
 		},
 	}
 
