@@ -314,6 +314,20 @@ export LME_LLM_MODEL="$(jq -r .llm_model /tmp/lme-route.json)"
 
 **Checkpoint files** are written to `<out>/checkpoint-ingest.jsonl`, `<out>/checkpoint-run.jsonl`, and `<out>/checkpoint-score.jsonl`. Resume is automatic. Re-running `score-efficient` is score-only reuse: it reads existing run checkpoints, preserves already-`CORRECT` rows by default, and does not ingest or generate.
 
+### Maintained Wrappers
+
+Use tracked wrappers under `scripts/` for reproducible runs:
+
+```bash
+# Full ingest -> run -> score-efficient pipeline (captures route-discover output when enabled).
+ROUTE_DISCOVER=1 OUT=~/benchmarks/lme-m scripts/longmemeval-pipeline.sh
+
+# Resume run/score with optional route discovery and optional RUN_PID wait.
+ROUTE_DISCOVER=1 OUT=~/benchmarks/lme-m scripts/longmemeval-resume.sh
+```
+
+Result-local scripts inside `results/**` are historical run artifacts and are not maintained entrypoints.
+
 ### vLLM Server Launch
 
 ```bash
