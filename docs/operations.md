@@ -164,17 +164,25 @@ The SHA-256 hash in `memories` is a content integrity check. `memory_verify` com
 
 ## Logs and Diagnostics
 
+For the live Engram deployment in this environment, Kubernetes is the operational source of truth. Start with the read-only namespace status command:
+
 ```bash
-# Check container state
+make status-k8s
+```
+
+It summarizes deployment readiness, image identity, pod restarts, previous container termination reasons, recent warning events, `/health`, `/ready`, and authenticated metrics when `ENGRAM_API_KEY` is available. Use the Docker commands below only for a confirmed local Docker/Compose stack.
+
+```bash
+# Local Docker only: check container state
 docker compose ps
 
-# Application logs — last 50 lines
+# Local Docker only: application logs - last 50 lines
 docker compose logs engram-go-app --tail=50
 
-# PostgreSQL logs
+# Local Docker only: PostgreSQL logs
 docker compose logs engram-postgres --tail=20
 
-# Memory count — quick health check
+# Local Docker only: memory count - quick health check
 docker exec engram-postgres psql -U engram -d engram -c "SELECT COUNT(*) FROM memories;"
 
 # Confirm the SSE endpoint is responding
@@ -187,7 +195,7 @@ curl -s http://localhost:8788/sse
 > `scripts/psql-exec.sh <file.sql>` which uses `docker cp` + `psql -f`
 > (unambiguous, no stdin). See issue #646.
 
-If the SSE endpoint returns nothing or hangs, check whether the Go container started correctly (`docker compose ps`) and whether PostgreSQL is accepting connections (`docker compose logs engram-postgres`). Most startup failures are PostgreSQL not finishing its initialization before the Go process tries to connect — restart with `docker compose restart engram-go-app` once PostgreSQL is ready.
+If the SSE endpoint returns nothing or hangs in live Kubernetes, run `make status-k8s` first and inspect the restart/crash/event rows before restarting anything. If the affected runtime is local Docker, check whether the Go container started correctly (`docker compose ps`) and whether PostgreSQL is accepting connections (`docker compose logs engram-postgres`). Most local startup failures are PostgreSQL not finishing its initialization before the Go process tries to connect - restart with `docker compose restart engram-go-app` once PostgreSQL is ready.
 
 ---
 
