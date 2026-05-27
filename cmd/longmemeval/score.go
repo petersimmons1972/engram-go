@@ -89,6 +89,7 @@ func runScore(cfg *Config) int {
 		log.Fatalf("read final scores: %v", err)
 	}
 	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
+	writeRunManifest(cfg, "score", itemMap, ingestMap, runMap, allScores)
 	if checkpointErr != nil {
 		log.Printf("ERROR score checkpoint write failed: %v", checkpointErr)
 		return 1
@@ -172,7 +173,7 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
 	writeHypotheses(cfg, scores)
 	writeRetrievalLog(cfg, itemMap, ingestMap, runMap, scores)
-	writeScoreReport(cfg, scores)
+	writeScoreReportWithCompleteness(cfg, scores, scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores))
 }
 
 type scoreReportCounts struct {
@@ -240,6 +241,10 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 }
 
 func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
+	writeScoreReportWithCompleteness(cfg, scores, scoreCompletenessFromScores(scores))
+}
+
+func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEntry, completeness scoreCompleteness) {
 	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
 	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
 	for _, s := range scores {
@@ -272,10 +277,17 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 	}
 
 	report := map[string]any{
-		"overall":      overall,
-		"by_type":      byQType,
-		"run_id":       cfg.RunID,
-		"total_scored": len(deduped),
+		"overall":               overall,
+		"by_type":               byQType,
+		"run_id":                cfg.RunID,
+		"total_scored":          len(deduped),
+		"expected_total":        completeness.ExpectedTotal,
+		"ingest_done_total":     completeness.IngestDoneTotal,
+		"completed_run_total":   completeness.CompletedRunTotal,
+		"completed_score_total": completeness.CompletedScoreTotal,
+		"run_error_total":       completeness.RunErrorTotal,
+		"score_error_total":     completeness.ScoreErrorTotal,
+		"complete":              completeness.Complete,
 	}
 
 	data, err := json.MarshalIndent(report, "", "  ")

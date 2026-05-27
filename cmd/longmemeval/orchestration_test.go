@@ -134,6 +134,114 @@ func TestRunScore_SkipsAlreadyDone(t *testing.T) {
 	}
 }
 
+func TestRunScore_ReportIncludesExpectedDenominatorForPartialRun(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+		{QuestionID: "q002", QuestionType: "single-session-user", Question: "?", Answer: "B"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+		longmemeval.IngestEntry{QuestionID: "q002", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	cfg := &Config{
+		DataFile: dataPath,
+		OutDir:   dir,
+		Workers:  1,
+		RunID:    "partial-run",
+	}
+	if exit := runScore(cfg); exit != 0 {
+		t.Fatalf("runScore exit = %d, want 0 for resume-only partial report", exit)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+	if got := int(report["expected_total"].(float64)); got != 2 {
+		t.Fatalf("expected_total = %d, want 2", got)
+	}
+	if got := int(report["completed_run_total"].(float64)); got != 1 {
+		t.Fatalf("completed_run_total = %d, want 1", got)
+	}
+	if got := int(report["completed_score_total"].(float64)); got != 1 {
+		t.Fatalf("completed_score_total = %d, want 1", got)
+	}
+	if complete, ok := report["complete"].(bool); !ok || complete {
+		t.Fatalf("complete = %v (%T), want false", report["complete"], report["complete"])
+	}
+}
+
+func TestRunScore_WritesRunManifest(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	cfg := &Config{
+		DataFile: dataPath,
+		OutDir:   dir,
+		Workers:  1,
+		RunID:    "manifest-run",
+	}
+	if exit := runScore(cfg); exit != 0 {
+		t.Fatalf("runScore exit = %d, want 0", exit)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "run_manifest.json"))
+	if err != nil {
+		t.Fatalf("read run_manifest.json: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse run_manifest.json: %v", err)
+	}
+	if manifest["run_id"] != "manifest-run" {
+		t.Fatalf("run_id = %v, want manifest-run", manifest["run_id"])
+	}
+	if manifest["stage"] != "score" {
+		t.Fatalf("stage = %v, want score", manifest["stage"])
+	}
+	if got := int(manifest["expected_total"].(float64)); got != 1 {
+		t.Fatalf("expected_total = %d, want 1", got)
+	}
+	if complete, ok := manifest["complete"].(bool); !ok || !complete {
+		t.Fatalf("complete = %v (%T), want true", manifest["complete"], manifest["complete"])
+	}
+}
+
 func TestRunScore_AllAttemptedRowsFailReturnsNonZero(t *testing.T) {
 	dir := t.TempDir()
 
