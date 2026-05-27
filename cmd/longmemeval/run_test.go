@@ -562,6 +562,59 @@ func TestSortBlocksByTargetDate_ClosestSessionFirst(t *testing.T) {
 	}
 }
 
+func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
+	since := time.Date(2023, 5, 8, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2023, 5, 11, 0, 0, 0, 0, time.UTC)
+	var calls []string
+	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+		if callSince != nil || callBefore != nil {
+			calls = append(calls, "filtered")
+			return []string{"dated-a", "dated-b"}, nil
+		}
+		calls = append(calls, "unfiltered")
+		return []string{"undated-answer", "dated-a"}, nil
+	}
+
+	retrieved, secondary, err := recallWithTemporalFallback("recent concert", 10, &since, &before, recall)
+	if err != nil {
+		t.Fatalf("recallWithTemporalFallback: %v", err)
+	}
+	if got, want := strings.Join(calls, ","), "filtered,unfiltered"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	if got, want := strings.Join(retrieved, ","), "dated-a,dated-b,undated-answer"; got != want {
+		t.Fatalf("retrieved = %s, want %s", got, want)
+	}
+	if got, want := strings.Join(secondary, ","), "undated-answer,dated-a"; got != want {
+		t.Fatalf("secondary = %s, want %s", got, want)
+	}
+}
+
+func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T) {
+	var calls int
+	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+		calls++
+		if callSince != nil || callBefore != nil {
+			t.Fatal("non-temporal recall should not pass date bounds")
+		}
+		return []string{"a"}, nil
+	}
+
+	retrieved, secondary, err := recallWithTemporalFallback("plain query", 10, nil, nil, recall)
+	if err != nil {
+		t.Fatalf("recallWithTemporalFallback: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if got := strings.Join(retrieved, ","); got != "a" {
+		t.Fatalf("retrieved = %s, want a", got)
+	}
+	if len(secondary) != 0 {
+		t.Fatalf("secondary = %v, want empty", secondary)
+	}
+}
+
 func TestSelectContextIDsReservesSecondarySlots(t *testing.T) {
 	retrieved := []string{"p1", "p2", "p3", "p4", "s1", "s2"}
 	secondary := []string{"s1", "s2"}

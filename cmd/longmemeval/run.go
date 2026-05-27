@@ -346,6 +346,24 @@ func exitCodeForRunOutcome(attempted, errors int64) int {
 	return 0
 }
 
+type dateRangeRecallFunc func(query string, topK int, since, before *time.Time) ([]string, error)
+
+func recallWithTemporalFallback(query string, topK int, since, before *time.Time, recall dateRangeRecallFunc) ([]string, []string, error) {
+	primary, err := recall(query, topK, since, before)
+	if err != nil {
+		return nil, nil, err
+	}
+	if since == nil && before == nil {
+		return primary, nil, nil
+	}
+	fallback, err := recall(query, topK, nil, nil)
+	if err != nil {
+		log.Printf("WARN temporal fallback recall failed: %v", err)
+		return primary, nil, nil
+	}
+	return longmemeval.UnionMemoryIDs(primary, fallback), fallback, nil
+}
+
 // runWorker processes items from work, writing RunEntry results to out and
 // recording preserved-project names in pl (for S9 end-of-run summary logging).
 func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.IngestEntry, out chan<- longmemeval.RunEntry, pl *preservedLog) {
@@ -413,10 +431,13 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
-	recall := func(query string, topK int) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+		return mcpClient.RecallWithDateRange(ctx, ingest.Project, query, topK, callSince, callBefore)
+	}
+	recallDefault := func(query string, topK int) ([]string, error) {
 		return mcpClient.RecallWithDateRange(ctx, ingest.Project, query, topK, since, before)
 	}
-	retrievedIDs, err := recall(recallQuery, cfg.RecallTopK)
+	retrievedIDs, temporalFallbackIDs, err := recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID: item.QuestionID,
@@ -424,14 +445,14 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			Error:      fmt.Sprintf("recall: %v", err),
 		}
 	}
-	var secondaryContextIDs []string
+	secondaryContextIDs := temporalFallbackIDs
 
 	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
 	// the object noun-phrase for count-shaped questions and union with primary.
 	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
 		const aggregationSweepTopK = 500
 		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
-		sweepIDs, sweepErr := recall(sweepQuery, aggregationSweepTopK)
+		sweepIDs, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
 		if sweepErr == nil {
 			secondaryContextIDs = append(secondaryContextIDs, sweepIDs...)
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
@@ -448,7 +469,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			anchorTopK = 1
 		}
 		anchor := longmemeval.PreferenceSubjectAnchorQuery(item.Question)
-		anchorIDs, anchorErr := recall(anchor, anchorTopK)
+		anchorIDs, anchorErr := recallDefault(anchor, anchorTopK)
 		if anchorErr == nil {
 			secondaryContextIDs = append(secondaryContextIDs, anchorIDs...)
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
@@ -469,7 +490,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
 		} else {
 			for _, pq := range paraphrases {
-				pIDs, pErr := recall(pq, cfg.RecallTopK)
+				pIDs, pErr := recallDefault(pq, cfg.RecallTopK)
 				if pErr != nil {
 					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
 					continue

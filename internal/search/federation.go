@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
 
@@ -70,7 +71,7 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 			continue
 		}
 		for _, r := range fan.results {
-			if existing, ok := seen[r.Memory.ID]; !ok || r.Score > existing.Score {
+			if existing, ok := seen[r.Memory.ID]; !ok || federatedScoreGreater(r.Score, existing.Score) {
 				seen[r.Memory.ID] = r
 			}
 		}
@@ -80,10 +81,22 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 	for _, r := range seen {
 		merged = append(merged, r)
 	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	sort.Slice(merged, func(i, j int) bool {
+		return federatedScoreGreater(merged[i].Score, merged[j].Score)
+	})
 
 	if topK > 0 && len(merged) > topK {
 		merged = merged[:topK]
 	}
 	return merged, nil
+}
+
+func federatedScoreGreater(a, b float64) bool {
+	if math.IsNaN(a) {
+		return false
+	}
+	if math.IsNaN(b) {
+		return true
+	}
+	return a > b
 }
