@@ -1,7 +1,7 @@
 # LongMemEval Integration Design
 
 **Date:** 2026-04-22  
-**Status:** Approved  
+**Status:** Historical / superseded by the current `cmd/longmemeval` CLI. Keep this as design history; use `longmemeval help`, `cmd/README.md`, and `docs/lme-benchmark-learnings.md` for current commands and scoring behavior.
 **Dataset:** `longmemeval_m_cleaned` (full scale — ~500 sessions/question, 500 questions)
 
 ---

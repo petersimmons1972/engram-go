@@ -389,6 +389,27 @@ Verification:
 3. Run one short completion against `llama3.1:8b` and confirm it returns normally.
 4. Expand traffic only after the canary remains stable under a small batch.
 
+Copy-paste checks:
+
+```bash
+export OLLA_URL="${OLLA_URL:-https://olla.petersimmons.com}"
+
+# Model inventory: both the embedding model and canary chat model should appear.
+curl -fsS "${OLLA_URL}/v1/models" \
+  | jq -r '.data[].id' \
+  | grep -E '^(BAAI/bge-m3|llama3.1:8b)$'
+
+# Completion smoke: verifies the W6800 chat path can answer through Olla.
+curl -fsS "${OLLA_URL}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"llama3.1:8b","messages":[{"role":"user","content":"Reply with W6800 canary ok."}],"max_tokens":16,"temperature":0}' \
+  | jq -r '.choices[0].message.content'
+
+# LongMemEval route discovery should select a live Olla-compatible generation route.
+go run ./cmd/longmemeval route-discover --purpose generation \
+  | jq '{llm_url, llm_model, olla_models}'
+```
+
 Rollback:
 
 1. Stop sending canary traffic to the W6800 host.

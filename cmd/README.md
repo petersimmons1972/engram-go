@@ -1,6 +1,6 @@
 # Command-Line Tools
 
-Engram ships six binaries. This page documents what each does, who typically runs it, and when.
+Engram ships seven binaries. This page documents what each does, who typically runs it, and when.
 
 ---
 
@@ -195,6 +195,44 @@ go run ./cmd/benchmark/main.go \
 
 ---
 
+## longmemeval
+
+**Location:** `cmd/longmemeval`
+
+**Who runs it:** Developers and benchmark operators evaluating Engram against LongMemEval.
+
+**Purpose:** Run the LongMemEval pipeline against a live Engram server: ingest per-question haystacks, recall context, generate answers, score against gold answers, analyze failures, discover Olla routes, and prune expired scratch projects.
+
+**Usage:**
+
+```bash
+go run ./cmd/longmemeval help
+go run ./cmd/longmemeval ingest --data questions.json --out results/lme-run --cleanup-policy=never
+go run ./cmd/longmemeval run --data questions.json --out results/lme-run --recall-topk 100 --context-topk 8
+go run ./cmd/longmemeval score-efficient --data questions.json --out results/lme-run
+go run ./cmd/longmemeval analyze --results results/lme-run
+```
+
+**Current subcommands:**
+
+- `ingest` — load the dataset into per-question Engram projects.
+- `run` — recall context and generate hypotheses.
+- `score` — score hypotheses against gold answers.
+- `all` — run ingest, run, and score in one invocation.
+- `score-efficient` — score with an Olla/OpenAI-compatible backend while preserving already-correct rows by default.
+- `score-batch` — score via Anthropic Message Batches.
+- `sample-prepare` — create a representative no-ingest sample output directory.
+- `sample-analyze` / `analyze` — summarize result checkpoints and classify score failures.
+- `route-discover` — resolve Olla/OpenAI flags from AI Flight Controller and Olla.
+- `prune` — plan or explicitly execute expired `lme-*` scratch project cleanup.
+
+**When to run:**
+- Before and after retrieval, prompt, routing, or scoring changes that may affect LongMemEval.
+- For score-only reuse of existing checkpoints after scorer changes.
+- To produce failure-analysis artifacts before deciding the next benchmark optimization.
+
+---
+
 ## Summary Table
 
 | Binary | Purpose | Who Runs It | Frequency |
@@ -205,6 +243,7 @@ go run ./cmd/benchmark/main.go \
 | `engram-eval` | Evaluate retrieval quality | Developer, CI | Before/after model changes, CI gate |
 | `instinct` | Extract and store tool-use patterns | Claude Code hook or developer | After coding sessions, optional |
 | `benchmark` | Synthetic embedding throughput test | Performance engineer, CI | Model evaluation, infra tuning |
+| `longmemeval` | LongMemEval benchmark pipeline | Developer, benchmark operator | LME runs and score-only analysis |
 
 ---
 
@@ -221,6 +260,7 @@ This produces:
 - `./engram-setup` — Setup tool
 - `./engram-eval` — Eval harness
 - `./instinct-benchmark` — Benchmark binary (note: different name from `cmd/benchmark`)
+- `./longmemeval` — LongMemEval benchmark CLI
 
 Docker images are built with `make build` and `make build-postgres`.
 

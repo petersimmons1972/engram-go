@@ -273,35 +273,46 @@ Use these exact settings to replicate the working configuration:
 ### Benchmark Launch Command
 
 ```bash
+# Resolve the generation endpoint/model from AI Flight Controller + Olla.
+./longmemeval route-discover --purpose generation > /tmp/lme-route.json
+export LME_LLM_URL="$(jq -r .llm_url /tmp/lme-route.json)"
+export LME_LLM_MODEL="$(jq -r .llm_model /tmp/lme-route.json)"
+
 # Stage 1: ingest the dataset into Engram (per-question isolation projects).
 ./longmemeval ingest \
   --data ~/path/to/longmemeval_m_cleaned.json \
   --url http://localhost:8788 \
   --workers 32 \
   --out ~/benchmarks/lme-m \
-  --no-cleanup
+  --cleanup-policy=never \
+  --scratch-ttl 168h
 
 # Stage 2: recall + generate hypotheses per question.
 ./longmemeval run \
   --data ~/path/to/longmemeval_m_cleaned.json \
   --url http://localhost:8788 \
-  --llm-url http://oblivion:8000/v1 \
-  --llm-model nemotron-3-nano-omni \
+  --llm-url "${LME_LLM_URL}" \
+  --llm-model "${LME_LLM_MODEL}" \
   --workers 32 \
-  --out ~/benchmarks/lme-m
+  --out ~/benchmarks/lme-m \
+  --recall-topk 100 \
+  --context-topk 8
 
-# Stage 3: score hypotheses against gold answers.
-./longmemeval score \
+# Stage 3: score hypotheses against gold answers using score-only reuse.
+./longmemeval score-efficient \
   --data ~/path/to/longmemeval_m_cleaned.json \
-  --llm-url http://oblivion:8000/v1 \
-  --llm-model nemotron-3-nano-omni \
+  --scorer-url "${LME_SCORER_URL:-${LME_LLM_URL}}" \
+  --scorer-model "${LME_SCORER_MODEL:-${LME_LLM_MODEL}}" \
   --workers 16 \
   --out ~/benchmarks/lme-m
+
+# Stage 4: summarize completeness and failure classes.
+./longmemeval analyze --results ~/benchmarks/lme-m
 ```
 
-**Note on top-k tuning**: `recallTopK` (100) and `contextTopK` (8) are compile-time constants in `cmd/longmemeval/run.go:23-24` — not CLI flags. Change the source and rebuild to tune them. The 8 vs 40 choice is documented in the same file (`// 40 blocks x 10KB avg = 104K tokens; 8 blocks ~21K tokens - 5x faster`).
+**Top-k tuning**: `--recall-topk` controls how many memories are fetched before trimming, and `--context-topk` controls how many context blocks go into generation. Start with `--recall-topk 100 --context-topk 8`; raise context only for targeted ablations because larger prompts reduce throughput quickly.
 
-**Checkpoint files** are written to `<out>/checkpoint-ingest.jsonl`, `<out>/checkpoint-run.jsonl`, `<out>/checkpoint-score.jsonl`. Resume is automatic — re-running any stage skips question IDs already present in the checkpoint.
+**Checkpoint files** are written to `<out>/checkpoint-ingest.jsonl`, `<out>/checkpoint-run.jsonl`, and `<out>/checkpoint-score.jsonl`. Resume is automatic. Re-running `score-efficient` is score-only reuse: it reads existing run checkpoints, preserves already-`CORRECT` rows by default, and does not ingest or generate.
 
 ### vLLM Server Launch
 

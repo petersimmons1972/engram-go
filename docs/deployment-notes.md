@@ -62,6 +62,24 @@ Recommended rollout:
 3. Expand to a small general traffic share only after the canary behaves cleanly.
 4. Keep the current backend and the 7900XT path available as fallback targets.
 
+Concrete checks before sending benchmark traffic:
+
+```bash
+export OLLA_URL="${OLLA_URL:-https://olla.petersimmons.com}"
+
+curl -fsS "${OLLA_URL}/v1/models" \
+  | jq -r '.data[].id' \
+  | grep -E '^(BAAI/bge-m3|llama3.1:8b)$'
+
+curl -fsS "${OLLA_URL}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"llama3.1:8b","messages":[{"role":"user","content":"Reply with W6800 canary ok."}],"max_tokens":16,"temperature":0}' \
+  | jq -r '.choices[0].message.content'
+
+go run ./cmd/longmemeval route-discover --purpose generation \
+  | jq '{llm_url, llm_model, olla_models}'
+```
+
 Current verified split:
 
 - `BAAI/bge-m3` is pinned on the embedding backend.
