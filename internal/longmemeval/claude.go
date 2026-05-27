@@ -22,10 +22,9 @@ import (
 var ErrDisallowedModel = errors.New("disallowed model")
 
 // debugOAIRequests gates verbose request/response logging for OAI calls.
-// Set LME_DEBUG_REQUESTS=1 to enable. Logs request body size and full response
-// body on non-200, so 400 errors include the vLLM error detail.
+// Set LME_DEBUG_REQUESTS=1 to enable. Logs endpoint/status and body sizes only;
+// response text is redacted because benchmark prompts can contain private memory.
 var debugOAIRequests = os.Getenv("LME_DEBUG_REQUESTS") == "1"
-
 
 // claudePrintTimeout is the hard cap for one claude --print call.
 
@@ -239,7 +238,7 @@ func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions
 		if debugOAIRequests {
 			body, _ := io.ReadAll(resp.Body)
 			log.Printf("DEBUG callOAI: status=%d request_body_bytes=%d response_body=%s",
-				resp.StatusCode, len(reqBody), strings.TrimSpace(string(body)))
+				resp.StatusCode, len(reqBody), sanitizeOAIDebugBody(body))
 		}
 		return "", fmt.Errorf("OAI request: status %d", resp.StatusCode)
 	}
@@ -277,6 +276,10 @@ func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions
 		content = strings.TrimSpace(content[idx+len("</think>"):])
 	}
 	return content, nil
+}
+
+func sanitizeOAIDebugBody(body []byte) string {
+	return fmt.Sprintf("[redacted bytes=%d]", len(bytes.TrimSpace(body)))
 }
 
 // DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
@@ -367,7 +370,9 @@ func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, 
 	}
 	var oaiResp struct {
 		Choices []struct {
-			Message struct{ Content string `json:"content"` } `json:"message"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
@@ -393,7 +398,6 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	label, explanation := ParseScoreLabel(out)
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
-
 
 // GenerationPromptForType builds a generation prompt tailored to the question type.
 // For single-session-preference questions the model is instructed to describe the
@@ -607,7 +611,6 @@ func ParseScoreLabel(raw string) (label, explanation string) {
 	// Pass 3: no label found — explicit error, not a silent PARTIALLY_CORRECT.
 	return "SCORE_ERROR", strings.TrimSpace(raw)
 }
-
 
 // oaiMessage is one entry in an OpenAI-compatible chat completion request.
 type oaiMessage struct {
