@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -239,6 +240,108 @@ func TestRunScore_WritesRunManifest(t *testing.T) {
 	}
 	if complete, ok := manifest["complete"].(bool); !ok || !complete {
 		t.Fatalf("complete = %v (%T), want true", manifest["complete"], manifest["complete"])
+	}
+}
+
+func TestDispatchScoreWritesRunStatus(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{
+		"longmemeval",
+		"score",
+		"--data", dataPath,
+		"--out", dir,
+		"--workers", "1",
+		"--run-id", "status-run",
+		"--llm-url", "http://user:pass@localhost:8000/v1?token=secret",
+		"--llm-model", "test-model",
+		"--score-output", "quiet",
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch exit = %d, want 0; stderr=%s", exit, stderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "RUN_STATUS.json"))
+	if err != nil {
+		t.Fatalf("read RUN_STATUS.json: %v", err)
+	}
+	var status map[string]any
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatalf("parse RUN_STATUS.json: %v", err)
+	}
+	if status["run_id"] != "status-run" {
+		t.Fatalf("run_id = %v, want status-run", status["run_id"])
+	}
+	if status["stage"] != "score" {
+		t.Fatalf("stage = %v, want score", status["stage"])
+	}
+	if got := int(status["exit_code"].(float64)); got != 0 {
+		t.Fatalf("exit_code = %d, want 0", got)
+	}
+	if got := int(status["expected_total"].(float64)); got != 1 {
+		t.Fatalf("expected_total = %d, want 1", got)
+	}
+	if got := int(status["completed_run_total"].(float64)); got != 1 {
+		t.Fatalf("completed_run_total = %d, want 1", got)
+	}
+	if got := int(status["completed_score_total"].(float64)); got != 1 {
+		t.Fatalf("completed_score_total = %d, want 1", got)
+	}
+	if got := int(status["ingest_row_total"].(float64)); got != 1 {
+		t.Fatalf("ingest_row_total = %d, want 1", got)
+	}
+	if got := int(status["run_row_total"].(float64)); got != 1 {
+		t.Fatalf("run_row_total = %d, want 1", got)
+	}
+	if got := int(status["score_row_total"].(float64)); got != 1 {
+		t.Fatalf("score_row_total = %d, want 1", got)
+	}
+	if _, ok := status["pid"].(float64); !ok {
+		t.Fatalf("pid missing or not numeric: %v", status["pid"])
+	}
+	if _, ok := status["started_at"].(string); !ok {
+		t.Fatalf("started_at missing or not a string: %v", status["started_at"])
+	}
+	if _, ok := status["ended_at"].(string); !ok {
+		t.Fatalf("ended_at missing or not a string: %v", status["ended_at"])
+	}
+	if _, ok := status["binary_path"].(string); !ok {
+		t.Fatalf("binary_path missing or not a string: %v", status["binary_path"])
+	}
+	if _, ok := status["command_line"].([]any); !ok {
+		t.Fatalf("command_line missing or not an array: %v", status["command_line"])
+	}
+	if _, ok := status["git_dirty"].(bool); !ok {
+		t.Fatalf("git_dirty missing or not a bool: %v", status["git_dirty"])
+	}
+	route, ok := status["route_snapshot"].(map[string]any)
+	if !ok {
+		t.Fatalf("route_snapshot missing or not a map: %v", status["route_snapshot"])
+	}
+	if route["llm_url"] != "http://localhost:8000/v1" {
+		t.Fatalf("route_snapshot.llm_url = %v, want redacted URL", route["llm_url"])
+	}
+	if status["lock_file"] == "" {
+		t.Fatalf("lock_file missing")
 	}
 }
 
