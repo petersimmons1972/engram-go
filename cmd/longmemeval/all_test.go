@@ -60,3 +60,36 @@ func TestRunAllWithStagesRunsScoreAfterSuccessfulRun(t *testing.T) {
 		t.Fatalf("stage calls = %v, want %v", calls, want)
 	}
 }
+
+func TestApplyRepairPresetRecallRepair(t *testing.T) {
+	cfg := &Config{RepairPreset: "recall-repair"}
+	if err := applyRepairPreset(cfg); err != nil {
+		t.Fatalf("applyRepairPreset: %v", err)
+	}
+	if !cfg.DualPreferenceRecall {
+		t.Error("recall-repair preset should enable dual preference recall")
+	}
+	if !cfg.ExhaustiveAggregation {
+		t.Error("recall-repair preset should enable exhaustive aggregation")
+	}
+	if !cfg.EnumerateFirst {
+		t.Error("recall-repair preset should enable enumerate-first")
+	}
+	if !cfg.TemporalPromptAug {
+		t.Error("recall-repair preset should enable temporal prompt augmentation")
+	}
+	if !cfg.ChronoSort {
+		t.Error("recall-repair preset should enable chronological context ordering")
+	}
+}
+
+func TestApplyRepairPresetDefaultBaselineNoop(t *testing.T) {
+	cfg := &Config{}
+	if err := applyRepairPreset(cfg); err != nil {
+		t.Fatalf("applyRepairPreset default: %v", err)
+	}
+	if cfg.DualPreferenceRecall || cfg.ExhaustiveAggregation || cfg.EnumerateFirst ||
+		cfg.TemporalPromptAug || cfg.ChronoSort {
+		t.Fatalf("default config should leave repair switches off: %+v", cfg)
+	}
+}

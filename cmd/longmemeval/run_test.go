@@ -531,6 +531,37 @@ func TestTemporalRecallWindow_HowManyAgoDoesNotFilter(t *testing.T) {
 	}
 }
 
+func TestTargetDateFromQuestion_RelativeAgo(t *testing.T) {
+	got, ok := targetDateFromQuestion(
+		"What did I buy 3 weeks ago?",
+		"temporal-reasoning",
+		"2023/05/30 (Tue) 23:50",
+	)
+	if !ok {
+		t.Fatal("targetDateFromQuestion returned ok=false")
+	}
+	want := time.Date(2023, 5, 9, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("targetDateFromQuestion() = %s, want %s", got.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+}
+
+func TestSortBlocksByTargetDate_ClosestSessionFirst(t *testing.T) {
+	question := "What did I buy 3 weeks ago?"
+	questionDate := "2023/05/30 (Tue) 23:50"
+	farOlder := "Session date: 2023-04-01\nOlder session"
+	closest := "Session date: 2023-05-09\nTarget session"
+	farNewer := "Session date: 2023-05-28\nNewer session"
+
+	got := sortBlocksByTargetDate([]string{farNewer, farOlder, closest}, question, "temporal-reasoning", questionDate)
+	want := []string{closest, farNewer, farOlder}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("position %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestSelectContextIDsReservesSecondarySlots(t *testing.T) {
 	retrieved := []string{"p1", "p2", "p3", "p4", "s1", "s2"}
 	secondary := []string{"s1", "s2"}

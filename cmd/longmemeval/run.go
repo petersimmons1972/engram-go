@@ -83,7 +83,54 @@ func buildRecallQuery(question, questionType string, disableRewrite bool) string
 	}
 }
 
-var relativeAgoRe = regexp.MustCompile(`(?i)\b(\d+)\s+(day|days|week|weeks|month|months|year|years)\s+ago\b`)
+var relativeAgoRe = regexp.MustCompile(`(?i)\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks|month|months|year|years)\s+ago\b`)
+
+func parseAgoAmount(raw string) (int, bool) {
+	if n, err := strconv.Atoi(raw); err == nil {
+		return n, n > 0
+	}
+	words := map[string]int{
+		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+		"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+	}
+	n := words[strings.ToLower(raw)]
+	return n, n > 0
+}
+
+func targetDateFromQuestion(question, questionType, questionDate string) (time.Time, bool) {
+	if questionType != "temporal-reasoning" {
+		return time.Time{}, false
+	}
+	anchor, ok := parseLongMemEvalQuestionDate(questionDate)
+	if !ok {
+		return time.Time{}, false
+	}
+	lower := strings.ToLower(strings.TrimSpace(question))
+	if strings.Contains(lower, "yesterday") {
+		return dateOnly(anchor).AddDate(0, 0, -1), true
+	}
+	match := relativeAgoRe.FindStringSubmatch(lower)
+	if len(match) != 3 {
+		return time.Time{}, false
+	}
+	n, ok := parseAgoAmount(match[1])
+	if !ok {
+		return time.Time{}, false
+	}
+	target := dateOnly(anchor)
+	switch match[2] {
+	case "day", "days":
+		return target.AddDate(0, 0, -n), true
+	case "week", "weeks":
+		return target.AddDate(0, 0, -7*n), true
+	case "month", "months":
+		return target.AddDate(0, -n, 0), true
+	case "year", "years":
+		return target.AddDate(-n, 0, 0), true
+	default:
+		return time.Time{}, false
+	}
+}
 
 func temporalRecallWindow(question, questionType, questionDate string) (*time.Time, *time.Time) {
 	if questionType != "temporal-reasoning" {
@@ -108,8 +155,8 @@ func temporalRecallWindow(question, questionType, questionDate string) (*time.Ti
 	if len(match) != 3 {
 		return nil, nil
 	}
-	n, err := strconv.Atoi(match[1])
-	if err != nil || n <= 0 {
+	n, ok := parseAgoAmount(match[1])
+	if !ok {
 		return nil, nil
 	}
 	target := dateOnly(anchor)
@@ -470,8 +517,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
-	// --chrono-sort: sort blocks by Session date ascending before prompt assembly.
-	if cfg.ChronoSort {
+	// For relative N-ago temporal questions, rank context by proximity to the
+	// requested historical target date. This is more precise than generic
+	// chronological order and prevents nearby sessions from being displaced.
+	if _, ok := targetDateFromQuestion(item.Question, item.QuestionType, item.QuestionDate); ok {
+		contextBlocks = sortBlocksByTargetDate(contextBlocks, item.Question, item.QuestionType, item.QuestionDate)
+	} else if cfg.ChronoSort {
 		contextBlocks = sortBlocksChronologically(contextBlocks)
 	}
 
@@ -616,4 +667,33 @@ func sortBlocksChronologically(blocks []string) []string {
 		return blockDate(out[i]).Before(blockDate(out[j]))
 	})
 	return out
+}
+
+func sortBlocksByTargetDate(blocks []string, question, questionType, questionDate string) []string {
+	target, ok := targetDateFromQuestion(question, questionType, questionDate)
+	if !ok {
+		out := make([]string, len(blocks))
+		copy(out, blocks)
+		return out
+	}
+	out := make([]string, len(blocks))
+	copy(out, blocks)
+	sort.SliceStable(out, func(i, j int) bool {
+		di := blockDistanceToTarget(out[i], target)
+		dj := blockDistanceToTarget(out[j], target)
+		return di < dj
+	})
+	return out
+}
+
+func blockDistanceToTarget(block string, target time.Time) time.Duration {
+	d := blockDate(block)
+	if d.IsZero() {
+		return time.Duration(1<<63 - 1)
+	}
+	delta := dateOnly(d).Sub(dateOnly(target))
+	if delta < 0 {
+		return -delta
+	}
+	return delta
 }

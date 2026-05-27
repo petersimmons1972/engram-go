@@ -57,6 +57,7 @@ type Config struct {
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+	RepairPreset        string
 
 	// H16: question_date injection
 	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
@@ -184,6 +185,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	fs.StringVar(&cfg.RepairPreset, "repair-preset", "", "named LongMemEval repair preset to enable known repair switches: recall-repair")
 	// H16: prepend question_date as first line of temporal-reasoning prompts
 	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")
 	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
@@ -351,6 +353,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
 	}
+	if err := applyRepairPreset(cfg); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	// B2 (#807): validate --cleanup-policy against the known enum set.
 	// Must fire before any other validation so the error is clearly attributable.
@@ -444,6 +450,22 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func applyRepairPreset(cfg *Config) error {
+	switch strings.TrimSpace(cfg.RepairPreset) {
+	case "":
+		return nil
+	case "recall-repair":
+		cfg.DualPreferenceRecall = true
+		cfg.ExhaustiveAggregation = true
+		cfg.EnumerateFirst = true
+		cfg.TemporalPromptAug = true
+		cfg.ChronoSort = true
+		return nil
+	default:
+		return fmt.Errorf("invalid --repair-preset %q: must be recall-repair", cfg.RepairPreset)
+	}
 }
 
 func defaultAPIKey() string {
