@@ -21,13 +21,6 @@ set -u
 # Allow override for testing (we never want a guard that fails open by accident)
 GIT="${GIT:-git}"
 
-# ── Collect staged files (added or modified, ignore deletions) ────────────────
-staged_files=$("$GIT" diff --cached --name-only --diff-filter=AM 2>/dev/null || true)
-
-if [ -z "$staged_files" ]; then
-    exit 0
-fi
-
 fail=0
 fail_reason=""
 
@@ -37,21 +30,53 @@ emit_fail() {
 }$1"
 }
 
+is_env_secret_name() {
+    case "$(basename "$1")" in
+        .env.example)
+            return 1
+            ;;
+        .env|.env.local|.env.machine-identity|.env.*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# ── 0. Local ignored env-file mode rules ──────────────────────────────────────
+# Inspect names and modes only. Do not read or print file contents.
+shopt -s nullglob
+for f in .env .env.*; do
+    if ! is_env_secret_name "$f"; then
+        continue
+    fi
+    if ! "$GIT" check-ignore -q -- "$f" 2>/dev/null; then
+        continue
+    fi
+    [ -e "$f" ] || continue
+    mode=$(stat -c '%a' "$f" 2>/dev/null || true)
+    [ -n "$mode" ] || continue
+    last_two="${mode: -2}"
+    group_digit="${last_two:0:1}"
+    world_digit="${last_two:1:1}"
+    if [ "$group_digit" != "0" ] || [ "$world_digit" != "0" ]; then
+        emit_fail "BLOCKED: ignored secret file has group/world permissions: $f mode=$mode (run: chmod 600 '$f')"
+    fi
+done
+shopt -u nullglob
+
+# ── Collect staged files (added or modified, ignore deletions) ────────────────
+staged_files=$("$GIT" diff --cached --name-only --diff-filter=AM 2>/dev/null || true)
+
+if [ -z "$staged_files" ] && [ "$fail" -eq 0 ]; then
+    exit 0
+fi
+
 # ── 1. Filename rules ─────────────────────────────────────────────────────────
 while IFS= read -r f; do
     [ -z "$f" ] && continue
-    base=$(basename "$f")
-    case "$base" in
-        .env.example)
-            ;;  # allowed
-        .env|.env.local|.env.machine-identity)
-            emit_fail "BLOCKED: staged secret file: $f"
-            ;;
-        .env.*)
-            # .env.bak.<ts>, .env.production, .env.<anything> — all blocked
-            emit_fail "BLOCKED: staged secret file: $f"
-            ;;
-    esac
+    if is_env_secret_name "$f"; then
+        emit_fail "BLOCKED: staged secret file: $f"
+    fi
 done <<< "$staged_files"
 
 # ── 2. Content rules — scan staged diff for known secret shapes ───────────────

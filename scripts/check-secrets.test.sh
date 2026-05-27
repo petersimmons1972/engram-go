@@ -119,6 +119,25 @@ out=$(cd "$R" && bash "$GUARD" 2>&1); rc=$?
 assert_exit "unstaged .env in working tree does not block" 0 $rc
 rm -rf "$R"
 
+# ─── Test 10: ignored group-readable .env is blocked without content leak ─────
+R=$(make_repo)
+echo ".env" > "$R/.gitignore"
+git -C "$R" add .gitignore
+git -C "$R" commit -qm "ignore env"
+echo "TOPSECRET_SHOULD_NOT_PRINT=abc123" > "$R/.env"
+chmod 0640 "$R/.env"
+out=$(cd "$R" && bash "$GUARD" 2>&1); rc=$?
+assert_exit "ignored group-readable .env is blocked" 1 $rc
+assert_contains "mode warning names env file" ".env" "$out"
+if echo "$out" | grep -qF "TOPSECRET_SHOULD_NOT_PRINT"; then
+    echo "✗ FAIL: ignored env permission warning leaked file contents"
+    FAIL=$((FAIL+1))
+else
+    echo "✓ PASS: ignored env permission warning does not leak contents"
+    PASS=$((PASS+1))
+fi
+rm -rf "$R"
+
 # ─── Summary ───────────────────────────────────────────────────────────────────
 echo
 echo "─── ${PASS} passed, ${FAIL} failed ───"
