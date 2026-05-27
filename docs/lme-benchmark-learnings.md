@@ -416,7 +416,19 @@ longmemeval prune \
   --api-key "${ENGRAM_API_KEY}"
 ```
 
-Add `--dry-run` to preview. Add `--limit 50` to cap blast radius on first run.
+By default this is a plan-only dry run. To delete, opt in explicitly:
+
+```
+longmemeval prune \
+  --database-url "${DATABASE_URL}" \
+  --url "${ENGRAM_URL}" \
+  --use-default-token \
+  --execute \
+  --confirm-prefix lme- \
+  --limit 50
+```
+
+Use `--unlimited` only for a deliberately unbounded sweep. If you want prune to discover `ENGRAM_API_KEY` or a Claude MCP token in execute mode, pass `--use-default-token`; otherwise deletion requires `--api-key`.
 
 The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`.
 

@@ -7,6 +7,8 @@
 #   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval:latest (or pin to a SHA)
 #
 # Tune --limit on first run to verify blast radius before allowing unlimited.
+# Deletion is explicit: --execute, --confirm-prefix, and --use-default-token are
+# all required because prune defaults to plan-only mode.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -42,7 +44,10 @@ spec:
               args:
                 - prune
                 - --prefix=lme-
+                - --execute
+                - --confirm-prefix=lme-
                 - --limit=200       # cap per-run; remove once first run is verified
+                - --use-default-token
               env:
                 - name: DATABASE_URL
                   valueFrom:

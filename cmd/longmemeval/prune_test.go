@@ -74,6 +74,86 @@ func TestPrune_DryRunNoMutation(t *testing.T) {
 	}
 }
 
+func TestPrune_DefaultNoMutation(t *testing.T) {
+	now := time.Now()
+	entries := []projectTTLEntry{
+		{Name: "lme-run1-q001", ExpiresAt: ptr(now.Add(-time.Hour))},
+	}
+
+	var deleted []string
+	deleteFn := func(name string) error {
+		deleted = append(deleted, name)
+		return nil
+	}
+
+	cfg := &PruneConfig{
+		Prefix: "lme-",
+	}
+
+	var out strings.Builder
+	code := runPruneWithEntries(cfg, entries, deleteFn, now, &out)
+	if code != 0 {
+		t.Errorf("default prune plan must exit 0, got %d", code)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("default prune must not call delete; got deletions: %v", deleted)
+	}
+	if !strings.Contains(out.String(), "DRY RUN") {
+		t.Fatalf("default prune output must identify dry-run mode, got: %q", out.String())
+	}
+}
+
+func TestPrune_ExecuteRequiresConfirmPrefix(t *testing.T) {
+	cfg := &PruneConfig{
+		Prefix:         "lme-",
+		Execute:        true,
+		Limit:          1,
+		APIKey:         "x",
+		ExplicitAPIKey: true,
+	}
+
+	err := validatePruneConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "--confirm-prefix") {
+		t.Fatalf("validatePruneConfig() error = %v, want --confirm-prefix error", err)
+	}
+}
+
+func TestPrune_ExecuteRequiresLimitOrUnlimited(t *testing.T) {
+	cfg := &PruneConfig{
+		Prefix:         "lme-",
+		Execute:        true,
+		ConfirmPrefix:  "lme-",
+		APIKey:         "x",
+		ExplicitAPIKey: true,
+	}
+
+	err := validatePruneConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "--limit") {
+		t.Fatalf("validatePruneConfig() error = %v, want --limit error", err)
+	}
+}
+
+func TestPrune_ExecuteRejectsImplicitDefaultToken(t *testing.T) {
+	const implicitValue = "placeholder-no-leak-value"
+	t.Setenv("ENGRAM_API_KEY", implicitValue)
+	t.Setenv("DATABASE_URL", "postgres://unused")
+	var stdout, stderr strings.Builder
+
+	exit := dispatch([]string{
+		"longmemeval", "prune",
+		"--execute",
+		"--confirm-prefix", "lme-",
+		"--limit", "1",
+	}, &stdout, &stderr)
+
+	if exit == 0 {
+		t.Fatalf("execute without explicit token opt-in must fail")
+	}
+	if !strings.Contains(stderr.String(), "--api-key") || strings.Contains(stderr.String(), implicitValue) {
+		t.Fatalf("stderr should require explicit token without leaking it, got: %q", stderr.String())
+	}
+}
+
 // TestPrune_NullExpiresAtPreserved verifies that projects with NULL expires_at
 // are never selected for deletion (durable semantics).
 func TestPrune_NullExpiresAtPreserved(t *testing.T) {
