@@ -358,9 +358,9 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 }
 
 // TestHandleMemoryRecall_IncludesFeedbackHint verifies that when
-// handleMemoryRecall returns an event_id (single-project, non-rerank path),
-// the response also contains a feedback_hint key so callers know how to
-// submit outcome feedback.
+// handleMemoryRecall is explicitly asked to record a retrieval event, the
+// response also contains a feedback_hint key so callers know how to submit
+// outcome feedback.
 func TestHandleMemoryRecall_IncludesFeedbackHint(t *testing.T) {
 	dsn := testRecallDSN(t)
 	ctx := context.Background()
@@ -380,10 +380,11 @@ func TestHandleMemoryRecall_IncludesFeedbackHint(t *testing.T) {
 	}
 	require.NoError(t, h.Engine.Store(ctx, m))
 
-	out := internalmcp.CallHandleMemoryRecallFull(ctx, t, pool, proj, "feedback hint recall API", nil)
+	out := internalmcp.CallHandleMemoryRecallFull(ctx, t, pool, proj, "feedback hint recall API",
+		map[string]any{"record_event": true})
 
 	eventID, hasEventID := out["event_id"]
-	require.True(t, hasEventID, "recall response must contain event_id on the single-project path")
+	require.True(t, hasEventID, "record_event=true recall response must contain event_id")
 	require.NotEmpty(t, eventID, "event_id must be non-empty")
 
 	hint, hasHint := out["feedback_hint"]

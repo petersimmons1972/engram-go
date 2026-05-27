@@ -24,10 +24,20 @@ const maxFederationConcurrency = 4
 // This is the engine-layer primitive for Cross-Project Knowledge Federation (Feature 4).
 // The MCP handler wires project name → engine via EnginePool and calls this function.
 func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string) ([]types.SearchResult, error) {
+	return RecallAcrossEnginesWithEvents(ctx, engines, query, topK, detail, true)
+}
+
+// RecallAcrossEnginesWithEvents is RecallAcrossEngines with explicit retrieval
+// telemetry control. When recordEvents is false, federation is a pure read.
+func RecallAcrossEnginesWithEvents(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string, recordEvents bool) ([]types.SearchResult, error) {
 	if len(engines) == 0 {
 		return nil, nil
 	}
 	if len(engines) == 1 {
+		if recordEvents {
+			results, _, err := engines[0].RecallWithEvent(ctx, query, topK, detail)
+			return results, err
+		}
 		return engines[0].Recall(ctx, query, topK, detail)
 	}
 
@@ -48,10 +58,16 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 			defer wg.Done()
 			sem <- struct{}{}        // acquire slot
 			defer func() { <-sem }() // release slot
-			// Use RecallWithEvent so Feature 5 retrieval tracking is emitted
-			// for cross-project queries too (#92). The event IDs are not returned
-			// to the federated caller — they're stored per-project for local feedback.
-			res, _, err := eng.RecallWithEvent(ctx, query, topK, detail)
+			var res []types.SearchResult
+			var err error
+			if recordEvents {
+				// Use RecallWithEvent so Feature 5 retrieval tracking can be emitted
+				// for cross-project queries too (#92). The event IDs are not returned
+				// to the federated caller — they're stored per-project for local feedback.
+				res, _, err = eng.RecallWithEvent(ctx, query, topK, detail)
+			} else {
+				res, err = eng.Recall(ctx, query, topK, detail)
+			}
 			ch <- fanResult{res, err}
 		}()
 	}

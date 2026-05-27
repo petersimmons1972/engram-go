@@ -262,6 +262,9 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int, si
 		"project": project,
 		"top_k":   topK,
 		"detail":  "summary",
+		// Benchmark retrieval must not mutate retrieval telemetry while
+		// measuring recall quality.
+		"record_event": false,
 		// Handle mode returns lightweight IDs + metadata instead of the
 		// full SearchResult graph. LongMemEval only needs ranked IDs, and
 		// this avoids oversized tool payloads on dense queries.

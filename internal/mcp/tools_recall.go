@@ -205,6 +205,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	topK := clampTopK(getInt(args, "top_k", defaultTopK), recallMaxTopK())
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
+	recordEvent := getBool(args, "record_event", false)
 	mode := getString(args, "mode", cfg.RecallDefaultMode)
 	since, before, err := parseRecallDateBounds(args)
 	if err != nil {
@@ -249,7 +250,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			}
 			engines = append(engines, h.Engine)
 		}
-		results, err := search.RecallAcrossEngines(ctx, engines, query, topK, detail)
+		results, err := search.RecallAcrossEnginesWithEvents(ctx, engines, query, topK, detail, recordEvent)
 		if err != nil {
 			return nil, err
 		}
@@ -304,10 +305,6 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	var embedDegraded bool
 	opts.EmbedDegraded = &embedDegraded
 
-	// Use RecallWithEvent to log the retrieval; on the rerank path we call
-	// RecallWithOpts (which supports a custom Reranker) and then manually
-	// record the retrieval event + warm times_retrieved so the feedback loop
-	// and precision signal work regardless of which path was taken.
 	var results []types.SearchResult
 	var eventID string
 	if opts.Reranker != nil {
@@ -315,66 +312,24 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if err != nil {
 			return nil, err
 		}
-		// Post-hoc event recording — mirrors RecallWithEvent internals.
-		rerankIDs := make([]string, 0, len(results))
-		for _, r := range results {
-			if r.Memory != nil {
-				rerankIDs = append(rerankIDs, r.Memory.ID)
-			}
-		}
-		if len(rerankIDs) > 0 {
-			event := &types.RetrievalEvent{
-				ID:        types.NewMemoryID(),
-				Project:   project,
-				Query:     query,
-				ResultIDs: rerankIDs,
-				CreatedAt: time.Now().UTC(),
-			}
-			if storeErr := h.Engine.Backend().StoreRetrievalEvent(ctx, event); storeErr != nil {
-				slog.Warn("store retrieval event (rerank path) failed", "project", project, "err", storeErr)
-			} else {
-				eventID = event.ID
-				if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, rerankIDs); incErr != nil {
-					slog.Warn("auto-increment times_retrieved (rerank path) failed", "project", project, "err", incErr)
-				}
-			}
+		if recordEvent {
+			eventID = recordRecallEvent(ctx, h, project, query, results, "rerank path")
 		}
 	} else if opts.CurrentEpisodeID != "" || opts.DateSince != nil || opts.DateBefore != nil {
-		// Custom recall options present: use RecallWithOpts so episode boosts
-		// and/or date bounds apply, then record the retrieval event manually
-		// (mirrors RecallWithEvent internals so the feedback loop and precision
-		// signal continue to work on this path).
 		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err
 		}
-		resultIDs := make([]string, 0, len(results))
-		for _, r := range results {
-			if r.Memory != nil {
-				resultIDs = append(resultIDs, r.Memory.ID)
-			}
-		}
-		if len(resultIDs) > 0 {
-			event := &types.RetrievalEvent{
-				ID:        types.NewMemoryID(),
-				Project:   project,
-				Query:     query,
-				ResultIDs: resultIDs,
-				CreatedAt: time.Now().UTC(),
-			}
-			if storeErr := h.Engine.Backend().StoreRetrievalEvent(ctx, event); storeErr != nil {
-				slog.Warn("store retrieval event (episode path) failed", "project", project, "err", storeErr)
-			} else {
-				eventID = event.ID
-				if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, resultIDs); incErr != nil {
-					slog.Warn("auto-increment times_retrieved (episode path) failed", "project", project, "err", incErr)
-				}
-			}
+		if recordEvent {
+			eventID = recordRecallEvent(ctx, h, project, query, results, "option path")
 		}
 	} else {
-		results, eventID, err = h.Engine.RecallWithEvent(ctx, query, topK, detail)
+		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err
+		}
+		if recordEvent {
+			eventID = recordRecallEvent(ctx, h, project, query, results, "default path")
 		}
 	}
 
@@ -409,6 +364,33 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 	out["degraded"] = degradedMap(embedDegraded || !ok, reason)
 	return toolResult(out)
+}
+
+func recordRecallEvent(ctx context.Context, h *EngineHandle, project, query string, results []types.SearchResult, path string) string {
+	resultIDs := make([]string, 0, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			resultIDs = append(resultIDs, r.Memory.ID)
+		}
+	}
+	if len(resultIDs) == 0 {
+		return ""
+	}
+	event := &types.RetrievalEvent{
+		ID:        types.NewMemoryID(),
+		Project:   project,
+		Query:     query,
+		ResultIDs: resultIDs,
+		CreatedAt: time.Now().UTC(),
+	}
+	if storeErr := h.Engine.Backend().StoreRetrievalEvent(ctx, event); storeErr != nil {
+		slog.Warn("store retrieval event failed", "path", path, "project", project, "err", storeErr)
+		return ""
+	}
+	if incErr := h.Engine.Backend().IncrementTimesRetrieved(ctx, resultIDs); incErr != nil {
+		slog.Warn("auto-increment times_retrieved failed", "path", path, "project", project, "err", incErr)
+	}
+	return event.ID
 }
 
 func parseRecallDateBounds(args map[string]any) (*time.Time, *time.Time, error) {
