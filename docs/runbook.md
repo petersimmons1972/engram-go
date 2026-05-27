@@ -4,6 +4,24 @@ This page documents Engram's observable metrics and how to interpret them. Each 
 
 ---
 
+## Runtime Source of Truth
+
+The live Engram service for this environment runs in Kubernetes namespace `engram`. Start live incidents with:
+
+```bash
+make status-k8s
+```
+
+That command is read-only. It reports deployment readiness, pod restart counts, previous container termination reasons, recent warning events, `/health`, `/ready`, and authenticated `/metrics` summaries when `ENGRAM_API_KEY` is set.
+
+Use Docker commands in this runbook only for local Docker/Compose development or when you have confirmed the affected runtime is a local Compose stack. The local Docker status command is:
+
+```bash
+make status NO_REMOTE=1
+```
+
+---
+
 ## Metrics Overview
 
 Engram exports Prometheus metrics on port 8788 at `/metrics`. The endpoint requires `Authorization: Bearer $ENGRAM_API_KEY`. The canonical set appears below. All metrics are prefixed `engram_`.
@@ -32,15 +50,18 @@ curl -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics
 **Diagnostic commands:**
 
 ```bash
-# Check the re-embedder container health
+# Live Kubernetes: deployment, restart, crash, event, and metrics summary
+make status-k8s
+
+# Local Docker only: check the re-embedder container health
 docker ps | grep engram-reembed
 docker logs engram-reembed | tail -50
 
-# Check if the embedding service is responding
+# Local Docker only: check if the embedding service is responding
 curl -s http://localhost:11434/api/tags  # (Ollama local profile)
 curl -s http://your-litellm:4000/v1/models  # (LiteLLM hybrid profile)
 
-# Check database schema version
+# Local Docker only: check database schema version
 docker exec engram-postgres psql -U engram -d engram -c "SELECT version FROM schema_versions ORDER BY applied_at DESC LIMIT 1;"
 ```
 
@@ -68,13 +89,13 @@ docker exec engram-postgres psql -U engram -d engram -c "SELECT version FROM sch
 
 ```bash
 # Get the current metric value
-curl -s http://localhost:8788/metrics | grep engram_episodes_ended_by_reaper_total
+curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_episodes_ended_by_reaper_total
 
-# Check SSE connection logs
+# Local Docker only: check SSE connection logs
 docker logs engram-go-app | grep "episode" | tail -20
 
 # Monitor in real-time
-watch -n 1 'curl -s http://localhost:8788/metrics | grep engram_episodes'
+watch -n 1 'curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_episodes'
 ```
 
 **Typical fixes:**
@@ -98,9 +119,9 @@ watch -n 1 'curl -s http://localhost:8788/metrics | grep engram_episodes'
 
 ```bash
 # Get the current metric value
-curl -s http://localhost:8788/metrics | grep engram_worker_panics_total
+curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_worker_panics_total
 
-# Get detailed panic logs
+# Local Docker only: get detailed panic logs
 docker logs engram-go-app 2>&1 | grep -i panic
 ```
 
@@ -133,10 +154,13 @@ curl http://localhost:8788/ready
 The server is starting up, migrations are running, or a component failed to initialize. In Kubernetes, start with `make status-k8s`; for local Docker, use `make status`. If it persists:
 
 ```bash
-# Check startup logs
+# Live Kubernetes: inspect the deployment and recent warnings
+make status-k8s
+
+# Local Docker only: check startup logs
 docker logs engram-go-app | tail -50
 
-# Check database connectivity
+# Local Docker only: check database connectivity
 docker exec engram-postgres pg_isready -U engram
 ```
 
