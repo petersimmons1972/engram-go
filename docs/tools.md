@@ -169,6 +169,9 @@ memory_recall("authentication JWT", project="my-app", detail="full", limit=10)
 
 # Claude re-ranking after retrieval (requires ENGRAM_CLAUDE_RERANK=true)
 memory_recall("auth", project="my-app", rerank=True)
+
+# Opt in to feedback telemetry when you plan to call memory_feedback
+memory_recall("authentication JWT", project="my-app", record_event=True)
 ```
 
 **detail** controls how much text comes back per result:
@@ -180,6 +183,8 @@ memory_recall("auth", project="my-app", rerank=True)
 | `"full"` | Original content | 200–50,000 chars | Export, debugging, full fidelity |
 
 At scale, summary mode uses roughly 13× less context than full mode. For an agent recalling 10 memories per session, that is the difference between 5% of a context window and 65%.
+
+By default, `memory_recall` is read-only and does not create a retrieval event or increment retrieval counters. Pass `record_event=True` only when you need the returned `event_id` for `memory_feedback`.
 
 You can filter by memory type. This is a hard filter — it excludes everything else regardless of relevance:
 

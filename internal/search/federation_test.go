@@ -6,6 +6,7 @@ package search_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/search"
@@ -74,6 +75,15 @@ func TestFederatedRecall_ResultsAreSortedByScore(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 1; i < len(results); i++ {
+		if math.IsNaN(results[i-1].Score) {
+			assert.True(t, math.IsNaN(results[i].Score),
+				"NaN scores must sort after finite scores; results[%d].Score=%v, results[%d].Score=%v",
+				i-1, results[i-1].Score, i, results[i].Score)
+			continue
+		}
+		if math.IsNaN(results[i].Score) {
+			continue
+		}
 		assert.GreaterOrEqual(t, results[i-1].Score, results[i].Score,
 			"results[%d].Score (%v) must be >= results[%d].Score (%v)", i-1, results[i-1].Score, i, results[i].Score)
 	}

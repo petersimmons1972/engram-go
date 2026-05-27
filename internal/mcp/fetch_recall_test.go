@@ -10,9 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +36,46 @@ func (s *recallStubFetcher) GetMemoryByID(_ context.Context, _ string) (*types.M
 
 func (s *recallStubFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error) {
 	return s.chunks, nil
+}
+
+type recallTrackingBackend struct {
+	noopBackend
+	storedEvents atomic.Int64
+	increments   atomic.Int64
+}
+
+func (b *recallTrackingBackend) FTSSearch(_ context.Context, project, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
+	return []db.FTSResult{{
+		Memory: &types.Memory{
+			ID:        "mem-1",
+			Project:   project,
+			Content:   "read-only recall telemetry regression memory",
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+		Score: 1,
+	}}, nil
+}
+
+func (b *recallTrackingBackend) StoreRetrievalEvent(_ context.Context, _ *types.RetrievalEvent) error {
+	b.storedEvents.Add(1)
+	return nil
+}
+
+func (b *recallTrackingBackend) IncrementTimesRetrieved(_ context.Context, _ []string) error {
+	b.increments.Add(1)
+	return nil
+}
+
+func newRecallTrackingPool(t *testing.T, backend *recallTrackingBackend) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
 }
 
 // ── execFetch boundary cases not in fetch_exec_test.go ───────────────────────
@@ -171,6 +215,63 @@ func TestHandleMemoryRecall_DefaultMode_ReturnsResultsKey(t *testing.T) {
 
 	_, hasHandles := out["handles"]
 	require.False(t, hasHandles, "default mode must NOT return 'handles' key")
+}
+
+func TestHandleMemoryRecall_DefaultDoesNotRecordRetrievalEvent(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "read only recall telemetry",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"])
+	require.NotContains(t, out, "event_id", "read-only recall must not return a feedback event by default")
+	require.Zero(t, backend.storedEvents.Load(), "read-only recall must not store retrieval events by default")
+	require.Zero(t, backend.increments.Load(), "read-only recall must not increment retrieval counters by default")
+}
+
+func TestHandleMemoryRecall_RecordEventOptInRecordsRetrievalEvent(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "record recall telemetry",
+		"record_event": true,
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"])
+	require.NotEmpty(t, out["event_id"], "record_event=true should return a feedback event")
+	require.Equal(t, int64(1), backend.storedEvents.Load())
+	require.Equal(t, int64(1), backend.increments.Load())
+}
+
+func TestHandleMemoryRecall_FederatedDefaultDoesNotRecordRetrievalEvent(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects": []any{"test-a", "test-b"},
+		"query":    "federated read only recall telemetry",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"])
+	require.Zero(t, backend.storedEvents.Load(), "federated read-only recall must not store retrieval events by default")
+	require.Zero(t, backend.increments.Load(), "federated read-only recall must not increment retrieval counters by default")
 }
 
 // TestHandleMemoryRecall_EpisodeContextInjected verifies that
