@@ -54,6 +54,72 @@ func TestLMEPruneCronJobUsesSafeExecuteFlags(t *testing.T) {
 	}
 }
 
+func TestCommandCatalogDocumentsLongMemEval(t *testing.T) {
+	data, err := os.ReadFile("../../cmd/README.md")
+	if err != nil {
+		t.Fatalf("read cmd/README.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{"## longmemeval", "score-efficient", "route-discover", "prune", "`longmemeval`"} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("command catalog missing %q", current)
+		}
+	}
+	if strings.Contains(doc, "Engram ships six binaries") {
+		t.Fatalf("command catalog still says Engram ships six binaries")
+	}
+}
+
+func TestLMEBenchmarkLearningsQuickStartUsesCurrentFlags(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-benchmark-learnings.md: %v", err)
+	}
+	doc := string(data)
+	section := between(t, doc, "## Quick Start for Future Benchmark Runs", "### Docker Compose Configuration")
+
+	for _, stale := range []string{"--no-cleanup", "compile-time constants"} {
+		if strings.Contains(section, stale) {
+			t.Fatalf("quick start contains stale text %q:\n%s", stale, section)
+		}
+	}
+	for _, current := range []string{"--cleanup-policy=never", "--recall-topk", "--context-topk", "score-efficient", "route-discover"} {
+		if !strings.Contains(section, current) {
+			t.Fatalf("quick start missing current text %q:\n%s", current, section)
+		}
+	}
+}
+
+func TestRunbookW6800CanaryHasConcreteOllaChecks(t *testing.T) {
+	data, err := os.ReadFile("../../docs/runbook.md")
+	if err != nil {
+		t.Fatalf("read docs/runbook.md: %v", err)
+	}
+	doc := string(data)
+	section := between(t, doc, "## W6800 Canary", "## Common Issues")
+
+	for _, current := range []string{"/v1/models", "/v1/chat/completions", "llama3.1:8b", "BAAI/bge-m3"} {
+		if !strings.Contains(section, current) {
+			t.Fatalf("W6800 canary section missing concrete check text %q:\n%s", current, section)
+		}
+	}
+}
+
+func TestDeploymentNotesW6800CanaryHasConcreteOllaChecks(t *testing.T) {
+	data, err := os.ReadFile("../../docs/deployment-notes.md")
+	if err != nil {
+		t.Fatalf("read docs/deployment-notes.md: %v", err)
+	}
+	doc := string(data)
+	section := between(t, doc, "## W6800 Canary Rollout", "Current verified split:")
+
+	for _, current := range []string{"/v1/models", "/v1/chat/completions", "route-discover", "llama3.1:8b", "BAAI/bge-m3"} {
+		if !strings.Contains(section, current) {
+			t.Fatalf("deployment W6800 section missing concrete check text %q:\n%s", current, section)
+		}
+	}
+}
+
 func between(t *testing.T, s, start, end string) string {
 	t.Helper()
 	startIdx := strings.Index(s, start)
