@@ -220,6 +220,18 @@ func TestApplySharedDefaultsUsesEnvironmentWhenFlagsOmitted(t *testing.T) {
 	}
 }
 
+func TestDispatchRejectsInvalidScoreOutputMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "score", "--data", "questions.json", "--score-output", "xml"}, &stdout, &stderr)
+
+	if exit == 0 {
+		t.Fatal("dispatch accepted invalid --score-output")
+	}
+	if !strings.Contains(stderr.String(), "--score-output") {
+		t.Fatalf("stderr = %q, want --score-output validation error", stderr.String())
+	}
+}
+
 func writeClaudeMCPConfig(t *testing.T, home, token string) {
 	t.Helper()
 	dir := filepath.Join(home, ".claude")

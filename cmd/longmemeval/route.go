@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -35,6 +36,7 @@ type routeDiscoverResult struct {
 	RunFlagHint []string    `json:"run_flag_hint"`
 	ScorerHint  []string    `json:"scorer_flag_hint"`
 	Source      string      `json:"source"`
+	Validated   bool        `json:"validated"`
 }
 
 type fleetHost struct {
@@ -96,6 +98,13 @@ func discoverRoute(cfg routeDiscoverConfig) (routeDiscoverResult, error) {
 		return routeDiscoverResult{}, err
 	}
 	baseURL := strings.TrimRight(cfg.OllaURL, "/") + "/olla/openai/v1"
+	validated := false
+	if requiresChatReadiness(cfg.Purpose) {
+		if err := validateOllaChatRoute(ctx, http.DefaultClient, baseURL, selected); err != nil {
+			return routeDiscoverResult{}, fmt.Errorf("validate Olla chat route for %q: %w", selected, err)
+		}
+		validated = true
+	}
 	return routeDiscoverResult{
 		FleetURL:   cfg.FleetURL,
 		OllaURL:    cfg.OllaURL,
@@ -112,7 +121,8 @@ func discoverRoute(cfg routeDiscoverConfig) (routeDiscoverResult, error) {
 			"--scorer-url", baseURL,
 			"--scorer-model", selected,
 		},
-		Source: "ai-fleet-registry+olla-openai-models",
+		Source:    "ai-fleet-registry+olla-openai-models",
+		Validated: validated,
 	}, nil
 }
 
@@ -220,11 +230,22 @@ func selectRouteModel(requested, purpose string, hosts []fleetHost, ollaModels [
 		if _, ok := fleetModels[requested]; !ok {
 			return "", fmt.Errorf("requested model %q is absent from AI Flight Controller registry", requested)
 		}
+		if purpose == "generation" || purpose == "scoring" {
+			if isEmbeddingRoute(requested, fleetModels[requested].Framework) {
+				return "", fmt.Errorf("requested model %q is embedding-like and not compatible with %s", requested, purpose)
+			}
+		}
+		if !isFleetModelReady(fleetModels[requested]) {
+			return "", fmt.Errorf("requested model %q is not ready in AI Flight Controller registry", requested)
+		}
 		return requested, nil
 	}
 	for _, model := range ollaModels {
 		fm, ok := fleetModels[model]
 		if !ok {
+			continue
+		}
+		if !isFleetModelReady(fm) {
 			continue
 		}
 		if purpose == "generation" || purpose == "scoring" {
@@ -240,4 +261,70 @@ func selectRouteModel(requested, purpose string, hosts []fleetHost, ollaModels [
 func isEmbeddingRoute(name, framework string) bool {
 	lower := strings.ToLower(name + " " + framework)
 	return strings.Contains(lower, "embed") || strings.Contains(lower, "bge") || strings.Contains(lower, "e5")
+}
+
+func isFleetModelReady(model fleetModel) bool {
+	return statusReady(model.Status) && statusReady(model.State)
+}
+
+func statusReady(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "ready", "running", "healthy", "available", "active", "started":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresChatReadiness(purpose string) bool {
+	switch purpose {
+	case "", "generation", "scoring":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateOllaChatRoute(ctx context.Context, client *http.Client, baseURL, model string) error {
+	body := map[string]any{
+		"model":       model,
+		"messages":    []map[string]string{{"role": "user", "content": "LongMemEval route readiness probe. Reply with READY."}},
+		"max_tokens":  8,
+		"temperature": 0,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected status %s", resp.Status)
+	}
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+	if len(payload.Choices) == 0 {
+		return errors.New("readiness probe returned no choices")
+	}
+	if payload.Choices[0].Message.Content == "" && payload.Choices[0].Text == "" {
+		return errors.New("readiness probe returned an empty choice")
+	}
+	return nil
 }

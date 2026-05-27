@@ -34,6 +34,8 @@ type Config struct {
 	LLMModel       string // model name for LLMBaseURL endpoint
 	EnableThinking bool   // enable chain-of-thought for models that support it (Qwen3)
 	LLMMaxTokens   int    // output token budget; 0 → default (2048 thinking-off, 8192 thinking-on)
+	ScoreOutput    string // score stdout mode: text, json, or quiet
+	Output         io.Writer
 
 	// score-efficient flags
 	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
@@ -174,6 +176,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
 	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
 	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
+	fs.StringVar(&cfg.ScoreOutput, "score-output", envOr("LME_SCORE_OUTPUT", "text"), "score summary stdout mode: text, json, or quiet")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
@@ -376,6 +379,17 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
+		return 1
+	}
+	cfg.Output = stdout
+
+	switch cfg.ScoreOutput {
+	case "", "text", "json", "quiet":
+		if cfg.ScoreOutput == "" {
+			cfg.ScoreOutput = "text"
+		}
+	default:
+		_, _ = fmt.Fprintf(stderr, "--score-output %q is not allowed; must be one of: text, json, quiet\n", cfg.ScoreOutput)
 		return 1
 	}
 

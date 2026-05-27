@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,46 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
+
+func TestWriteScoreReport_QuietSuppressesStdout(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	cfg := &Config{OutDir: dir, RunID: "quiet-test", ScoreOutput: "quiet", Output: &out}
+
+	writeScoreReport(cfg, []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	if out.Len() != 0 {
+		t.Fatalf("quiet score output wrote stdout: %q", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "score_report.json")); err != nil {
+		t.Fatalf("score_report.json was not written: %v", err)
+	}
+}
+
+func TestWriteScoreReport_JSONWritesMachineSummaryToConfiguredOutput(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	cfg := &Config{OutDir: dir, RunID: "json-test", ScoreOutput: "json", Output: &out}
+
+	writeScoreReport(cfg, []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+	})
+
+	var report map[string]any
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
+	}
+	if report["run_id"] != "json-test" {
+		t.Fatalf("stdout run_id = %v, want json-test", report["run_id"])
+	}
+	overall := report["overall"].(map[string]any)
+	if int(overall["total"].(float64)) != 2 {
+		t.Fatalf("stdout overall.total = %v, want 2", overall["total"])
+	}
+}
 
 // TestWriteScoreReport_ScoreErrorCountsAsIncorrect is the regression guard for
 // issue #793: a ScoreEntry with ScoreLabel="SCORE_ERROR" and Status="done" must

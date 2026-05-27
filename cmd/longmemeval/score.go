@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -174,6 +175,13 @@ func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap ma
 	writeScoreReport(cfg, scores)
 }
 
+type scoreReportCounts struct {
+	Correct          int `json:"correct"`
+	PartiallyCorrect int `json:"partially_correct"`
+	Incorrect        int `json:"incorrect"`
+	Total            int `json:"total"`
+}
+
 func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 	f, err := createPrivateArtifact(filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
 	if err != nil {
@@ -232,20 +240,14 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 }
 
 func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
-	type byType struct {
-		Correct          int `json:"correct"`
-		PartiallyCorrect int `json:"partially_correct"`
-		Incorrect        int `json:"incorrect"`
-		Total            int `json:"total"`
-	}
 	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
 	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
 	for _, s := range scores {
 		deduped[s.QuestionID] = s
 	}
 
-	overall := &byType{}
-	byQType := make(map[string]*byType)
+	overall := &scoreReportCounts{}
+	byQType := make(map[string]*scoreReportCounts)
 
 	for _, s := range deduped {
 		if s.Status != "done" {
@@ -253,10 +255,10 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		}
 		qbt := byQType[s.QuestionType]
 		if qbt == nil {
-			qbt = &byType{}
+			qbt = &scoreReportCounts{}
 			byQType[s.QuestionType] = qbt
 		}
-		for _, bt := range []*byType{overall, qbt} {
+		for _, bt := range []*scoreReportCounts{overall, qbt} {
 			bt.Total++
 			switch s.ScoreLabel {
 			case "CORRECT":
@@ -292,15 +294,35 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 	}
 	log.Printf("wrote %s", path)
 
-	// Print summary.
-	if overall.Total > 0 {
-		pct := func(n int) float64 { return float64(n) / float64(overall.Total) * 100 }
-		fmt.Printf("\n--- Score Report (run-id: %s) ---\n", cfg.RunID)
-		fmt.Printf("Total scored:       %d\n", overall.Total)
-		fmt.Printf("Correct:            %d (%.1f%%)\n", overall.Correct, pct(overall.Correct))
-		fmt.Printf("Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
-		fmt.Printf("Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
+	writeScoreSummary(cfg.Output, cfg.ScoreOutput, report, overall)
+}
+
+func writeScoreSummary(w io.Writer, mode string, report map[string]any, overall *scoreReportCounts) {
+	if w == nil {
+		w = os.Stdout
 	}
+	if mode == "" {
+		mode = "text"
+	}
+	switch mode {
+	case "quiet":
+		return
+	case "json":
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(report)
+		return
+	}
+
+	if overall == nil || overall.Total == 0 {
+		return
+	}
+	pct := func(n int) float64 { return float64(n) / float64(overall.Total) * 100 }
+	_, _ = fmt.Fprintf(w, "\n--- Score Report (run-id: %s) ---\n", report["run_id"])
+	_, _ = fmt.Fprintf(w, "Total scored:       %d\n", overall.Total)
+	_, _ = fmt.Fprintf(w, "Correct:            %d (%.1f%%)\n", overall.Correct, pct(overall.Correct))
+	_, _ = fmt.Fprintf(w, "Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
+	_, _ = fmt.Fprintf(w, "Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
 }
 
 // normalizeLabel canonicalises a score label: trims surrounding whitespace
