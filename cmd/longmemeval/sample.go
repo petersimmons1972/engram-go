@@ -38,26 +38,30 @@ type sampleAnalyzeConfig struct {
 }
 
 type sampleAnalyzeSummary struct {
-	Items                int                      `json:"items"`
-	RunDone              int                      `json:"run_done"`
-	RunErrors            int                      `json:"run_errors"`
-	Scored               int                      `json:"scored"`
-	Correct              int                      `json:"correct"`
-	PartiallyCorrect     int                      `json:"partially_correct"`
-	Incorrect            int                      `json:"incorrect"`
-	ScoreErrors          int                      `json:"score_errors"`
-	RetrievedGoldSession int                      `json:"retrieved_gold_session"`
-	ByType               map[string]sampleTypeRow `json:"by_type"`
+	Items                        int                      `json:"items"`
+	RunDone                      int                      `json:"run_done"`
+	RunErrors                    int                      `json:"run_errors"`
+	Scored                       int                      `json:"scored"`
+	Correct                      int                      `json:"correct"`
+	PartiallyCorrect             int                      `json:"partially_correct"`
+	Incorrect                    int                      `json:"incorrect"`
+	ScoreErrors                  int                      `json:"score_errors"`
+	RetrievedGoldSession         int                      `json:"retrieved_gold_session"`
+	RetrievalMiss                int                      `json:"retrieval_miss"`
+	ContextPresentGenerationMiss int                      `json:"context_present_generation_miss"`
+	ByType                       map[string]sampleTypeRow `json:"by_type"`
 }
 
 type sampleTypeRow struct {
-	Items                int `json:"items"`
-	RunDone              int `json:"run_done"`
-	Scored               int `json:"scored"`
-	Correct              int `json:"correct"`
-	PartiallyCorrect     int `json:"partially_correct"`
-	Incorrect            int `json:"incorrect"`
-	RetrievedGoldSession int `json:"retrieved_gold_session"`
+	Items                        int `json:"items"`
+	RunDone                      int `json:"run_done"`
+	Scored                       int `json:"scored"`
+	Correct                      int `json:"correct"`
+	PartiallyCorrect             int `json:"partially_correct"`
+	Incorrect                    int `json:"incorrect"`
+	RetrievedGoldSession         int `json:"retrieved_gold_session"`
+	RetrievalMiss                int `json:"retrieval_miss"`
+	ContextPresentGenerationMiss int `json:"context_present_generation_miss"`
 }
 
 func prepareSample(cfg samplePrepareConfig) (samplePrepareResult, error) {
@@ -151,19 +155,8 @@ func prepareSample(cfg samplePrepareConfig) (samplePrepareResult, error) {
 }
 
 func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
-	if cfg.DataFile == "" {
-		return sampleAnalyzeSummary{}, errors.New("--data is required")
-	}
 	if cfg.ResultsDir == "" {
 		return sampleAnalyzeSummary{}, errors.New("--results is required")
-	}
-	items, err := loadItemsFile(cfg.DataFile)
-	if err != nil {
-		return sampleAnalyzeSummary{}, err
-	}
-	itemMap := make(map[string]longmemeval.Item, len(items))
-	for _, item := range items {
-		itemMap[item.QuestionID] = item
 	}
 	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.ResultsDir, "checkpoint-ingest.jsonl"))
 	if err != nil {
@@ -190,6 +183,10 @@ func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
 		scoreMap[entry.QuestionID] = entry
 	}
 
+	items, err := analyzeItems(cfg.DataFile, runMap, scoreMap)
+	if err != nil {
+		return sampleAnalyzeSummary{}, err
+	}
 	summary := sampleAnalyzeSummary{
 		Items:  len(items),
 		ByType: make(map[string]sampleTypeRow),
@@ -227,6 +224,17 @@ func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
 					summary.Incorrect++
 					row.Incorrect++
 				}
+				if score.ScoreLabel != "CORRECT" && len(item.AnswerSessionIDs) > 0 {
+					run, runOK := runMap[item.QuestionID]
+					retrievedGold := runOK && run.Status == "done" && hasGoldSession(run.RetrievedIDs, ingestMap[item.QuestionID].MemoryMap, item.AnswerSessionIDs)
+					if retrievedGold {
+						summary.ContextPresentGenerationMiss++
+						row.ContextPresentGenerationMiss++
+					} else {
+						summary.RetrievalMiss++
+						row.RetrievalMiss++
+					}
+				}
 			case "error":
 				summary.ScoreErrors++
 			}
@@ -234,6 +242,31 @@ func analyzeSample(cfg sampleAnalyzeConfig) (sampleAnalyzeSummary, error) {
 		summary.ByType[item.QuestionType] = row
 	}
 	return summary, nil
+}
+
+func analyzeItems(dataFile string, runMap map[string]longmemeval.RunEntry, scoreMap map[string]longmemeval.ScoreEntry) ([]longmemeval.Item, error) {
+	if dataFile != "" {
+		return loadItemsFile(dataFile)
+	}
+	ids := make(map[string]longmemeval.Item, len(runMap)+len(scoreMap))
+	for id := range runMap {
+		ids[id] = longmemeval.Item{QuestionID: id, QuestionType: "unknown"}
+	}
+	for id, score := range scoreMap {
+		item := ids[id]
+		item.QuestionID = id
+		if score.QuestionType != "" {
+			item.QuestionType = score.QuestionType
+		} else if item.QuestionType == "" {
+			item.QuestionType = "unknown"
+		}
+		ids[id] = item
+	}
+	items := make([]longmemeval.Item, 0, len(ids))
+	for _, item := range ids {
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func selectSampleItems(items []longmemeval.Item, limit, maxPerType int) []longmemeval.Item {

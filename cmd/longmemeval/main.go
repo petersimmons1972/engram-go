@@ -104,6 +104,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  score-batch     Score all items in one Anthropic Message Batches API call")
 	_, _ = fmt.Fprintln(w, "  sample-prepare  Prepare a no-ingest representative sample output directory")
 	_, _ = fmt.Fprintln(w, "  sample-analyze  Summarize existing sample checkpoints without generation/scoring")
+	_, _ = fmt.Fprintln(w, "  analyze         Summarize result checkpoints and classify score failures")
 	_, _ = fmt.Fprintln(w, "  route-discover  Resolve Olla/OpenAI flags from AI Flight Controller + Olla")
 	_, _ = fmt.Fprintln(w, "  prune           Delete expired lme-* scratch projects (TTL sweep, #754)")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
@@ -289,8 +290,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if subcommand == "sample-analyze" {
-		safs := flag.NewFlagSet("sample-analyze", flag.ContinueOnError)
+	if subcommand == "sample-analyze" || subcommand == "analyze" {
+		safs := flag.NewFlagSet(subcommand, flag.ContinueOnError)
 		safs.SetOutput(stderr)
 		var sa sampleAnalyzeConfig
 		safs.StringVar(&sa.DataFile, "data", "", "path to LongMemEval cohort JSON")
@@ -300,7 +301,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		}
 		summary, err := analyzeSample(sa)
 		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "sample-analyze: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "%s: %v\n", subcommand, err)
 			return 1
 		}
 		enc := json.NewEncoder(stdout)
