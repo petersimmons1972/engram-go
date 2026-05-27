@@ -50,9 +50,19 @@ type PruneConfig struct {
 	// mutations.
 	DryRun bool
 
+	// Execute is the explicit opt-in that allows deletion. Without it, prune
+	// always plans only, even when DryRun is false.
+	Execute bool
+
+	// ConfirmPrefix must match Prefix when Execute is true.
+	ConfirmPrefix string
+
 	// Limit caps the number of projects considered for deletion in a single
-	// invocation. Zero means no cap. Used to bound blast radius on first runs.
+	// invocation. In execute mode this must be positive unless Unlimited is set.
 	Limit int
+
+	// Unlimited permits execute mode without a positive Limit.
+	Unlimited bool
 
 	// DatabaseURL is the PostgreSQL DSN; falls back to env DATABASE_URL.
 	DatabaseURL string
@@ -62,6 +72,13 @@ type PruneConfig struct {
 
 	// APIKey is the engram bearer token.
 	APIKey string
+
+	// ExplicitAPIKey tracks whether credentials were supplied by a CLI flag
+	// rather than automatic discovery.
+	ExplicitAPIKey bool
+
+	// UseDefaultToken permits automatic token discovery for execute mode.
+	UseDefaultToken bool
 }
 
 // projectTTLEntry is the in-memory shape used by selectExpiredProjects. It
@@ -144,7 +161,7 @@ func runPruneWithEntries(cfg *PruneConfig, entries []projectTTLEntry, deleteFn f
 		return 0
 	}
 
-	if cfg.DryRun {
+	if effectiveDryRun(cfg) {
 		_, _ = fmt.Fprintf(out, "prune: DRY RUN — would delete %d project(s):\n", len(victims))
 		for _, name := range victims {
 			_, _ = fmt.Fprintf(out, "  %s\n", name)
@@ -172,11 +189,50 @@ func runPruneWithEntries(cfg *PruneConfig, entries []projectTTLEntry, deleteFn f
 	return 0
 }
 
+func effectiveDryRun(cfg *PruneConfig) bool {
+	return cfg.DryRun || !cfg.Execute
+}
+
+func validatePruneConfig(cfg *PruneConfig) error {
+	if cfg.Prefix == "" {
+		return errors.New("prune: --prefix is required")
+	}
+	if cfg.Limit < 0 {
+		return errors.New("prune: --limit must be >= 0")
+	}
+	if cfg.Execute && cfg.DryRun {
+		return errors.New("prune: --execute and --dry-run cannot be combined")
+	}
+	if !cfg.Execute {
+		return nil
+	}
+	if cfg.ConfirmPrefix != cfg.Prefix {
+		return fmt.Errorf("prune: --confirm-prefix must exactly match --prefix (%q)", cfg.Prefix)
+	}
+	if cfg.Unlimited && cfg.Limit > 0 {
+		return errors.New("prune: use either --limit N or --unlimited, not both")
+	}
+	if !cfg.Unlimited && cfg.Limit <= 0 {
+		return errors.New("prune: --execute requires --limit N > 0 or --unlimited")
+	}
+	if !cfg.ExplicitAPIKey && !cfg.UseDefaultToken {
+		return errors.New("prune: --execute requires --api-key, or --use-default-token to allow discovered credentials")
+	}
+	if cfg.APIKey == "" {
+		return errors.New("prune: --execute requires a non-empty API key")
+	}
+	return nil
+}
+
 // runPrune is the wired-up entrypoint that connects to Postgres, lists
 // expired projects from project_ttl, and calls memory_delete_project over MCP
 // for each. Errors during list/connect return non-zero exit; per-delete errors
 // are aggregated by runPruneWithEntries.
 func runPrune(cfg *PruneConfig, stdout, stderr io.Writer) int {
+	if err := validatePruneConfig(cfg); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 2
+	}
 	if cfg.DatabaseURL == "" {
 		_, _ = fmt.Fprintln(stderr, "prune: DATABASE_URL or --database-url is required")
 		return 1
@@ -215,7 +271,7 @@ func runPrune(cfg *PruneConfig, stdout, stderr io.Writer) int {
 	deleteFn := func(name string) error {
 		return errors.New("prune: delete client not initialised — use --dry-run")
 	}
-	if !cfg.DryRun {
+	if !effectiveDryRun(cfg) {
 		client, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "prune: MCP connect: %v\n", err)
@@ -240,11 +296,15 @@ func dispatchPrune(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.Prefix, "prefix", "lme-", "delete only projects whose names start with this prefix")
 	fs.DurationVar(&cfg.OlderThan, "older-than", 0, "additional cushion past expires_at before pruning (e.g. 24h); 0 means use expires_at as-is")
 	fs.DurationVar(&cfg.OlderThan, "scratch-ttl", 0, "alias for --older-than; documents intent for lme scratch retention windows")
-	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print projects that would be deleted but make no changes")
-	fs.IntVar(&cfg.Limit, "limit", 0, "cap deletions to this many projects per invocation; 0 = no cap")
+	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print projects that would be deleted but make no changes (default behavior)")
+	fs.BoolVar(&cfg.Execute, "execute", false, "delete matching projects; requires --confirm-prefix and --limit N or --unlimited")
+	fs.StringVar(&cfg.ConfirmPrefix, "confirm-prefix", "", "required with --execute; must exactly match --prefix")
+	fs.IntVar(&cfg.Limit, "limit", 0, "cap deletions to this many projects per invocation; required with --execute unless --unlimited")
+	fs.BoolVar(&cfg.Unlimited, "unlimited", false, "allow --execute without a deletion limit")
 	fs.StringVar(&cfg.DatabaseURL, "database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (env: DATABASE_URL)")
 	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
 	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
+	fs.BoolVar(&cfg.UseDefaultToken, "use-default-token", false, "allow --execute to use ENGRAM_API_KEY or Claude MCP config token")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(stderr, "Usage: longmemeval prune [flags]")
@@ -261,7 +321,8 @@ func dispatchPrune(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	if !flagWasProvided(fs, "api-key") {
+	cfg.ExplicitAPIKey = flagWasProvided(fs, "api-key")
+	if !cfg.ExplicitAPIKey && cfg.UseDefaultToken {
 		cfg.APIKey = defaultAPIKey()
 	}
 	if !flagWasProvided(fs, "url") {
