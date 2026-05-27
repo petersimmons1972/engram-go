@@ -175,7 +175,7 @@ func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap ma
 }
 
 func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
-	f, err := os.Create(filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
+	f, err := createPrivateArtifact(filepath.Join(cfg.OutDir, "hypotheses.jsonl"))
 	if err != nil {
 		log.Printf("WARN write hypotheses.jsonl: %v", err)
 		return
@@ -192,7 +192,7 @@ func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
 }
 
 func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
-	f, err := os.Create(filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
+	f, err := createPrivateArtifact(filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 	if err != nil {
 		log.Printf("WARN write retrieval_log.jsonl: %v", err)
 		return
@@ -282,8 +282,12 @@ func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
 		return
 	}
 	path := filepath.Join(cfg.OutDir, "score_report.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, privateArtifactFileMode); err != nil {
 		log.Printf("WARN write score_report.json: %v", err)
+		return
+	}
+	if err := os.Chmod(path, privateArtifactFileMode); err != nil {
+		log.Printf("WARN chmod score_report.json: %v", err)
 		return
 	}
 	log.Printf("wrote %s", path)

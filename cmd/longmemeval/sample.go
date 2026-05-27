@@ -101,8 +101,11 @@ func prepareSample(cfg samplePrepareConfig) (samplePrepareResult, error) {
 		return samplePrepareResult{}, fmt.Errorf("source ingest checkpoint contains %d/%d selected items", len(filteredIngest), len(items))
 	}
 
-	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.OutDir, privateArtifactDirMode); err != nil {
 		return samplePrepareResult{}, fmt.Errorf("create output dir: %w", err)
+	}
+	if err := os.Chmod(cfg.OutDir, privateArtifactDirMode); err != nil {
+		return samplePrepareResult{}, fmt.Errorf("chmod output dir: %w", err)
 	}
 	if err := writeJSON(filepath.Join(cfg.OutDir, "data.json"), items); err != nil {
 		return samplePrepareResult{}, err
@@ -284,7 +287,7 @@ func loadItemsFile(path string) ([]longmemeval.Item, error) {
 }
 
 func writeJSON(path string, v any) error {
-	f, err := os.Create(path)
+	f, err := createPrivateArtifact(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
@@ -298,7 +301,7 @@ func writeJSON(path string, v any) error {
 }
 
 func writeJSONL[T any](path string, entries []T) error {
-	f, err := os.Create(path)
+	f, err := createPrivateArtifact(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
@@ -321,7 +324,7 @@ func copyFilteredJSONL(src, dst string, idSet map[string]bool) error {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.Create(dst)
+	out, err := createPrivateArtifact(dst)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}

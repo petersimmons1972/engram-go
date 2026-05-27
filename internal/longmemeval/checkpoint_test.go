@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -19,7 +20,9 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		longmemeval.WriteCheckpoint(path, ch)
+		if err := longmemeval.WriteCheckpoint(path, ch); err != nil {
+			t.Errorf("WriteCheckpoint: %v", err)
+		}
 	}()
 
 	ch <- longmemeval.IngestEntry{QuestionID: "q001", Status: "done", SessionCount: 3}
@@ -36,6 +39,55 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	}
 	if skip["q002"] {
 		t.Error("q002 (error) should NOT be in skip set")
+	}
+}
+
+func TestWriteCheckpointCreatesPrivateFile(t *testing.T) {
+	defer withPermissiveUmask(t)()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-score.jsonl")
+
+	ch := make(chan longmemeval.ScoreEntry, 1)
+	ch <- longmemeval.ScoreEntry{QuestionID: "q001", Status: "done"}
+	close(ch)
+
+	if err := longmemeval.WriteCheckpoint(path, ch); err != nil {
+		t.Fatalf("WriteCheckpoint: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat checkpoint: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("checkpoint mode = %o, want 600", got)
+	}
+}
+
+func TestWriteCheckpointTightensExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-run.jsonl")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatalf("seed checkpoint: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod seed checkpoint: %v", err)
+	}
+
+	ch := make(chan longmemeval.RunEntry, 1)
+	ch <- longmemeval.RunEntry{QuestionID: "q001", Status: "done"}
+	close(ch)
+
+	if err := longmemeval.WriteCheckpoint(path, ch); err != nil {
+		t.Fatalf("WriteCheckpoint: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat checkpoint: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("checkpoint mode = %o, want 600", got)
 	}
 }
 
@@ -105,6 +157,14 @@ func TestCheckpointReadersFailClosedOnMalformedJSONL(t *testing.T) {
 				t.Fatal("expected malformed checkpoint line to fail closed")
 			}
 		})
+	}
+}
+
+func withPermissiveUmask(t *testing.T) func() {
+	t.Helper()
+	old := syscall.Umask(0)
+	return func() {
+		syscall.Umask(old)
 	}
 }
 

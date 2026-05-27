@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -140,6 +141,50 @@ func TestWriteScoreReport_Basic(t *testing.T) {
 	}
 }
 
+func TestWriteOutputArtifactsArePrivate(t *testing.T) {
+	defer withPermissiveUmask(t)()
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "private-artifacts-test"}
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", Hypothesis: "answer one", ScoreLabel: "CORRECT", Status: "done"},
+	}
+	itemMap := map[string]longmemeval.Item{
+		"q1": {QuestionID: "q1", AnswerSessionIDs: []string{"sid-a"}},
+	}
+	ingestMap := map[string]longmemeval.IngestEntry{
+		"q1": {QuestionID: "q1", MemoryMap: map[string]string{"mem-1": "sid-a"}},
+	}
+	runMap := map[string]longmemeval.RunEntry{
+		"q1": {QuestionID: "q1", RetrievedIDs: []string{"mem-1"}},
+	}
+
+	writeOutputs(cfg, itemMap, ingestMap, runMap, scores)
+
+	assertMode(t, filepath.Join(dir, "hypotheses.jsonl"), 0o600)
+	assertMode(t, filepath.Join(dir, "retrieval_log.jsonl"), 0o600)
+	assertMode(t, filepath.Join(dir, "score_report.json"), 0o600)
+}
+
+func TestWriteOutputArtifactsTightenExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "private-artifacts-test"}
+	for _, name := range []string{"hypotheses.jsonl", "retrieval_log.jsonl", "score_report.json"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatalf("chmod seed %s: %v", name, err)
+		}
+	}
+
+	writeOutputs(cfg, nil, nil, nil, nil)
+
+	assertMode(t, filepath.Join(dir, "hypotheses.jsonl"), 0o600)
+	assertMode(t, filepath.Join(dir, "retrieval_log.jsonl"), 0o600)
+	assertMode(t, filepath.Join(dir, "score_report.json"), 0o600)
+}
+
 func TestWriteHypotheses_Basic(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir}
@@ -258,6 +303,25 @@ func TestNormalizeLabel(t *testing.T) {
 		if got != c.want {
 			t.Errorf("normalizeLabel(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", filepath.Base(path), got, want)
+	}
+}
+
+func withPermissiveUmask(t *testing.T) func() {
+	t.Helper()
+	old := syscall.Umask(0)
+	return func() {
+		syscall.Umask(old)
 	}
 }
 

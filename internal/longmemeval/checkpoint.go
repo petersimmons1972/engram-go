@@ -12,7 +12,7 @@ import (
 // WriteCheckpoint reads entries from ch and appends each as a JSON line to path.
 // Runs until ch is closed. Designed to run in a dedicated goroutine.
 func WriteCheckpoint[T any](path string, ch <-chan T) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		log.Printf("WARN WriteCheckpoint: open %s: %v — all entries will be lost", path, err)
 		for range ch {
@@ -20,6 +20,9 @@ func WriteCheckpoint[T any](path string, ch <-chan T) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	if err := f.Chmod(0o600); err != nil {
+		log.Printf("WARN WriteCheckpoint: chmod %s: %v", path, err)
+	}
 	enc := json.NewEncoder(f)
 	var encodeErrs int
 	var firstErr error
