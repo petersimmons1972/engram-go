@@ -218,10 +218,11 @@ func runRun(cfg *Config) int {
 	}()
 
 	var wgWriter sync.WaitGroup
+	writerErr := make(chan error, 1)
 	wgWriter.Add(1)
 	go func() {
 		defer wgWriter.Done()
-		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+		writerErr <- longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
 	work := make(chan longmemeval.IngestEntry, len(ingestEntries))
@@ -250,6 +251,10 @@ func runRun(cfg *Config) int {
 	wg.Wait()
 	close(innerCh)
 	wgWriter.Wait()
+	if err := <-writerErr; err != nil {
+		log.Printf("ERROR run checkpoint write failed: %v", err)
+		return 1
+	}
 
 	// S9 (#807): emit one end-of-run summary line (token: cleanup-summary).
 	preserved := pl.names()

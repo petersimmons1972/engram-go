@@ -25,11 +25,12 @@ func runIngest(cfg *Config) {
 	log.Printf("ingest: %d items loaded, %d already done", len(items), len(skip))
 
 	ckptCh := make(chan longmemeval.IngestEntry, cfg.Workers*2)
+	writerErr := make(chan error, 1)
 	var wgWriter sync.WaitGroup
 	wgWriter.Add(1)
 	go func() {
 		defer wgWriter.Done()
-		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+		writerErr <- longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
 	work := make(chan longmemeval.Item, len(items))
@@ -51,6 +52,9 @@ func runIngest(cfg *Config) {
 	wg.Wait()
 	close(ckptCh)
 	wgWriter.Wait()
+	if err := <-writerErr; err != nil {
+		log.Fatalf("write ingest checkpoint: %v", err)
+	}
 
 	log.Printf("ingest: complete")
 }
