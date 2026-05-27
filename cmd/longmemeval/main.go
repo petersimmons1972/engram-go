@@ -421,20 +421,32 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	switch subcommand {
 	case "ingest":
-		runIngest(cfg)
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			runIngest(cfg)
+			return 0
+		})
 	case "run":
 		// #703: surface non-zero exit when runRun reports any errors.
-		if exit := runRun(cfg); exit != 0 {
-			return exit
-		}
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			return runRun(cfg)
+		})
 	case "score":
-		if exit := runScore(cfg); exit != 0 {
-			return exit
-		}
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			return runScore(cfg)
+		})
 	case "all":
-		return runAll(cfg)
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			return runAll(cfg)
+		})
 	}
 	return 0
+}
+
+func runStageWithStatus(cfg *Config, stage string, commandLine []string, run func() int) int {
+	startedAt := time.Now().UTC()
+	exitCode := run()
+	writeRunStatus(cfg, stage, startedAt, time.Now().UTC(), exitCode, commandLine)
+	return exitCode
 }
 
 func newRunID() string {

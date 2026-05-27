@@ -23,6 +23,13 @@ type scoreCompleteness struct {
 	Complete            bool
 }
 
+type runStatusSnapshot struct {
+	Completeness   scoreCompleteness
+	IngestRowTotal int
+	RunRowTotal    int
+	ScoreRowTotal  int
+}
+
 func scoreCompletenessFromScores(scores []longmemeval.ScoreEntry) scoreCompleteness {
 	scoreDone, scoreErrors := scoreOutcomeCounts(scores)
 	total := scoreDone + scoreErrors
@@ -127,6 +134,157 @@ func writeRunManifest(
 		return
 	}
 	log.Printf("wrote %s", path)
+}
+
+func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exitCode int, commandLine []string) {
+	snapshot := collectRunStatusSnapshot(cfg)
+	exe, _ := os.Executable()
+	status := map[string]any{
+		"run_id":                cfg.RunID,
+		"stage":                 stage,
+		"started_at":            startedAt.UTC().Format(time.RFC3339),
+		"ended_at":              endedAt.UTC().Format(time.RFC3339),
+		"exit_code":             exitCode,
+		"pid":                   os.Getpid(),
+		"expected_total":        snapshot.Completeness.ExpectedTotal,
+		"ingest_done_total":     snapshot.Completeness.IngestDoneTotal,
+		"completed_run_total":   snapshot.Completeness.CompletedRunTotal,
+		"completed_score_total": snapshot.Completeness.CompletedScoreTotal,
+		"run_error_total":       snapshot.Completeness.RunErrorTotal,
+		"score_error_total":     snapshot.Completeness.ScoreErrorTotal,
+		"complete":              snapshot.Completeness.Complete,
+		"ingest_row_total":      snapshot.IngestRowTotal,
+		"run_row_total":         snapshot.RunRowTotal,
+		"score_row_total":       snapshot.ScoreRowTotal,
+		"binary_path":           exe,
+		"command_line":          commandLine,
+		"git_sha":               bestEffortGit("rev-parse", "HEAD"),
+		"git_dirty":             bestEffortGitDirty(),
+		"server_url":            redactURL(cfg.ServerURL),
+		"llm_url":               redactURL(cfg.LLMBaseURL),
+		"llm_model":             cfg.LLMModel,
+		"scorer_url":            redactURL(cfg.ScorerURL),
+		"scorer_model":          cfg.ScorerModel,
+		"lock_file":             statusLockFile(cfg),
+		"cleanup_policy":        cfg.CleanupPolicy,
+		"recall_topk":           cfg.RecallTopK,
+		"context_topk":          cfg.ContextTopKOverride,
+		"route_snapshot": map[string]any{
+			"server_url":   redactURL(cfg.ServerURL),
+			"llm_url":      redactURL(cfg.LLMBaseURL),
+			"llm_model":    cfg.LLMModel,
+			"scorer_url":   redactURL(cfg.ScorerURL),
+			"scorer_model": cfg.ScorerModel,
+		},
+	}
+	data, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		log.Printf("WARN marshal RUN_STATUS.json: %v", err)
+		return
+	}
+	path := filepath.Join(cfg.OutDir, "RUN_STATUS.json")
+	if err := os.WriteFile(path, data, privateArtifactFileMode); err != nil {
+		log.Printf("WARN write RUN_STATUS.json: %v", err)
+		return
+	}
+	if err := os.Chmod(path, privateArtifactFileMode); err != nil {
+		log.Printf("WARN chmod RUN_STATUS.json: %v", err)
+		return
+	}
+	log.Printf("wrote %s", path)
+}
+
+func collectRunStatusSnapshot(cfg *Config) runStatusSnapshot {
+	itemMap := loadItemMapForStatus(cfg.DataFile)
+	ingestEntries := readIngestEntriesForStatus(cfg.OutDir)
+	runEntries := readRunEntriesForStatus(cfg.OutDir)
+	scoreEntries := readScoreEntriesForStatus(cfg.OutDir)
+
+	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
+	for _, entry := range ingestEntries {
+		if entry.QuestionID == "" {
+			continue
+		}
+		if entry.Status == "done" {
+			ingestMap[entry.QuestionID] = entry
+			continue
+		}
+		delete(ingestMap, entry.QuestionID)
+	}
+	runMap := make(map[string]longmemeval.RunEntry, len(runEntries))
+	for _, entry := range runEntries {
+		if entry.QuestionID == "" {
+			continue
+		}
+		runMap[entry.QuestionID] = entry
+	}
+	return runStatusSnapshot{
+		Completeness:   scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scoreEntries),
+		IngestRowTotal: len(ingestEntries),
+		RunRowTotal:    len(runEntries),
+		ScoreRowTotal:  len(scoreEntries),
+	}
+}
+
+func loadItemMapForStatus(path string) map[string]longmemeval.Item {
+	itemMap := make(map[string]longmemeval.Item)
+	if path == "" {
+		return itemMap
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("WARN RUN_STATUS.json: read data file %q: %v", path, err)
+		return itemMap
+	}
+	var items []longmemeval.Item
+	if err := json.Unmarshal(data, &items); err != nil {
+		log.Printf("WARN RUN_STATUS.json: parse data file %q: %v", path, err)
+		return itemMap
+	}
+	for _, item := range items {
+		if item.QuestionID != "" {
+			itemMap[item.QuestionID] = item
+		}
+	}
+	return itemMap
+}
+
+func readIngestEntriesForStatus(outDir string) []longmemeval.IngestEntry {
+	entries, err := longmemeval.ReadAllIngest(filepath.Join(outDir, "checkpoint-ingest.jsonl"))
+	if err != nil {
+		log.Printf("WARN RUN_STATUS.json: read checkpoint-ingest.jsonl: %v", err)
+		return nil
+	}
+	return entries
+}
+
+func readRunEntriesForStatus(outDir string) []longmemeval.RunEntry {
+	entries, err := longmemeval.ReadAllRun(filepath.Join(outDir, "checkpoint-run.jsonl"))
+	if err != nil {
+		log.Printf("WARN RUN_STATUS.json: read checkpoint-run.jsonl: %v", err)
+		return nil
+	}
+	return entries
+}
+
+func readScoreEntriesForStatus(outDir string) []longmemeval.ScoreEntry {
+	entries, err := longmemeval.ReadAllScore(filepath.Join(outDir, "checkpoint-score.jsonl"))
+	if err != nil {
+		log.Printf("WARN RUN_STATUS.json: read checkpoint-score.jsonl: %v", err)
+		return nil
+	}
+	return entries
+}
+
+func statusLockFile(cfg *Config) string {
+	if !cfg.ExclusiveBackend || cfg.LLMBaseURL == "" {
+		return ""
+	}
+	dir := cfg.BackendLockDir
+	if dir == "" {
+		dir = defaultLockDir()
+	}
+	return backendLockPath(dir, cfg.LLMBaseURL)
 }
 
 func bestEffortGit(args ...string) string {
