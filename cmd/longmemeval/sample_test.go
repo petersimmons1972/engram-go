@@ -104,6 +104,7 @@ func TestPrepareSampleAppliesMaxPerType(t *testing.T) {
 }
 
 func TestPrepareSampleCreatesPrivateArtifacts(t *testing.T) {
+	defer withPermissiveUmask(t)()
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source")
 	out := filepath.Join(dir, "out")

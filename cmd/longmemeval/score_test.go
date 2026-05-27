@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
@@ -141,6 +142,7 @@ func TestWriteScoreReport_Basic(t *testing.T) {
 }
 
 func TestWriteOutputArtifactsArePrivate(t *testing.T) {
+	defer withPermissiveUmask(t)()
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir, RunID: "private-artifacts-test"}
 	scores := []longmemeval.ScoreEntry{
@@ -167,8 +169,12 @@ func TestWriteOutputArtifactsTightenExistingFiles(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir, RunID: "private-artifacts-test"}
 	for _, name := range []string{"hypotheses.jsonl", "retrieval_log.jsonl", "score_report.json"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("stale"), 0o644); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatalf("chmod seed %s: %v", name, err)
 		}
 	}
 
@@ -308,6 +314,14 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode = %o, want %o", filepath.Base(path), got, want)
+	}
+}
+
+func withPermissiveUmask(t *testing.T) func() {
+	t.Helper()
+	old := syscall.Umask(0)
+	return func() {
+		syscall.Umask(old)
 	}
 }
 
