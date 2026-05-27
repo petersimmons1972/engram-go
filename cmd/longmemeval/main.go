@@ -407,7 +407,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			return exit
 		}
 	case "score":
-		runScore(cfg)
+		if exit := runScore(cfg); exit != 0 {
+			return exit
+		}
 	case "all":
 		return runAll(cfg)
 	}
