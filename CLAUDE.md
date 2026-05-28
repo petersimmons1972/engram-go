@@ -132,9 +132,13 @@ Priority stack: 1=clearwatch (revenue), 2=infrastructure (K8s/runbooks), 3=job-s
 
 ## Claude ↔ Codex Handoff
 
-Claude plans and coordinates; Codex implements. Work queue = GitHub Issues
+Claude plans + coordinates; Codex implements. Work queue = GitHub Issues
 (via `~/bin/queue-agent`). Context injection = `codex-handoff` MCP tool.
-Full workflow: `~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow.
+
+**When producing a plan for Codex, use the `write-codex-plan` skill** — it
+enforces the 6-section plan format and the 10 operational protocols
+(branch strategy, completion signal, scope, TDD, etc.). Full architecture:
+`~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow.
 
 ## Cost Guardrails & Wake-the-Founder Triggers [AP.11]
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
