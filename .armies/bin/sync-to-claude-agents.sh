@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+# Regenerate canonical roster + ROSTER.md from profile frontmatter.
+# Abort sync on schema violation so we don't propagate broken data.
+"$HOME/.armies/bin/generate-roster.py" || {
+  echo "ERROR: generate-roster.py failed; aborting sync" >&2
+  exit 1
+}
+
 ARMIES_PROFILES="${HOME}/.armies/profiles"
 CLAUDE_AGENTS="${HOME}/.claude/agents"
 
