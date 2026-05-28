@@ -1,3 +1,16 @@
+---
+project: engram-go
+purpose: Go v2 persistent memory service for AI agents — 19 MCP tools, BM25 + vector + recency + knowledge graph recall.
+stack: [go, postgresql, docker]
+status: active
+entrypoints:
+  - cmd/
+  - engram/
+storage: PostgreSQL; backups in backups/; Docker Compose variants for lan/local/prod
+related: [engram]
+notes: Supersedes engram (Python v1). AI-generated PRs require three-round adversarial review before merge.
+---
+
 # engram-go — Claude Instructions
 
 ## AI-Generated PR Policy
