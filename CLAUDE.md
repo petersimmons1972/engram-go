@@ -126,10 +126,9 @@ Default: Chainguard base images. Python-with-tools: `python:latest-dev` build st
 - **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`. [QC.6]
 - Retry/escalation limits live in §Cost Guardrails ("same error 3+ times" + circular loops).
 
-## Project Priority Stack
-1. **Clearwatch** — revenue: reports, cache, charts, grading
-2. **Infrastructure** — K8s cluster, cert-manager, DNS, storage
-3. **Gmail tracker / job search** — tooling and automation
+## Projects
+Full index → `~/PROJECTS.md` (generated; regenerate with `~/bin/regen-projects-index.sh`).
+Priority stack: 1=clearwatch (revenue), 2=infrastructure (K8s/runbooks), 3=job-search-system.
 
 ## Claude ↔ Codex Handoff
 
