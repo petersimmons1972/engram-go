@@ -7,7 +7,7 @@ status: active
 branch: QA & Review
 xp: 900
 rank: "Admiral"
-model: opus
+model: sonnet
 description: "Verification and TDD compliance validator — post-implementation sweeps, spec compliance checks, regression confirmation. Cannot modify code under review."
 disallowedTools:
   - Write
