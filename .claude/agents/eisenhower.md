@@ -12,6 +12,7 @@ roles:
   primary: coordinator
   secondary: planner
 status: active
+branch: Org & Infra
 xp: 0
 rank: "General of the Army"
 model: opus

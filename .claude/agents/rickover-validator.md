@@ -4,9 +4,10 @@ display_name: "Vice Admiral Hyman G. Rickover"
 roles:
   primary: qa-validator
 status: active
+branch: QA & Review
 xp: 850
 rank: "Vice Admiral"
-model: opus
+model: sonnet
 description: "Zero-defect quality auditor — post-implementation audits, quality gate enforcement, Rickover-level standards. Cannot modify code under review."
 disallowedTools:
   - Write

@@ -4,6 +4,7 @@ display_name: "Fleet Admiral Ernest J. King"
 roles:
   primary: specialist
 status: active
+branch: Advisory & Coordination
 xp: 175
 rank: "Fleet Admiral"
 model: sonnet

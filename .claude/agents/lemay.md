@@ -4,6 +4,7 @@ display_name: "General Curtis E. LeMay"
 roles:
   primary: specialist
 status: active
+branch: Air Power
 xp: 0
 rank: "General"
 model: sonnet

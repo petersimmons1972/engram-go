@@ -12,6 +12,7 @@ description: >
 roles:
   primary: implementer
 status: active
+branch: Org & Infra
 xp: 100
 rank: Colonel
 disallowedTools:

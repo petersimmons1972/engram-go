@@ -10,6 +10,7 @@ description: >
 roles:
   primary: troubleshooter
 status: active
+branch: Ground Ops
 xp: 650
 rank: "General"
 model: sonnet

@@ -4,9 +4,10 @@ display_name: "Major General Leslie R. Groves"
 roles:
   primary: coordinator
 status: active
+branch: Org & Infra
 xp: 700
 rank: "Major General"
-model: opus
+model: sonnet
 description: "Content pipeline coordinator — briefs and deploys journalist specialists, never writes content directly; use when a written deliverable needs scope definition, writer selection, precise briefing, and driven completion"
 disallowedTools:
   - Write

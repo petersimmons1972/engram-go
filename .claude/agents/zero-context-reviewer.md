@@ -4,6 +4,7 @@ display_name: "Zero-Context Reviewer"
 roles:
   primary: observer
 status: active
+branch: QA & Review
 xp: 300
 rank: "Major"
 model: sonnet

@@ -284,5 +284,8 @@
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "worktree": {
+    "baseRef": "head"
+  }
 }

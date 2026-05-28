@@ -1,4 +1,4 @@
-model = "gpt-5.5"
+model = "gpt-5.3-codex"
 model_reasoning_effort = "medium"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -44,7 +44,7 @@ approval_mode = "approve"
 approval_mode = "approve"
 
 [notice.model_migrations]
-"gpt-5.3-codex" = "gpt-5.4"
+"gpt-5.3-codex" = "gpt-5.5"
 
 [features]
 terminal_resize_reflow = true
@@ -64,3 +64,6 @@ SEARXNG_URL = "https://searxng.petersimmons.com"
 
 [mcp_servers.codex-tools]
 command = "/home/psimmons/bin/codex-mcp"
+
+[mcp_servers.agentgateway]
+url = "https://app.agentgateway.com/api/mcp"

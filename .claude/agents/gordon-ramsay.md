@@ -12,9 +12,10 @@ description: >
 roles:
   primary: qa-validator
 status: active
+branch: QA & Review
 xp: 0
 rank: "Michelin Three-Star"
-model: opus
+model: sonnet
 disallowedTools:
   - Write
   - Edit
