@@ -131,6 +131,12 @@ Default: Chainguard base images. Python-with-tools: `python:latest-dev` build st
 2. **Infrastructure** — K8s cluster, cert-manager, DNS, storage
 3. **Gmail tracker / job search** — tooling and automation
 
+## Claude ↔ Codex Handoff
+
+Claude plans and coordinates; Codex implements. Work queue = GitHub Issues
+(via `~/bin/queue-agent`). Context injection = `codex-handoff` MCP tool.
+Full workflow: `~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow.
+
 ## Cost Guardrails & Wake-the-Founder Triggers [AP.11]
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
 - STOP and notify founder if: **>$5 compute** · **production deployment** (kubectl/helm/terraform apply targeting prod namespaces or clusters) · **push to main/master** · **data loss risk** (any operation that deletes, truncates, or overwrites persistent data without a verified backup) · **agent stuck ≥45 min** · **same error 3+ times in this session**
