@@ -1,31 +1,31 @@
 # Learning Index
 
-**Last Updated**: 2026-05-21T11:36:53Z
-**Session**: 20260521-073653
+**Last Updated**: 2026-05-28T13:57:47Z
+**Session**: 20260528-095747
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-05-21: feat(hermes): install Hermes Agent on hermes.petersimmons.com [QC.2, AP.11]
-- 2026-05-20: feat(harness-port): Stage 6+7 — live install + A1→ADV.1 backfill [AP.5, QC.2]
-- 2026-05-20: merge(github): integrate ansible PR #54 (round-2 cleanup) from github [AP.5, AP.8]
-- 2026-05-20: ansible: PR #30 round-2 cleanup (closes #42, #44, #46, #47, #50, #51) (#54)
-- 2026-05-20: refactor(claude-md): Project A Stage 3 — root CLAUDE.md [QC.2, AP.4, AP.5]
-- 2026-05-20: refactor(claude-md): Project A Stage 3 — root CLAUDE.md [QC.2, AP.4, AP.5]
-- 2026-05-20: ansible(registry-hosts): round-2 cleanup — closes #44 #46 #47 #50 #51 #42
-- 2026-05-20: docs(claude): publish boundary mandate — sub-agents commit, coordinator pushes [AP.11]
-- 2026-05-20: memory(lessons): sub-agent briefs must not contain push commands [AP.11]
-- 2026-05-20: claude.md: surface k8s egress firewall as primary diagnosis step
+- 2026-05-26: docs: optimize Codex prompt memory config
+- 2026-05-25: fix(olla): priority LB + leviathan embed deprioritised to 25
+- 2026-05-25: WIP on feat/llama-cpp-embed-leviathan: 394713c fix(hooks): make engram-precheck self-heal k8s-aware [#860]
+- 2026-05-25: index on feat/llama-cpp-embed-leviathan: 394713c fix(hooks): make engram-precheck self-heal k8s-aware [#860]
+- 2026-05-24: fix(hooks): make engram-precheck self-heal k8s-aware [#860]
+- 2026-05-24: docs(claude): codify 2026-05-24 session rules + lessons
+- 2026-05-24: docs(coordinator): mandatory bug-tracking block in every agent brief [AP.12]
+- 2026-05-24: docs(claude-md): add Branch Protection & Merge Discipline rules [QC.1]
+- 2026-05-23: feat(watcher): self-heal pattern - auto-restart on VRAM anomaly (closes #110)
+- 2026-05-22: fix(engram): restore token resolution in flush-fallback hook
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  2 modified, 0 staged
+**Uncommitted**: ⚠️  6 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  15 OK, 0 failed, 2 warnings
+**Cluster**: ✅ All 9 nodes ready | **Services**: health-check failed to run
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh`
