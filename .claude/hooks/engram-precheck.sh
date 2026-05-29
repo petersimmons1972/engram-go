@@ -3,29 +3,40 @@
 . ~/.claude/hooks/lib/timing-v2.sh 2>/dev/null || true
 # PreToolUse hook: fast connectivity check before any mcp__engram__* call.
 # If Engram responds healthy → silent exit 0 (<100ms).
-# If Engram is down → kick off a background restart, emit a systemMessage,
-#   exit 0 immediately. Never polls. Never blocks.
+# If Engram is down → log a warning, emit a systemMessage, exit 0 immediately.
+# Never polls. Never blocks. Never attempts Docker restarts (engram-go is in k8s).
 #
 # engram-go#408: polling loop removed — polling held the PreToolUse hook for
 # up to 20s, making Claude appear hung and prompting accidental user interrupts.
 
 set -euo pipefail
 
-PORT="${ENGRAM_TEST_PORT:-8788}"
-ENGRAM_DIR="${ENGRAM_TEST_DIR:-$HOME/projects/engram-go}"
-HEALTH_URL="http://localhost:${PORT}/health"
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
+HEALTH_URL="${ENGRAM_BASE_URL}/health"
+
+# Short-circuit: if Engram is known-degraded, fast-skip
+# Degraded state expires after 20 minutes.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Fast path: healthy → done in <100ms
 if curl -sf --max-time 1 "$HEALTH_URL" >/dev/null 2>&1; then
     exit 0
 fi
 
-# Engram not responding. Kick off a background restart and return immediately.
-# Never poll here — polling blocks the MCP call and makes Claude appear hung.
-if [[ -d "$ENGRAM_DIR" ]]; then
-    (cd "$ENGRAM_DIR" && docker compose up -d engram-go >/dev/null 2>&1) &
-    disown $! 2>/dev/null || true
-fi
+# Engram not responding. Log it and return immediately.
+# engram-go runs in Kubernetes — do NOT attempt docker compose restart here.
+# If the pod is crashlooping, use: kubectl rollout restart deployment/engram-go -n engram
+echo "[engram-precheck] Health check failed for ${HEALTH_URL}" >&2
 
-printf '{"systemMessage":"⚠️  Engram health check failed — background restart initiated. This MCP call may fail; if so, the result will be captured to fallback.md. Check: docker logs engram-go-app"}'
+printf '{"systemMessage":"⚠️  Engram health check failed. This MCP call may fail; result may be captured to fallback.md. To investigate: kubectl get pods -n engram"}'
 exit 0

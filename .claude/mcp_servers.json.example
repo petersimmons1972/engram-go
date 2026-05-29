@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "agentgateway": {
+      "type": "http",
+      "url": "https://app.agentgateway.com/api/mcp"
+    },
+    "crux": {
+      "type": "http",
+      "url": "http://127.0.0.1:14801/mcp"
+    },
+    "engram": {
+      "type": "sse",
+      "url": "https://engram.petersimmons.com/sse",
+      "headers": {
+        "Authorization": "Bearer ${ENGRAM_API_KEY}"
+      }
+    },
+    "codex-tools": {
+      "command": "/home/psimmons/bin/codex-mcp",
+      "args": []
+    }
+  }
+}

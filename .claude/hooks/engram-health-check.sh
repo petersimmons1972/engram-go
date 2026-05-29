@@ -6,9 +6,23 @@
 
 set -euo pipefail
 
-PORT=8788
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 STATE_FILE="$HOME/.claude/.engram-health-state"
 WARN_THRESHOLD=2  # Number of consecutive failures before warning
+
+# Short-circuit: if Engram is known-degraded, fast-skip
+# Degraded state expires after 20 minutes.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Extract bearer token from mcp_servers.json (reuse pattern from engram-session-recall.sh)
 TOKEN=$(python3 -c "
@@ -24,11 +38,11 @@ except Exception:
 
 [[ -z "$TOKEN" ]] && exit 0
 
-# Perform health check: POST to /quick-recall with 5s timeout
+# Perform health check: POST to /quick-recall with 2s timeout
 HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+  -X POST "${ENGRAM_BASE_URL}/quick-recall" \
   -d '{"query":"health-check","project":"global","limit":1}' 2>/dev/null || echo "000")
 
 # Read previous state
@@ -41,9 +55,10 @@ fi
 
 # Check if this call succeeded (200-299 is success, 000 is timeout/unreachable)
 if [[ "$HTTP_STATUS" =~ ^[2][0-9]{2}$ ]]; then
-  # Success: reset counter
+  # Success: reset counter and clear degraded marker
   FAILURES=0
   LAST_FAILURE_TIME=""
+  rm -f "$DISCONNECT_STATE"
 else
   # Failure: increment counter
   FAILURES=$((PREV_FAILURES + 1))
@@ -69,7 +84,7 @@ mv "$TMPFILE" "$STATE_FILE"
 # so the tool call proceeds. Engram itself reports degraded state via /health
 # and the circuit breaker handles persistent embed failures.
 if [[ "$FAILURES" -ge "$WARN_THRESHOLD" ]]; then
-  printf '{"systemMessage":"Engram health probe failing (consecutive failures=%s, since %s). MCP call will proceed; recall may degrade to BM25+recency. Investigate: curl http://localhost:8788/health"}' "$FAILURES" "$LAST_FAILURE_TIME"
+  printf '{"systemMessage":"Engram health probe failing (consecutive failures=%s, since %s). MCP call will proceed; recall may degrade to BM25+recency. Investigate: curl %s/health"}' "$FAILURES" "$LAST_FAILURE_TIME" "$ENGRAM_BASE_URL"
 fi
 
 exit 0

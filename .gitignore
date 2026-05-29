@@ -1,6 +1,7 @@
 .worktrees/
 
 # Claude credentials & sensitive config - never commit
+.claude/mcp_servers.json
 .claude/.credentials.json
 .claude/.unifi-credentials
 .claude/.truenas-credentials

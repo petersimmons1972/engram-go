@@ -8,7 +8,10 @@
 
 set -euo pipefail
 
-PORT="${ENGRAM_TEST_PORT:-8788}"
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 ENGRAM_DIR="$HOME/projects/engram-go"
 MCP_CONFIG="$HOME/.claude/mcp_servers.json"
 
@@ -18,6 +21,19 @@ source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 # Skip if engram-go project not installed
 [[ -d "$ENGRAM_DIR" ]] || exit 0
 [[ -f "$MCP_CONFIG" ]] || exit 0
+
+# Short-circuit: if Engram is known-degraded/disconnected, skip the network call
+# Degraded state expires after 20 minutes — auto-heals when engram recovers.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    # Still within 20-minute degraded window — fast-skip
+    exit 0
+  fi
+  # Expired — remove stale marker and proceed with live check
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Read token from config (#395)
 TOKEN=$(python3 -c "
@@ -33,7 +49,7 @@ except Exception:
 
 [[ -z "$TOKEN" ]] && exit 0
 
-# File-based auth cache — 120s TTL to avoid per-message latency (#400)
+# File-based auth cache — 600s TTL to avoid per-message latency (#400)
 CACHE="$HOME/.claude/.engram-auth-ok"
 CACHE_TTL=600
 
@@ -42,23 +58,13 @@ if [[ -f "$CACHE" ]]; then
   [[ "$age" -lt "$CACHE_TTL" ]] && exit 0
 fi
 
-
-# Short-circuit: if Engram is known-degraded/disconnected, skip the network call (#latency-fix)
-DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
-if [[ -f "$DISCONNECT_STATE" ]]; then
-  # Honour existing cache if still fresh; otherwise skip silently (don't hammer a degraded server)
-  [[ -f "$CACHE" ]] && exit 0
-  touch "$CACHE"  # extend cache so next call is also fast
-  exit 0
-fi
-
-# Fast auth probe — 3s hard limit
+# Fast auth probe — 2s hard limit
 # 200 or 500 = auth OK (500 = recall backend error, but token was accepted)
 # 401 or 000 = auth broken
-HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 1 \
+HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+  -X POST "${ENGRAM_BASE_URL}/quick-recall" \
   -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
 
 if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
@@ -96,10 +102,10 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
     fi
     ENV_KEY="$FALLBACK_KEY"
     if [[ -n "$ENV_KEY" ]]; then
-      ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 1 \
+      ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
         -H "Authorization: Bearer ${ENV_KEY}" \
         -H "Content-Type: application/json" \
-        -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+        -X POST "${ENGRAM_BASE_URL}/quick-recall" \
         -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
       if [[ "$ENV_STATUS" != "401" && "$ENV_STATUS" != "000" ]]; then
         # Fallback key is valid — write it atomically to mcp_servers.json (#614)
@@ -127,15 +133,16 @@ PYEOF
   fi
 
   if [[ "$REFRESHED" == "true" ]]; then
-    printf '{"systemMessage":"⚠️  Engram auth token was stale — recovered from .env.\\nRun /mcp in Claude Code to reconnect memory."}'
+    printf '{"systemMessage":"⚠️  Engram auth token was stale — recovered from .env.\nRun /mcp in Claude Code to reconnect memory."}'
   else
-    printf '{"systemMessage":"❌ Engram auth failed and auto-recovery failed.\\nRun: cd ~/projects/engram-go && make restart && make setup\\nThen run /mcp in Claude Code."}'
+    printf '{"systemMessage":"❌ Engram auth failed and auto-recovery failed.\nRun: cd ~/projects/engram-go && make restart && make setup\nThen run /mcp in Claude Code."}'
   fi
   exit 0  # must exit here — fall-through would overwrite failure state updates
 fi
 
-# Auth OK: update cache, reset failure counter, silent exit (#404)
+# Auth OK: update cache, reset failure counter, clear any stale degraded marker, silent exit (#404)
 touch "$CACHE"
+rm -f "$DISCONNECT_STATE"
 update_state "consecutive_auth_failures" "0" 2>/dev/null || true
 update_state "last_auth_ok_at" "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" 2>/dev/null || true
 exit 0

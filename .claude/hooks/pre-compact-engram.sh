@@ -3,11 +3,24 @@
 # Uses /quick-store (sessionless REST endpoint) — no SSE handshake required.
 set -euo pipefail
 
-PORT=8788
-BASE="http://127.0.0.1:${PORT}"
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
+BASE="$ENGRAM_BASE_URL"
 PAYLOAD_FILE=$(mktemp "${TMPDIR:-/tmp}/engram-precompact.XXXXXX.json")
 trap 'rm -f "$PAYLOAD_FILE"' EXIT
 cat > "$PAYLOAD_FILE" || true
+
+# Short-circuit: if Engram is known-degraded, skip — never block compaction
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Bail if engram is down — never block compaction
 if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then
