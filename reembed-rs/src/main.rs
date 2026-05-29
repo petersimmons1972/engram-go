@@ -137,13 +137,20 @@ async fn run_batch(
     // Claim a batch inside a transaction and commit immediately so the
     // connection is returned to the pool before the (slow) embed calls begin.
     // FOR UPDATE SKIP LOCKED ensures concurrent replicas don't process the same chunks.
+    //
+    // ORDER BY id DESC: process newest (highest-id) chunks first so recently-written
+    // memories become vector-searchable with minimal delay (#914).
+    // Starvation note: if write rate ever meets embed throughput, oldest chunks may
+    // never drain. In this system write rate is well below embed throughput in steady
+    // state; monitor the pending-reembed gauge and switch to a hybrid if oldest-chunk
+    // age grows unboundedly.
     let mut tx = pool.begin().await.context("begin tx")?;
     let rows: Vec<PendingChunk> = sqlx::query_as(
         r#"
         SELECT id, chunk_text
         FROM chunks
         WHERE embedding IS NULL
-        ORDER BY id
+        ORDER BY id DESC
         LIMIT $1
         FOR UPDATE SKIP LOCKED
         "#,
@@ -860,5 +867,37 @@ mod adaptive_concurrency_tests {
         let mut c = controller(1, 8);
         c.update(10, 0, 0, Duration::from_millis(1_000)); // no panic = pass
         assert_eq!(c.current, 1); // ramp credit from low latency
+    }
+}
+
+// ── Ordering regression tests ─────────────────────────────────────────────────
+
+#[cfg(test)]
+mod ordering_tests {
+    /// Regression guard: the chunk-selection query must use ORDER BY id DESC
+    /// so that newest (highest-id) chunks are embedded first (#914).
+    ///
+    /// Starvation note: DESC ordering may not drain oldest rows if write rate
+    /// meets embed throughput. Monitor the pending-reembed gauge; switch to a
+    /// hybrid if oldest-chunk age grows unboundedly.
+    #[test]
+    fn chunk_query_uses_desc_ordering() {
+        let query = r#"
+        SELECT id, chunk_text
+        FROM chunks
+        WHERE embedding IS NULL
+        ORDER BY id DESC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+        "#;
+        assert!(
+            query.contains("ORDER BY id DESC"),
+            "chunk-selection query must use ORDER BY id DESC (newest-first) — found ASC or missing (#914)"
+        );
+        assert!(
+            !query.contains("ORDER BY id
+"),
+            "chunk-selection query must not use bare ORDER BY id (ASC) — must be DESC (#914)"
+        );
     }
 }
