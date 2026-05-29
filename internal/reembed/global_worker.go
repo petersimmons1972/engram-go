@@ -189,11 +189,17 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("begin claim tx: %w", err)
 	}
 
+	// ORDER BY c.id DESC processes the newest (highest-id) chunks first so
+	// recently-written memories become vector-searchable with minimal delay
+	// (#914). Starvation risk: if write rate ever meets embed throughput,
+	// oldest chunks may never drain. In this system write rate is well below
+	// embed throughput in steady state; monitor the pending-reembed gauge and
+	// switch to a hybrid if oldest-chunk age grows unboundedly.
 	rows, err := tx.Query(ctx, `
 		SELECT c.id, c.chunk_text
 		FROM chunks c
 		WHERE c.embedding IS NULL
-		ORDER BY c.id
+		ORDER BY c.id DESC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`, g.batchSize)
 	if err != nil {
