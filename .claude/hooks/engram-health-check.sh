@@ -25,7 +25,7 @@ except Exception:
 [[ -z "$TOKEN" ]] && exit 0
 
 # Perform health check: POST to /quick-recall with 5s timeout
-HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -X POST "http://127.0.0.1:${PORT}/quick-recall" \

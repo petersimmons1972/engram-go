@@ -51,10 +51,10 @@ except Exception:
 
 _fetch_setup_token() {
   local json
-  json=$(curl -sf --max-time 5 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
+  json=$(curl -sf --max-time 2 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
   if [[ -z "$json" ]]; then
     sleep 3
-    json=$(curl -sf --max-time 5 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
+    json=$(curl -sf --max-time 2 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
   fi
   echo "$json"
 }
@@ -140,7 +140,7 @@ _write_token "$HOME/.claude.json"
 _test_auth() {
   local tok="$1"
   local http_status
-  http_status=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+  http_status=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
     -H "Authorization: Bearer ${tok}" \
     -H "Content-Type: application/json" \
     -X POST "http://127.0.0.1:${PORT}/quick-recall" \
@@ -224,7 +224,7 @@ else
   fi
   ENV_RECOVERED=false
   if [[ -n "$ENV_KEY" ]]; then
-    ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+    ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
       -H "Authorization: Bearer ${ENV_KEY}" \
       -H "Content-Type: application/json" \
       -X POST "http://127.0.0.1:${PORT}/quick-recall" \

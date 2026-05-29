@@ -39,8 +39,14 @@ case "$INFERRED_PROJECT" in
   *)           ENGRAM_PROJECT="" ;;
 esac
 
+# Short-circuit: if Engram is known-degraded/disconnected, skip all network calls (#latency-fix)
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  exit 0
+fi
+
 # Quick auth smoke-test — same endpoint used by all other hooks (#393)
-HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
+HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -X POST "http://127.0.0.1:${PORT}/quick-recall" \
@@ -48,7 +54,7 @@ HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
 [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]] && exit 0
 
 # Call /quick-recall for global project context
-RECALL_JSON=$(curl -sf --max-time 8 \
+RECALL_JSON=$(curl -sf --max-time 3 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -X POST "http://127.0.0.1:${PORT}/quick-recall" \
@@ -57,7 +63,7 @@ RECALL_JSON=$(curl -sf --max-time 8 \
 
 # Second recall for inferred project, merged with global results (#402)
 if [[ -n "$ENGRAM_PROJECT" && "$ENGRAM_PROJECT" != "global" ]]; then
-  PROJECT_RECALL=$(curl -sf --max-time 8 \
+  PROJECT_RECALL=$(curl -sf --max-time 3 \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -X POST "http://127.0.0.1:${PORT}/quick-recall" \

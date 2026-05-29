@@ -35,17 +35,27 @@ except Exception:
 
 # File-based auth cache — 120s TTL to avoid per-message latency (#400)
 CACHE="$HOME/.claude/.engram-auth-ok"
-CACHE_TTL=120
+CACHE_TTL=600
 
 if [[ -f "$CACHE" ]]; then
   age=$(( $(date +%s) - $(date -r "$CACHE" +%s 2>/dev/null || echo 0) ))
   [[ "$age" -lt "$CACHE_TTL" ]] && exit 0
 fi
 
+
+# Short-circuit: if Engram is known-degraded/disconnected, skip the network call (#latency-fix)
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  # Honour existing cache if still fresh; otherwise skip silently (don't hammer a degraded server)
+  [[ -f "$CACHE" ]] && exit 0
+  touch "$CACHE"  # extend cache so next call is also fast
+  exit 0
+fi
+
 # Fast auth probe — 3s hard limit
 # 200 or 500 = auth OK (500 = recall backend error, but token was accepted)
 # 401 or 000 = auth broken
-HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
+HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 1 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -X POST "http://127.0.0.1:${PORT}/quick-recall" \
@@ -86,7 +96,7 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
     fi
     ENV_KEY="$FALLBACK_KEY"
     if [[ -n "$ENV_KEY" ]]; then
-      ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
+      ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 1 \
         -H "Authorization: Bearer ${ENV_KEY}" \
         -H "Content-Type: application/json" \
         -X POST "http://127.0.0.1:${PORT}/quick-recall" \
