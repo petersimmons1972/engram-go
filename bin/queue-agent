@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OWNER="${GITHUB_OWNER:-petersimmons1972}"
+VALID_REPOS="engram-go olla aifleet factvault agent-gateway instinct harness-port yourai codex"
+VALID_AGENTS="codex hermes"
+
+agent=""
+repo=""
+title=""
+brief=""
+priority="p2"
+extra_labels=()
+
+base="$(basename "$0")"
+if [[ "$base" == "queue-codex" ]]; then
+  echo "queue-codex is deprecated; use queue-agent --agent codex" >&2
+  agent="codex"
+fi
+
+usage() {
+  cat <<'EOF'
+Usage: queue-agent --agent <codex|hermes> --repo <name> --title "..." --brief brief.md [--priority p2] [--label bug]
+EOF
+}
+
+fail() {
+  echo "queue-agent: $*" >&2
+  exit 2
+}
+
+contains_word() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+section_nonempty() {
+  local section="$1" file="$2"
+  awk -v section="$section" '
+    $0 == section { in_section=1; next }
+    /^## / && in_section { exit found ? 0 : 1 }
+    in_section && $0 !~ /^[[:space:]]*$/ { found=1 }
+    END { if (in_section && found) exit 0; exit 1 }
+  ' "$file"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent) agent="${2:-}"; shift 2 ;;
+    --repo) repo="${2:-}"; shift 2 ;;
+    --title) title="${2:-}"; shift 2 ;;
+    --brief) brief="${2:-}"; shift 2 ;;
+    --priority) priority="${2:-}"; shift 2 ;;
+    --label) extra_labels+=("${2:-}"); shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "$agent" ]] || fail "--agent is required"
+[[ "$agent" != *","* ]] || fail "--agent accepts a single value in v1; comma-separated multi-agent routing is a v2 feature"
+contains_word "$agent" $VALID_AGENTS || fail "--agent must be one of: $VALID_AGENTS"
+
+[[ -n "$repo" ]] || fail "--repo is required"
+contains_word "$repo" $VALID_REPOS || fail "--repo must be one of: $VALID_REPOS"
+[[ -n "$title" ]] || fail "--title is required"
+[[ -n "$brief" && -f "$brief" ]] || fail "--brief must point to a readable file"
+[[ "$priority" =~ ^p[0-3]$ ]] || fail "--priority must be p0, p1, p2, or p3"
+
+for section in "## Files" "## Acceptance (TDD)" "## Spec refs" "## Constraints"; do
+  section_nonempty "$section" "$brief" || fail "brief missing non-empty section: $section"
+done
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
+{
+  printf 'Filed by queue-agent on %s at the request of: %s\n\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$(git config user.name 2>/dev/null || printf unknown)"
+  cat "$brief"
+} >"$tmp"
+
+labels=(--label "agent/$agent" --label "agent/$agent/queued" --label "priority/$priority")
+for label in "${extra_labels[@]}"; do
+  [[ -n "$label" ]] && labels+=(--label "$label")
+done
+
+gh issue create \
+  --repo "$OWNER/$repo" \
+  --title "$title" \
+  --body-file "$tmp" \
+  "${labels[@]}"
