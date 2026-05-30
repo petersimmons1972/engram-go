@@ -16,8 +16,10 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -360,6 +362,36 @@ func TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason(t *testing.T) {
 	require.Equal(t, false, degraded["embed"])
 	_, hasReason := degraded["reason"]
 	require.False(t, hasReason, "reason must be absent when embedder is healthy (Fix A: #634 fix#4)")
+	_, hasWarnings := out["warnings"]
+	require.False(t, hasWarnings, "warnings must be absent when recall is not degraded")
+}
+
+func TestHandleMemoryRecall_FullMode_Degraded_AddsWarningsAndMetric(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "something",
+	}
+	cfg := testConfig()
+	cfg.RouterURL = "http://litellm:4000"
+	cfg.EmbedderHealth = NewEmbedderHealth(func(context.Context) (bool, string) {
+		return false, "litellm_unreachable"
+	}, 5*time.Second)
+
+	before := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed"))
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	warningsRaw, hasWarnings := out["warnings"]
+	require.True(t, hasWarnings, "warnings must be present when recall is degraded")
+	warnings, ok := warningsRaw.([]any)
+	require.True(t, ok)
+	require.Contains(t, warnings, recallEmbedDegradedWarning)
+
+	after := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed"))
+	require.Equal(t, before+1, after, "degraded recall counter must increment once")
 }
 
 // ── Fix B: cross-project recall→fetch (#634 primary) ─────────────────────────
