@@ -2,8 +2,31 @@
 set -euo pipefail
 
 OWNER="${GITHUB_OWNER:-petersimmons1972}"
-VALID_REPOS="engram-go olla aifleet factvault agent-gateway instinct harness-port yourai codex"
+# Fallback list used only if the authoritative config below is unreachable.
+FALLBACK_REPOS="engram-go olla aifleet factvault agent-gateway instinct harness-port yourai codex"
+# Authoritative target-repo list. Single source of truth shared with the
+# codex-poll poller: petersimmons1972/claude-codex:config/target-repos.txt,
+# cached locally at ~/.cache/claude-codex. Entries are full owner/name slugs,
+# one per line, with `#` comments. We strip the "<owner>/" prefix to get the
+# short repo name this script accepts.
+TARGET_REPOS_FILE="${CLAUDE_CODEX_CACHE:-$HOME/.cache/claude-codex}/config/target-repos.txt"
+
 VALID_AGENTS="codex hermes"
+
+# Derive VALID_REPOS from the shared config file; fall back if unreadable.
+if [[ -r "$TARGET_REPOS_FILE" ]]; then
+  VALID_REPOS="$(
+    sed -e 's/#.*$//' "$TARGET_REPOS_FILE" \
+      | awk '{ $1=$1; print }' \
+      | sed -e 's@^[^/]*/@@' \
+      | grep -v '^$' \
+      | tr '\n' ' '
+  )"
+  # Guard against an empty/garbled file: never end up with no valid repos.
+  [[ -n "${VALID_REPOS// }" ]] || VALID_REPOS="$FALLBACK_REPOS"
+else
+  VALID_REPOS="$FALLBACK_REPOS"
+fi
 
 agent=""
 repo=""
