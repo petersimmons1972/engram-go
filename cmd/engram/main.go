@@ -267,8 +267,21 @@ func run() error {
 		BackoffCap:        *embedCircuitBackoffCap,
 	}
 	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
+	embedGatewayEnabled := envBool("ENGRAM_EMBED_GW_ENABLED", false)
+	modelEmbedder, embedProbeModel := embedClient.(embedgateway.Embedder)
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	probeVec, probeModelID, probeErr := embedClient.(embedgateway.Embedder).EmbedWithModel(probeCtx, "startup probe")
+	probeVec := []float32(nil)
+	probeModelID := ""
+	probeErr := error(nil)
+	if embedGatewayEnabled {
+		if !embedProbeModel {
+			probeErr = fmt.Errorf("startup probe requested embed gateway but client does not implement embedgateway.Embedder")
+		} else {
+			probeVec, probeModelID, probeErr = modelEmbedder.EmbedWithModel(probeCtx, "startup probe")
+		}
+	} else {
+		probeVec, probeErr = embedClient.Embed(probeCtx, "startup probe")
+	}
 	probeCancel()
 	if probeErr != nil {
 		slog.Warn("LiteLLM unavailable at startup — embedding degraded; server will start anyway", "error", probeErr)
@@ -276,14 +289,16 @@ func run() error {
 	} else if len(probeVec) == 0 {
 		slog.Warn("LiteLLM startup probe returned empty vector — embedding degraded")
 		embedDegraded = true
-	} else if err := embedgateway.ValidateEmbedResponse(probeVec, probeModelID); err != nil {
-		if envBool("ENGRAM_EMBED_GW_ENABLED", false) {
+	} else if embedGatewayEnabled {
+		if err := embedgateway.ValidateEmbedResponse(probeVec, probeModelID); err != nil {
 			return fmt.Errorf("embed gateway startup probe rejected embed response: %w", err)
 		}
+		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec), "model_id", probeModelID)
+	} else if err := embedgateway.ValidateEmbedResponse(probeVec, probeModelID); err != nil {
 		slog.Warn("LiteLLM startup probe does not match bge-m3 gateway contract", "err", err)
 		embedDegraded = true
 	} else {
-		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec), "model_id", probeModelID)
+		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec))
 	}
 
 	dsn := *databaseURL
