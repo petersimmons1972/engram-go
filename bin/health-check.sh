@@ -140,14 +140,12 @@ check_proxmox() {
 }
 
 # ── DNS servers ──────────────────────────────────────────────────────────────
+# Pi-holes (192.168.0.231/.232) retired — probes removed 2026-05-30 (aifleet#181)
 check_dns() {
   local out="$TMPDIR_HC/dns"
   {
     echo "=== DNS Servers ==="
-    timeout 2 dig @192.168.0.231 google.com +short > /dev/null 2>&1 \
-      && echo "✅ Primary Pi-hole (231)" || echo "❌ Primary Pi-hole (231)"
-    timeout 2 dig @192.168.0.232 google.com +short > /dev/null 2>&1 \
-      && echo "✅ Secondary Pi-hole (232)" || echo "❌ Secondary Pi-hole (232)"
+    echo "⏸️  Pi-hole 231/232 — retired (aifleet#181)"
   } > "$out" 2>&1
 }
 
