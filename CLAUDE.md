@@ -28,6 +28,7 @@
 - **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
 - **Validator bash guard:** Before dispatching Spruance or Rickover-validator, run `touch ~/.claude/.validator-bash-guard`. After the validation session ends, run `rm ~/.claude/.validator-bash-guard`. This enables the read-only Bash enforcement hook.
 - **Model floor rule:** Always set `model:` explicitly on every agent dispatch. Default to the lowest tier that can do the job correctly — Haiku first, Sonnet only when the task requires judgment or multi-file synthesis, Opus only per the ADV.1–ADV.5 triggers below. Homogeneous Sonnet teams are a smell. If you cannot articulate why Haiku is insufficient for a given agent, use Haiku.
+- **Effort floor rule (Opus 4.8+):** The API default effort is now `high` on all surfaces. Always set `effort:` explicitly on agent dispatches. Use `low` for search, grep, classification, health checks, and single-file reads. Use `medium` for multi-file reads, summarisation, and mechanical transforms. Use `high` only for implementation, debugging, architecture, and multi-step reasoning. Homogeneous high-effort teams are a cost smell — same discipline as the model floor rule.
 - **Advisory mandate:** Every implementation agent brief must include: "Before proposing or selecting any implementation approach, invoke the `advisory-gate` skill if 2+ approaches exist with meaningfully different consequences (ADV.1–ADV.5 triggers)." [ADV.1-ADV.5]
 - **Engram context mandate:** When dispatching implementation agents, include relevant Engram recall results from the current session in the brief. Subagents receive no session hooks — coordinator is responsible for seeding their context. [QC.6]
 - **Publish boundary mandate:** Sub-agent briefs MAY include `git add` and `git commit` but MUST NOT include `git push`. The coordinator owns the publish boundary and pushes only after explicit per-push founder confirmation. Applies to any ref pushed to a shared remote (main, release branches, anything visible beyond the local machine). [AP.11]
@@ -136,9 +137,8 @@ Claude plans + coordinates; Codex implements. Work queue = GitHub Issues
 (via `~/bin/queue-agent`). Context injection = `codex-handoff` MCP tool.
 
 **When producing a plan for Codex, use the `write-codex-plan` skill** — it
-enforces the 6-section plan format and the 10 operational protocols
-(branch strategy, completion signal, scope, TDD, etc.). Full architecture:
-`~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow.
+enforces the 6-section plan format and the 11 operational protocols.
+**Canonical protocol reference:** `petersimmons1972/claude-codex`.
 
 ## Cost Guardrails & Wake-the-Founder Triggers [AP.11]
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work

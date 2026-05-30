@@ -32,8 +32,13 @@
 - Agent selection MUST be cost conscious. Choose the most token-efficient agent or model that can reliably complete each subtask. Reserve larger or more expensive agents for ambiguity, high-risk decisions, broad-context synthesis, adversarial review, or final validation.
 - Every agent assignment MUST be bounded with clear inputs, expected output, stop conditions, and cost expectations. The main agent MUST merge, dedupe, verify, and resolve conflicts instead of treating agent output as authoritative.
 
+# Codex Decision-Hold Convention
+
+See `petersimmons1972/claude-codex/protocol/decision-hold.md` for the
+canonical semantics of `decision/needs-founder` and the `plan-only` pairing.
+
 ## Claude ↔ Codex Handoff
 
 Codex implements work queued by Claude via GitHub Issues (`~/bin/queue-agent`).
-Use `codex-handoff` MCP tool for repo context. Full workflow:
-`~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow.
+Use `codex-handoff` MCP tool for repo context. Full workflow and all protocols:
+`petersimmons1972/claude-codex`.

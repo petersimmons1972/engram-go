@@ -76,72 +76,24 @@ fail if absent or empty. Context and Out of scope are project conventions.
 
 ---
 
-## The 10 Codex Operational Protocols
+## The 11 Codex Operational Protocols (summary)
 
-### 1. Plan structure
-Every plan handed to Codex MUST use the 6-section template above. `queue-agent`
-enforces the middle 4 (`## Files`, `## Acceptance (TDD)`, `## Spec refs`,
-`## Constraints`); Context and Out of scope are project conventions enforced here.
+The canonical protocol text lives at `petersimmons1972/claude-codex/protocol/operational-protocols.md`.
+Full text: **petersimmons1972/claude-codex/protocol/operational-protocols.md**
 
-### 2. Branch strategy
-Codex creates a feature branch named `agent/codex/issue-<N>-<short-slug>`, pushes
-it, and opens a **draft PR** linking back to the issue. The founder reviews and
-merges. Codex does NOT merge its own PRs.
+Summary:
 
-### 3. Completion signal
-When work is complete, Codex applies the `agent/codex/done` label, posts a final
-comment containing commit hash(es), PR link, test results, and any notable findings,
-then **closes the issue itself**. The PR remains open until the founder merges.
-
-### 4. Blocked signal
-When unable to proceed, Codex uses **best-effort with explicit workarounds**: continues
-the work using a reasonable workaround, and posts a comment that prominently labels
-what was worked around and why. Apply `agent/codex/blocked` label only if the work
-cannot proceed at all even with workarounds. The blocker comment must be unmissable —
-never silent compromise.
-
-### 5. Push policy
-Codex pushes `agent/codex/*` feature branches freely. **Never** pushes to
-main/master/release branches. Mirrors the Claude-side publish-boundary rule
-(CLAUDE.md AP.11).
-
-### 6. Scope discipline
-Pragmatic. Codex implements the plan plus **small adjacent fixes** (typos, dead imports,
-broken comments, obvious linter findings in touched files). Every adjacent fix is called
-out in the PR description. Anything larger goes to a new issue (see protocol 8).
-
-### 7. Disagreement protocol
-If Codex thinks the plan is wrong, it posts an objection comment on the issue AND a
-**proposed alternative plan**, then waits for founder resolution. Codex does NOT implement
-the original plan if it believes the alternative is materially better. @-mentions the
-founder.
-
-### 8. Out-of-scope bugs
-If Codex finds a bug not in the current plan:
-
-- **< 5-minute trivial fix** (typo, dead import, missing newline, etc.): fix in current
-  commit, note in PR description under "Adjacent fixes."
-- **Anything larger**: file a new GitHub issue with appropriate severity label
-  (`severity/blocker`, `severity/nice-to-have`, etc.), link from current issue comment,
-  stay in current scope.
-
-Mirrors Claude-side AP.12 bug accountability.
-
-### 9. Memory (Engram)
-At end of each Codex work session:
-
-- `memory_store` decisions, error patterns, and notable context with project tag matching
-  the repo (`clearwatch`, `homelab`, `engram`, `global`, `3dprint`, `family`)
-- Before any architectural or design choice during the session, call
-  `memory_recall(<topic>, project=<repo>)` first
-
-Mirrors Claude-side QC.6.
-
-### 10. TDD discipline
-**Always required.** Every commit must include a test that exercises the change — even
-refactors and dependency upgrades. New behavior follows the strict failing-test-first
-pattern. Refactors should retain or improve existing coverage. No exceptions for
-"obvious" changes. Mirrors Claude-side QC.2/AP.8.
+1. **Plan structure** — 6-section template required; `queue-agent` validates 4 sections
+2. **Branch strategy** — `agent/codex/issue-<N>-<slug>`; draft PR; founder merges
+3. **Completion signal** — `done` label + commit hash + PR link + test results; close issue
+4. **Blocked signal** — best-effort with explicit workarounds; `blocked` label only when truly stuck
+5. **Push policy** — push feature branches freely; never push to main/master/release
+6. **Scope discipline** — implement plan + small adjacent fixes; anything larger → new issue
+7. **Disagreement protocol** — post objection + alternative plan; wait for founder; no silent substitution
+8. **Out-of-scope bugs** — trivial (<5 min): fix in commit; larger: file new issue, stay in scope
+9. **Memory (Engram)** — `memory_store` decisions/errors at session end; `memory_recall` before arch choices
+10. **TDD discipline** — every commit includes a test; failing test before implementation; no exceptions
+11. **Subagent delegation** — delegate independent/parallelizable work to subagents; keep orchestration in main context
 
 ## Invocation Pattern
 
@@ -162,7 +114,7 @@ Once the plan is written, execute in this order:
 
 ## Cross-References
 
-- Architecture: `~/projects/codex/README.md` § Claude ↔ Codex Hybrid Workflow
+- Architecture and all protocol text: `petersimmons1972/claude-codex`
 - Plan that established this: `~/.claude/plans/start-with-the-bridge-flickering-torvalds.md`
-- Tooling: `~/bin/queue-agent`, `~/projects/codex/src/bin/codex-handoff.rs`, `codex-mcp` server
+- Tooling: `~/bin/queue-agent`, `petersimmons1972/codex` (`codex-handoff`, `codex-mcp`)
 - Tripwire: GitHub issue petersimmons1972/homelab-config#60 (2026-06-11 review)
