@@ -87,7 +87,10 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	// factory for a given project at a time. All concurrent callers for the
 	// same project share the result, preventing TOCTOU races and duplicate
 	// backend connection pools.
-	v, err, _ := p.sfg.Do(project, func() (any, error) {
+	//
+	// DoChan lets waiters respect their own ctx cancellation while the shared
+	// initialization continues in the background for other waiters.
+	ch := p.sfg.DoChan(project, func() (any, error) {
 		// Re-check under read lock in case a previous singleflight call (from
 		// before pool startup) already inserted this project.
 		p.mu.RLock()
@@ -97,11 +100,11 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 		}
 		p.mu.RUnlock()
 
-		// Bound the factory with a 10s timeout so a slow DB migration (schema
-		// init, connection pool setup) cannot block the caller indefinitely.
-		// singleflight does NOT cache errors, so a timeout here allows the next
-		// Get() call to retry the factory rather than returning a stale error.
-		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
+		// Bound shared factory work with a 10s timeout so a slow DB migration
+		// cannot block initialization indefinitely.
+		// Use Background() so a single canceled waiter does not abort the
+		// shared initialization for all current and future callers.
+		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer initCancel()
 		h, err := p.factory(initCtx, project)
 		if err != nil {
@@ -126,10 +129,15 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 		p.engines[project] = entry
 		return h, nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*EngineHandle), nil //nolint:errcheck
 	}
-	return v.(*EngineHandle), nil //nolint:errcheck
 }
 
 // evictLRULocked removes the engine with the oldest lastAccess time.

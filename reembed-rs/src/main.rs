@@ -26,6 +26,9 @@ struct Config {
     embed_sub_batch: usize,
     interval: Duration,
     embed_timeout: Duration,
+    startup_probe_max_attempts: usize,
+    startup_probe_initial_backoff: Duration,
+    startup_probe_max_backoff: Duration,
     // Adaptive concurrency config
     concurrency_min: usize,
     concurrency_max: usize,
@@ -57,6 +60,15 @@ impl Config {
             embed_sub_batch: env_usize("ENGRAM_EMBED_SUB_BATCH", 8),
             interval: env_duration("ENGRAM_REEMBED_INTERVAL", Duration::from_secs(10)),
             embed_timeout: Duration::from_secs(120),
+            startup_probe_max_attempts: env_usize("ENGRAM_REEMBED_STARTUP_PROBE_MAX_ATTEMPTS", 5),
+            startup_probe_initial_backoff: env_duration(
+                "ENGRAM_REEMBED_STARTUP_PROBE_INITIAL_BACKOFF",
+                Duration::from_secs(2),
+            ),
+            startup_probe_max_backoff: env_duration(
+                "ENGRAM_REEMBED_STARTUP_PROBE_MAX_BACKOFF",
+                Duration::from_secs(60),
+            ),
             concurrency_min: env_usize("ENGRAM_REEMBED_CONCURRENCY_MIN", 1),
             concurrency_max: env_usize("ENGRAM_REEMBED_CONCURRENCY_MAX", legacy_concurrency),
             latency_high_ms: env_u64("ENGRAM_REEMBED_LATENCY_HIGH_MS", 2000),
@@ -192,16 +204,20 @@ async fn run_batch(
             let t0 = std::time::Instant::now();
 
             // Truncate each text to the model context window.
-            let texts: Vec<String> = chunks.iter().map(|c| {
-                if c.chunk_text.len() > max_chars {
-                    let end = (0..=max_chars).rev()
-                        .find(|&i| c.chunk_text.is_char_boundary(i))
-                        .unwrap_or(0);
-                    c.chunk_text[..end].to_string()
-                } else {
-                    c.chunk_text.clone()
-                }
-            }).collect();
+            let texts: Vec<String> = chunks
+                .iter()
+                .map(|c| {
+                    if c.chunk_text.len() > max_chars {
+                        let end = (0..=max_chars)
+                            .rev()
+                            .find(|&i| c.chunk_text.is_char_boundary(i))
+                            .unwrap_or(0);
+                        c.chunk_text[..end].to_string()
+                    } else {
+                        c.chunk_text.clone()
+                    }
+                })
+                .collect();
 
             let embed_result = tokio::time::timeout(
                 timeout,
@@ -237,13 +253,12 @@ async fn run_batch(
             };
 
             for (chunk, vec) in chunks.iter().zip(vecs) {
-                if let Err(e) = sqlx::query(
-                    "UPDATE chunks SET embedding = $1::vector WHERE id = $2",
-                )
-                .bind(Vector::from(vec))
-                .bind(&chunk.id)
-                .execute(&pool)
-                .await
+                if let Err(e) =
+                    sqlx::query("UPDATE chunks SET embedding = $1::vector WHERE id = $2")
+                        .bind(Vector::from(vec))
+                        .bind(&chunk.id)
+                        .execute(&pool)
+                        .await
                 {
                     warn!(chunk_id = %chunk.id, err = %e, "update failed");
                 }
@@ -296,24 +311,61 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         .build()
         .context("build http client")?;
 
-    // Startup probe — hard-fail if the embed endpoint is unreachable.
-    // Exiting here lets Docker/k8s restart the container with backoff, which
-    // is simpler and more reliable than internal retry loops ("let it crash").
-    match embed_batch(
-        &http,
-        &cfg.litellm_url,
-        &cfg.litellm_api_key,
-        &cfg.embed_model,
-        cfg.embed_dims,
-        &[String::from("probe")],
-    )
-    .await
-    {
-        Ok(v) => info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, "litellm probe ok"),
-        Err(e) => {
-            error!(err = %e, url = %cfg.litellm_url, "embed endpoint unreachable at startup — exiting so container restarts");
-            std::process::exit(1);
+    // Startup probe with bounded retry/backoff so transient backend outages
+    // (restart windows, brief network blips) do not trigger crash loops.
+    let attempts = cfg.startup_probe_max_attempts.max(1);
+    let mut backoff = cfg.startup_probe_initial_backoff;
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut probe_ok = false;
+    for attempt in 1..=attempts {
+        match embed_batch(
+            &http,
+            &cfg.litellm_url,
+            &cfg.litellm_api_key,
+            &cfg.embed_model,
+            cfg.embed_dims,
+            &[String::from("probe")],
+        )
+        .await
+        {
+            Ok(v) => {
+                info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, attempt, "litellm probe ok");
+                probe_ok = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                if attempt == attempts {
+                    break;
+                }
+                warn!(
+                    attempt,
+                    max_attempts = attempts,
+                    sleep_ms = backoff.as_millis(),
+                    url = %cfg.litellm_url,
+                    "startup embed probe failed; retrying with backoff"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(cfg.startup_probe_max_backoff);
+            }
         }
+    }
+    if !probe_ok {
+        if let Some(e) = last_err {
+            error!(
+                err = %e,
+                attempts,
+                url = %cfg.litellm_url,
+                "embed endpoint unreachable after startup probe retries — exiting"
+            );
+        } else {
+            error!(
+                attempts,
+                url = %cfg.litellm_url,
+                "embed endpoint unreachable after startup probe retries — exiting"
+            );
+        }
+        std::process::exit(1);
     }
 
     // Pre-warm connection pool and measure actual endpoint concurrency.
@@ -332,7 +384,10 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
             let dims = cfg.embed_dims;
             let sc = Arc::clone(&successes);
             warmup.spawn(async move {
-                if embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")]).await.is_ok() {
+                if embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")])
+                    .await
+                    .is_ok()
+                {
                     sc.fetch_add(1, Ordering::Relaxed);
                 }
             });
@@ -355,6 +410,7 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         interval_ms = cfg.interval.as_millis(),
         concurrency_min = cfg.concurrency_min,
         concurrency_max = cfg.concurrency_max,
+        startup_probe_max_attempts = cfg.startup_probe_max_attempts,
         "engram-reembed started"
     );
 
@@ -590,15 +646,26 @@ impl AdaptiveConcurrency {
 mod config_tests {
     use super::*;
 
+    fn reset_env() {
+        for key in [
+            "ENGRAM_REEMBED_CONCURRENCY_MIN",
+            "ENGRAM_REEMBED_CONCURRENCY_MAX",
+            "ENGRAM_REEMBED_LATENCY_HIGH_MS",
+            "ENGRAM_REEMBED_LATENCY_LOW_MS",
+            "ENGRAM_REEMBED_RAMP_AFTER",
+            "ENGRAM_REEMBED_CONCURRENCY",
+            "ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE",
+            "ENGRAM_REEMBED_STARTUP_PROBE_MAX_ATTEMPTS",
+            "ENGRAM_REEMBED_STARTUP_PROBE_INITIAL_BACKOFF",
+            "ENGRAM_REEMBED_STARTUP_PROBE_MAX_BACKOFF",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
+
     #[test]
     fn config_adaptive_defaults() {
-        // Unset all adaptive vars so we see defaults.
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY_MIN");
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY_MAX");
-        std::env::remove_var("ENGRAM_REEMBED_LATENCY_HIGH_MS");
-        std::env::remove_var("ENGRAM_REEMBED_LATENCY_LOW_MS");
-        std::env::remove_var("ENGRAM_REEMBED_RAMP_AFTER");
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY");
+        reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert_eq!(cfg.concurrency_min, 1);
@@ -611,28 +678,26 @@ mod config_tests {
     #[test]
     fn config_concurrency_backward_compat() {
         // Legacy ENGRAM_REEMBED_CONCURRENCY sets concurrency_max when MAX absent.
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY_MAX");
+        reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert_eq!(cfg.concurrency_max, 4);
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY");
     }
 
     #[test]
     fn config_explicit_max_overrides_legacy() {
+        reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY_MAX", "12");
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert_eq!(cfg.concurrency_max, 12);
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY");
-        std::env::remove_var("ENGRAM_REEMBED_CONCURRENCY_MAX");
     }
 
     #[test]
     fn config_failure_rate_backpressure_default() {
-        std::env::remove_var("ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE");
+        reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert!((cfg.failure_rate_backpressure - 0.10).abs() < f64::EPSILON);
@@ -640,11 +705,11 @@ mod config_tests {
 
     #[test]
     fn config_failure_rate_backpressure_override() {
+        reset_env();
         std::env::set_var("ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE", "0.05");
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert!((cfg.failure_rate_backpressure - 0.05).abs() < f64::EPSILON);
-        std::env::remove_var("ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE");
     }
 }
 
@@ -691,8 +756,8 @@ mod adaptive_concurrency_tests {
         // Two clean batches (not enough to ramp), then a failure.
         c.update(10, 0, 1, Duration::from_millis(1_000)); // clean 1
         c.update(10, 0, 1, Duration::from_millis(1_000)); // clean 2
-        c.update(10, 1, 1, Duration::from_millis(30));    // failure — resets streak
-        // Two more clean batches — should NOT ramp (streak restarted).
+        c.update(10, 1, 1, Duration::from_millis(30)); // failure — resets streak
+                                                       // Two more clean batches — should NOT ramp (streak restarted).
         c.update(10, 0, 1, Duration::from_millis(1_000)); // clean 1 (new streak)
         c.update(10, 0, 1, Duration::from_millis(1_000)); // clean 2
         assert_eq!(c.current, 1); // still at min, streak not complete
@@ -722,10 +787,12 @@ mod adaptive_concurrency_tests {
     fn recovery_after_failures_is_gradual() {
         let mut c = controller(1, 8);
         // Ramp to 4 then hit failures to drop to 2.
-        for _ in 0..9 { c.update(10, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4);
         c.update(10, 1, 1, Duration::from_millis(30)); // 4 → 2
-        // Recovery: needs ramp_after=3 clean batches per step.
+                                                       // Recovery: needs ramp_after=3 clean batches per step.
         c.update(10, 0, 1, Duration::from_millis(1_000));
         c.update(10, 0, 1, Duration::from_millis(1_000));
         assert_eq!(c.current, 2); // not yet
@@ -739,7 +806,9 @@ mod adaptive_concurrency_tests {
     fn high_latency_halves_concurrency() {
         let mut c = controller(1, 8);
         // Ramp first so we have room to observe halving.
-        for _ in 0..9 { c.update(10, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4);
         c.update(10, 0, 1, Duration::from_millis(30_000)); // 3000ms/chunk > 2000 threshold
         assert_eq!(c.current, 2);
@@ -748,7 +817,9 @@ mod adaptive_concurrency_tests {
     #[test]
     fn high_latency_floors_at_min() {
         let mut c = controller(3, 4);
-        for _ in 0..3 { c.update(10, 0, 1, Duration::from_millis(1_000)); } // ramp: 3 → 4
+        for _ in 0..3 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        } // ramp: 3 → 4
         c.update(10, 0, 1, Duration::from_millis(30_000)); // halve 4 → 2, floor at 3
         assert_eq!(c.current, 3);
     }
@@ -784,7 +855,9 @@ mod adaptive_concurrency_tests {
     #[test]
     fn dead_band_latency_leaves_state_unchanged() {
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(10, 0, 1, Duration::from_millis(1_000)); } // → 4
+        for _ in 0..9 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        } // → 4
         c.update(10, 0, 1, Duration::from_millis(8_000)); // 800ms/chunk — dead band [400, 2000)
         assert_eq!(c.current, 4);
     }
@@ -792,7 +865,9 @@ mod adaptive_concurrency_tests {
     #[test]
     fn empty_batch_skips_update() {
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(10, 0, 1, Duration::from_millis(1_000)); } // → 4
+        for _ in 0..9 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        } // → 4
         c.update(0, 0, 1, Duration::from_millis(1_000)); // empty — no change
         assert_eq!(c.current, 4);
     }
@@ -800,9 +875,13 @@ mod adaptive_concurrency_tests {
     #[test]
     fn ceiling_is_respected_on_ramp() {
         let mut c = controller(1, 4);
-        for _ in 0..9 { c.update(10, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4); // at ceiling
-        for _ in 0..3 { c.update(10, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..3 {
+            c.update(10, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4); // clamped
     }
 
@@ -813,7 +892,9 @@ mod adaptive_concurrency_tests {
         // 1/20 sub-batches failed (5%) — below 10% threshold.
         // Concurrency must hold; no halve, no ramp credit.
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(100, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(100, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4); // ramped to 4 by 9 clean batches
         c.update(2000, 1, 20, Duration::from_millis(80_000)); // 5% failure rate
         assert_eq!(c.current, 4); // must not halve
@@ -835,7 +916,9 @@ mod adaptive_concurrency_tests {
     fn high_failure_rate_halves_concurrency() {
         // 3/20 (15%) ≥ 10% threshold → halve + reset streak.
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(100, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(100, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4);
         c.update(2000, 3, 20, Duration::from_millis(80_000)); // 15%
         assert_eq!(c.current, 2);
@@ -845,7 +928,9 @@ mod adaptive_concurrency_tests {
     fn threshold_boundary_exactly_ten_percent_triggers_backoff() {
         // 10/100 = exactly 10.0% — must trigger halve.
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(100, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(100, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4);
         c.update(1000, 10, 100, Duration::from_millis(80_000));
         assert_eq!(c.current, 2);
@@ -855,7 +940,9 @@ mod adaptive_concurrency_tests {
     fn threshold_boundary_nine_percent_holds() {
         // 9/100 = 9% < 10% — must hold, not halve.
         let mut c = controller(1, 8);
-        for _ in 0..9 { c.update(100, 0, 1, Duration::from_millis(1_000)); }
+        for _ in 0..9 {
+            c.update(100, 0, 1, Duration::from_millis(1_000));
+        }
         assert_eq!(c.current, 4);
         c.update(1000, 9, 100, Duration::from_millis(80_000));
         assert_eq!(c.current, 4);
@@ -895,8 +982,10 @@ mod ordering_tests {
             "chunk-selection query must use ORDER BY id DESC (newest-first) — found ASC or missing (#914)"
         );
         assert!(
-            !query.contains("ORDER BY id
-"),
+            !query.contains(
+                "ORDER BY id
+"
+            ),
             "chunk-selection query must not use bare ORDER BY id (ASC) — must be DESC (#914)"
         );
     }

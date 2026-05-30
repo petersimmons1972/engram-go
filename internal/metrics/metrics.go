@@ -140,6 +140,12 @@ var (
 		Name: "engram_recall_embed_timeout_total",
 		Help: "memory_recall calls that exceeded embed timeout and fell back to BM25+recency",
 	})
+	// RecallDegradedTotal counts memory_recall responses that ran in degraded
+	// mode for any embed-path reason (timeout, backend unavailable, etc.).
+	RecallDegradedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_recall_degraded_total",
+		Help: "memory_recall responses served in degraded mode by reason",
+	}, []string{"reason"})
 
 	// #673: pgxpool connection pool gauges. Operators need visibility into
 	// pool saturation — until now /health Ping succeeded even when the pool
@@ -205,6 +211,7 @@ func init() {
 		EmbedCircuitTransitions,
 		StoreEmbedAsyncTotal,
 		RecallEmbedTimeoutTotal,
+		RecallDegradedTotal,
 		DBPoolAcquiredConns,
 		DBPoolIdleConns,
 		DBPoolTotalConns,
