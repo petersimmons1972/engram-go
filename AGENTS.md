@@ -37,6 +37,16 @@
 See `petersimmons1972/claude-codex/protocol/decision-hold.md` for the
 canonical semantics of `decision/needs-founder` and the `plan-only` pairing.
 
+- `decision/needs-founder` means plan/comment only; do not implement code or
+  execute destructive/remediating ops for that issue while the label is present.
+- `agent/codex/queued` is not sufficient to implement when
+  `decision/needs-founder` is present.
+- `decision/needs-founder` + `agent/codex/plan-only` is an explicit
+  no-implementation hold.
+- Implementation is allowed only after `decision/needs-founder` is removed and
+  a normal Codex dispatch label is present (for example `agent/codex/queued`).
+- `aifleet#308` is currently decided and implementable when queued.
+
 ## Claude ↔ Codex Handoff
 
 Codex implements work queued by Claude via GitHub Issues (`~/bin/queue-agent`).
