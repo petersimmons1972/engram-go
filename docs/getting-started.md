@@ -224,7 +224,9 @@ ENGRAM_CLAUDE_RERANK=false                # Use Claude to rerank results (slower
 | `POSTGRES_USER`            | `engram`             | No       | Database user (rarely needs changing)                 |
 | `ENGRAM_TRUST_PROXY_HEADERS` | `false`              | No       | Trust `X-Forwarded-For` / `X-Real-IP` for rate limiting. Set to `1` only when a trusted reverse proxy is in front. |
 | `ENGRAM_RECALL_MAX_TOP_K`  | `500`                | No       | Hard cap on results returned by `memory_recall`. Increase for bulk export use cases. |
-| `ENGRAM_REEMBED_BATCH_SIZE`| `100`                | No       | Chunks processed per GlobalReembedder iteration. Increase for faster catch-up after model changes. |
+| `ENGRAM_EMBED_GW_ENABLED` | `false`              | No       | Enable the unified embedding gateway. Default-off; when enabled it owns background embedding through a dedicated DB pool. |
+| `ENGRAM_EMBED_GW_BATCH_SIZE` | `100`             | No       | Chunks processed per embedding gateway batch. Falls back to `ENGRAM_REEMBED_BATCH_SIZE` if unset. |
+| `ENGRAM_REEMBED_BATCH_SIZE`| `100`                | No       | Chunks processed per legacy GlobalReembedder iteration. Also used as gateway batch-size fallback during rollout. |
 | `ENGRAM_REEMBED_INTERVAL`  | `10s`                | No       | Delay between GlobalReembedder polling iterations. Accepts Go duration strings (`10s`, `1m`). |
 
 ---

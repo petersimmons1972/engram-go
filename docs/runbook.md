@@ -410,6 +410,34 @@ go run ./cmd/longmemeval route-discover --purpose generation \
   | jq '{llm_url, llm_model, olla_models}'
 ```
 
+## Unified Embedding Gateway
+
+The gateway is default-off. Enable it with:
+
+```bash
+ENGRAM_EMBED_GW_ENABLED=true
+ENGRAM_EMBED_GW_BATCH_SIZE=100
+```
+
+Rollback is a config-only restart with `ENGRAM_EMBED_GW_ENABLED=false`; the
+legacy `GlobalReembedder` resumes draining chunks with `embedding IS NULL`.
+Do not enable an external `reembed-rs` sidecar as the primary drain path during
+gateway rollout.
+
+Watch these metrics during canary:
+
+- `engram_chunks_pending_reembed`
+- `engram_embed_validation_rejections_total{class=...}`
+- `engram_embed_gateway_degraded_total`
+- `engram_embed_gateway_batches_total{result=...}`
+- `engram_embed_gateway_concurrency`
+
+If validation rejections climb, confirm the embedding backend is reporting an
+accepted bge-m3 alias and returning 1024 dimensions. After five consecutive
+validation rejections the gateway enters degraded hold for two minutes, leaves
+affected chunks NULL, and retries after the hold expires. Disable the gateway if
+the hold repeats after backend routing is corrected.
+
 Rollback:
 
 1. Stop sending canary traffic to the W6800 host.

@@ -11,11 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 // FlushPendingEmbeddings backfills NULL embeddings on chunks for the given
@@ -116,6 +116,10 @@ func (f *fakeTestEmbedClient) Embed(_ context.Context, text string) ([]float32, 
 		}
 	}
 	return vec, nil
+}
+func (f *fakeTestEmbedClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
 }
 func (f *fakeTestEmbedClient) Name() string    { return "fake" }
 func (f *fakeTestEmbedClient) Dimensions() int { return f.dims }

@@ -30,6 +30,11 @@ func (e permanentErrorEmbedder) Embed(_ context.Context, _ string) ([]float32, e
 	}
 }
 
+func (e permanentErrorEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
+}
+
 func (e permanentErrorEmbedder) Name() string    { return e.current }
 func (e permanentErrorEmbedder) Dimensions() int { return 384 }
 

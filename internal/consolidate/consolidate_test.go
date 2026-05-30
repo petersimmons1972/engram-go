@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testDSN(t *testing.T) string  { return testutil.DSN(t) }
+func testDSN(t *testing.T) string      { return testutil.DSN(t) }
 func uniqueProject(base string) string { return testutil.UniqueProject(base) }
 
 // fakeEmbedder returns deterministic vectors that encode similarity via a simple hash.
@@ -36,11 +36,14 @@ func (f *fakeEmbedder) Embed(_ context.Context, text string) ([]float32, error) 
 	}
 	return vec, nil
 }
+func (f *fakeEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
+}
 func (f *fakeEmbedder) Name() string    { return "fake" }
 func (f *fakeEmbedder) Dimensions() int { return f.dims }
 
 var _ embed.Client = (*fakeEmbedder)(nil)
-
 
 // ── InferRelationships ────────────────────────────────────────────────────────
 
@@ -160,7 +163,7 @@ func TestRunAll_ReturnsStats(t *testing.T) {
 	runner := consolidate.NewRunner(backend, project, &fakeEmbedder{dims: 1024})
 
 	m := &types.Memory{
-		Content: "Sleep consolidation: infer relationships between related memories",
+		Content:    "Sleep consolidation: infer relationships between related memories",
 		MemoryType: types.MemoryTypePattern, Project: project, Importance: 2, StorageMode: "focused",
 	}
 	m.ID = types.NewMemoryID()
@@ -513,11 +516,11 @@ func storeContradictingPair(t *testing.T, ctx context.Context, backend db.Backen
 
 	// Older memory — created olderOffset in the past.
 	mOld := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "PostgreSQL uses MVCC for concurrency control",
-		MemoryType: types.MemoryTypeArchitecture,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "PostgreSQL uses MVCC for concurrency control",
+		MemoryType:  types.MemoryTypeArchitecture,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, mOld))
@@ -530,11 +533,11 @@ func storeContradictingPair(t *testing.T, ctx context.Context, backend db.Backen
 
 	// Newer memory — created "now" (StoreMemory sets created_at=NOW()).
 	mNew := &types.Memory{
-		ID:         types.NewMemoryID(),
-		Content:    "PostgreSQL does not use MVCC for concurrency control",
-		MemoryType: types.MemoryTypeArchitecture,
-		Project:    project,
-		Importance: 2,
+		ID:          types.NewMemoryID(),
+		Content:     "PostgreSQL does not use MVCC for concurrency control",
+		MemoryType:  types.MemoryTypeArchitecture,
+		Project:     project,
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, mNew))

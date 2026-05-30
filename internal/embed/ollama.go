@@ -22,6 +22,8 @@ import (
 type Client interface {
 	// Embed returns a float32 vector for the given text.
 	Embed(ctx context.Context, text string) ([]float32, error)
+	// EmbedWithModel returns a vector plus the model identifier reported by the embedding backend.
+	EmbedWithModel(ctx context.Context, text string) ([]float32, string, error)
 	// Name returns the model identifier (e.g. "nomic-embed-text").
 	Name() string
 	// Dimensions returns the vector size, or 0 before the first successful embed.
@@ -184,6 +186,14 @@ func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error
 		return nil, fmt.Errorf("ollama embed: empty response")
 	}
 	return result.Embeddings[0], nil
+}
+
+func (c *OllamaClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := c.Embed(ctx, text)
+	if err != nil {
+		return nil, "", err
+	}
+	return vec, c.model, nil
 }
 
 func (c *OllamaClient) ensureModel(ctx context.Context) error {

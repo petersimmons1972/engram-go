@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
-	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/petersimmons1972/engram/internal/testutil"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // TestGlobalReembedder_QueryOrderIsNewestFirst_Source asserts that the
@@ -160,6 +160,10 @@ type trackingEmbedder struct {
 func (e *trackingEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
 	e.embeds = append(e.embeds, text)
 	return make([]float32, e.dims), nil
+}
+func (e *trackingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
 }
 func (e *trackingEmbedder) Name() string    { return "tracking" }
 func (e *trackingEmbedder) Dimensions() int { return e.dims }

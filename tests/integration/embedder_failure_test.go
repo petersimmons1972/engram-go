@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/mcp"
@@ -32,7 +33,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/testutil"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
 
 // testDSN returns the TEST_DATABASE_URL environment variable, skipping t if unset.
@@ -62,6 +62,11 @@ func (f *fakeClientWithName) Embed(_ context.Context, text string) ([]float32, e
 	return vec, nil
 }
 
+func (f *fakeClientWithName) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
+}
+
 func (f *fakeClientWithName) Name() string    { return f.name }
 func (f *fakeClientWithName) Dimensions() int { return f.dims }
 
@@ -75,6 +80,11 @@ type transientErrorEmbedder struct {
 
 func (e *transientErrorEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, errors.New("connection refused to embedder backend")
+}
+
+func (e *transientErrorEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
 }
 
 func (e *transientErrorEmbedder) Name() string    { return e.name }
@@ -91,6 +101,11 @@ type hangingEmbedder struct {
 func (h *hangingEmbedder) Embed(ctx context.Context, _ string) ([]float32, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+func (h *hangingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := h.Embed(ctx, text)
+	return vec, h.Name(), err
 }
 
 func (h *hangingEmbedder) Name() string    { return "hanging-fake" }

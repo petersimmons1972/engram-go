@@ -12,6 +12,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/embedmodel"
 	"github.com/petersimmons1972/engram/internal/envconf"
 	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/minhash"
@@ -25,6 +26,10 @@ import (
 // (avoiding an import cycle) and tests can supply a stub.
 type globalNotifier interface {
 	Notify()
+}
+
+type embedGateway interface {
+	Enqueue(chunkIDs []string)
 }
 
 // MergeReviewer reviews candidate near-duplicate pairs and returns merge decisions.
@@ -155,14 +160,11 @@ type SearchEngine struct {
 	decayer             *DecayWorker
 	weightCache         *WeightCache        // nil when no pgxpool available (pre-migration or test)
 	globalReembedder    globalNotifier      // non-nil after SetGlobalReembedder; woken on chunk store
+	embedGateway        embedGateway        // non-nil when ENGRAM_EMBED_GW_ENABLED=true
 	PreferenceExtractor PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
-	// storeEmbedSync, when true, embeds chunks inline during Store rather than
-	// deferring to the reembed worker. Controlled by ENGRAM_STORE_EMBED_MODE=sync.
-	// Default (false) is async: Store returns immediately after the DB write.
-	storeEmbedSync bool
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -184,6 +186,10 @@ func (e *SearchEngine) Embedder() embed.Client {
 // constructing the engine in main; nil is safe (Notify is skipped).
 func (e *SearchEngine) SetGlobalReembedder(n globalNotifier) {
 	e.globalReembedder = n
+}
+
+func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
+	e.embedGateway = g
 }
 
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
@@ -220,7 +226,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		dims = targetDims[0]
 	}
 	recallTimeoutMS := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
-	storeEmbedSync := envconf.String("ENGRAM_STORE_EMBED_MODE", "async") == "sync"
 
 	return &SearchEngine{
 		backend:             backend,
@@ -235,7 +240,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
 		embedRecallTimeout:  time.Duration(recallTimeoutMS) * time.Millisecond,
-		storeEmbedSync:      storeEmbedSync,
 	}
 }
 
@@ -255,11 +259,9 @@ func (e *SearchEngine) Backend() db.Backend { return e.backend }
 // Project returns the project slug this engine is scoped to.
 func (e *SearchEngine) Project() string { return e.project }
 
-// storeChunksForMemory chunks content, embeds each chunk, and returns the new
-// chunk records ready for storage. It is used by both Store (new memories) and
-// Correct (re-chunking after a content change). Embedding is done outside any
-// transaction because it is slow; callers are responsible for writing the
-// returned chunks inside a transaction.
+// storeChunksForMemory chunks content and returns records with NULL embeddings.
+// It is used by both Store (new memories) and Correct (re-chunking after a
+// content change). Background workers fill vectors after callers commit chunks.
 func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory, rawBody string) ([]*types.Chunk, error) {
 	// A4 Tier-1 synopsis support: when rawBody is non-empty, chunks are built
 	// from the full document body rather than the memory's (synopsis) Content.
@@ -313,11 +315,8 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		return nil, nil
 	}
 
-	// Build chunk records. In async mode (default), embeddings are left nil and the
-	// reembed worker fills them in — this keeps Store fully decoupled from Ollama
-	// and eliminates the 48-minute hang caused by Ollama blocking the MCP call.
-	// In sync mode (ENGRAM_STORE_EMBED_MODE=sync), embeddings are computed inline
-	// for callers that require immediate vector availability (e.g. migration scripts).
+	// Build chunk records with nil embeddings. Background embedding is handled by
+	// GlobalReembedder or EmbedGateway; Store must never block on the embedder.
 	chunks := make([]*types.Chunk, len(pending))
 	for j, p := range pending {
 		ch := &types.Chunk{
@@ -333,16 +332,6 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 		if p.candidate.HasHeading {
 			heading := p.candidate.SectionHeading
 			ch.SectionHeading = &heading
-		}
-		if e.storeEmbedSync {
-			// Sync mode: embed inline. Errors are non-fatal — the chunk is stored
-			// with a nil embedding and the reembed worker will backfill it.
-			if vec, embedErr := e.getEmbedder().Embed(ctx, p.candidate.Text); embedErr == nil {
-				ch.Embedding = vec
-			} else {
-				slog.Warn("storeChunksForMemory: inline embed failed, chunk stored without embedding",
-					"project", e.project, "chunk_idx", p.idx, "err", embedErr)
-			}
 		}
 		chunks[j] = ch
 	}
@@ -424,8 +413,7 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 		return err
 	}
 	if len(chunks) > 0 {
-		// Async path: enqueue chunks for reembed worker. In sync mode, embeddings
-		// were already computed inline; the worker will skip them (no NULL embedding).
+		// Enqueue chunks for the enabled background embedding path.
 		chunkIDs := make([]string, len(chunks))
 		for i, c := range chunks {
 			chunkIDs[i] = c.ID
@@ -434,15 +422,18 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 			// Log but do not fail — reembed worker will find chunks via NULL embedding.
 			slog.Warn("failed to enqueue chunk leases", "count", len(chunkIDs), "err", err)
 		}
-		e.reembedder.Notify()
-		if e.globalReembedder != nil {
+		if e.embedGateway != nil {
+			e.embedGateway.Enqueue(chunkIDs)
+			e.notifyEmbedQueue(ctx)
+		} else {
+			e.reembedder.Notify()
+		}
+		if e.globalReembedder != nil && e.embedGateway == nil {
 			e.globalReembedder.Notify()
 		}
 	}
-	if !e.storeEmbedSync {
-		// Count each store call that returned before embedding completed.
-		metrics.StoreEmbedAsyncTotal.Inc()
-	}
+	// Count each store call that returned before embedding completed.
+	metrics.StoreEmbedAsyncTotal.Inc()
 	return nil
 }
 
@@ -515,16 +506,19 @@ func (e *SearchEngine) StoreBatch(ctx context.Context, memories []*types.Memory)
 			// Log but do not fail — reembed worker will find chunks via NULL embedding.
 			slog.Warn("failed to enqueue batch chunk leases", "count", len(allChunkIDs), "err", err)
 		}
-		e.reembedder.Notify()
-		if e.globalReembedder != nil {
+		if e.embedGateway != nil {
+			e.embedGateway.Enqueue(allChunkIDs)
+			e.notifyEmbedQueue(ctx)
+		} else {
+			e.reembedder.Notify()
+		}
+		if e.globalReembedder != nil && e.embedGateway == nil {
 			e.globalReembedder.Notify()
 		}
 	}
-	if !e.storeEmbedSync {
-		// Count each store-batch call that returned before embedding completed.
-		// One increment per StoreBatch call (not per memory) — tracks call volume.
-		metrics.StoreEmbedAsyncTotal.Inc()
-	}
+	// Count each store-batch call that returned before embedding completed.
+	// One increment per StoreBatch call (not per memory) — tracks call volume.
+	metrics.StoreEmbedAsyncTotal.Inc()
 	return nil
 }
 
@@ -1025,10 +1019,27 @@ var embedderAliases = map[string]string{
 // canonicalEmbedderName returns the canonical model identifier for s.
 // If s has no alias entry, it is returned unchanged.
 func canonicalEmbedderName(s string) string {
+	if c := embedmodel.CanonicalName(s); c != "" {
+		return c
+	}
 	if c, ok := embedderAliases[s]; ok {
 		return c
 	}
 	return s
+}
+
+func (e *SearchEngine) notifyEmbedQueue(ctx context.Context) {
+	pgb, ok := e.backend.(pgPooler)
+	if !ok || pgb.PgxPool() == nil {
+		return
+	}
+	go func() {
+		notifyCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		if _, err := pgb.PgxPool().Exec(notifyCtx, "SELECT pg_notify($1, '')", embedmodel.PGNotifyChannel); err != nil {
+			slog.Warn("failed to notify embed queue", "err", err)
+		}
+	}()
 }
 
 // checkEmbedderMeta ensures the stored embedder name matches the current client,
@@ -1195,6 +1206,24 @@ func (e *SearchEngine) Correct(ctx context.Context, id string, content *string, 
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
+		if len(chunks) > 0 {
+			chunkIDs := make([]string, len(chunks))
+			for i, c := range chunks {
+				chunkIDs[i] = c.ID
+			}
+			if err := e.backend.EnqueueChunkLeases(ctx, chunkIDs); err != nil {
+				slog.Warn("failed to enqueue corrected chunk leases", "count", len(chunkIDs), "err", err)
+			}
+			if e.embedGateway != nil {
+				e.embedGateway.Enqueue(chunkIDs)
+				e.notifyEmbedQueue(ctx)
+			} else {
+				e.reembedder.Notify()
+			}
+			if e.globalReembedder != nil && e.embedGateway == nil {
+				e.globalReembedder.Notify()
+			}
+		}
 	}
 
 	return mem, nil
@@ -1334,6 +1363,16 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+
+	if e.embedGateway != nil {
+		e.embedGateway.Enqueue([]string{"migration"})
+		e.notifyEmbedQueue(ctx)
+		return map[string]any{
+			"chunks_nulled": nulled,
+			"new_model":     newModel,
+			"status":        "migration queued — embed gateway will drain NULL embeddings",
+		}, nil
 	}
 
 	// Stop old reembed worker and create a new one with the new model.

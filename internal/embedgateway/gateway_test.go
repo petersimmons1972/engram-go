@@ -125,3 +125,16 @@ func TestGateway_Stop_DrainsInFlight(t *testing.T) {
 		t.Fatal("Stop did not return after in-flight drain completed")
 	}
 }
+
+func TestGateway_DegradedHoldAfterValidationRejections(t *testing.T) {
+	g := NewForTest(stubEmbedder{}, nil)
+	g.holdFor = time.Hour
+
+	for range consecutiveValidationThreshold {
+		g.noteValidationRejected("nomic-embed-text", embedmodel.RequiredDims)
+	}
+
+	if _, held := g.inDegradedHold(time.Now()); !held {
+		t.Fatal("gateway did not enter degraded hold after validation rejection threshold")
+	}
+}

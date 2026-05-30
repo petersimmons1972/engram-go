@@ -241,11 +241,16 @@ func (c *LiteLLMClient) Dimensions() int {
 // If a circuit breaker is configured, checks circuit state first and short-circuits
 // with errCircuitOpen if the upstream is consistently failing.
 func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	vec, _, err := c.EmbedWithModel(ctx, text)
+	return vec, err
+}
+
+func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
 	// Check circuit breaker before attempting request
 	if c.cb != nil {
 		if err := c.cb.Allow(); err != nil {
 			metrics.EmbedFailures.WithLabelValues("circuit_open").Inc()
-			return nil, err
+			return nil, "", err
 		}
 	}
 
@@ -258,7 +263,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("litellm embed: marshal: %w", err)
+		return nil, "", fmt.Errorf("litellm embed: marshal: %w", err)
 	}
 
 	const maxAttempts = 3
@@ -271,23 +276,23 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			backoff := computeBackoff(attempt - 1)
 			select {
 			case <-time.After(backoff):
-				// Continue after backoff
+			// Continue after backoff
 			case <-ctx.Done():
 				// Context expired during backoff
 				metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-				return nil, fmt.Errorf("litellm embed: context canceled during backoff: %w", ctx.Err())
+				return nil, "", fmt.Errorf("litellm embed: context canceled during backoff: %w", ctx.Err())
 			}
 		}
 
 		// Check if context is still valid before making the request
 		if ctx.Err() != nil {
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-			return nil, fmt.Errorf("litellm embed: context deadline exceeded before attempt: %w", ctx.Err())
+			return nil, "", fmt.Errorf("litellm embed: context deadline exceeded before attempt: %w", ctx.Err())
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/embeddings", bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("litellm embed: build request: %w", err)
+			return nil, "", fmt.Errorf("litellm embed: build request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if c.apiKey != "" {
@@ -305,7 +310,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 				if c.cb != nil {
 					c.cb.RecordFailure()
 				}
-				return nil, fmt.Errorf("litellm embed request: %w", err)
+				return nil, "", fmt.Errorf("litellm embed request: %w", err)
 			}
 			// Retryable error; log and retry
 			if attempt < maxAttempts-1 {
@@ -317,7 +322,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			if c.cb != nil {
 				c.cb.RecordFailure()
 			}
-			return nil, fmt.Errorf("litellm embed request (exhausted retries): %w", err)
+			return nil, "", fmt.Errorf("litellm embed request (exhausted retries): %w", err)
 		}
 
 		defer resp.Body.Close() //nolint:errcheck
@@ -332,7 +337,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 				if c.cb != nil {
 					c.cb.RecordFailure()
 				}
-				return nil, fmt.Errorf("litellm embed: %w", statusErr)
+				return nil, "", fmt.Errorf("litellm embed: %w", statusErr)
 			}
 			// Retryable HTTP error; log and retry
 			if attempt < maxAttempts-1 {
@@ -344,12 +349,13 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			if c.cb != nil {
 				c.cb.RecordFailure()
 			}
-			return nil, fmt.Errorf("litellm embed: %w (exhausted retries)", statusErr)
+			return nil, "", fmt.Errorf("litellm embed: %w (exhausted retries)", statusErr)
 		}
 
 		// Success: decode response
 		var result struct {
-			Data []struct {
+			Model string `json:"model"`
+			Data  []struct {
 				Embedding []float32 `json:"embedding"`
 			} `json:"data"`
 		}
@@ -359,7 +365,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			if c.cb != nil {
 				c.cb.RecordFailure()
 			}
-			return nil, fmt.Errorf("litellm embed decode: %w", err)
+			return nil, "", fmt.Errorf("litellm embed decode: %w", err)
 		}
 		if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
 			// Empty response is non-retryable
@@ -367,7 +373,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			if c.cb != nil {
 				c.cb.RecordFailure()
 			}
-			return nil, fmt.Errorf("litellm embed: empty response")
+			return nil, "", fmt.Errorf("litellm embed: empty response")
 		}
 
 		// Success!
@@ -386,7 +392,11 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 			c.cb.RecordSuccess()
 		}
 
-		return vec, nil
+		modelID := result.Model
+		if modelID == "" {
+			modelID = c.model
+		}
+		return vec, modelID, nil
 	}
 
 	// Should not reach here, but as a fallback
@@ -394,7 +404,7 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 	if c.cb != nil {
 		c.cb.RecordFailure()
 	}
-	return nil, fmt.Errorf("litellm embed: exhausted %d attempts, last error: %w (status %d)", maxAttempts, lastErr, lastStatusCode)
+	return nil, "", fmt.Errorf("litellm embed: exhausted %d attempts, last error: %w (status %d)", maxAttempts, lastErr, lastStatusCode)
 }
 
 // Probe checks if the LiteLLM endpoint is healthy and advertising the configured

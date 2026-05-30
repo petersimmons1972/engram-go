@@ -55,6 +55,10 @@ type storeableNoopEmbedder struct{}
 func (storeableNoopEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, 384), nil
 }
+func (e storeableNoopEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
+}
 func (storeableNoopEmbedder) Name() string    { return "noop-store" }
 func (storeableNoopEmbedder) Dimensions() int { return 384 }
 

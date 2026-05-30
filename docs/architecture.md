@@ -10,6 +10,8 @@ This document describes the high-level structure, responsibilities, and data flo
 | `internal/db` | PostgreSQL backend interface, connection pooling, transactional storage, queries for memories, episodes, sessions |
 | `internal/search` | Semantic and BM25 hybrid search, ranking, importance decay, episode recall, memory retrieval pipeline |
 | `internal/embed` | Embedding generation via LiteLLM, model management, health probes, dimension truncation (MRL) |
+| `internal/embedgateway` | Optional unified background embedding gateway for async chunk backfill, validation, and DB backpressure |
+| `internal/embedmodel` | Machine-readable embedding model contract mirrored from `docs/EMBEDDING.md` |
 | `internal/types` | Core data types: Memory, SearchResult, Memory ID/Type, constants (MaxContentLength=500KB) |
 | `internal/claude` | HTTP client for Anthropic Messages API, advisor tool declarations, request/response marshaling |
 | `internal/chunk` | Content splitting into chunks for embedding and storage, chunk table writes |
@@ -44,11 +46,11 @@ handleMemoryStore (tools_store.go) — apply defaults, build Memory struct
   ↓
 engine.Store (search.go) — coordinate storage pipeline
   ↓
-embed.NewClient.Embed — LiteLLM embedding generation
-  ↓
 chunk.Chunker.Split — tokenize content for chunks table
   ↓
-db.Begin().Tx.StoreMemory — PostgreSQL insert
+db.Begin().Tx.StoreMemory + StoreChunks — PostgreSQL insert with NULL embeddings
+  ↓
+async: GlobalReembedder, or EmbedGateway when ENGRAM_EMBED_GW_ENABLED=true
   ↓
 async: enqueueExtractionAsync — submit for entity extraction
 ```

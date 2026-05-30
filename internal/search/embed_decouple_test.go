@@ -1,10 +1,10 @@
 package search_test
 
-// embed_decouple_test.go — issue #611 fix#2: env-var config and metrics coverage.
+// embed_decouple_test.go — store and recall embedding decoupling coverage.
 //
 // Tests:
 //   T1: ENGRAM_EMBED_RECALL_TIMEOUT_MS shortens the recall embed budget.
-//   T2: ENGRAM_STORE_EMBED_MODE=sync embeds inline (embedder called during Store).
+//   T2: legacy ENGRAM_STORE_EMBED_MODE=sync no longer embeds inline.
 //   T3: ENGRAM_STORE_EMBED_MODE=async (default) does NOT call embedder during Store.
 
 import (
@@ -32,6 +32,10 @@ func (e *countingBlockingEmbedder) Embed(ctx context.Context, _ string) ([]float
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
+func (e *countingBlockingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
+}
 func (e *countingBlockingEmbedder) Name() string    { return "counting-blocking" }
 func (e *countingBlockingEmbedder) Dimensions() int { return e.dims }
 
@@ -46,6 +50,10 @@ type syncCountingEmbedder struct {
 func (e *syncCountingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	e.calls.Add(1)
 	return make([]float32, e.dims), nil
+}
+func (e *syncCountingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
 }
 func (e *syncCountingEmbedder) Name() string    { return "sync-counting" }
 func (e *syncCountingEmbedder) Dimensions() int { return e.dims }
@@ -96,12 +104,12 @@ func TestRecallEmbedTimeout_ShortBudget(t *testing.T) {
 		"parent context must not be cancelled by the embed timeout")
 }
 
-// TestStoreEmbedMode_Sync verifies that ENGRAM_STORE_EMBED_MODE=sync causes
-// Store to call the embedder inline. The embedder call count must be > 0
-// after Store returns.
+// TestStoreEmbedMode_SyncIgnored verifies that legacy ENGRAM_STORE_EMBED_MODE=sync
+// no longer calls the embedder inline. Store must remain async so the gateway
+// remains the single background/store embedding path.
 //
 // Integration: requires TEST_DATABASE_URL.
-func TestStoreEmbedMode_Sync(t *testing.T) {
+func TestStoreEmbedMode_SyncIgnored(t *testing.T) {
 	proj := uniqueProject("embed-decouple-sync")
 	t.Setenv("ENGRAM_STORE_EMBED_MODE", "sync")
 
@@ -110,15 +118,16 @@ func TestStoreEmbedMode_Sync(t *testing.T) {
 
 	m := &types.Memory{
 		ID:          types.NewMemoryID(),
-		Content:     "Sync mode: embedding must be computed inline during Store.",
+		Content:     "Legacy sync mode must not embed inline during Store.",
 		MemoryType:  types.MemoryTypeContext,
 		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, eng.Store(context.Background(), m))
 
-	assert.Greater(t, int(counter.calls.Load()), 0,
-		"ENGRAM_STORE_EMBED_MODE=sync: embedder must be called inline during Store; got 0 calls")
+	assert.Equal(t, int64(0), counter.calls.Load(),
+		"legacy ENGRAM_STORE_EMBED_MODE=sync must not call embedder during Store; got %d calls",
+		counter.calls.Load())
 }
 
 // TestStoreEmbedMode_Async verifies that ENGRAM_STORE_EMBED_MODE=async (default)

@@ -21,6 +21,10 @@ func (c *callCountingClient) Embed(_ context.Context, _ string) ([]float32, erro
 	c.calls++
 	return make([]float32, 4), nil
 }
+func (c *callCountingClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := c.Embed(ctx, text)
+	return vec, c.Name(), err
+}
 func (c *callCountingClient) Name() string    { return "counting" }
 func (c *callCountingClient) Dimensions() int { return 4 }
 

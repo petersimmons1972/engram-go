@@ -242,6 +242,10 @@ type noopEmbedder struct{}
 func (noopEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, 384), nil
 }
+func (e noopEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
+}
 func (noopEmbedder) Name() string    { return "noop" }
 func (noopEmbedder) Dimensions() int { return 384 }
 

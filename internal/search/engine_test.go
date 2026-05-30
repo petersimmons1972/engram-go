@@ -28,6 +28,10 @@ func (f *fakeClient) Embed(_ context.Context, text string) ([]float32, error) {
 	}
 	return vec, nil
 }
+func (f *fakeClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
+}
 func (f *fakeClient) Name() string    { return "fake" }
 func (f *fakeClient) Dimensions() int { return f.dims }
 
@@ -379,6 +383,10 @@ func (f *fakeClientWithName) Embed(_ context.Context, text string) ([]float32, e
 		vec[i] = float32(i) / float32(f.dims)
 	}
 	return vec, nil
+}
+func (f *fakeClientWithName) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
 }
 func (f *fakeClientWithName) Name() string    { return f.name }
 func (f *fakeClientWithName) Dimensions() int { return f.dims }
