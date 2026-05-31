@@ -1014,6 +1014,8 @@ var embedderAliases = map[string]string{
 	"bge-m3-Q4_K_M.gguf": "BAAI/bge-m3",
 	"bge-m3":             "BAAI/bge-m3",
 	"BAAI/bge-m3":        "BAAI/bge-m3",
+	"bge-m3:latest":      "BAAI/bge-m3",
+	"BAAI/bge-m3:latest": "BAAI/bge-m3",
 }
 
 // canonicalEmbedderName returns the canonical model identifier for s.
