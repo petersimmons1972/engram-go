@@ -34,6 +34,10 @@ func (b *blockingClient) Embed(ctx context.Context, _ string) ([]float32, error)
 		return nil, errors.New("blockingClient: timeout simulated")
 	}
 }
+func (b *blockingClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := b.Embed(ctx, text)
+	return vec, b.Name(), err
+}
 func (b *blockingClient) Name() string    { return "blocking-fake" }
 func (b *blockingClient) Dimensions() int { return b.dims }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/config"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/embedgateway"
 	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
@@ -161,7 +162,6 @@ func run() error {
 		return err
 	}
 
-
 	if *versionFlag {
 		fmt.Printf("engram %s\n", Version)
 		os.Exit(0)
@@ -268,7 +268,7 @@ func run() error {
 	}
 	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	probeVec, probeErr := embedClient.Embed(probeCtx, "startup probe")
+	probeVec, probeModelID, probeErr := embedClient.EmbedWithModel(probeCtx, "startup probe")
 	probeCancel()
 	if probeErr != nil {
 		slog.Warn("LiteLLM unavailable at startup — embedding degraded; server will start anyway", "error", probeErr)
@@ -276,8 +276,14 @@ func run() error {
 	} else if len(probeVec) == 0 {
 		slog.Warn("LiteLLM startup probe returned empty vector — embedding degraded")
 		embedDegraded = true
+	} else if err := embedgateway.ValidateEmbedResponse(probeVec, probeModelID); err != nil {
+		if envBool("ENGRAM_EMBED_GW_ENABLED", false) {
+			return fmt.Errorf("embed gateway startup probe rejected embed response: %w", err)
+		}
+		slog.Warn("LiteLLM startup probe does not match bge-m3 gateway contract", "err", err)
+		embedDegraded = true
 	} else {
-		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec))
+		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec), "model_id", probeModelID)
 	}
 
 	dsn := *databaseURL
@@ -321,21 +327,41 @@ func run() error {
 	// retentionBackend does not own the pool — do not call Close() on it.
 	go retentionBackend.StartRetentionWorker(ctx)
 
-	// GlobalReembedder processes unembedded chunks across all projects from a
-	// single goroutine, lifecycle-independent of any EnginePool entry (#359).
-	// It uses FOR UPDATE SKIP LOCKED so multiple server replicas are safe.
-	reembedBatchSize := envInt("ENGRAM_REEMBED_BATCH_SIZE", 100)
-	reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
-	// ENGRAM_REEMBED_BATCH_SIZE=0 disables the GlobalReembedder in this process.
-	// Use this when a dedicated engram-reembed container owns all embedding work.
-	globalReembedder := reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
-	if reembedBatchSize > 0 {
-		globalReembedder.Start(ctx)
-		slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
+	var globalReembedder *reembed.GlobalReembedder
+	var embedGateway *embedgateway.EmbedGateway
+
+	if envBool("ENGRAM_EMBED_GW_ENABLED", false) {
+		gatewayPool, err := db.NewGatewayPool(ctx, dsn)
+		if err != nil {
+			return fmt.Errorf("embed gateway pool: %w", err)
+		}
+		defer gatewayPool.Close()
+		modelEmbedder, ok := embedClient.(embedgateway.Embedder)
+		if !ok {
+			return fmt.Errorf("embed gateway requires an embedder that reports response model IDs")
+		}
+		gatewayBatchSize := envInt("ENGRAM_EMBED_GW_BATCH_SIZE", envInt("ENGRAM_REEMBED_BATCH_SIZE", embedgateway.DefaultBatchSize))
+		embedGateway = embedgateway.New(gatewayPool, pgxPool, modelEmbedder, gatewayBatchSize)
+		embedGateway.Start(ctx)
+		defer embedGateway.Stop()
+		slog.Info("embed gateway enabled", "batch_size", gatewayBatchSize)
 	} else {
-		slog.Info("global reembedder disabled (ENGRAM_REEMBED_BATCH_SIZE=0) — reembed container owns embedding")
+		// GlobalReembedder processes unembedded chunks across all projects from a
+		// single goroutine, lifecycle-independent of any EnginePool entry (#359).
+		// It uses FOR UPDATE SKIP LOCKED so multiple server replicas are safe.
+		reembedBatchSize := envInt("ENGRAM_REEMBED_BATCH_SIZE", 100)
+		reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
+		// ENGRAM_REEMBED_BATCH_SIZE=0 disables the GlobalReembedder in this process.
+		// Use this when a dedicated engram-reembed container owns all embedding work.
+		globalReembedder = reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
+		if reembedBatchSize > 0 {
+			globalReembedder.Start(ctx)
+			slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
+		} else {
+			slog.Info("global reembedder disabled (ENGRAM_REEMBED_BATCH_SIZE=0) — reembed container owns embedding")
+		}
+		defer globalReembedder.Wait()
 	}
-	defer globalReembedder.Wait()
 
 	// Audit and weight tuner workers use the shared pool directly.
 	sharedPool := pgxPool
@@ -350,7 +376,11 @@ func run() error {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
 		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
-		engine.SetGlobalReembedder(globalReembedder)
+		if embedGateway != nil {
+			engine.SetEmbedGateway(embedGateway)
+		} else {
+			engine.SetGlobalReembedder(globalReembedder)
+		}
 		return &internalmcp.EngineHandle{Engine: engine}, nil
 	}
 
@@ -589,6 +619,7 @@ func run() error {
 // Returns nil when:
 //   - host is loopback (any rate limit setting), OR
 //   - rate limiting is enabled (any host).
+//
 // Returns a non-nil error otherwise; caller should treat as fatal.
 func checkBindInterlock(host string, rateLimitDisable bool) error {
 	loopbacks := map[string]bool{"127.0.0.1": true, "::1": true, "localhost": true}

@@ -27,6 +27,10 @@ func (h *hangingEmbedder) Embed(ctx context.Context, _ string) ([]float32, error
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
+func (h *hangingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := h.Embed(ctx, text)
+	return vec, h.Name(), err
+}
 func (h *hangingEmbedder) Name() string    { return "hanging-fake" }
 func (h *hangingEmbedder) Dimensions() int { return h.dims }
 
@@ -40,6 +44,10 @@ type errorEmbedder struct {
 
 func (e *errorEmbedder) Embed(ctx context.Context, _ string) ([]float32, error) {
 	return nil, e.err
+}
+func (e *errorEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
 }
 func (e *errorEmbedder) Name() string    { return "error-fake" }
 func (e *errorEmbedder) Dimensions() int { return e.dims }

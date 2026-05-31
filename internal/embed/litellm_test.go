@@ -55,6 +55,32 @@ func TestEmbedRetriesOn502(t *testing.T) {
 	}
 }
 
+func TestLiteLLMClient_EmbedWithModelReturnsReportedModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "BAAI/bge-m3",
+			"data": []map[string]any{{
+				"embedding": []float32{0.1, 0.2, 0.3},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewLiteLLMClientNoProbe(server.URL, "configured-alias", "", 0)
+	vec, modelID, err := client.EmbedWithModel(context.Background(), "test text")
+	if err != nil {
+		t.Fatalf("EmbedWithModel returned error: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Fatalf("len(vec) = %d, want 3", len(vec))
+	}
+	if modelID != "BAAI/bge-m3" {
+		t.Fatalf("modelID = %q, want reported model", modelID)
+	}
+}
+
 // TestEmbedNoRetryOn400 verifies that a 400 Bad Request does not retry.
 func TestEmbedNoRetryOn400(t *testing.T) {
 	t.Helper()

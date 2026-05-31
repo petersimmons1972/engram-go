@@ -19,6 +19,10 @@ type fakeEmbedder struct{ dims int }
 func (f *fakeEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, f.dims), nil
 }
+func (f *fakeEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
+}
 func (f *fakeEmbedder) Name() string    { return "fake" }
 func (f *fakeEmbedder) Dimensions() int { return f.dims }
 
@@ -308,6 +312,10 @@ func (c *concurrentEmbedder) Embed(_ context.Context, _ string) ([]float32, erro
 	<-c.release
 	return make([]float32, c.dims), nil
 }
+func (c *concurrentEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := c.Embed(ctx, text)
+	return vec, c.Name(), err
+}
 func (c *concurrentEmbedder) Name() string    { return "concurrent-fake" }
 func (c *concurrentEmbedder) Dimensions() int { return c.dims }
 
@@ -348,6 +356,10 @@ func (d *deadlineInspectEmbedder) Embed(ctx context.Context, _ string) ([]float3
 	}
 	d.mu.Unlock()
 	return make([]float32, d.dims), nil
+}
+func (d *deadlineInspectEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := d.Embed(ctx, text)
+	return vec, d.Name(), err
 }
 func (d *deadlineInspectEmbedder) Name() string    { return "inspect-fake" }
 func (d *deadlineInspectEmbedder) Dimensions() int { return d.dims }
@@ -463,6 +475,10 @@ func (b *blockingEmbedder) Embed(ctx context.Context, _ string) ([]float32, erro
 	<-ctx.Done()
 	close(b.cancelled)
 	return nil, ctx.Err()
+}
+func (b *blockingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := b.Embed(ctx, text)
+	return vec, b.Name(), err
 }
 func (b *blockingEmbedder) Name() string    { return "blocking" }
 func (b *blockingEmbedder) Dimensions() int { return b.dims }

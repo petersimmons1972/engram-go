@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/db"
-	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/petersimmons1972/engram/internal/testutil"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // TestGlobalReembedder_ConsecutiveErrorCounterResets verifies that the
@@ -69,6 +69,10 @@ type countingEmbedder struct {
 
 func (c *countingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, c.dims), nil
+}
+func (c *countingEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := c.Embed(ctx, text)
+	return vec, c.Name(), err
 }
 func (c *countingEmbedder) Name() string    { return "counting" }
 func (c *countingEmbedder) Dimensions() int { return c.dims }

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/stretchr/testify/require"
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
 
 // testDSNDecouple returns the integration-test DSN, skipping if unset.
@@ -38,6 +38,11 @@ type transientErrorEmbedder struct {
 
 func (e transientErrorEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, errors.New("connection refused to embedder backend")
+}
+
+func (e transientErrorEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
 }
 
 func (e transientErrorEmbedder) Name() string    { return e.name }

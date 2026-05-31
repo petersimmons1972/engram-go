@@ -21,6 +21,10 @@ type failEmbedder struct{}
 func (f *failEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, errors.New("mock embed failure")
 }
+func (f *failEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := f.Embed(ctx, text)
+	return vec, f.Name(), err
+}
 func (f *failEmbedder) Name() string    { return "fail" }
 func (f *failEmbedder) Dimensions() int { return 0 }
 

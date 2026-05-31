@@ -75,6 +75,26 @@ var (
 		Help: "Total final embedding failures by reason",
 	}, []string{"reason"})
 
+	EmbedValidationRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_embed_validation_rejections_total",
+		Help: "Embedding responses rejected before storage by rejection class",
+	}, []string{"class"})
+
+	EmbedGatewayDegraded = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_embed_gateway_degraded_total",
+		Help: "Times the embedding gateway entered degraded hold after repeated validation rejections",
+	})
+
+	EmbedGatewayBatches = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_embed_gateway_batches_total",
+		Help: "Embedding gateway drain batches by result",
+	}, []string{"result"})
+
+	EmbedGatewayConcurrency = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "engram_embed_gateway_concurrency",
+		Help: "Current embedding gateway worker concurrency limit",
+	})
+
 	// WorkerPanics counts panics caught and recovered by background workers.
 	// Incremented by the deferred recover() in each worker's main loop.
 	WorkerPanics = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -175,6 +195,10 @@ func init() {
 		EpisodesEndedByReaperTotal,
 		EmbedRetries,
 		EmbedFailures,
+		EmbedValidationRejections,
+		EmbedGatewayDegraded,
+		EmbedGatewayBatches,
+		EmbedGatewayConcurrency,
 		WorkerPanics,
 		ExtractionDropped,
 		EmbedCircuitState,

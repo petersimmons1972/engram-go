@@ -15,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/types"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 //go:embed migrations/*.sql
@@ -28,9 +28,9 @@ var projectSlugRE = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // PostgresBackend is the PostgreSQL implementation of Backend.
 // It is safe for concurrent use from multiple goroutines.
 type PostgresBackend struct {
-	pool      *pgxpool.Pool
-	project   string // validated project slug
-	ownsPool  bool   // true only when NewPostgresBackend created the pool; false for shared-pool backends
+	pool     *pgxpool.Pool
+	project  string // validated project slug
+	ownsPool bool   // true only when NewPostgresBackend created the pool; false for shared-pool backends
 }
 
 // configurePool applies connection pool tuning for CLI tools that create a
@@ -63,6 +63,36 @@ func configureSharedPool(cfg *pgxpool.Config) {
 	// 15s health-check so the pool detects dead connections within one
 	// GlobalReembedder poll interval after a Postgres restart (#645).
 	cfg.HealthCheckPeriod = 15 * time.Second
+}
+
+func configureGatewayPool(cfg *pgxpool.Config) {
+	cfg.MinConns = 1
+	cfg.MaxConns = 8
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnIdleTime = 3 * time.Minute
+	cfg.HealthCheckPeriod = 15 * time.Second
+}
+
+func NewGatewayPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DSN: %w", err)
+	}
+	if err := rejectDefaultPassword(cfg); err != nil {
+		return nil, err
+	}
+	configureGatewayPool(cfg)
+	cfg.AfterConnect = registerTypesAfterConnect
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create gateway connection pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("cannot connect gateway pool to PostgreSQL: %w", err)
+	}
+	return pool, nil
 }
 
 // registerTypesAfterConnect registers custom type codecs that every connection
@@ -492,26 +522,26 @@ func (b *PostgresBackend) SetMetaTx(ctx context.Context, tx Tx, project, key, va
 // DDL and with rowToMemory below (#112 — single point of schema knowledge).
 func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 	var (
-		id, content, memType, proj string
-		tags                       []byte
-		importance, accessCount    int
+		id, content, memType, proj         string
+		tags                               []byte
+		importance, accessCount            int
 		lastAccessed, createdAt, updatedAt time.Time
-		immutable                  bool
-		expiresAt                  *time.Time
-		summary, contentHash       *string
-		storageMode                string
-		searchVector               []byte
-		validFrom, validTo         *time.Time
-		invalidationReason         *string
-		dynamicImportance          *float64
-		retrievalIntervalHrs       float64
-		nextReviewAt               *time.Time
-		timesRetrieved, timesUseful int
-		retrievalPrecision         *float64
-		episodeID                  *string
-		documentID                 *string
-		patternConfidence          *float64
-		rank                       float64
+		immutable                          bool
+		expiresAt                          *time.Time
+		summary, contentHash               *string
+		storageMode                        string
+		searchVector                       []byte
+		validFrom, validTo                 *time.Time
+		invalidationReason                 *string
+		dynamicImportance                  *float64
+		retrievalIntervalHrs               float64
+		nextReviewAt                       *time.Time
+		timesRetrieved, timesUseful        int
+		retrievalPrecision                 *float64
+		episodeID                          *string
+		documentID                         *string
+		patternConfidence                  *float64
+		rank                               float64
 	)
 	// Column order matches the live DB schema (search_vector was added between
 	// updated_at and immutable in an early migration, so it sits at position 10).

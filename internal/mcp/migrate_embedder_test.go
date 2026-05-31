@@ -47,6 +47,10 @@ type dimEmbedder struct {
 func (e dimEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return make([]float32, e.dims), nil
 }
+func (e dimEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, e.Name(), err
+}
 func (e dimEmbedder) Name() string    { return "dim-test-model" }
 func (e dimEmbedder) Dimensions() int { return e.dims }
 
@@ -171,7 +175,6 @@ type migrateReadyBackend struct{ dimBackend }
 func (b migrateReadyBackend) Begin(_ context.Context) (db.Tx, error) { return noopTx{}, nil }
 
 var _ db.Backend = migrateReadyBackend{}
-
 
 // TestHandleMemoryMigrateEmbedder_MigrateError verifies that when MigrateEmbedder
 // itself returns an error, the handler surfaces that error and does not fire
