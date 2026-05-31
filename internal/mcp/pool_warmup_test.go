@@ -81,6 +81,46 @@ func TestWarmProjects_CancelledContext_ExitsCleanly(t *testing.T) {
 	}
 }
 
+// TestPrewarm_ContextCancel_Unblocks verifies that cancelling the warm context
+// after warmup has already started unblocks WarmProjects quickly, even when the
+// underlying factory is stuck and ignores context cancellation.
+func TestPrewarm_ContextCancel_Unblocks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{})
+	var startedOnce sync.Once
+
+	pool := NewEnginePool(func(_ context.Context, project string) (*EngineHandle, error) {
+		startedOnce.Do(func() {
+			close(started)
+		})
+		select {}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pool.WarmProjects(ctx, []string{"a", "b", "c"}, 1)
+	}()
+
+	select {
+	case <-started:
+		// A warmup Get is now blocked in factory.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WarmProjects never started the blocking factory")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+		// WarmProjects should unblock promptly after cancellation.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WarmProjects did not unblock within 500ms after warm context cancellation")
+	}
+}
+
 // TestWarmProjects_EmptyList_IsNoop verifies that passing nil or an empty slice
 // is a safe no-op — no panic, no hang.
 func TestWarmProjects_EmptyList_IsNoop(t *testing.T) {
