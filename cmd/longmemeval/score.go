@@ -13,7 +13,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
-func runScore(cfg *Config) {
+func runScore(cfg *Config) int {
 	items := loadItems(cfg.DataFile)
 	itemMap := make(map[string]longmemeval.Item, len(items))
 	for _, item := range items {
@@ -42,11 +42,13 @@ func runScore(cfg *Config) {
 	log.Printf("score: %d run entries loaded, %d already done", len(runEntries), len(skip))
 
 	ckptCh := make(chan longmemeval.ScoreEntry, cfg.Workers*2)
+	scoreStats := make(chan longmemeval.ScoreEntry, len(runEntries))
+	writerErr := make(chan error, 1)
 	var wgWriter sync.WaitGroup
 	wgWriter.Add(1)
 	go func() {
 		defer wgWriter.Done()
-		longmemeval.WriteCheckpoint(ckptPath, ckptCh)
+		writerErr <- longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
 	// Buffer sized to full input so pre-load before workers start cannot block.
@@ -63,12 +65,22 @@ func runScore(cfg *Config) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			scoreWorker(cfg, itemMap, work, ckptCh)
+			scoreWorker(cfg, itemMap, work, ckptCh, scoreStats)
 		}()
 	}
 	wg.Wait()
+	close(scoreStats)
 	close(ckptCh)
 	wgWriter.Wait()
+	checkpointErr := <-writerErr
+
+	var attempted, failed int
+	for entry := range scoreStats {
+		attempted++
+		if entry.Status != "done" {
+			failed++
+		}
+	}
 
 	// Load all score entries and write output files.
 	allScores, err := longmemeval.ReadAllScore(ckptPath)
@@ -76,7 +88,16 @@ func runScore(cfg *Config) {
 		log.Fatalf("read final scores: %v", err)
 	}
 	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
+	if checkpointErr != nil {
+		log.Printf("ERROR score checkpoint write failed: %v", checkpointErr)
+		return 1
+	}
+	if attempted > 0 && failed == attempted {
+		log.Printf("ERROR score: all attempted rows failed (attempted=%d failed=%d)", attempted, failed)
+		return 1
+	}
 	log.Printf("score: complete")
+	return 0
 }
 
 func loadIngestMap(outDir string) (map[string]longmemeval.IngestEntry, error) {
@@ -93,16 +114,19 @@ func loadIngestMap(outDir string) (map[string]longmemeval.IngestEntry, error) {
 	return ingestMap, nil
 }
 
-func scoreWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.RunEntry, out chan<- longmemeval.ScoreEntry) {
+func scoreWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan longmemeval.RunEntry, out chan<- longmemeval.ScoreEntry, stats chan<- longmemeval.ScoreEntry) {
 	ctx := context.Background()
 	for runEntry := range work {
 		item, ok := itemMap[runEntry.QuestionID]
 		if !ok {
-			out <- longmemeval.ScoreEntry{QuestionID: runEntry.QuestionID, Status: "error", Error: "item not in data file"}
+			entry := longmemeval.ScoreEntry{QuestionID: runEntry.QuestionID, Status: "error", Error: "item not in data file"}
+			out <- entry
+			stats <- entry
 			continue
 		}
 		entry := scoreOne(ctx, cfg, item, runEntry)
 		out <- entry
+		stats <- entry
 		log.Printf("score [%s] label=%s", runEntry.QuestionID, entry.ScoreLabel)
 	}
 }

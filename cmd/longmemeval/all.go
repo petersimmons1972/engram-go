@@ -5,7 +5,7 @@ import "log"
 type allStages struct {
 	ingest func(*Config)
 	run    func(*Config) int
-	score  func(*Config)
+	score  func(*Config) int
 }
 
 func runAll(cfg *Config) int {
@@ -32,7 +32,10 @@ func runAllWithStages(cfg *Config, stages allStages) int {
 	}
 
 	log.Println("--- Stage 3: score ---")
-	stages.score(cfg)
+	if exit := stages.score(cfg); exit != 0 {
+		log.Printf("all: score stage failed with exit=%d (run-id=%s)", exit, cfg.RunID)
+		return exit
+	}
 
 	log.Printf("all: complete (run-id=%s)", cfg.RunID)
 	return 0
