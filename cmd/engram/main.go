@@ -268,7 +268,7 @@ func run() error {
 	}
 	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	probeVec, probeModelID, probeErr := embedClient.(embedgateway.Embedder).EmbedWithModel(probeCtx, "startup probe")
+	probeVec, probeModelID, probeErr := embedClient.EmbedWithModel(probeCtx, "startup probe")
 	probeCancel()
 	if probeErr != nil {
 		slog.Warn("LiteLLM unavailable at startup — embedding degraded; server will start anyway", "error", probeErr)
