@@ -17,7 +17,7 @@ func TestMetricsRegistered(t *testing.T) {
 	WorkerTicks.WithLabelValues("reembed").Inc()
 	WorkerErrors.WithLabelValues("reembed").Inc()
 	ChunksPendingReembed.Set(5)
-	RecallDegradedTotal.WithLabelValues("embed").Inc()
+	RecallDegradedTotal.WithLabelValues("embed_timeout").Inc()
 
 	names := []string{
 		"engram_tool_requests_total",

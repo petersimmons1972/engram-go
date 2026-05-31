@@ -32,7 +32,7 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 }
 
 func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
-	metrics.RecallDegradedTotal.WithLabelValues("embed").Inc()
+	metrics.RecallDegradedTotal.WithLabelValues(reason).Inc()
 	slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
 		"embed_endpoint", endpoint,
 		"reason", reason)
