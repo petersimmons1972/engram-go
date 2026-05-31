@@ -394,9 +394,11 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			// so cosine similarity remains meaningful at the reduced dimension.
 			vec = L2Normalize(vec[:c.targetDims])
 		}
-		if c.dims.Load() == 0 {
-			c.dims.Store(int32(len(vec)))
-		}
+		// CompareAndSwap is more explicit than the check-then-Store idiom: it
+		// atomically sets dims to the observed vector size only when dims is still
+		// 0, preventing a redundant store on subsequent calls. Functionally
+		// equivalent but makes the intent clear.
+		c.dims.CompareAndSwap(0, int32(len(vec)))
 
 		// Record success in circuit breaker and return
 		if c.cb != nil {

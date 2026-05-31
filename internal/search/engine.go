@@ -983,6 +983,12 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	defer embedCancel()
 	queryVec, embedErr := e.getEmbedder().Embed(embedCtx, query)
 	if embedErr != nil {
+		// If the PARENT ctx was cancelled or expired (not just the embed child ctx),
+		// propagate the parent error rather than silently degrading to BM25 results.
+		// Only degrade when the embed itself failed while the parent ctx is still alive.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		metrics.RecallEmbedTimeoutTotal.Inc()
 		slog.Info("RecallWithinMemory embed failed, degrading to keyword search",
 			"memory_id", memoryID, "timeout_ms", embedTimeout.Milliseconds(), "err", embedErr)
