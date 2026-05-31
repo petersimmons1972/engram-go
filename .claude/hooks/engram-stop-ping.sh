@@ -5,8 +5,23 @@
 # a broken connection manually. Must exit 0 always — never blocks Claude Code from stopping.
 # Issue: engram-go#614 (resilience track)
 
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
-MCP_URL="http://127.0.0.1:8788/mcp"
+MCP_URL="${ENGRAM_BASE_URL}/mcp"
+
+# Short-circuit: if Engram is known-degraded, fast-skip (suppress repeated warnings)
+# Degraded state expires after 20 minutes — auto-heals when engram recovers.
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  # Expired — remove marker and run a live probe
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Extract bearer token from mcp_servers.json (same one-liner as engram-health-check.sh)
 TOKEN=$(python3 -c "
@@ -45,7 +60,7 @@ else
 fi
 
 if [[ "$PROBE_OK" -eq 1 ]]; then
-    # Server is reachable
+    # Server is reachable — clear any stale degraded marker
     if [[ -f "$DISCONNECT_STATE" ]]; then
         # Was previously disconnected — emit recovery message and clean up state
         rm -f "$DISCONNECT_STATE"
@@ -58,7 +73,7 @@ else
         # First failure — write state file and emit disconnection message
         mkdir -p "$(dirname "$DISCONNECT_STATE")"
         date -u +'%Y-%m-%dT%H:%M:%SZ' > "$DISCONNECT_STATE"
-        printf '{"type":"system","content":"⚠️  Engram MCP disconnected — memory tools unavailable. Check `docker compose ps` in ~/projects/engram-go. No MCP reset needed — tools will recover automatically when server restarts."}'
+        printf '{"type":"system","content":"⚠️  Engram MCP disconnected — memory tools unavailable. Check: kubectl get pods -n engram. No MCP reset needed — tools will recover automatically when server restarts."}'
     fi
     # Already flagged: stay quiet to avoid repeating the warning every turn
 fi

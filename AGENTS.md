@@ -1,14 +1,54 @@
 # Local Safety Policy
 
-- Preserve prompts for delete actions that include wildcards, such as `rm *`, `rm -rf dir/*`, `find ... -delete`, or shell-expanded destructive patterns.
-- Treat Docker and Docker Compose data as protected by default. Do not run commands that can destroy container data, volumes, databases, or persistent state without explicit user approval.
-- Avoid `docker compose down -v`, `docker volume rm`, `docker volume prune`, `docker system prune --volumes`, database `DROP`/`TRUNCATE`, and equivalent destructive operations unless the user has specifically authorized that data loss.
-- When a container needs to be rebuilt, prefer data-preserving workarounds first: `docker compose up --build`, image rebuilds, service restarts, backups, named-volume reuse, migrations, or export/import flows.
-- If data destruction seems necessary, stop and explain what data is at risk, the safer alternatives tried or available, and the exact command that needs approval.
+## Always Ask First
+
+- Wildcard or expanded destructive deletes: `rm *`, `rm -rf dir/*`, `find ... -delete`, and similar shell-expanded patterns.
+- Docker/database data loss: `docker compose down -v`, `docker volume rm`, `docker volume prune`, `docker system prune --volumes`, `DROP`, `TRUNCATE`, destructive migration resets, and equivalents.
+- Any operation that could remove, overwrite, rebuild destructively, or discard persistent container, database, volume, backup, or exported data.
+
+## Preservation Default
+
+- Treat Docker and Docker Compose data as protected unless the user explicitly authorizes data loss in this turn.
+- Prefer data-preserving rebuilds: `docker compose up --build`, image rebuilds, service restarts, backups, named-volume reuse, non-destructive migrations, or export/import flows.
+- If destruction appears necessary, stop and state the data at risk, safer alternatives tried or available, and the exact command needing approval.
 
 ## Engram Data Protection
 
-- Treat the `engram` and `engram-go` projects as containing irreplaceable shared AI memory. Their Docker containers, Postgres databases, volumes, migrations, backups, and exported data must be preserved unless the user explicitly authorizes a destructive action.
-- Do not assume local Engram data is test fixture data. Before any operation that could alter, rebuild, reset, truncate, migrate destructively, or remove Engram data, identify the affected container, database, schema, table, and volume when possible.
-- Prefer preservation workflows for Engram: inspect first, back up before risky changes, reuse named volumes, run non-destructive migrations, rebuild images without removing volumes, and verify container/database health after changes.
-- Never run Engram-related `docker compose down -v`, `docker volume rm`, `docker volume prune`, `docker system prune --volumes`, `DROP DATABASE`, `DROP SCHEMA`, `DROP TABLE`, `TRUNCATE`, destructive migration resets, or wildcard deletes without explicit user approval in that turn.
+- Treat `engram` and `engram-go` as irreplaceable shared AI memory.
+- Before risky Engram work, identify the affected container, database, schema, table, and volume when possible.
+- Prefer inspect, backup, named-volume reuse, non-destructive migrations, and post-change health checks.
+- Never run Engram-related destructive Docker, volume, database, migration-reset, or wildcard-delete commands without explicit approval in that turn.
+
+# Superpowers Planning Override
+
+- When using superpowers planning, brainstorming, or design/spec skills, ask as many clarifying questions as needed to produce a correct plan; do not stop because a generic three-question limit has been reached.
+- Preserve the superpowers preference for one question at a time when practical. If the active tool or UI can only batch a limited number of questions, continue with additional follow-up batches until the plan has enough information.
+
+# Global Multi-Agent Preference
+
+- For all non-trivial work, default to a multi-phase approach and use multiple agents when they add meaningful leverage. This global preference applies especially to planning, design review, implementation planning, issue triage, audits, debugging, and tasks with independent workstreams.
+- Before execution on complex tasks, split the work into explicit phases such as discovery, analysis, plan drafting, plan review, implementation, verification, and handoff. Use only the phases that fit the task.
+- Use agents for parallelism, independent review, specialized analysis, adversarial critique, or context isolation. Do not use agents for tiny, single-step, clearly serial, or low-risk tasks where coordination cost exceeds the benefit.
+- Agent selection MUST be cost conscious. Choose the most token-efficient agent or model that can reliably complete each subtask. Reserve larger or more expensive agents for ambiguity, high-risk decisions, broad-context synthesis, adversarial review, or final validation.
+- Every agent assignment MUST be bounded with clear inputs, expected output, stop conditions, and cost expectations. The main agent MUST merge, dedupe, verify, and resolve conflicts instead of treating agent output as authoritative.
+
+# Codex Decision-Hold Convention
+
+See `petersimmons1972/claude-codex/protocol/decision-hold.md` for the
+canonical semantics of `decision/needs-founder` and the `plan-only` pairing.
+
+- `decision/needs-founder` means plan/comment only; do not implement code or
+  execute destructive/remediating ops for that issue while the label is present.
+- `agent/codex/queued` is not sufficient to implement when
+  `decision/needs-founder` is present.
+- `decision/needs-founder` + `agent/codex/plan-only` is an explicit
+  no-implementation hold.
+- Implementation is allowed only after `decision/needs-founder` is removed and
+  a normal Codex dispatch label is present (for example `agent/codex/queued`).
+- `aifleet#308` is currently decided and implementable when queued.
+
+## Claude ↔ Codex Handoff
+
+Codex implements work queued by Claude via GitHub Issues (`~/bin/queue-agent`).
+Use `codex-handoff` MCP tool for repo context. Full workflow and all protocols:
+`petersimmons1972/claude-codex`.

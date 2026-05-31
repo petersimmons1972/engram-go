@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+load_engram_env() {
+  if [[ -n "${ENGRAM_API_KEY:-}" ]]; then
+    return 0
+  fi
+
+  local key_file="${HOME:-/home/psimmons}/.config/engram/api_key"
+  if [[ -r "${key_file}" ]]; then
+    ENGRAM_API_KEY="$(tr -d '\n' < "${key_file}")"
+    if [[ -n "${ENGRAM_API_KEY}" ]]; then
+      export ENGRAM_API_KEY
+      return 0
+    fi
+  fi
+
+  local claude_mcp="${HOME:-/home/psimmons}/.claude/mcp_servers.json"
+  if [[ ! -r "${claude_mcp}" ]]; then
+    return 0
+  fi
+
+  local auth_header
+  auth_header="$(
+    jq -r '.mcpServers.engram.headers.Authorization // empty' "${claude_mcp}" 2>/dev/null || true
+  )"
+
+  if [[ "${auth_header}" == Bearer\ * ]]; then
+    export ENGRAM_API_KEY="${auth_header#Bearer }"
+  fi
+}

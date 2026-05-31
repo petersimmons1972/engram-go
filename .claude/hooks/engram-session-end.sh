@@ -4,11 +4,24 @@
 # Keeps engram_episodes_ended_clean_total accurate vs reaper count.
 set -euo pipefail
 
-PORT="${ENGRAM_TEST_PORT:-8788}"
-BASE="http://127.0.0.1:${PORT}"
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
+BASE="$ENGRAM_BASE_URL"
 
 # shellcheck source=lib/engram-state.sh
 source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
+
+# Short-circuit: if Engram is known-degraded, fast-skip
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Never block session end
 if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then

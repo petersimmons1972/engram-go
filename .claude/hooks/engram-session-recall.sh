@@ -11,9 +11,23 @@
 
 set -euo pipefail
 
-PORT=8788
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 MEMORY_FILE="$HOME/.claude/projects/-home-psimmons/memory/MEMORY.md"
 MAX_RESULTS=5
+
+# Short-circuit: if Engram is known-degraded, skip all network calls
+# Degraded state expires after 20 minutes.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
 
 # Read token from mcp_servers.json
 TOKEN=$(python3 -c "
@@ -40,27 +54,30 @@ case "$INFERRED_PROJECT" in
 esac
 
 # Quick auth smoke-test — same endpoint used by all other hooks (#393)
-HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
+HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+  -X POST "${ENGRAM_BASE_URL}/quick-recall" \
   -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
 [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]] && exit 0
 
+# Auth OK — clear any stale degraded marker
+rm -f "$DISCONNECT_STATE"
+
 # Call /quick-recall for global project context
-RECALL_JSON=$(curl -sf --max-time 8 \
+RECALL_JSON=$(curl -sf --max-time 3 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+  -X POST "${ENGRAM_BASE_URL}/quick-recall" \
   -d "{\"query\":\"current project status recent work decisions\",\"project\":\"global\",\"limit\":3}" \
   2>/dev/null || true)
 
 # Second recall for inferred project, merged with global results (#402)
 if [[ -n "$ENGRAM_PROJECT" && "$ENGRAM_PROJECT" != "global" ]]; then
-  PROJECT_RECALL=$(curl -sf --max-time 8 \
+  PROJECT_RECALL=$(curl -sf --max-time 3 \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+    -X POST "${ENGRAM_BASE_URL}/quick-recall" \
     -d "{\"query\":\"current project status recent work decisions\",\"project\":\"${ENGRAM_PROJECT}\",\"limit\":3}" \
     2>/dev/null || true)
   # Merge: combine both JSON result arrays, deduplicate by id, sort by score, cap at MAX_RESULTS

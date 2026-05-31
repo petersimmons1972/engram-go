@@ -4,9 +4,12 @@
 # Runs after engram-token-refresh.sh so the server is confirmed up and token is fresh.
 set -euo pipefail
 
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 FALLBACK="${ENGRAM_TEST_FALLBACK:-$HOME/.claude/projects/-home-psimmons/memory/fallback.md}"
-PORT="${ENGRAM_TEST_PORT:-8788}"
-BASE="http://127.0.0.1:${PORT}"
+BASE="$ENGRAM_BASE_URL"
 
 # shellcheck source=lib/engram-state.sh
 source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
@@ -16,6 +19,18 @@ source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 # Quick exit if no pending entries
 if ! grep -q "^\*\*Project:\*\*" "$FALLBACK" 2>/dev/null; then
     exit 0
+fi
+
+# Short-circuit: if Engram is known-degraded, skip flush — leave entries intact
+# Degraded state expires after 20 minutes.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    echo "⚠️  engram-flush-fallback: degraded-skip — leaving fallback.md intact"
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
 fi
 
 # Server must be up (engram-token-refresh.sh already ensured this, but double-check)

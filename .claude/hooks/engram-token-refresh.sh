@@ -6,23 +6,38 @@
 
 set -euo pipefail
 
+# Load centralized endpoint
+# shellcheck source=engram-endpoint.conf
+source "$HOME/.claude/hooks/engram-endpoint.conf" 2>/dev/null || ENGRAM_BASE_URL="http://127.0.0.1:8788"
+
 ENGRAM_DIR="$HOME/projects/engram-go"
-PORT="${ENGRAM_TEST_PORT:-8788}"
 
 [[ -d "$ENGRAM_DIR" ]] || exit 0
 
 # shellcheck source=lib/engram-state.sh
 source "$HOME/.claude/hooks/lib/engram-state.sh" 2>/dev/null || true
 
+# Short-circuit: if Engram is known-degraded, skip — degrade gracefully
+# Degraded state expires after 20 minutes.
+DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
+if [[ -f "$DISCONNECT_STATE" ]]; then
+  AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
+  if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
+    echo "⚠️  Engram: degraded-skip (disconnect marker fresh) — token refresh skipped"
+    exit 0
+  fi
+  rm -f "$DISCONNECT_STATE"
+fi
+
 # ── 1. Ensure server is up ───────────────────────────────────────────────────
-if ! curl -sf --max-time 2 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
+if ! curl -sf --max-time 2 "${ENGRAM_BASE_URL}/health" > /dev/null 2>&1; then
   echo "⚠️  Engram: server not responding — starting it now..."
   (cd "$ENGRAM_DIR" && timeout 30 make up) 2>&1 | sed 's/^/   /'
 
   # Wait up to 15s for it to become healthy
   for i in $(seq 1 15); do
     sleep 1
-    if curl -sf --max-time 1 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
+    if curl -sf --max-time 1 "${ENGRAM_BASE_URL}/health" > /dev/null 2>&1; then
       echo "✅ Engram: started (took ${i}s)"
       break
     fi
@@ -51,16 +66,16 @@ except Exception:
 
 _fetch_setup_token() {
   local json
-  json=$(curl -sf --max-time 5 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
+  json=$(curl -sf --max-time 2 "${ENGRAM_BASE_URL}/setup-token" 2>/dev/null || true)
   if [[ -z "$json" ]]; then
     sleep 3
-    json=$(curl -sf --max-time 5 "http://127.0.0.1:${PORT}/setup-token" 2>/dev/null || true)
+    json=$(curl -sf --max-time 2 "${ENGRAM_BASE_URL}/setup-token" 2>/dev/null || true)
   fi
   echo "$json"
 }
 
 TOKEN=""
-ENDPOINT="http://127.0.0.1:${PORT}/sse"
+ENDPOINT="${ENGRAM_BASE_URL}/sse"
 
 if [[ -n "$EXISTING_TOKEN" ]]; then
   TOKEN="$EXISTING_TOKEN"
@@ -140,10 +155,10 @@ _write_token "$HOME/.claude.json"
 _test_auth() {
   local tok="$1"
   local http_status
-  http_status=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+  http_status=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
     -H "Authorization: Bearer ${tok}" \
     -H "Content-Type: application/json" \
-    -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+    -X POST "${ENGRAM_BASE_URL}/quick-recall" \
     -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
   # 401 = bad token; 000 = unreachable; anything else = auth OK (500 = recall
   # failed internally, but token was accepted)
@@ -151,11 +166,16 @@ _test_auth() {
 }
 
 if _test_auth "$TOKEN"; then
+  # Auth OK — clear any stale degraded marker
+  rm -f "$DISCONNECT_STATE"
+
   # ── 5. Detect container restart since last token write ───────────────────────
   # If the container restarted after the last time mcp_servers.json was written,
   # the Claude Code MCP connection is using a token from before the restart.
   # The token itself is stable (same ENGRAM_API_KEY), but the SSE session was
   # dropped. Prompt the user to run /mcp to reconnect. (#376)
+  # NOTE: engram-go runs in k8s (not Docker). docker inspect will silently return
+  # empty string; the NEEDS_MCP check still evaluates to 'no' cleanly.
   CONTAINER_STARTED=$(docker inspect --format '{{.State.StartedAt}}' engram-go-app 2>/dev/null || true)
   CONFIG_MTIME=$(python3 -c "import os; print(os.path.getmtime(os.path.expanduser('~/.claude/mcp_servers.json')))" 2>/dev/null || true)
 
@@ -174,7 +194,7 @@ except Exception:
     if [[ "$NEEDS_MCP" == "yes" ]]; then
       # Container restarted since last config write — SSE session is stale.
       # Output systemMessage so Claude surfaces the /mcp step immediately.
-      printf '{"systemMessage":"⚠️  Engram container restarted since last session.\\nRun /mcp in Claude Code to reconnect memory — this is the only step needed."}'
+      printf '{"systemMessage":"⚠️  Engram container restarted since last session.\nRun /mcp in Claude Code to reconnect memory — this is the only step needed."}'
       exit 0
     fi
   fi
@@ -201,7 +221,7 @@ try:
         msgs.append(f"{af} consecutive auth failure(s)")
     if msgs:
         detail = " | ".join(msgs)
-        print(f'{{"systemMessage":"⚠️  Engram memory is degraded: {detail}.\\nRun: engram-flush --force  or restart Engram to recover."}}')
+        print(f'{{"systemMessage":"⚠️  Engram memory is degraded: {detail}.\nRun: engram-flush --force  or restart Engram to recover."}}')
 except Exception:
     pass
 PYEOF
@@ -224,10 +244,10 @@ else
   fi
   ENV_RECOVERED=false
   if [[ -n "$ENV_KEY" ]]; then
-    ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 5 \
+    ENV_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 2 \
       -H "Authorization: Bearer ${ENV_KEY}" \
       -H "Content-Type: application/json" \
-      -X POST "http://127.0.0.1:${PORT}/quick-recall" \
+      -X POST "${ENGRAM_BASE_URL}/quick-recall" \
       -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
     if [[ "$ENV_STATUS" != "401" && "$ENV_STATUS" != "000" ]]; then
       TOKEN="$ENV_KEY"
