@@ -1428,9 +1428,10 @@ func (s *Server) registerTools() {
 // Unauthenticated — suitable as a K8s readiness probe.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	type result struct {
-		Status   string `json:"status"`
-		Postgres string `json:"postgres"`
-		Ollama   string `json:"ollama"`
+		Status       string `json:"status"`
+		Postgres     string `json:"postgres"`
+		Ollama       string `json:"ollama"`
+		CircuitState string `json:"circuit_state"`
 	}
 
 	pgStatus := "ok"
@@ -1486,10 +1487,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Resolve circuit breaker state for the response.
+	circuitState := "closed"
+	if s.cfg.CircuitStateFunc != nil {
+		circuitState = s.cfg.CircuitStateFunc()
+	}
 	res := result{
-		Status:   "ok",
-		Postgres: pgStatus,
-		Ollama:   ollamaStatus,
+		Status:       "ok",
+		Postgres:     pgStatus,
+		Ollama:       ollamaStatus,
+		CircuitState: circuitState,
 	}
 	statusCode := http.StatusOK
 	// Return 503 only for hard failures: Postgres down, or LiteLLM down when it was
