@@ -87,7 +87,7 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 	// factory for a given project at a time. All concurrent callers for the
 	// same project share the result, preventing TOCTOU races and duplicate
 	// backend connection pools.
-	v, err, _ := p.sfg.Do(project, func() (any, error) {
+	resCh := p.sfg.DoChan(project, func() (any, error) {
 		// Re-check under read lock in case a previous singleflight call (from
 		// before pool startup) already inserted this project.
 		p.mu.RLock()
@@ -126,10 +126,16 @@ func (p *EnginePool) Get(ctx context.Context, project string) (*EngineHandle, er
 		p.engines[project] = entry
 		return h, nil
 	})
-	if err != nil {
-		return nil, err
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-resCh:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*EngineHandle), nil //nolint:errcheck
 	}
-	return v.(*EngineHandle), nil //nolint:errcheck
 }
 
 // evictLRULocked removes the engine with the oldest lastAccess time.
