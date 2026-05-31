@@ -221,7 +221,7 @@ func (c *LiteLLMClient) Name() string { return c.model }
 
 // CircuitState returns the current circuit breaker state for this client.
 // Returns StateClosed when circuit breaking is disabled (c.cb == nil) so
-// callers can safely call String() on the result without a nil check. (#926)
+// callers can safely call String() on the result without a nil check (#926).
 func (c *LiteLLMClient) CircuitState() CircuitState {
 	if c.cb == nil {
 		return StateClosed

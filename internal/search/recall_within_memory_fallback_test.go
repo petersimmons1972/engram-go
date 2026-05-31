@@ -342,7 +342,7 @@ func TestKeywordFallback_ScoringOrder(t *testing.T) {
 
 	// chunk-tie-a must appear before chunk-tie-b (both match "golang programming";
 	// chunk_index=1 < chunk_index=2).
-	var tieAIdx, tieBIdx int = -1, -1
+	tieAIdx, tieBIdx := -1, -1
 	for i, r := range results {
 		if r.Content == "golang programming" {
 			if tieAIdx == -1 {
