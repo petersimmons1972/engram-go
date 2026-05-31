@@ -76,22 +76,23 @@ func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 		"RecallWithOpts must return within 1s when embed times out (500ms deadline); got %s", elapsed)
 }
 
-// TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory fails
-// fast (within 3s) when Ollama is unavailable. Document chunk search is
-// vector-only so an error is correct — but it must not hang.
+// TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory degrades
+// to keyword search (not an error) when Ollama is unavailable, and returns
+// within the embed deadline window (not 15s+).
 func TestEmbedDeadline_RecallWithinMemory(t *testing.T) {
 	proj := uniqueProject("embed-deadline-within")
+	// Embedder blocks for 60s — far longer than the 500ms embed deadline.
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
 	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	_, err := eng.RecallWithinMemory(callerCtx, "test query", "some-memory-id", 5, "summary")
+	results, err := eng.RecallWithinMemory(callerCtx, "test query", "some-memory-id", 5, "summary")
 	elapsed := time.Since(start)
 
-	require.Error(t, err, "RecallWithinMemory must return error when embed fails (no BM25 fallback for document search)")
-	require.ErrorContains(t, err, "embed query", "error should wrap embed failure")
+	require.NoError(t, err, "RecallWithinMemory must degrade to keyword search on embed failure, not return an error")
+	require.NotNil(t, results, "results slice must be non-nil even when degraded")
 	require.Less(t, elapsed, 1*time.Second,
-		"RecallWithinMemory must fail within 1s (500ms embed deadline); got %s", elapsed)
+		"RecallWithinMemory must return within 1s when embed times out (500ms deadline); got %s", elapsed)
 }

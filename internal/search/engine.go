@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"strconv"
 	"sync"
 	"time"
@@ -972,18 +973,26 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	}
 
 	// Embed call bounded by embedRecallTimeout, consistent with RecallWithOpts.
-	// RecallWithinMemory has no BM25 fallback (document chunk search is
-	// vector-only), so it returns an error on embed failure.
+	// On embed timeout or error, degrade to keyword-scored chunk search using
+	// GetChunksForMemory — mirrors the BM25+recency fallback in RecallWithOpts.
 	embedTimeout := e.embedRecallTimeout
 	if embedTimeout <= 0 {
 		embedTimeout = defaultEmbedRecallTimeoutMS * time.Millisecond
 	}
 	embedCtx, embedCancel := context.WithTimeout(ctx, embedTimeout)
 	defer embedCancel()
-	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
-	if err != nil {
+	queryVec, embedErr := e.getEmbedder().Embed(embedCtx, query)
+	if embedErr != nil {
+		// If the PARENT ctx was cancelled or expired (not just the embed child ctx),
+		// propagate the parent error rather than silently degrading to BM25 results.
+		// Only degrade when the embed itself failed while the parent ctx is still alive.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		metrics.RecallEmbedTimeoutTotal.Inc()
-		return nil, fmt.Errorf("embed query: %w", err)
+		slog.Info("RecallWithinMemory embed failed, degrading to keyword search",
+			"memory_id", memoryID, "timeout_ms", embedTimeout.Milliseconds(), "err", embedErr)
+		return e.recallWithinMemoryKeywordFallback(ctx, query, memoryID, topK)
 	}
 	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)
 	if err != nil {
@@ -996,6 +1005,74 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 			ID:      c.MemoryID,
 			Content: c.ChunkText,
 			Project: c.Project,
+		})
+	}
+	return out, nil
+}
+
+// recallWithinMemoryKeywordFallback is the degraded-signal path for
+// RecallWithinMemory when the embedder is unavailable. It fetches all chunks
+// for the memory and ranks them by simple term-overlap against the query
+// (case-insensitive unigrams), returning up to topK results. This preserves
+// usefulness of the document-query tool even when the vector index is cold.
+func (e *SearchEngine) recallWithinMemoryKeywordFallback(ctx context.Context, query, memoryID string, topK int) ([]*types.Memory, error) {
+	all, err := e.backend.GetChunksForMemory(ctx, memoryID)
+	if err != nil {
+		return nil, err
+	}
+	if len(all) == 0 {
+		return []*types.Memory{}, nil
+	}
+
+	// Build query term set (lowercase unigrams, ignore single-char tokens).
+	queryTerms := make(map[string]struct{})
+	for _, tok := range strings.Fields(strings.ToLower(query)) {
+		tok = strings.Trim(tok, ".,;:!?\"'()[]{}") // strip punctuation
+		if len(tok) > 1 {
+			queryTerms[tok] = struct{}{}
+		}
+	}
+
+	type scored struct {
+		chunk *types.Chunk
+		score float64
+	}
+	scoredChunks := make([]scored, 0, len(all))
+	for _, c := range all {
+		if len(queryTerms) == 0 {
+			scoredChunks = append(scoredChunks, scored{chunk: c, score: 0})
+			continue
+		}
+		text := strings.ToLower(c.ChunkText)
+		var hits int
+		for term := range queryTerms {
+			if strings.Contains(text, term) {
+				hits++
+			}
+		}
+		scoredChunks = append(scoredChunks, scored{
+			chunk: c,
+			score: float64(hits) / float64(len(queryTerms)),
+		})
+	}
+
+	// Sort descending by score, then ascending by chunk_index for ties.
+	sort.SliceStable(scoredChunks, func(i, j int) bool {
+		if scoredChunks[i].score != scoredChunks[j].score {
+			return scoredChunks[i].score > scoredChunks[j].score
+		}
+		return scoredChunks[i].chunk.ChunkIndex < scoredChunks[j].chunk.ChunkIndex
+	})
+
+	if topK > 0 && len(scoredChunks) > topK {
+		scoredChunks = scoredChunks[:topK]
+	}
+	out := make([]*types.Memory, 0, len(scoredChunks))
+	for _, s := range scoredChunks {
+		out = append(out, &types.Memory{
+			ID:      s.chunk.MemoryID,
+			Content: s.chunk.ChunkText,
+			Project: s.chunk.Project,
 		})
 	}
 	return out, nil
@@ -1014,6 +1091,8 @@ var embedderAliases = map[string]string{
 	"bge-m3-Q4_K_M.gguf": "BAAI/bge-m3",
 	"bge-m3":             "BAAI/bge-m3",
 	"BAAI/bge-m3":        "BAAI/bge-m3",
+	"bge-m3:latest":      "BAAI/bge-m3",
+	"BAAI/bge-m3:latest": "BAAI/bge-m3",
 }
 
 // canonicalEmbedderName returns the canonical model identifier for s.
