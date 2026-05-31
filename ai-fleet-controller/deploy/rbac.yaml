@@ -13,6 +13,13 @@ rules:
 - apiGroups: [ai.petersimmons.com]
   resources: [gpuhosts]
   verbs: [get, list, watch]
+# SECURITY NOTE: grants controller write access to NetworkPolicies in ai-fleet namespace.
+# Blast-radius reviewed: controller can create/patch/update the allow-olla-backends
+# NetworkPolicy. This YAML must NOT be applied to the cluster without explicit founder
+# review — apply manually after reviewing the PR.
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies]
+  verbs: [get, create, update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

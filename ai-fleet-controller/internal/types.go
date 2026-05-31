@@ -31,6 +31,10 @@ type GPUHostSpec struct {
 	Host             string      `json:"host"`
 	ReservedMemoryGB int         `json:"reservedMemoryGB"`
 	NFSMount         string      `json:"nfsMount"`
+	// HostIP is the static IPv4 address for this GPU host. Used by the
+	// NetworkPolicy reconciler to emit ipBlock rules without DNS resolution
+	// at reconcile time. Must be set for NetworkPolicy egress to work.
+	HostIP           string      `json:"hostIP,omitempty"`
 	Models           []ModelSpec `json:"models"`
 }
 

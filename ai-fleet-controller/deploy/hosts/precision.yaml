@@ -1,0 +1,11 @@
+apiVersion: ai.petersimmons.com/v1
+kind: GPUHost
+metadata:
+  name: precision
+  namespace: ai-fleet
+spec:
+  host: precision.petersimmons.com
+  hostIP: "192.168.0.90"
+  reservedMemoryGB: 8
+  nfsMount: "truenas.petersimmons.com:/mnt/zp1/ai-models"
+  models: []

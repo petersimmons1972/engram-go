@@ -37,6 +37,9 @@ spec:
                 default: 8
               nfsMount:
                 type: string
+              hostIP:
+                type: string
+                description: "Static IPv4 address for this GPU host. Used by the NetworkPolicy reconciler to emit ipBlock rules without DNS resolution at reconcile time."
               models:
                 type: array
                 items:
