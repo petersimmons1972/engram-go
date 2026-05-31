@@ -23,8 +23,8 @@ func TestSharedPoolConfig(t *testing.T) {
 
 	configureSharedPool(cfg)
 
-	if cfg.MaxConns != 50 {
-		t.Errorf("MaxConns: got %d, want 50", cfg.MaxConns)
+	if cfg.MaxConns != 75 {
+		t.Errorf("MaxConns: got %d, want 75", cfg.MaxConns)
 	}
 	if cfg.MinConns != 2 {
 		t.Errorf("MinConns: got %d, want 2", cfg.MinConns)
@@ -145,8 +145,8 @@ func TestSharedPoolIsReusedAcrossBackends(t *testing.T) {
 
 	// Pool stat total connections must not exceed shared MaxConns.
 	stat := pool.Stat()
-	if stat.TotalConns() > 50 {
-		t.Errorf("TotalConns %d > MaxConns 50", stat.TotalConns())
+	if stat.TotalConns() > 75 {
+		t.Errorf("TotalConns %d > MaxConns 75", stat.TotalConns())
 	}
 
 	_ = b2

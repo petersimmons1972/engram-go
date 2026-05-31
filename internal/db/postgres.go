@@ -57,7 +57,7 @@ func configurePool(cfg *pgxpool.Config) {
 // idle. Tighter idle and health-check intervals keep the shared pool lean.
 func configureSharedPool(cfg *pgxpool.Config) {
 	cfg.MinConns = 2
-	cfg.MaxConns = 50
+	cfg.MaxConns = 75
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 3 * time.Minute
 	// 15s health-check so the pool detects dead connections within one
