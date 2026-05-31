@@ -16,8 +16,10 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/db"
+	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -360,6 +362,36 @@ func TestHandleMemoryRecall_FullMode_NoDegradation_OmitsReason(t *testing.T) {
 	require.Equal(t, false, degraded["embed"])
 	_, hasReason := degraded["reason"]
 	require.False(t, hasReason, "reason must be absent when embedder is healthy (Fix A: #634 fix#4)")
+	_, hasWarnings := out["warnings"]
+	require.False(t, hasWarnings, "warnings must be absent when recall is not degraded")
+}
+
+func TestHandleMemoryRecall_FullMode_Degraded_AddsWarningsAndMetric(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "something",
+	}
+	cfg := testConfig()
+	cfg.RouterURL = "http://litellm:4000"
+	cfg.EmbedderHealth = NewEmbedderHealth(func(context.Context) (bool, string) {
+		return false, "litellm_unreachable"
+	}, 5*time.Second)
+
+	before := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("litellm_unreachable"))
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	warningsRaw, hasWarnings := out["warnings"]
+	require.True(t, hasWarnings, "warnings must be present when recall is degraded")
+	warnings, ok := warningsRaw.([]any)
+	require.True(t, ok)
+	require.Contains(t, warnings, recallEmbedDegradedWarning)
+
+	after := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("litellm_unreachable"))
+	require.Equal(t, before+1, after, "degraded recall counter must increment once")
 }
 
 // ── Fix B: cross-project recall→fetch (#634 primary) ─────────────────────────
@@ -401,4 +433,77 @@ func TestExecFetch_CrossProjectFetch_Issue634(t *testing.T) {
 	require.NoError(t, err, "cross-project fetch must succeed after #634 fix")
 	require.Equal(t, mem.ID, out["id"], "returned id must match requested id")
 	require.Equal(t, mem.Content, out["content"], "full content must be present")
+}
+
+// ── Blocker 2: embed-timeout degradation path counter coverage ───────────────
+
+// errorEmbedder always returns an error from Embed, simulating an embed backend
+// that is unavailable or timing out. This drives the embedDegraded=true path in
+// RecallWithOpts (search/engine.go) without relying on the EmbedderHealth probe.
+type errorEmbedder struct{}
+
+func (errorEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, errors.New("embed backend unavailable")
+}
+func (errorEmbedder) EmbedWithModel(_ context.Context, _ string) ([]float32, string, error) {
+	return nil, "", errors.New("embed backend unavailable")
+}
+func (errorEmbedder) Name() string    { return "error-embedder" }
+func (errorEmbedder) Dimensions() int { return 384 }
+
+// newErrorEmbedPool builds an EnginePool backed by a noopBackend + errorEmbedder.
+// RecallWithOpts on this pool always sets embedDegraded=true.
+func newErrorEmbedPool(t *testing.T) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, noopBackend{}, errorEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
+}
+
+// TestHandleMemoryRecall_EmbedTimeout_IncrementsDegradedCounter verifies that
+// when RecallWithOpts sets embedDegraded=true (embed backend error path),
+// the RecallDegradedTotal counter with label "embed_timeout" increments and
+// warnings are added to the response.
+//
+// This covers the embedDegraded=true path independently of the EmbedderHealth
+// health-probe path (!ok). The embedder returns an error; the health probe
+// reports healthy — so only the timeout/error path fires.
+func TestHandleMemoryRecall_EmbedTimeout_IncrementsDegradedCounter(t *testing.T) {
+	pool := newErrorEmbedPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "embed timeout degraded path",
+	}
+	// EmbedderHealth returns healthy — only the embedDegraded=true path fires,
+	// not the !ok path. This isolates the counter increment to the embed-error branch.
+	cfg := testConfig()
+	cfg.RouterURL = "http://litellm:4000"
+
+	before := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	// Verify warnings are present.
+	warningsRaw, hasWarnings := out["warnings"]
+	require.True(t, hasWarnings, "warnings must be present when embed backend errors")
+	warnings, ok := warningsRaw.([]any)
+	require.True(t, ok)
+	require.Contains(t, warnings, recallEmbedDegradedWarning)
+
+	// Verify the degraded field signals embed=true.
+	degradedRaw, hasDegraded := out["degraded"]
+	require.True(t, hasDegraded, "degraded key must be present")
+	degradedMap, ok := degradedRaw.(map[string]any)
+	require.True(t, ok, "degraded must be a map")
+	require.Equal(t, true, degradedMap["embed"], "degraded.embed must be true on embed error path")
+
+	// Counter must increment exactly once with label "embed_timeout".
+	after := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	require.Equal(t, before+1, after, "RecallDegradedTotal[embed_timeout] must increment once on embed error")
 }

@@ -17,6 +17,7 @@ func TestMetricsRegistered(t *testing.T) {
 	WorkerTicks.WithLabelValues("reembed").Inc()
 	WorkerErrors.WithLabelValues("reembed").Inc()
 	ChunksPendingReembed.Set(5)
+	RecallDegradedTotal.WithLabelValues("embed_timeout").Inc()
 
 	names := []string{
 		"engram_tool_requests_total",
@@ -24,6 +25,7 @@ func TestMetricsRegistered(t *testing.T) {
 		"engram_worker_ticks_total",
 		"engram_worker_errors_total",
 		"engram_chunks_pending_reembed",
+		"engram_recall_degraded_total",
 	}
 	for _, name := range names {
 		mfs, err := prometheus.DefaultGatherer.Gather()
