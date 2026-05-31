@@ -27,59 +27,63 @@ data:
         on_connection_failure: true
         on_status_codes: [502, 503, 504]
         max_attempts: 2
+      # Circuit breaker timeout raised for cold-start tolerance.
+      # oblivion-gb10-vllm (Qwen3-32B) takes ~1800s to load from NFS;
+      # the default 30s cooldown caused perpetual lock-out during cold-start
+      # (3 x 150s client timeouts -> breaker open -> 30s half-open probe -> repeat).
+      # 2000s > NFS load time; breaker self-heals once vLLM is warm.
+      # Per-endpoint override (aifleet#95) will replace this global when implemented.
+      # See: petersimmons1972/aifleet#94, #95.
+      circuit_breaker:
+        timeout: 2000s
+        threshold: 5
 
     discovery:
       type: "static"
       refresh_interval: 30s
       static:
         endpoints:
-          # GB10 Grace-Blackwell (128 GB unified) — Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4
-          # Managed by ai-fleet-controller (policy a9e7777d)
+          # GB10 Grace-Blackwell (128 GB unified) -- Qwen3-32B BF16
+          # Managed by ai-fleet-controller (policy 49658164)
+          # Inference only -- NOT an embedder. No embeddings capability.
+          # circuit_breaker_timeout: 2000s set to match NFS model load time (~1800s).
           - url: "http://oblivion.petersimmons.com:8000"
             name: "oblivion-gb10-vllm"
-            type: "openai"
+            type: "openai-compatible"
             priority: 200
+            circuit_breaker_timeout: 2000s
+            circuit_breaker_threshold: 10
 
-          # RX 7900 XT (20 GB, gfx1100, leviathan) — bge-m3 via Infinity on port 8004
-          - url: "http://leviathan.petersimmons.com:8004"
-            name: "leviathan-7900xt-infinity"
-            type: "openai"
-            priority: 25
+          # MI-50 / Radeon VII (16 GB, gfx906, precision) -- BAAI/bge-m3 via llama.cpp port 8007
+          # PRIMARY embed endpoint. Confirmed HEALTHY (advertises BAAI/bge-m3, 1024-dim).
+          # Highest priority embed endpoint -- priority-LB routes all embed traffic here first.
+          - url: "http://precision.petersimmons.com:8007"
+            name: "ai-fleet-embed-mi50"
+            type: "openai-compatible"
+            priority: 200
+            capabilities: ["embeddings"]
 
-          # GB10 Grace-Blackwell — bge-m3 via Infinity port 8003 (down — will reconnect when restored)
-          - url: "http://oblivion.petersimmons.com:8003"
-            name: "oblivion-gb10-infinity"
-            type: "openai"
-            priority: 125
-
-          # W6800 (32 GB, gfx1030, precision) — bge-m3 via Infinity port 8005
+          # W6800 (32 GB, gfx1030, precision) -- bge-m3-Q8_0.gguf via llama.cpp port 8005
+          # Secondary embed endpoint.
           - url: "http://precision.petersimmons.com:8005"
-            name: "precision-w6800-infinity"
-            type: "openai"
+            name: "precision-w6800-llamacpp"
+            type: "openai-compatible"
             priority: 100
+            capabilities: ["embeddings"]
 
-          # W6800 (32 GB, gfx1030, precision) — Ollama general inference
-          - url: "http://precision.petersimmons.com:11434"
-            name: "w6800"
-            type: "ollama"
-            priority: 100
+          # RX 7900 XT (20 GB, gfx1100, leviathan) -- bge-m3-Q8_0.gguf via llama.cpp port 8004
+          # Backup embed endpoint. CURRENTLY OFFLINE. Retained as low-priority backup;
+          # priority-LB will not route here while it is down.
+          - url: "http://leviathan.petersimmons.com:8004"
+            name: "embed-7900xt"
+            type: "openai-compatible"
+            priority: 25
+            capabilities: ["embeddings"]
 
-          # MI-50 (16 GB, gfx906, precision) — Ollama coding (qwen2.5-coder:14b-q6_K)
-          - url: "http://precision.petersimmons.com:11436"
-            name: "mi50"
-            type: "ollama"
-            priority: 75
-
-          # RX 7900 XT (leviathan) — Ollama backup inference
-          - url: "http://leviathan.petersimmons.com:11434"
-            name: "leviathan-7900xt"
-            type: "ollama"
-            priority: 50
-
-    model_discovery:
-      enabled: true
-      interval: 5m
-      timeout: 30s
+      model_discovery:
+        enabled: true
+        interval: 5m
+        timeout: 30s
 
     model_registry:
       type: "memory"
@@ -88,13 +92,12 @@ data:
         enabled: true
         stale_threshold: 24h
         cleanup_interval: 10m
-
-    routing_strategy:
-      type: "round-robin"
-      options:
-        fallback_behavior: "compatible_only"
-        discovery_timeout: 2s
-        discovery_refresh_on_miss: true
+      routing_strategy:
+        type: "discovery"
+        options:
+          fallback_behavior: "compatible_only"
+          discovery_timeout: 2s
+          discovery_refresh_on_miss: true
 
     translators:
       anthropic:
