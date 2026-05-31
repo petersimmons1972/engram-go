@@ -25,6 +25,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 CACHE_DIR="${CLAUDE_CODEX_CACHE:-${HOME}/.cache/claude-codex}"
 export TARGET_REPOS_FILE="${CACHE_DIR}/config/target-repos.txt"
+CHECKOUT_PATHS_FILE="${CACHE_DIR}/config/checkout-paths.txt"
 GITHUB_OWNER="${GITHUB_OWNER:-petersimmons1972}"
 PROJECTS_ROOT="${PROJECTS_ROOT:-${HOME}/projects}"
 WORKTREES_ROOT="${WORKTREES_ROOT:-${HOME}/projects/.codex-poll-worktrees}"
@@ -45,6 +46,26 @@ log() {
 }
 
 repo_short_name() { printf '%s' "$1" | sed 's|^[^/]*/||'; }
+
+# Return the local checkout path for a repo slug.
+# Consults CHECKOUT_PATHS_FILE for a per-repo override; falls back to
+# $PROJECTS_ROOT/<short-name> when no override is present.
+repo_checkout_path() {
+  local slug="$1"
+  local override=""
+  if [[ -r "${CHECKOUT_PATHS_FILE}" ]]; then
+    override="$(awk -v s="${slug}" '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*$/ { next }
+      { if ($1 == s) { print $2; exit } }
+    ' "${CHECKOUT_PATHS_FILE}")"
+  fi
+  if [[ -n "${override}" ]]; then
+    printf '%s' "${override}"
+  else
+    printf '%s/%s' "${PROJECTS_ROOT}" "$(repo_short_name "${slug}")"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Embedded Python helpers (single-quoted bodies; config path via env var;
@@ -191,7 +212,7 @@ fast_path() {
   local skipped_no_checkout=() skipped_dirty=() found=0
   while IFS=$'\t' read -r PRANK CREATED REPO ISSUE_NUM; do
     SHORT="$(repo_short_name "${REPO}")"
-    REPO_PATH="${PROJECTS_ROOT}/${SHORT}"
+    REPO_PATH="$(repo_checkout_path "${REPO}")"
 
     if [[ ! -d "${REPO_PATH}/.git" ]]; then
       skipped_no_checkout+=("${REPO}#${ISSUE_NUM}")
