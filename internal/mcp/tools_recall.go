@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -36,6 +37,53 @@ func degradedWarnings(embedDegraded bool) []string {
 	return []string{"recall degraded: embed unavailable or timed out; using BM25+recency fallback"}
 }
 
+func finiteOrZero(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
+}
+
+func sanitizeMemoryFloatFields(m *types.Memory) {
+	if m == nil {
+		return
+	}
+	if m.PatternConfidence != nil {
+		v := finiteOrZero(*m.PatternConfidence)
+		m.PatternConfidence = &v
+	}
+	if m.DynamicImportance != nil {
+		v := finiteOrZero(*m.DynamicImportance)
+		m.DynamicImportance = &v
+	}
+	m.RetrievalIntervalHrs = finiteOrZero(m.RetrievalIntervalHrs)
+	if m.RetrievalPrecision != nil {
+		v := finiteOrZero(*m.RetrievalPrecision)
+		m.RetrievalPrecision = &v
+	}
+}
+
+func sanitizeRecallResults(results []types.SearchResult) {
+	for i := range results {
+		results[i].Score = finiteOrZero(results[i].Score)
+		results[i].ChunkScore = finiteOrZero(results[i].ChunkScore)
+		for k, v := range results[i].ScoreBreakdown {
+			results[i].ScoreBreakdown[k] = finiteOrZero(v)
+		}
+		sanitizeMemoryFloatFields(results[i].Memory)
+		for j := range results[i].Connected {
+			results[i].Connected[j].Strength = finiteOrZero(results[i].Connected[j].Strength)
+			sanitizeMemoryFloatFields(results[i].Connected[j].Memory)
+		}
+	}
+}
+
+func sanitizeConflictingResults(conflicts []types.ConflictingResult) {
+	for i := range conflicts {
+		conflicts[i].Strength = finiteOrZero(conflicts[i].Strength)
+		sanitizeMemoryFloatFields(conflicts[i].Memory)
+	}
+}
 func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
 	m, err := f.GetMemoryByID(ctx, id)
 	if err != nil {
@@ -262,6 +310,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if err != nil {
 			return nil, err
 		}
+		sanitizeRecallResults(results)
 		if mode == "handle" {
 			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 			degraded := !ok
@@ -288,6 +337,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			// EnrichWithConflicts uses each result's Memory.Project for the
 			// per-memory lookup; firstProject is the fallback for the rare empty case.
 			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), firstProject, results)
+			sanitizeConflictingResults(conflicts)
 			out["conflicting_results"] = conflicts
 			out["conflict_count"] = len(conflicts)
 		}
@@ -372,6 +422,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if embedDegraded {
 			metrics.RecallDegradedTotal.WithLabelValues("embed_timeout").Inc()
 		}
+		sanitizeRecallResults(results)
 		return toolResult(map[string]any{
 			"handles":    search.ToHandles(results),
 			"count":      len(results),
@@ -380,6 +431,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"warnings":   degradedWarnings(embedDegraded),
 		})
 	}
+	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
 	if eventID != "" {
 		out["event_id"] = eventID
@@ -387,6 +439,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	if includeConflicts {
 		conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
+		sanitizeConflictingResults(conflicts)
 		out["conflicting_results"] = conflicts
 		out["conflict_count"] = len(conflicts)
 	}
