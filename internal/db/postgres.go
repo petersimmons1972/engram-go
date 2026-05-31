@@ -325,20 +325,20 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		}
 
 		// 003_pgvector.sql starts with CREATE EXTENSION which cannot run
-		// inside a transaction in most PostgreSQL configurations. Run it
-		// outside any transaction, complete the backfill, then record the
-		// migration last — so a crash before recording causes a safe retry
-		// on the next startup (CREATE EXTENSION IF NOT EXISTS is idempotent).
-		// Fix for #100: previously the migration was recorded before the
-		// backfill, leaving the schema permanently stuck if the backfill failed.
-		if name == "003_pgvector.sql" {
+		// inside a transaction in most PostgreSQL configurations.
+		// 023_null_embed_covering_idx.sql uses CREATE INDEX CONCURRENTLY,
+		// which also must run outside a transaction block.
+		if name == "003_pgvector.sql" || name == "023_null_embed_covering_idx.sql" {
 			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}
-			// Run backfill on the same connection that holds the advisory lock so
-			// the lock covers the full backfill duration (issue #292).
-			if err := b.backfillVectors(ctx, conn); err != nil {
-				return fmt.Errorf("pgvector backfill failed: %w", err)
+			// For 003, run backfill on the same connection that holds the
+			// advisory lock so the lock covers the full backfill duration
+			// (issue #292).
+			if name == "003_pgvector.sql" {
+				if err := b.backfillVectors(ctx, conn); err != nil {
+					return fmt.Errorf("pgvector backfill failed: %w", err)
+				}
 			}
 			// Record last — use ON CONFLICT DO NOTHING so a concurrent or retried
 			// startup that already recorded doesn't fail here.

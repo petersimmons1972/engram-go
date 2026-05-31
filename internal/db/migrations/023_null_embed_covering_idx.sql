@@ -4,5 +4,5 @@
 -- A covering partial index on the columns used for backpressure and work ordering
 -- keeps those queries off full-table scans under large backlog scenarios.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_null_embed_proj_created
-    ON chunks (project, created_at)
+    ON chunks (project, id)
     WHERE embedding IS NULL;
