@@ -180,6 +180,63 @@ slow_path() {
 }
 
 # ---------------------------------------------------------------------------
+# POST-RUN VERIFICATION: wait for Codex to finish, verify remote branch + PR,
+# then apply done or stalled label accordingly.
+# Called in a background subshell after Codex is launched.
+# ---------------------------------------------------------------------------
+post_run_verify() {
+  local codex_pid="$1"
+  local repo="$2"
+  local issue_num="$3"
+  local branch_name="$4"
+  local log_run="$5"
+
+  # Wait for the Codex process to finish
+  if ! wait "${codex_pid}" 2>/dev/null; then
+    log "post-verify: codex exec pid=${codex_pid} exited non-zero for ${repo}#${issue_num}"
+    # Non-zero exit is noted but we still run remote verification below,
+    # because Codex may have pushed its branch before failing the final step.
+  else
+    log "post-verify: codex exec pid=${codex_pid} completed for ${repo}#${issue_num}"
+  fi
+
+  # Check 1: does the branch exist on the remote? Use the GitHub API so this
+  # works regardless of which local checkout is current.
+  local remote_exists=0
+  if gh api "repos/${repo}/git/refs/heads/${branch_name}" >/dev/null 2>&1; then
+    remote_exists=1
+  fi
+
+  # Check 2: is there an open PR from this branch?
+  local pr_count
+  pr_count="$(gh pr list -R "${repo}" --head "${branch_name}" --state open --json number --jq 'length' 2>/dev/null || echo "0")"
+
+  if [[ "${remote_exists}" -eq 1 && "${pr_count}" -gt 0 ]]; then
+    log "post-verify: ${repo}#${issue_num} remote branch and open PR confirmed — applying done label"
+    gh issue edit "${issue_num}" --repo "${repo}" \
+      --add-label "agent/codex/done" \
+      --remove-label "agent/codex/in-progress" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING done label transition failed for ${repo}#${issue_num}"
+  else
+    log "ERROR: Codex reported done but no remote branch/PR found for issue ${issue_num} (remote_exists=${remote_exists}, pr_count=${pr_count})"
+    gh issue edit "${issue_num}" --repo "${repo}" \
+      --add-label "agent/codex/stalled" \
+      --remove-label "agent/codex/in-progress" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label transition failed for ${repo}#${issue_num}"
+    gh issue comment "${issue_num}" --repo "${repo}" \
+      --body "**codex-poll post-run verification failed.**
+
+Remote branch \`${branch_name}\` exists: ${remote_exists}
+Open PR count: ${pr_count}
+
+Codex run log: \`${log_run}\`
+
+Label set to \`agent/codex/stalled\`. Manual inspection required." \
+      2>>"${LOG_FILE}" || true
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # FAST PATH: single cross-repo search for queued issues; run one if found
 # ---------------------------------------------------------------------------
 fast_path() {
@@ -269,7 +326,54 @@ fast_path() {
   BRANCH_NAME="agent/codex/issue-${ISSUE_NUM}-poll"
   log "fast: creating worktree ${WT_DIR} (branch ${BRANCH_NAME} off origin/main)"
   git -C "${REPO_PATH}" fetch origin main >>"${LOG_FILE}" 2>&1 || log "fast: WARNING fetch failed, using local HEAD"
-  git -C "${REPO_PATH}" worktree add "${WT_DIR}" -b "${BRANCH_NAME}" origin/main >>"${LOG_FILE}" 2>&1
+
+  # Branch collision detection: if the branch already exists, check whether an
+  # active worktree is using it before deciding how to proceed.
+  if git -C "${REPO_PATH}" rev-parse --verify "${BRANCH_NAME}" >/dev/null 2>&1; then
+    # Parse porcelain worktree list to find any worktree using this branch.
+    # Format: blocks separated by blank lines; each block has "worktree <path>",
+    # "HEAD <sha>", "branch refs/heads/<name>" lines.
+    local active_wt
+    active_wt="$(git -C "${REPO_PATH}" worktree list --porcelain 2>/dev/null \
+      | awk -v br="refs/heads/${BRANCH_NAME}" '
+          /^worktree / { wt=$2 }
+          /^branch /   { if ($2 == br) { print wt; exit } }
+        ' || true)"
+    if [[ -n "${active_wt}" ]]; then
+      log "ERROR: branch ${BRANCH_NAME} has an active worktree (${active_wt}) — skipping issue ${ISSUE_NUM}"
+      # Revert label so the issue is retried next cycle
+      gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
+        --add-label "agent/codex/queued" \
+        --remove-label "agent/codex/in-progress" \
+        2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
+      return 1
+    else
+      log "fast: stale branch ${BRANCH_NAME} exists with no active worktree — deleting and proceeding"
+      git -C "${REPO_PATH}" branch -D "${BRANCH_NAME}" >>"${LOG_FILE}" 2>&1 || {
+        log "ERROR: failed to delete stale branch ${BRANCH_NAME} for issue ${ISSUE_NUM} — aborting"
+        gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
+          --add-label "agent/codex/queued" \
+          --remove-label "agent/codex/in-progress" \
+          2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
+        return 1
+      }
+    fi
+  fi
+
+  # Non-zero exit on worktree creation failure: capture stderr, log, and skip issue.
+  local WT_STDERR WT_EXIT
+  WT_STDERR="$(git -C "${REPO_PATH}" worktree add "${WT_DIR}" -b "${BRANCH_NAME}" origin/main 2>&1)"
+  WT_EXIT=$?
+  printf '%s\n' "${WT_STDERR}" >> "${LOG_FILE}"
+  if [[ "${WT_EXIT}" -ne 0 ]]; then
+    log "ERROR: worktree creation failed for issue ${ISSUE_NUM}: ${WT_STDERR}"
+    # Revert label so the issue is retried next cycle
+    gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
+      --add-label "agent/codex/queued" \
+      --remove-label "agent/codex/in-progress" \
+      2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
+    return 1
+  fi
 
   # Compact context seed via codex-handoff
   local HANDOFF_CONTEXT=""
@@ -301,7 +405,12 @@ Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the s
   codex exec --ephemeral --cd "${WT_DIR}" "${PROMPT}" > "${LOG_RUN}" 2>&1 &
   local CODEX_PID=$!
   log "fast: codex exec pid=${CODEX_PID} log=${LOG_RUN}"
-  log "fast: done — Codex running in background, worktree owned by Codex"
+
+  # Post-run verification runs in a background subshell so it does not block
+  # the poller. It waits for Codex to finish, then checks for a remote branch
+  # and open PR before applying the done or stalled label.
+  post_run_verify "${CODEX_PID}" "${REPO}" "${ISSUE_NUM}" "${BRANCH_NAME}" "${LOG_RUN}" &
+  log "fast: post-run verifier spawned (pid=$!) — Codex running in background, worktree owned by Codex"
 }
 
 # ---------------------------------------------------------------------------
