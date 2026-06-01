@@ -285,9 +285,15 @@ func testRecallDSN(t *testing.T) string {
 	return dsn
 }
 
-// TestHandleMemoryRecall_IncludeConflicts_Integration stores two memories,
-// creates a "contradicts" edge between them, recalls the source, and verifies
-// that include_conflicts=true returns the contradicting memory.
+// TestHandleMemoryRecall_IncludeConflicts_Integration stores two contradicting
+// memories, recalls with top_k=1 and include_conflicts=true, and verifies that
+// the memory NOT returned as a primary result surfaces in conflicting_results.
+//
+// The assertion is intentionally order-independent: with only two memories and
+// one contradicts edge, whichever memory wins the top_k=1 primary slot, its
+// peer must appear in conflicting_results. This removes the dependency on
+// ranking stability that caused intermittent failures when both memories had
+// similar composite scores under concurrent DB load (#975).
 func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	dsn := testRecallDSN(t)
 	ctx := context.Background()
@@ -332,10 +338,9 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	// flush pending chunks synchronously before recall.
 	internalmcp.FlushPendingEmbeddings(t, ctx, dsn, proj)
 
-	// Recall with top_k=1 so only the strongest BM25/vector match enters the
-	// primary results, leaving the contradicting memory available to the
-	// conflicts-enrichment path. The query uses m1's unique tokens
-	// ("afternoons"/"iteration") to make the disambiguation deterministic.
+	// Recall with top_k=1 so exactly one of the two memories enters primary
+	// results, leaving its contradicting peer available to the conflicts-
+	// enrichment path.
 	out := internalmcp.CallHandleMemoryRecallFull(ctx, t, pool, proj, "afternoons iteration",
 		map[string]any{"top_k": float64(1), "include_conflicts": true})
 
@@ -346,15 +351,34 @@ func TestHandleMemoryRecall_IncludeConflicts_Integration(t *testing.T) {
 	require.True(t, ok, "conflicting_results must be []types.ConflictingResult")
 	require.NotEmpty(t, conflictSlice, "expected at least one conflicting result")
 
-	// m2 should appear as the contradicting memory.
-	found := false
+	// Build the set of IDs that appear in conflicting_results.
+	conflictMemIDs := make(map[string]string, len(conflictSlice)) // memID → contradictsID
 	for _, c := range conflictSlice {
-		if c.Memory != nil && c.Memory.ID == m2.ID {
+		if c.Memory != nil {
+			conflictMemIDs[c.Memory.ID] = c.ContradictsID
+		}
+	}
+
+	// The invariant: exactly one of the two memories is in primary (top_k=1);
+	// the other must appear in conflicting_results, and its ContradictsID must
+	// point back to the primary memory.  We accept either ordering.
+	pairIDs := map[string]string{m1.ID: m2.ID, m2.ID: m1.ID}
+	found := false
+	for conflictID, contradictsID := range conflictMemIDs {
+		peer, inPair := pairIDs[conflictID]
+		if !inPair {
+			continue
+		}
+		// The ContradictsID must be the OTHER member of the pair (the primary).
+		if contradictsID == peer {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "contradicting memory m2 must appear in conflicting_results")
+	assert.True(t, found,
+		"one member of the contradicting pair must appear in conflicting_results "+
+			"with its ContradictsID pointing to the primary memory; "+
+			"conflict IDs seen: %v", conflictMemIDs)
 }
 
 // TestHandleMemoryRecall_IncludesFeedbackHint verifies that when
