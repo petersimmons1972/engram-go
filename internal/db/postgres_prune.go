@@ -201,6 +201,14 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 		return nil, err
 	}
 
+	pendingEmbedding, err := b.GetPendingEmbeddingCount(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	stats.ChunksPendingEmbedding = pendingEmbedding
+	stats.ChunksTotal = stats.TotalChunks
+	stats.ChunksEmbedded = stats.TotalChunks - pendingEmbedding
+
 	return stats, nil
 }
 
