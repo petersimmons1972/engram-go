@@ -166,6 +166,15 @@ type SearchEngine struct {
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
+
+	// embedder metadata cache — eliminates 2-3 DB round-trips per recall/store.
+	// Protected by embedderMetaMu, which is SEPARATE from embedMu to avoid
+	// coupling the embedder-swap lock to the metadata-read lock.
+	embedderMetaMu            sync.RWMutex
+	embedderMetaCacheValid    bool
+	cachedEmbedderName        string
+	cachedEmbedderDims        int
+	cachedMigrationInProgress bool
 }
 
 // getEmbedder safely reads the current embedder. Use this instead of e.embedder
@@ -1123,18 +1132,62 @@ func (e *SearchEngine) notifyEmbedQueue(ctx context.Context) {
 
 // checkEmbedderMeta ensures the stored embedder name matches the current client,
 // or registers it if this is the first store for the project.
+//
+// Fast path: when the in-process cache is warm and no migration is in progress,
+// the three checks (name match, migration flag, dims match) are satisfied from
+// memory without any DB round-trips (#929).
 func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
+	emb := e.getEmbedder()
+
+	// ── Fast path ────────────────────────────────────────────────────────────
+	e.embedderMetaMu.RLock()
+	if e.embedderMetaCacheValid && !e.cachedMigrationInProgress {
+		cachedName := e.cachedEmbedderName
+		cachedDims := e.cachedEmbedderDims
+		e.embedderMetaMu.RUnlock()
+
+		if canonicalEmbedderName(cachedName) != canonicalEmbedderName(emb.Name()) {
+			return &embed.PermanentError{
+				Code:        "embedder_mismatch",
+				Stored:      cachedName,
+				Current:     emb.Name(),
+				Remediation: "run memory_migrate_embedder",
+			}
+		}
+		if cachedDims != 0 && cachedDims != emb.Dimensions() {
+			return &embed.PermanentError{
+				Code:        "embedder_mismatch",
+				Stored:      fmt.Sprintf("%d-dim", cachedDims),
+				Current:     fmt.Sprintf("%d-dim", emb.Dimensions()),
+				Remediation: "run memory_migrate_embedder",
+			}
+		}
+		return nil
+	}
+	e.embedderMetaMu.RUnlock()
+
+	// ── Slow path: read from DB ───────────────────────────────────────────────
 	storedName, ok, err := e.backend.GetMeta(ctx, e.project, "embedder_name")
 	if err != nil {
 		return err
 	}
-	emb := e.getEmbedder()
 	if !ok {
-		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", emb.Name()); err != nil {
+		// First store for this project — register the embedder.
+		if err := e.backend.SetMeta(ctx, e.project, "embedder_name", canonicalEmbedderName(emb.Name())); err != nil {
 			return err
 		}
-		return e.backend.SetMeta(ctx, e.project, "embedder_dimensions",
-			fmt.Sprintf("%d", emb.Dimensions()))
+		if err := e.backend.SetMeta(ctx, e.project, "embedder_dimensions",
+			fmt.Sprintf("%d", emb.Dimensions())); err != nil {
+			return err
+		}
+		// Populate cache after successful registration.
+		e.embedderMetaMu.Lock()
+		e.cachedEmbedderName = canonicalEmbedderName(emb.Name())
+		e.cachedEmbedderDims = emb.Dimensions()
+		e.cachedMigrationInProgress = false
+		e.embedderMetaCacheValid = true
+		e.embedderMetaMu.Unlock()
+		return nil
 	}
 	if canonicalEmbedderName(storedName) != canonicalEmbedderName(emb.Name()) {
 		return &embed.PermanentError{
@@ -1149,14 +1202,22 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 	// completes.
 	migrating, _, _ := e.backend.GetMeta(ctx, e.project, "embedding_migration_in_progress")
 	if migrating == "true" {
+		// Cache the migration-in-progress state so subsequent calls skip the
+		// dimension check without hitting the DB, but keep cacheValid=false so
+		// the slow path re-runs once migration completes and the flag clears.
+		e.embedderMetaMu.Lock()
+		e.cachedMigrationInProgress = true
+		e.embedderMetaCacheValid = false
+		e.embedderMetaMu.Unlock()
 		return nil
 	}
 	storedDimsStr, ok, err := e.backend.GetMeta(ctx, e.project, "embedder_dimensions")
 	if err != nil {
 		return err
 	}
+	var storedDims int
 	if ok {
-		storedDims, err := strconv.Atoi(storedDimsStr)
+		storedDims, err = strconv.Atoi(storedDimsStr)
 		if err != nil {
 			return fmt.Errorf("embedder_dimensions metadata is corrupt: %w", err)
 		}
@@ -1169,6 +1230,13 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 			}
 		}
 	}
+	// All checks passed — populate cache.
+	e.embedderMetaMu.Lock()
+	e.cachedEmbedderName = canonicalEmbedderName(storedName)
+	e.cachedEmbedderDims = storedDims
+	e.cachedMigrationInProgress = false
+	e.embedderMetaCacheValid = true
+	e.embedderMetaMu.Unlock()
 	return nil
 }
 
@@ -1444,9 +1512,17 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 		return nil, err
 	}
 
+	// Invalidate embedder metadata cache — the DB now holds a different
+	// embedder_name and the migration_in_progress flag is set (#929).
+	e.embedderMetaMu.Lock()
+	e.embedderMetaCacheValid = false
+	e.embedderMetaMu.Unlock()
+
 	if e.embedGateway != nil {
 		e.embedGateway.Enqueue([]string{"migration"})
 		e.notifyEmbedQueue(ctx)
+		// Invalidate cache before early return so the embed-gateway path also
+		// gets a clean slate on the next checkEmbedderMeta call (#929).
 		return map[string]any{
 			"chunks_nulled": nulled,
 			"new_model":     newModel,
