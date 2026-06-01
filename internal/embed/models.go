@@ -43,22 +43,6 @@ var SuggestedModels = []ModelSpec{
 		Recommended: true,
 	},
 	{
-		Name:        "jinaai/jina-embeddings-v5-text-small",
-		Dimensions:  1024,
-		MaxTokens:   8192,
-		SizeMB:      560,
-		Description: "Legacy. Jina v5-text-small via vLLM on oblivion. Superseded by BAAI/bge-m3 on 2026-05-08.",
-		Recommended: false,
-	},
-	{
-		Name:        "diqiuzhuanzhuan/jina-embeddings-v4-text-retrieval-Q8_0.gguf:latest",
-		Dimensions:  1024, // Matryoshka truncation from native 2048; set ENGRAM_EMBED_DIMENSIONS=1024
-		MaxTokens:   8192,
-		SizeMB:      9200,
-		Description: "Legacy. Jina v4 Q8 GGUF. Retained on engram-ollama only; all other nodes migrated.",
-		Recommended: false,
-	},
-	{
 		Name:        "qwen3-embedding:8b",
 		Dimensions:  1536,
 		MaxTokens:   8192,
