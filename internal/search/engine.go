@@ -163,6 +163,8 @@ type SearchEngine struct {
 	globalReembedder    globalNotifier      // non-nil after SetGlobalReembedder; woken on chunk store
 	embedGateway        embedGateway        // non-nil when ENGRAM_EMBED_GW_ENABLED=true
 	PreferenceExtractor PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
+	embedderMetaChecked bool                // guarded by embedderMetaCheckMu
+	embedderMetaCheckMu sync.Mutex
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
@@ -1124,6 +1126,16 @@ func (e *SearchEngine) notifyEmbedQueue(ctx context.Context) {
 // checkEmbedderMeta ensures the stored embedder name matches the current client,
 // or registers it if this is the first store for the project.
 func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
+	if e.embedderMetaChecked {
+		return nil
+	}
+	e.embedderMetaCheckMu.Lock()
+	defer e.embedderMetaCheckMu.Unlock()
+
+	if e.embedderMetaChecked {
+		return nil
+	}
+
 	storedName, ok, err := e.backend.GetMeta(ctx, e.project, "embedder_name")
 	if err != nil {
 		return err
@@ -1169,6 +1181,7 @@ func (e *SearchEngine) checkEmbedderMeta(ctx context.Context) error {
 			}
 		}
 	}
+	e.embedderMetaChecked = true
 	return nil
 }
 
@@ -1440,6 +1453,9 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedder_name", newModel); err != nil {
 		return nil, err
 	}
+	e.embedderMetaCheckMu.Lock()
+	e.embedderMetaChecked = false
+	e.embedderMetaCheckMu.Unlock()
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
