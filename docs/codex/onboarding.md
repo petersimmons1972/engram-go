@@ -1,3 +1,5 @@
+> **Global Claude↔Codex loop, QA, and protocol:** petersimmons1972/claude-codex/AGENTS.md — repo-specific notes below.
+
 # Codex Onboarding — engram-go
 
 ## Role
