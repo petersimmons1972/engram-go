@@ -439,15 +439,15 @@ func run() error {
 			}
 			return "closed"
 		},
-		DegradedErrorMode:        envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
-		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
-		IngestQueue:              ingestQ,
-		RateLimitRPS:             *rateLimitRPS,
-		RateLimitBurst:           *rateLimitBurst,
-		RateLimitDisable:         *rateLimitDisable,
-		SessionRehydrateWindow:   sessionRehydrateWindow,
-		EmbedRatePerSecond:       *embedRatePerSecond,
-		LogLevelVar:              logLevelVar,
+		DegradedErrorMode:      envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
+		SessionDB:              retentionBackend, // retentionBackend satisfies db.SessionRegistry
+		IngestQueue:            ingestQ,
+		RateLimitRPS:           *rateLimitRPS,
+		RateLimitBurst:         *rateLimitBurst,
+		RateLimitDisable:       *rateLimitDisable,
+		SessionRehydrateWindow: sessionRehydrateWindow,
+		EmbedRatePerSecond:     *embedRatePerSecond,
+		LogLevelVar:            logLevelVar,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
@@ -753,11 +753,35 @@ type auditRecallerAdapter struct {
 // model name. Model upgrades are operational changes as long as they preserve
 // that dimension.
 func validateEmbedConfig(model string, dims int) string {
-	if dims == 1024 {
+	var issues []string
+
+	fallbackTokens := embed.ModelMaxTokens("")
+	if !isRecognizedEmbedModel(model) && embed.ModelMaxTokens(model) == fallbackTokens {
+		issues = append(issues, fmt.Sprintf(
+			"configured embed model %q is not in SuggestedModels — using default %d-token window",
+			model, fallbackTokens,
+		))
+	}
+
+	if dims != 1024 {
+		issues = append(issues, "the embedding index expects ENGRAM_EMBED_DIMENSIONS=1024; current value ("+
+			fmt.Sprintf("%d", dims)+") will cause dimension mismatch errors")
+	}
+
+	if len(issues) == 0 {
 		return ""
 	}
-	return "the embedding index expects ENGRAM_EMBED_DIMENSIONS=1024; current value (" +
-		fmt.Sprintf("%d", dims) + ") will cause dimension mismatch errors"
+
+	return strings.Join(issues, "; ")
+}
+
+func isRecognizedEmbedModel(model string) bool {
+	for _, candidate := range embed.SuggestedModels {
+		if candidate.Name == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string, topK int) ([]string, error) {

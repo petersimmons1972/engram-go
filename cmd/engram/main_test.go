@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	"log/slog"
-	"os"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -96,10 +96,11 @@ func TestValidateEmbedConfig(t *testing.T) {
 		wantWarn     bool
 		warnContains string
 	}{
-		{"any-model", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
-		{"any-model", 512, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
-		{"any-model", 768, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
-		{"any-model", 1024, false, ""},
+		{"BAAI/bge-m3", 1024, false, ""},
+		{"BAAI/bge-m3", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
+		{"some-model", 1024, true, "not in SuggestedModels"},
+		{"some-model", 512, true, "not in SuggestedModels"},
+		{"nomic-embed-text", 0, true, "ENGRAM_EMBED_DIMENSIONS=1024"},
 	}
 
 	for _, tc := range cases {
