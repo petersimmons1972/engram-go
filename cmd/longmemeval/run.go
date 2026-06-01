@@ -596,7 +596,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// after the post-reset atom extraction pass has been completed.
 	var atomContextBlock string
 	if cfg.AtomMode {
-		atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID)
+		atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
 	}
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
 	// the two are mutually exclusive. When both are set, aug wins.

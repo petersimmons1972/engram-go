@@ -24,23 +24,26 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
 // AtomBuildConfig holds flags for the atom-build subcommand.
 type AtomBuildConfig struct {
-	DataFile   string
-	OutDir     string
-	RunID      string
-	Workers    int
-	ServerURL  string
-	APIKey     string
-	LLMBaseURL string
-	LLMModel   string
-	EmbedURL   string
-	EmbedModel string
-	Retries    int
+	DataFile     string
+	OutDir       string
+	RunID        string
+	Workers      int
+	ServerURL    string
+	APIKey       string
+	LLMBaseURL   string
+	LLMModel     string
+	EmbedURL     string
+	EmbedModel   string
+	Retries      int
+	DatabaseURL  string // when set, store atoms directly via DB connection (--direct-db path)
+	AtomCacheDir string // when set, also write atoms to <dir>/<project>.json for local fallback
 }
 
 // oaiCompleterAdapter wraps GenerateOAI to satisfy atom.ClaudeCompleter.
@@ -123,14 +126,40 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 	completer := &oaiCompleterAdapter{baseURL: cfg.LLMBaseURL, model: cfg.LLMModel, retries: cfg.Retries}
 	extractor := atom.NewClaudeExtractor(completer)
 
-	// Build the REST client for atom + embedding storage.
-	serverURL := cfg.ServerURL
-	if serverURL == "" {
-		serverURL = defaultServerURL()
-	}
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = defaultAPIKey()
+	// Build the atom storage function.
+	// --direct-db: write directly to Postgres (for use when the REST /atoms endpoint
+	// is not yet deployed on the target Engram server).
+	// Default: POST /atoms via the Engram REST API.
+	var storeAtom atomStoreFunc
+	if cfg.DatabaseURL != "" {
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		sharedPool, poolErr := db.NewSharedPool(dbCtx, cfg.DatabaseURL)
+		dbCancel()
+		if poolErr != nil {
+			_, _ = fmt.Fprintf(stderr, "atom-build --direct-db: connect failed: %v\n", poolErr)
+			return 1
+		}
+		defer sharedPool.Close()
+		// Use a single PostgresBackend with the _shared project slug for DDL.
+		// InsertAtom / InsertAtomEmbedding are project-agnostic (project is a column).
+		pg, pgErr := db.NewPostgresBackendWithPool(context.Background(), "_atom_build", sharedPool)
+		if pgErr != nil {
+			_, _ = fmt.Fprintf(stderr, "atom-build --direct-db: backend failed: %v\n", pgErr)
+			return 1
+		}
+		storeAtom = makeDirectDBStoreFunc(pg)
+		log.Printf("atom-build: using direct-db storage path")
+	} else {
+		serverURL := cfg.ServerURL
+		if serverURL == "" {
+			serverURL = defaultServerURL()
+		}
+		apiKey := cfg.APIKey
+		if apiKey == "" {
+			apiKey = defaultAPIKey()
+		}
+		storeAtom = makeRESTStoreFunc(serverURL, apiKey)
+		log.Printf("atom-build: using REST storage path at %s", serverURL)
 	}
 
 	// Checkpoint writer.
@@ -166,12 +195,20 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 	}
 	close(workCh)
 
+	// Ensure atom cache directory exists if specified.
+	if cfg.AtomCacheDir != "" {
+		if mkErr := os.MkdirAll(cfg.AtomCacheDir, 0o755); mkErr != nil {
+			_, _ = fmt.Fprintf(stderr, "atom-build: create atom-cache-dir: %v\n", mkErr)
+			return 1
+		}
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			atomBuildWorker(extractor, embedClient, serverURL, apiKey, workCh, ckptCh)
+			atomBuildWorker(extractor, embedClient, storeAtom, cfg.AtomCacheDir, workCh, ckptCh)
 		}()
 	}
 	wg.Wait()
@@ -192,12 +229,16 @@ type atomBuildWorkItem struct {
 	item  longmemeval.Item
 }
 
+// atomStoreFunc stores one atom + embedding. Implementations: REST and direct-DB.
+type atomStoreFunc func(project string, a *atom.Atom, vec []float32) error
+
 // atomBuildWorker processes sessions from workCh, extracts atoms via olla,
 // embeds them, and stores them in Engram.
 func atomBuildWorker(
 	extractor atom.Extractor,
 	embedClient *embed.LiteLLMClient,
-	serverURL, apiKey string,
+	storeAtom atomStoreFunc,
+	atomCacheDir string,
 	workCh <-chan atomBuildWorkItem,
 	ckptCh chan<- atomBuildEntry,
 ) {
@@ -248,7 +289,7 @@ func atomBuildWorker(
 				continue
 			}
 
-			if storeErr := storeAtomREST(serverURL, apiKey, entry.Project, a, vec); storeErr != nil {
+			if storeErr := storeAtom(entry.Project, a, vec); storeErr != nil {
 				log.Printf("WARN atom-build [%s] store: %v", entry.QuestionID, storeErr)
 				continue
 			}
@@ -258,6 +299,13 @@ func atomBuildWorker(
 		result.Status = "done"
 		ckptCh <- result
 		log.Printf("atom-build [%s] project=%s atoms=%d/%d", entry.QuestionID, entry.Project, ok, len(atoms))
+
+		// Write atom cache file for the --atom-cache-dir fallback.
+		if atomCacheDir != "" && len(atoms) > 0 {
+			if cacheErr := writeAtomCacheFile(atomCacheDir, entry.Project, atoms); cacheErr != nil {
+				log.Printf("WARN atom-build [%s] cache write: %v", entry.QuestionID, cacheErr)
+			}
+		}
 	}
 }
 
@@ -274,6 +322,32 @@ func buildSessionText(item longmemeval.Item) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// makeRESTStoreFunc returns an atomStoreFunc that stores via POST /atoms.
+func makeRESTStoreFunc(serverURL, apiKey string) atomStoreFunc {
+	return func(project string, a *atom.Atom, vec []float32) error {
+		return storeAtomREST(serverURL, apiKey, project, a, vec)
+	}
+}
+
+// makeDirectDBStoreFunc returns an atomStoreFunc that writes directly to Postgres
+// via a *db.PostgresBackend. Used when the REST /atoms endpoint is not yet deployed.
+func makeDirectDBStoreFunc(pg *db.PostgresBackend) atomStoreFunc {
+	return func(project string, a *atom.Atom, vec []float32) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		a.Project = project
+		if err := pg.InsertAtom(ctx, a); err != nil {
+			return fmt.Errorf("InsertAtom: %w", err)
+		}
+		if len(vec) > 0 {
+			if err := pg.InsertAtomEmbedding(ctx, a.ID, vec); err != nil {
+				log.Printf("WARN InsertAtomEmbedding (non-fatal): %v", err)
+			}
+		}
+		return nil
+	}
 }
 
 // atomStoreRequest is the JSON body sent to POST /atoms.
@@ -320,6 +394,19 @@ func storeAtomREST(serverURL, apiKey, project string, a *atom.Atom, vec []float3
 		return fmt.Errorf("atom store: unexpected status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 	return nil
+}
+
+// writeAtomCacheFile writes atoms as JSON to <dir>/<project>.json.
+// Used by --atom-cache-dir to enable local fallback for run --atom-mode.
+// The file is overwritten on each call (idempotent).
+func writeAtomCacheFile(dir, project string, atoms []atom.Atom) error {
+	path := filepath.Join(dir, project+".json")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return json.NewEncoder(f).Encode(atoms)
 }
 
 // readAtomBuildSkipSet reads checkpoint-atom-build.jsonl and returns the set

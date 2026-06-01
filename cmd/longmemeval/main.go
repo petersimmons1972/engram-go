@@ -98,6 +98,12 @@ type Config struct {
 	// (issue #938). CODE PATH ONLY — do NOT enable on real data until the
 	// post-reset atom extraction pass has been completed.
 	AtomMode bool
+
+	// AtomCacheDir is an optional fallback directory for atom-mode when the
+	// /atoms server endpoint is not yet deployed. atom-build writes per-project
+	// JSON files here; run reads them when FetchAtoms returns no results.
+	// Format: <AtomCacheDir>/<project>.json  each file is []atom.Atom JSON.
+	AtomCacheDir string
 }
 
 func main() {
@@ -228,6 +234,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// #938: atom-mode — inject extracted preference atoms into the generation prompt.
 	// CODE PATH ONLY: do NOT enable until the post-reset atom extraction pass is complete.
 	fs.BoolVar(&cfg.AtomMode, "atom-mode", false, "#938: prepend extracted preference atoms from the project into the generation prompt (requires prior atom extraction pass; off by default)")
+	// atom-cache-dir: fallback for atom-mode when the /atoms server endpoint is not deployed.
+	// atom-build writes per-project JSON files here; run reads them when FetchAtoms returns empty.
+	fs.StringVar(&cfg.AtomCacheDir, "atom-cache-dir", envOr("LME_ATOM_CACHE_DIR", ""), "fallback directory for atom-mode: reads <dir>/<project>.json when /atoms endpoint returns empty")
 
 	// prune has its own flag set and early return — it does not share the
 	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
@@ -252,6 +261,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		abfs.StringVar(&ab.EmbedURL, "embed-url", envOr("LME_EMBED_URL", ""), "OAI-compatible embedding endpoint (defaults to --llm-url)")
 		abfs.StringVar(&ab.EmbedModel, "embed-model", envOr("LME_EMBED_MODEL", "BAAI/bge-m3"), "embedding model name")
 		abfs.IntVar(&ab.Retries, "retries", 1, "retry count for LLM/embed calls")
+		abfs.StringVar(&ab.DatabaseURL, "direct-db", envOr("DATABASE_URL", ""), "write atoms directly to Postgres DSN instead of via REST /atoms endpoint (use when /atoms not deployed)")
+		abfs.StringVar(&ab.AtomCacheDir, "atom-cache-dir", envOr("LME_ATOM_CACHE_DIR", ""), "also write per-project atom JSON files here for --atom-mode local fallback")
 		if exit := parseFlagSet(abfs, args[2:]); exit >= 0 {
 			return exit
 		}
