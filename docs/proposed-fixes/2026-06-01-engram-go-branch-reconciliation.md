@@ -4,14 +4,16 @@ Context: this note records the decision for stale and rescued branches identifie
 [`#942`](https://github.com/petersimmons1972/engram-go/issues/942), aligned with the
 reconciliation snapshot taken 2026-05-31.
 
+Refreshed 2026-06-01: 4 KEEP-marked branches confirmed no longer present on origin (rows updated below).
+
 ## Action decisions
 
-| Branch | Ahead | Behind | Tip commit | Decision | Notes |
-| --- | ---: | ---: | --- | --- | --- |
-| `lme-campaign-2026-05-19` | +10 | -33 | `feat(lme-scorer): add --scorer-api-key flag` | KEEP | Preserved for review; contains partial campaign wiring and is not ready for merge as-is. |
-| `fix/temporal-retrieval-f1-f2` | +2 | -33 | `fix(search): F1 — rank-normalize recency decay` | KEEP | Useful scoring experiment; continue running with reconciliation checks before merge. |
-| `codex/agent-p0p1-engram` | +2 | -21 | `Merge remote-tracking origin/main into branch` | KEEP | Utility branch used for Codex-side merge-work; retain to avoid losing unresolved diff context. |
-| `codex/lme-codex-execution-20260530` | +2 | -3 | `chore(docs): add global protocol pointer to Codex onboarding` | KEEP | Mostly documentation/process updates with light drift; keep for possible merge in next tidy-up. |
+| Branch                               | Ahead | Behind | Tip commit                                                     | Decision                                          | Notes                                                                                                                                                      |
+| ------------------------------------ | ----: | -----: | -------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lme-campaign-2026-05-19`            |   +10 |    -33 | `feat(lme-scorer): add --scorer-api-key flag`                  | GONE — merged via #766                            | Integrated via PR #766 "feat(lme): LME-on-a-Budget campaign 2026-05-19"; branch deleted from origin after merge.                                          |
+| `fix/temporal-retrieval-f1-f2`       |    +2 |    -33 | `fix(search): F1 — rank-normalize recency decay`               | GONE — merged via #849                            | Integrated via PR #849 "fix(search/lme): temporal retrieval — rank-normalized recency + query classifier signal"; branch deleted from origin after merge.  |
+| `codex/agent-p0p1-engram`            |    +2 |    -21 | `Merge remote-tracking origin/main into branch`                | GONE — merged via #893                            | Integrated via PR #893 "fix: harden longmemeval command failures"; branch deleted from origin after merge.                                                 |
+| `codex/lme-codex-execution-20260530` |    +2 |     -3 | `chore(docs): add global protocol pointer to Codex onboarding` | GONE — no longer on origin (verified 2026-06-01) | No merged PR found; branch is no longer present on origin as of 2026-06-01 refresh. Content may have been applied manually or abandoned.                  |
 | `chore/rename-litellm-to-engram-router` | +1 | -37 | `chore: rename LITELLM_URL → ENGRAM_ROUTER_URL (closes #636)` | MERGE | Explicit merge-needed rename consolidation; this branch was consolidated from duplicated worktree branches. |
 | `rescue/pr920-startup-probe-guard` | +3 | -2 | `fix(embed): guard startup probe EmbedWithModel type assertion` | KEEP | Rescue branch should be retained to preserve fix until main branch merge target is ready. |
 | `rescue/verify-881-ops-truth` | +2 | -19 | `wip(rescue): verify-881 working tree (ops status truth + longmemeval)` | KEEP | Rescue branch contains ops-trace recovery notes; keep for continuity. |
