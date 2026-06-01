@@ -268,3 +268,57 @@ func TestConfigFormatFlag(t *testing.T) {
 		t.Skip("--format flag recognition verified in run() logic")
 	})
 }
+
+// TestDefaultEndpointIsK8s verifies that the default server URL points to the
+// k8s ingress, not the retired local Docker address (#engram-setup-k8s).
+func TestDefaultEndpointIsK8s(t *testing.T) {
+	if defaultServerURL != "https://engram.petersimmons.com" {
+		t.Errorf("defaultServerURL = %q, want %q", defaultServerURL, "https://engram.petersimmons.com")
+	}
+}
+
+// TestPortFlagOverridesURL verifies that --port builds a localhost base URL and
+// takes precedence over --url / the k8s default.
+func TestPortFlagOverridesURL(t *testing.T) {
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	defer func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	}()
+
+	// Point --port at the httptest server so the health-check succeeds.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/setup-token":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"token":    "test-token-abcdefghijklmnop",
+				"endpoint": r.Host + "/mcp",
+				"name":     "engram",
+			})
+		}
+	}))
+	defer srv.Close()
+
+	// Extract port from httptest server URL.
+	srvParts := strings.Split(srv.URL, ":")
+	srvPort := srvParts[len(srvParts)-1]
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	flag.CommandLine = flag.NewFlagSet("engram-setup", flag.ContinueOnError)
+	os.Args = []string{"engram-setup", "--port", srvPort, "--dry-run"}
+
+	// run() should succeed: --port overrides the k8s default to localhost,
+	// health-check passes, setup-token returns a token, dry-run prints without writing.
+	if err := run(); err != nil {
+		t.Fatalf("run() with --port override returned error: %v", err)
+	}
+}
