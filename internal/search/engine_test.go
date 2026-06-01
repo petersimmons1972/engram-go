@@ -35,6 +35,14 @@ func (f *fakeClient) EmbedWithModel(ctx context.Context, text string) ([]float32
 func (f *fakeClient) Name() string    { return "fake" }
 func (f *fakeClient) Dimensions() int { return f.dims }
 
+type failingMergeReviewer struct {
+	err error
+}
+
+func (f *failingMergeReviewer) ReviewMergeCandidates(context.Context, []search.MergeCandidate) ([]search.MergeDecision, error) {
+	return nil, f.err
+}
+
 // compile-time check that fakeClient satisfies embed.Client.
 var _ embed.Client = (*fakeClient)(nil)
 
@@ -622,4 +630,54 @@ func TestSearchEngine_EmbedderNameAliasesAreCompatible(t *testing.T) {
 		require.True(t, errors.As(err, &pe))
 		require.Equal(t, "embedder_mismatch", pe.Code)
 	})
+}
+
+func TestSearchEngine_ConsolidateWithClaude_ReviewerBatchFailuresIncrementDroppedCounter(t *testing.T) {
+	project := uniqueProject("test-consolidate-reviewer-failure")
+	engine := newTestEngine(t, project)
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m1 := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "Consolidation test memory A. This memory is intentionally verbose to pass length checks and is used to verify dropped batch accounting in reviewer failures.",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	m2 := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "Consolidation test memory B. This memory is intentionally verbose to pass length checks and is used to verify dropped batch accounting in reviewer failures.",
+		MemoryType:  types.MemoryTypePattern,
+		Importance:  1,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine.Store(ctx, m1))
+	require.NoError(t, engine.Store(ctx, m2))
+
+	chunks1, err := engine.Backend().GetChunksForMemory(ctx, m1.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks1, "first memory must have stored chunks")
+	chunks2, err := engine.Backend().GetChunksForMemory(ctx, m2.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks2, "second memory must have stored chunks")
+
+	vector := make([]float32, 1024)
+	for i := range vector {
+		vector[i] = 0.01 * float32(i%11)
+	}
+
+	for _, c := range append(chunks1, chunks2...) {
+		updated, err := engine.Backend().UpdateChunkEmbedding(ctx, c.ID, vector)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, updated, 1)
+	}
+
+	reviewer := &failingMergeReviewer{err: errors.New("claude reviewer unavailable")}
+	result, err := engine.ConsolidateWithClaude(ctx, reviewer)
+	require.NoError(t, err)
+
+	batchesDropped, ok := result["batches_dropped"].(int)
+	require.True(t, ok, "result should expose batches_dropped as int")
+	require.Equal(t, 1, batchesDropped)
 }
