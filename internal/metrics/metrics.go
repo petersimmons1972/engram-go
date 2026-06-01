@@ -36,6 +36,12 @@ var (
 		Help: "Chunks with NULL embedding_vec awaiting reembedding",
 	})
 
+	// ReembedPoolResets counts pgx pool reset events triggered by the reembed worker.
+	ReembedPoolResets = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_reembed_pool_resets_total",
+		Help: "Total reembed worker pool reset events after repeated consecutive errors",
+	})
+
 	// IngestQueueDepth is the current number of async ingestion jobs queued but not yet started.
 	IngestQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "engram_ingest_queue_depth",
@@ -196,6 +202,7 @@ func init() {
 		WorkerTicks,
 		WorkerErrors,
 		ChunksPendingReembed,
+		ReembedPoolResets,
 		IngestQueueDepth,
 		EpisodesStartedTotal,
 		EpisodesEndedCleanTotal,

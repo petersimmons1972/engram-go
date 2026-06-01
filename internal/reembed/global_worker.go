@@ -145,6 +145,7 @@ func (g *GlobalReembedder) run(ctx context.Context) {
 					if consecutive >= consecutiveErrorThreshold {
 						slog.Warn("global reembedder: resetting pool after repeated errors — possible Postgres restart",
 							"consecutive_errors", consecutive)
+						metrics.ReembedPoolResets.Inc()
 						g.pool.Reset()
 					}
 					break
