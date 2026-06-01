@@ -17,8 +17,6 @@ import (
 // TestEmbedRetriesOn502 verifies that a 502 followed by 200 triggers retries
 // and increments the retries_total counter.
 func TestEmbedRetriesOn502(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -61,8 +59,6 @@ func TestEmbedRetriesOn502(t *testing.T) {
 // to 1 and oversized error bodies, this would otherwise block subsequent retry
 // requests when close is deferred inside the loop.
 func TestEmbed_NoConnectionLeakOnRetry(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -103,6 +99,131 @@ func TestEmbed_NoConnectionLeakOnRetry(t *testing.T) {
 	}
 }
 
+// TestEmbed_NoConnectionLeakOnDecodeError verifies that the response body is
+// closed on the decode-error path. With MaxConnsPerHost=1, if the body is NOT
+// closed after a decode failure the transport holds the one allowed connection
+// and the subsequent call (or retry/next use) would stall forever. A successful
+// return from the second call proves the body was closed.
+func TestEmbed_NoConnectionLeakOnDecodeError(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			// First call: 200 OK but invalid JSON body — triggers the decode-error
+			// close path in EmbedWithModel.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("not-json{"))
+			return
+		}
+		// Second call: valid embedding response.
+		encodeEmbeddingResponse(w, []float32{0.1, 0.2, 0.3})
+	}))
+	defer server.Close()
+
+	client := NewLiteLLMClientNoProbe(server.URL, "test-model", "", 3)
+	// Constrain transport to 1 connection. If the decode-error path leaks the
+	// body, the connection is never returned to the pool and the second call
+	// would block until the context deadline fires.
+	client.http = &http.Client{
+		Transport: &http.Transport{
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// First call fails with decode error (non-retryable); body must be closed.
+	_, err := client.Embed(ctx, "test text")
+	if err == nil {
+		t.Fatal("expected decode error on first call, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("expected decode error, got: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt for decode error (non-retryable), got %d", attempts)
+	}
+
+	// Second call must succeed — proves the body from the failed call was closed
+	// and the connection was released back to the pool.
+	vec, err := client.Embed(ctx, "test text")
+	if err != nil {
+		t.Fatalf("expected second call to succeed (body must have been closed), got error: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Fatalf("len(vec) = %d, want 3", len(vec))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 total attempts, got %d", attempts)
+	}
+}
+
+// TestEmbed_NoConnectionLeakOnEmptyResponse verifies that the response body is
+// closed on the empty-response path (200 OK, valid JSON, but Data is empty or
+// the embedding slice is empty). Under MaxConnsPerHost=1, a leaked body on this
+// path would stall the transport. A successful second call proves the body was
+// closed.
+func TestEmbed_NoConnectionLeakOnEmptyResponse(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			// First call: 200 OK with valid JSON but empty Data array — triggers
+			// the empty-response close path in EmbedWithModel.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{},
+			})
+			return
+		}
+		// Second call: valid embedding response.
+		encodeEmbeddingResponse(w, []float32{0.1, 0.2, 0.3})
+	}))
+	defer server.Close()
+
+	client := NewLiteLLMClientNoProbe(server.URL, "test-model", "", 3)
+	// Constrain transport to 1 connection — leak detection via transport starvation.
+	client.http = &http.Client{
+		Transport: &http.Transport{
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// First call fails with empty response (non-retryable); body must be closed.
+	_, err := client.Embed(ctx, "test text")
+	if err == nil {
+		t.Fatal("expected empty-response error on first call, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty response") {
+		t.Fatalf("expected empty response error, got: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt for empty response (non-retryable), got %d", attempts)
+	}
+
+	// Second call must succeed — proves the body from the failed call was closed.
+	vec, err := client.Embed(ctx, "test text")
+	if err != nil {
+		t.Fatalf("expected second call to succeed (body must have been closed), got error: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Fatalf("len(vec) = %d, want 3", len(vec))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 total attempts, got %d", attempts)
+	}
+}
+
 func TestLiteLLMClient_EmbedWithModelReturnsReportedModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -131,8 +252,6 @@ func TestLiteLLMClient_EmbedWithModelReturnsReportedModel(t *testing.T) {
 
 // TestEmbedNoRetryOn400 verifies that a 400 Bad Request does not retry.
 func TestEmbedNoRetryOn400(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -172,8 +291,6 @@ func TestEmbedNoRetryOn400(t *testing.T) {
 // TestEmbedRetriesOn429 verifies that 429 Too Many Requests is retried
 // with exponential backoff.
 func TestEmbedRetriesOn429(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -214,8 +331,6 @@ func TestEmbedRetriesOn429(t *testing.T) {
 // TestEmbedExhaustsRetries verifies that after 3 failed attempts,
 // the embed fails and increments failures_total{reason="exhausted"}.
 func TestEmbedExhaustsRetries(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -260,8 +375,6 @@ func TestEmbedExhaustsRetries(t *testing.T) {
 // TestEmbedRespectsContextDeadline verifies that a context deadline is not
 // retried even if the error is transient.
 func TestEmbedRespectsContextDeadline(t *testing.T) {
-	t.Helper()
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate slow response (longer than context deadline)
 		time.Sleep(2 * time.Second)
@@ -295,7 +408,6 @@ func TestEmbedRespectsContextDeadline(t *testing.T) {
 
 // TestEmbedRetriesOnEOF verifies that connection EOF errors trigger retries.
 func TestEmbedRetriesOnEOF(t *testing.T) {
-	t.Helper()
 	resetMetrics()
 
 	attempts := 0
@@ -337,8 +449,6 @@ func resetMetrics() {
 // TestEmbedReturnsCircuitOpenError verifies that when the circuit breaker is open,
 // Embed returns the circuit open error without calling the upstream.
 func TestEmbedReturnsCircuitOpenError(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -388,8 +498,6 @@ func TestEmbedReturnsCircuitOpenError(t *testing.T) {
 // TestEmbedWithCircuitBreakerSuccess verifies that successful calls record success
 // in the circuit breaker and keep it closed.
 func TestEmbedWithCircuitBreakerSuccess(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -432,8 +540,6 @@ func TestEmbedWithCircuitBreakerSuccess(t *testing.T) {
 // TestEmbedCircuitBreakerDisabledByDefault verifies that circuit breaker is
 // disabled when no config is provided (backward compatibility).
 func TestEmbedCircuitBreakerDisabledByDefault(t *testing.T) {
-	t.Helper()
-
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
