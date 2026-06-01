@@ -56,6 +56,53 @@ func TestEmbedRetriesOn502(t *testing.T) {
 	}
 }
 
+// TestEmbed_NoConnectionLeakOnRetry verifies that response bodies are closed on
+// each retry attempt before the next request is issued. With MaxConnsPerHost set
+// to 1 and oversized error bodies, this would otherwise block subsequent retry
+// requests when close is deferred inside the loop.
+func TestEmbed_NoConnectionLeakOnRetry(t *testing.T) {
+	t.Helper()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(strings.Repeat("x", 2048)))
+			return
+		}
+		encodeEmbeddingResponse(w, []float32{0.1, 0.2, 0.3})
+	}))
+	defer server.Close()
+
+	client := NewLiteLLMClientNoProbe(server.URL, "test-model", "", 3)
+	client.http = &http.Client{
+		Transport: &http.Transport{
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	vec, err := client.Embed(ctx, "test text")
+	if err != nil {
+		t.Fatalf("expected retry to recover successfully, got error: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Fatalf("len(vec) = %d, want 3", len(vec))
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("expected retries to complete without transport starvation, got %s", time.Since(start))
+	}
+}
+
 func TestLiteLLMClient_EmbedWithModelReturnsReportedModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
