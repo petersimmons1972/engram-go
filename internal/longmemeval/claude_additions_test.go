@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -62,7 +63,14 @@ func TestGenerateOpus_InvalidModel_NotTriggered(t *testing.T) {
 	// GenerateOpus passes "opus" which IS in the allowlist. The call will fail
 	// because there is no real claude binary in CI, but the error must NOT be
 	// the model-rejection sentinel.
-	ctx := context.Background()
+	//
+	// Use a 2s deadline so the test completes quickly on machines where a real
+	// `claude` binary is on PATH. The deadline does not affect what we're
+	// testing: the model-allowlist check in runClaude is synchronous and happens
+	// before any exec, so ErrDisallowedModel (if it were returned) arrives in
+	// well under 1 ms regardless of the deadline. (#954)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	_, err := longmemeval.GenerateOpus(ctx, "prompt", 0)
 	if err != nil && strings.Contains(err.Error(), "disallowed model") {
 		t.Errorf("GenerateOpus should use an allowed model but got: %v", err)
