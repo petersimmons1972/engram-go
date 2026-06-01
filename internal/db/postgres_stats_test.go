@@ -31,28 +31,37 @@ func TestGetStats_AllEmbedded(t *testing.T) {
 	backend := newTestBackend(t, project)
 	mem := storeMemory(t, backend, project, "all-embedded test")
 
-	// Use a minimal non-nil embedding so the DB accepts the vector.
-	vec := []float32{0.1, 0.2, 0.3}
-	err := backend.StoreChunks(ctx, []*types.Chunk{
-		{
-			ID:        types.NewMemoryID(),
-			MemoryID:  mem.ID,
-			ChunkText: "chunk a",
-			ChunkHash: "chunk-hash-a",
-			Project:   project,
-			ChunkType: "sentence_window",
-			Embedding: vec,
-		},
-		{
-			ID:        types.NewMemoryID(),
-			MemoryID:  mem.ID,
-			ChunkText: "chunk b",
-			ChunkHash: "chunk-hash-b",
-			Project:   project,
-			ChunkType: "sentence_window",
-			Embedding: vec,
-		},
-	})
+	// Store chunks with nil embeddings first, then update them so the DB
+	// vector dimension constraint is satisfied (migration 018 sets vector(1024)).
+	chunkA := &types.Chunk{
+		ID:        types.NewMemoryID(),
+		MemoryID:  mem.ID,
+		ChunkText: "chunk a",
+		ChunkHash: "chunk-hash-a",
+		Project:   project,
+		ChunkType: "sentence_window",
+		Embedding: nil,
+	}
+	chunkB := &types.Chunk{
+		ID:        types.NewMemoryID(),
+		MemoryID:  mem.ID,
+		ChunkText: "chunk b",
+		ChunkHash: "chunk-hash-b",
+		Project:   project,
+		ChunkType: "sentence_window",
+		Embedding: nil,
+	}
+	err := backend.StoreChunks(ctx, []*types.Chunk{chunkA, chunkB})
+	require.NoError(t, err)
+
+	// Populate embeddings using the proper 1024-dim vector.
+	vec := make([]float32, 1024)
+	for i := range vec {
+		vec[i] = float32(i) / 1024.0
+	}
+	_, err = backend.UpdateChunkEmbedding(ctx, chunkA.ID, vec)
+	require.NoError(t, err)
+	_, err = backend.UpdateChunkEmbedding(ctx, chunkB.ID, vec)
 	require.NoError(t, err)
 
 	stats, err := backend.GetStats(ctx, project)
