@@ -450,6 +450,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 	secondaryContextIDs := temporalFallbackIDs
 	if cfg.RetrievalFusion {
+		// Fix #938: fusion candidates flow through retrievedIDs (primary) only —
+		// NOT secondaryContextIDs — to avoid the reserve≤3 secondary-slot cap in
+		// selectContextIDs. UnionMemoryIDs deduplicates and preserves primary order,
+		// so fusion hits appear after the primary batch and are included when
+		// contextLimit allows. Adding them to secondaryContextIDs would throttle all
+		// fusion candidates to at most 3 swapped-in slots, defeating the lever.
 		variants := buildRecallVariants(item.Question, recallQuery, cfg.DisableQueryRewrite, true)
 		for _, q := range variants[1:] {
 			ids, qErr := recallDefault(q, cfg.RecallTopK)
@@ -457,7 +463,6 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				log.Printf("WARN run [%s] fusion recall (%q): %v", item.QuestionID, q, qErr)
 				continue
 			}
-			secondaryContextIDs = append(secondaryContextIDs, ids...)
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, ids)
 		}
 	}
@@ -542,22 +547,6 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			contextBlocks = append(contextBlocks, content)
 		}
 	}
-	if cfg.ExactSignalBoost {
-		ranked := rankIDsByExactSignals(contextIDs, item.Question, contentByID)
-		reordered := make([]string, 0, len(ranked))
-		for _, id := range ranked {
-			if c := contentByID[id]; c != "" {
-				reordered = append(reordered, c)
-			}
-		}
-		if len(reordered) > 0 {
-			contextBlocks = reordered
-		}
-	}
-	if cfg.EvidenceFirstPacked {
-		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
-	}
-
 	// --max-block-chars: truncate each block so the assembled prompt stays within
 	// the model's max_model_len. Applied before chrono-sort so truncation is
 	// independent of ordering. Required when --context-topk is large (e.g. 100)
@@ -577,6 +566,28 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = sortBlocksByTargetDate(contextBlocks, item.Question, item.QuestionType, item.QuestionDate)
 	} else if cfg.ChronoSort {
 		contextBlocks = sortBlocksChronologically(contextBlocks)
+	}
+
+	// Fix #938: exact-signal reorders run AFTER chrono-sort so temporal ordering
+	// is not overwritten. --evidence-first-pack is suppressed for temporal-reasoning
+	// questions where chrono order is load-bearing (mirrors --temporal-prompt-aug
+	// precedence: the temporal branch takes priority over other reordering passes).
+	if cfg.ExactSignalBoost {
+		ranked := rankIDsByExactSignals(contextIDs, item.Question, contentByID)
+		reordered := make([]string, 0, len(ranked))
+		for _, id := range ranked {
+			if c := contentByID[id]; c != "" {
+				reordered = append(reordered, c)
+			}
+		}
+		if len(reordered) > 0 {
+			contextBlocks = reordered
+		}
+	}
+	if cfg.EvidenceFirstPacked && item.QuestionType != "temporal-reasoning" {
+		// Skip for temporal-reasoning: chrono order is load-bearing there and
+		// evidence-first packing would displace temporally-proximate blocks.
+		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
