@@ -326,9 +326,9 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 
 		// 003_pgvector.sql starts with CREATE EXTENSION which cannot run
 		// inside a transaction in most PostgreSQL configurations.
-		// 023_null_embed_covering_idx.sql uses CREATE INDEX CONCURRENTLY,
-		// which also must run outside a transaction block.
-		if name == "003_pgvector.sql" || name == "023_null_embed_covering_idx.sql" {
+		// 023_null_embed_covering_idx.sql and 024_reembed_null_partial_index.sql
+		// use CREATE INDEX CONCURRENTLY, which also must run outside a transaction block.
+		if name == "003_pgvector.sql" || name == "023_null_embed_covering_idx.sql" || name == "024_reembed_null_partial_index.sql" {
 			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}

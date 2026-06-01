@@ -202,6 +202,16 @@ func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 	e.embedGateway = g
 }
 
+// SetEmbedRecallTimeout overrides the embed call budget used during recall.
+// When ms > 0 the engine uses that value instead of the 500ms default; when ms
+// is 0 the default is preserved. Call this after New() to thread the value from
+// the --embed-recall-timeout-ms CLI flag (#932).
+func (e *SearchEngine) SetEmbedRecallTimeout(ms int) {
+	if ms > 0 {
+		e.embedRecallTimeout = time.Duration(ms) * time.Millisecond
+	}
+}
+
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
 // and spaced-repetition importance decay). claudeClient may be nil, in which case
 // summarization falls back to Ollama. decayInterval controls how often the decay
@@ -235,7 +245,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	if len(targetDims) > 0 {
 		dims = targetDims[0]
 	}
-	recallTimeoutMS := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
 
 	return &SearchEngine{
 		backend:             backend,
@@ -249,7 +258,8 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		decayer:             dec,
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
-		embedRecallTimeout:  time.Duration(recallTimeoutMS) * time.Millisecond,
+		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
+		embedRecallTimeout:  time.Duration(envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)) * time.Millisecond,
 	}
 }
 
@@ -1638,7 +1648,7 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	// 7. Batch candidates to Claude reviewer.
 	const batchSize = 10
-	var totalMerged, totalReviewed int
+	var totalMerged, totalReviewed, batchErrors int
 	for start := 0; start < len(candidates); start += batchSize {
 		end := start + batchSize
 		if end > len(candidates) {
@@ -1647,6 +1657,9 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		batch := candidates[start:end]
 		decisions, err := reviewer.ReviewMergeCandidates(ctx, batch)
 		if err != nil {
+			slog.Warn("consolidate: reviewer batch failed", "err", err)
+			batchErrors++
+			metrics.ConsolidateBatchErrors.Inc()
 			continue
 		}
 		totalReviewed += len(batch)
@@ -1656,6 +1669,9 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			}
 			// Atomic merge (#104): update winner content + delete loser in one tx.
 			if err := e.backend.MergeMemoriesAtomic(ctx, e.project, d.MemoryAID, d.MemoryBID, d.MergedContent); err != nil {
+				slog.Warn("consolidate: merge atomic failed", "err", err)
+				batchErrors++
+				metrics.ConsolidateBatchErrors.Inc()
 				continue
 			}
 			totalMerged++
@@ -1666,6 +1682,7 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 	result["candidates_reviewed"] = totalReviewed
 	result["lsh_candidates"] = len(lshPairs)
 	result["jaccard_passed"] = len(candidates)
+	result["batch_errors"] = batchErrors
 	return result, nil
 }
 

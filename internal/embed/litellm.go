@@ -518,10 +518,10 @@ func InfinityQueueCheck(ctx context.Context, httpClient *http.Client, baseURL st
 
 	for _, m := range modelsResp.Data {
 		s := m.Stats
-		// All three conditions required to avoid false positives:
-		// - QueueFraction > 1 alone can occur during normal burst load
-		// - ResultsPending == 0 with QueueFraction > 1 is the definitive hang
-		// - QueueAbsolute > 0 guards against zero-value structs (non-Infinity servers)
+		// GPU hang: ResultsPending == 0 means the GPU has stopped processing entirely
+		// (queue drained with no output). High-load cases where ResultsPending > 0
+		// are intentionally NOT flagged — backpressure without stall is normal.
+		// See TestInfinityQueueCheck_HighLoadNotHung (litellm_test.go).
 		if s.QueueFraction > 1.0 && s.ResultsPending == 0 && s.QueueAbsolute > 0 {
 			return false, fmt.Sprintf(
 				"infinity_queue_check: GPU thread hung (model=%s queue_fraction=%.4f results_pending=%d queue_absolute=%d)",

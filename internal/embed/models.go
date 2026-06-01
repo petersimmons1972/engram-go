@@ -11,7 +11,7 @@ type ModelSpec struct {
 }
 
 // defaultModelMaxTokens is the safe fallback for unknown models.
-const defaultModelMaxTokens = 512
+const defaultModelMaxTokens = 8192
 
 // ModelMaxTokens returns the context window limit for the named model.
 // Falls back to defaultModelMaxTokens for unknown model names.

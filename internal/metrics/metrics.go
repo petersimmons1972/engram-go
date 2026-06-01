@@ -30,6 +30,13 @@ var (
 		Help: "Background worker error count",
 	}, []string{"worker"})
 
+	// WorkerPoolResets counts the number of times the embed worker pool has been reset.
+	// A pool reset closes stale connections after repeated errors (e.g. Postgres restart).
+	WorkerPoolResets = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_worker_pool_resets_total",
+		Help: "Number of times the embed worker pool has been reset.",
+	}, []string{"worker"})
+
 	// ChunksPendingReembed is the current number of chunks with NULL embedding_vec.
 	ChunksPendingReembed = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "engram_chunks_pending_reembed",
@@ -187,6 +194,13 @@ var (
 		Name: "engram_audit_drift_alerts_total",
 		Help: "Retrieval drift alerts (RBO-vs-previous below alert_threshold) per project",
 	}, []string{"project"})
+
+	// ConsolidateBatchErrors counts batch errors during ConsolidateWithClaude.
+	// Incremented when reviewer.ReviewMergeCandidates or backend.MergeMemoriesAtomic fails.
+	ConsolidateBatchErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_consolidate_batch_errors_total",
+		Help: "Number of batch errors during ConsolidateWithClaude.",
+	})
 )
 
 func init() {
@@ -195,6 +209,7 @@ func init() {
 		ToolDuration,
 		WorkerTicks,
 		WorkerErrors,
+		WorkerPoolResets,
 		ChunksPendingReembed,
 		IngestQueueDepth,
 		EpisodesStartedTotal,
@@ -220,5 +235,6 @@ func init() {
 		DBPoolAcquireCount,
 		DBPoolAcquireDurationSeconds,
 		AuditDriftAlerts,
+		ConsolidateBatchErrors,
 	)
 }
