@@ -158,7 +158,7 @@ func (w *Worker) run(ctx context.Context) {
 		}
 		if batchDone && !migrationCleared {
 			slog.Info("reembed: backfill pass complete", "project", w.project)
-			flagCtx, flagCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			flagCtx, flagCancel := context.WithTimeout(ctx, 10*time.Second)
 			if err := w.backend.SetMeta(flagCtx, w.project, "embedding_migration_in_progress", "false"); err != nil {
 				slog.Warn("reembed: failed to clear migration flag", "project", w.project, "err", err)
 				metrics.WorkerErrors.WithLabelValues("reembed").Inc()
@@ -224,8 +224,10 @@ func (w *Worker) runBatch(ctx context.Context) bool {
 				slog.Warn("reembed embed failed", "chunk", c.ID, "err", err)
 				return nil // non-fatal: let other goroutines continue
 			}
-			if n, err := w.backend.UpdateChunkEmbedding(egCtx, c.ID, vec); err != nil || n == 0 {
-				slog.Warn("reembed update failed or chunk deleted", "chunk", c.ID)
+			if n, err := w.backend.UpdateChunkEmbedding(egCtx, c.ID, vec); err != nil {
+				slog.Warn("reembed update failed", "chunk", c.ID, "err", err)
+			} else if n == 0 {
+				slog.Warn("reembed update matched zero rows — chunk may have been deleted between fetch and update", "chunk", c.ID)
 			}
 			return nil
 		})

@@ -962,10 +962,11 @@ func isLoopbackIP(ip string) bool {
 }
 
 // setupTokenTOFUHandler returns the /setup-token handler with TOFU (Trust On
-// First Use) logic. It creates an internal rate limiter with default parameters.
+// First Use) logic. It creates an internal rate limiter whose eviction goroutine
+// is bound to ctx so it stops when the server shuts down (prevents goroutine leak).
 // Use setupTokenTOFUHandlerWithLimiter in tests to inject a pre-exhausted limiter.
-func (s *Server) setupTokenTOFUHandler(apiKey string) http.Handler {
-	return s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+func (s *Server) setupTokenTOFUHandler(ctx context.Context, apiKey string) http.Handler {
+	return s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(ctx))
 }
 
 // setupTokenTOFUHandlerWithLimiter returns the /setup-token handler using the
