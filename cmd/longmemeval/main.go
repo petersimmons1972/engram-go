@@ -119,6 +119,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  sample-analyze  Summarize existing sample checkpoints without generation/scoring")
 	_, _ = fmt.Fprintln(w, "  analyze         Summarize result checkpoints and classify score failures")
 	_, _ = fmt.Fprintln(w, "  route-discover  Resolve Olla/OpenAI flags from AI Flight Controller + Olla")
+	_, _ = fmt.Fprintln(w, "  atom-build      Extract preference atoms from ingested sessions (Milestone 1 #938)")
 	_, _ = fmt.Fprintln(w, "  prune           Delete expired lme-* scratch projects (TTL sweep, #754)")
 	_, _ = fmt.Fprintln(w, "  help            Print this usage and exit")
 	_, _ = fmt.Fprintln(w)
@@ -232,6 +233,29 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
 	if subcommand == "prune" {
 		return dispatchPrune(args[2:], stdout, stderr)
+	}
+
+	// atom-build — Milestone 1 (#938): extract preference atoms from ingested
+	// sessions, embed them via olla, and store in Engram for --atom-mode recall.
+	if subcommand == "atom-build" {
+		abfs := flag.NewFlagSet("atom-build", flag.ContinueOnError)
+		abfs.SetOutput(stderr)
+		var ab AtomBuildConfig
+		abfs.StringVar(&ab.DataFile, "data", "", "path to longmemeval JSON (required)")
+		abfs.StringVar(&ab.OutDir, "out", ".", "output directory containing checkpoint-ingest.jsonl")
+		abfs.StringVar(&ab.RunID, "run-id", "", "run ID (informational only)")
+		abfs.IntVar(&ab.Workers, "workers", 2, "parallel extraction workers")
+		abfs.StringVar(&ab.ServerURL, "url", "", "Engram server URL")
+		abfs.StringVar(&ab.APIKey, "api-key", "", "Engram API key")
+		abfs.StringVar(&ab.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OAI-compatible LLM base URL for extraction (local olla)")
+		abfs.StringVar(&ab.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "model name for extraction")
+		abfs.StringVar(&ab.EmbedURL, "embed-url", envOr("LME_EMBED_URL", ""), "OAI-compatible embedding endpoint (defaults to --llm-url)")
+		abfs.StringVar(&ab.EmbedModel, "embed-model", envOr("LME_EMBED_MODEL", "BAAI/bge-m3"), "embedding model name")
+		abfs.IntVar(&ab.Retries, "retries", 1, "retry count for LLM/embed calls")
+		if exit := parseFlagSet(abfs, args[2:]); exit >= 0 {
+			return exit
+		}
+		return runAtomBuild(&ab, stdout, stderr)
 	}
 
 	// score-efficient has its own flag set and early return.

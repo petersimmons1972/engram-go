@@ -37,6 +37,22 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 	return err
 }
 
+// InsertAtomEmbedding upserts the vector embedding for the given atom into the
+// atom_embeddings table. The caller must have already inserted the atom via
+// InsertAtom. Uses ON CONFLICT DO UPDATE so re-embedding an atom (e.g. after a
+// model change) overwrites the stale vector rather than silently skipping it.
+func (p *PostgresBackend) InsertAtomEmbedding(ctx context.Context, atomID string, vec []float32) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO atom_embeddings (atom_id, embedding, embedder, created_at)
+		VALUES ($1, $2, 'olla', NOW())
+		ON CONFLICT (atom_id) DO UPDATE
+			SET embedding = EXCLUDED.embedding,
+			    embedder  = EXCLUDED.embedder,
+			    created_at = NOW()`,
+		atomID, vec)
+	return err
+}
+
 // RetireAtom sets valid_to on the atom with the given ID, effectively marking
 // it as superseded. Idempotent: a second call with the same ID is a no-op if
 // valid_to is already set.
