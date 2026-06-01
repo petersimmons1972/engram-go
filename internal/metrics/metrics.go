@@ -194,6 +194,13 @@ var (
 		Name: "engram_audit_drift_alerts_total",
 		Help: "Retrieval drift alerts (RBO-vs-previous below alert_threshold) per project",
 	}, []string{"project"})
+
+	// ConsolidateBatchErrors counts batch errors during ConsolidateWithClaude.
+	// Incremented when reviewer.ReviewMergeCandidates or backend.MergeMemoriesAtomic fails.
+	ConsolidateBatchErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "engram_consolidate_batch_errors_total",
+		Help: "Number of batch errors during ConsolidateWithClaude.",
+	})
 )
 
 func init() {
@@ -228,5 +235,6 @@ func init() {
 		DBPoolAcquireCount,
 		DBPoolAcquireDurationSeconds,
 		AuditDriftAlerts,
+		ConsolidateBatchErrors,
 	)
 }

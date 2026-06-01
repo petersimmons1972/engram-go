@@ -1562,7 +1562,7 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 
 	// 7. Batch candidates to Claude reviewer.
 	const batchSize = 10
-	var totalMerged, totalReviewed int
+	var totalMerged, totalReviewed, batchErrors int
 	for start := 0; start < len(candidates); start += batchSize {
 		end := start + batchSize
 		if end > len(candidates) {
@@ -1571,6 +1571,9 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 		batch := candidates[start:end]
 		decisions, err := reviewer.ReviewMergeCandidates(ctx, batch)
 		if err != nil {
+			slog.Warn("consolidate: reviewer batch failed", "err", err)
+			batchErrors++
+			metrics.ConsolidateBatchErrors.Inc()
 			continue
 		}
 		totalReviewed += len(batch)
@@ -1580,6 +1583,9 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 			}
 			// Atomic merge (#104): update winner content + delete loser in one tx.
 			if err := e.backend.MergeMemoriesAtomic(ctx, e.project, d.MemoryAID, d.MemoryBID, d.MergedContent); err != nil {
+				slog.Warn("consolidate: merge atomic failed", "err", err)
+				batchErrors++
+				metrics.ConsolidateBatchErrors.Inc()
 				continue
 			}
 			totalMerged++
@@ -1590,6 +1596,7 @@ func (e *SearchEngine) ConsolidateWithClaude(ctx context.Context, reviewer Merge
 	result["candidates_reviewed"] = totalReviewed
 	result["lsh_candidates"] = len(lshPairs)
 	result["jaccard_passed"] = len(candidates)
+	result["batch_errors"] = batchErrors
 	return result, nil
 }
 
