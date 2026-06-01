@@ -546,6 +546,42 @@ func TestInfinityQueueCheck_HighLoadNotHung(t *testing.T) {
 	}
 }
 
+// TestInfinityQueueCheck_FullQueueWithInflight verifies that queue_fraction == 1.0
+// with in-flight work is not treated as hung.
+func TestInfinityQueueCheck_FullQueueWithInflight(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			encodeModelsResponse(w, "BAAI/bge-m3", 1.0, 800, 12)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if !ok {
+		t.Errorf("expected ok=true for full queue with in-flight work, got ok=false reason=%q", reason)
+	}
+}
+
+// TestInfinityQueueCheck_ExactlyOneNoInflight verifies that queue_fraction == 1.0
+// with no in-flight work and an empty absolute queue is not treated as hung.
+func TestInfinityQueueCheck_ExactlyOneNoInflight(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			encodeModelsResponse(w, "BAAI/bge-m3", 1.0, 0, 0)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ok, reason := InfinityQueueCheck(context.Background(), http.DefaultClient, srv.URL)
+	if !ok {
+		t.Errorf("expected ok=true for empty absolute queue even at exact capacity, got ok=false reason=%q", reason)
+	}
+}
+
 // TestDimsRace_ConcurrentEmbedAndDimensions exercises concurrent Embed/EmbedWithModel
 // calls and concurrent Dimensions() reads. Run with -race; the unfixed plain-int version
 // of dims triggers the Go race detector. (#924)
