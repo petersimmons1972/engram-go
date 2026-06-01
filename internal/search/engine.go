@@ -969,7 +969,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		// are skipped via the chunkID check. This is a strict improvement over
 		// the prior code, which would have called UpdateChunkLastMatched("").
 		if hit, ok := bestHits[r.Memory.ID]; ok && hit.chunkID != "" {
-			_ = e.backend.UpdateChunkLastMatched(ctx, hit.chunkID)
+			if err := e.backend.UpdateChunkLastMatched(ctx, hit.chunkID); err != nil {
+				slog.Warn("recall: update last-matched failed", "err", err)
+			}
 		}
 	}
 
