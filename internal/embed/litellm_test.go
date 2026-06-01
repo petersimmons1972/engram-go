@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -543,4 +544,48 @@ func TestInfinityQueueCheck_HighLoadNotHung(t *testing.T) {
 	if !ok {
 		t.Errorf("expected ok=true for high-load-but-processing queue, got ok=false reason=%q", reason)
 	}
+}
+
+// TestDimsRace_ConcurrentEmbedAndDimensions exercises concurrent Embed/EmbedWithModel
+// calls and concurrent Dimensions() reads. Run with -race; the unfixed plain-int version
+// of dims triggers the Go race detector. (#924)
+func TestDimsRace_ConcurrentEmbedAndDimensions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always return a valid 3-dim embedding.
+		encodeEmbeddingResponse(w, []float32{0.1, 0.2, 0.3})
+	}))
+	defer srv.Close()
+
+	client := NewLiteLLMClientNoProbe(srv.URL, "test-model", "", 0)
+	ctx := context.Background()
+
+	const goroutines = 20
+	const callsPerGoroutine = 10
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2) // writers + readers
+
+	// Writers: call Embed concurrently (triggers dims write on first success).
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < callsPerGoroutine; j++ {
+				if _, err := client.Embed(ctx, "text"); err != nil {
+					t.Errorf("Embed error: %v", err)
+				}
+			}
+		}()
+	}
+
+	// Readers: call Dimensions() concurrently.
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < callsPerGoroutine; j++ {
+				_ = client.Dimensions()
+			}
+		}()
+	}
+
+	wg.Wait()
 }

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/metrics"
@@ -25,7 +26,7 @@ type LiteLLMClient struct {
 	baseURL    string
 	model      string
 	apiKey     string
-	dims       int
+	dims       atomic.Int32
 	targetDims int
 	http       *http.Client
 	cb         *CircuitBreaker
@@ -103,7 +104,7 @@ func NewLiteLLMClient(ctx context.Context, baseURL, model, apiKey string, target
 	if err != nil {
 		return nil, fmt.Errorf("litellm startup probe: %w", err)
 	}
-	c.dims = len(vec)
+	c.dims.Store(int32(len(vec)))
 	return c, nil
 }
 
@@ -218,12 +219,22 @@ func computeBackoff(attempt int) time.Duration {
 
 func (c *LiteLLMClient) Name() string { return c.model }
 
+// CircuitState returns the current circuit breaker state for this client.
+// Returns StateClosed when circuit breaking is disabled (c.cb == nil) so
+// callers can safely call String() on the result without a nil check (#926).
+func (c *LiteLLMClient) CircuitState() CircuitState {
+	if c.cb == nil {
+		return StateClosed
+	}
+	return c.cb.State()
+}
+
 // Dimensions returns the known vector size. Before the first successful Embed
 // call, falls back to targetDims so the dimension guard in checkEmbedderMeta
 // does not falsely report a mismatch on startup.
 func (c *LiteLLMClient) Dimensions() int {
-	if c.dims > 0 {
-		return c.dims
+	if d := c.dims.Load(); d > 0 {
+		return int(d)
 	}
 	return c.targetDims
 }
@@ -383,9 +394,11 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			// so cosine similarity remains meaningful at the reduced dimension.
 			vec = L2Normalize(vec[:c.targetDims])
 		}
-		if c.dims == 0 {
-			c.dims = len(vec)
-		}
+		// CompareAndSwap is more explicit than the check-then-Store idiom: it
+		// atomically sets dims to the observed vector size only when dims is still
+		// 0, preventing a redundant store on subsequent calls. Functionally
+		// equivalent but makes the intent clear.
+		c.dims.CompareAndSwap(0, int32(len(vec)))
 
 		// Record success in circuit breaker and return
 		if c.cb != nil {
