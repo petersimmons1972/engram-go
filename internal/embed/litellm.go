@@ -336,11 +336,11 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			return nil, "", fmt.Errorf("litellm embed request (exhausted retries): %w", err)
 		}
 
-		defer resp.Body.Close() //nolint:errcheck
 		lastStatusCode = resp.StatusCode
 
 		if resp.StatusCode != http.StatusOK {
 			rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			_ = resp.Body.Close() //nolint:errcheck
 			statusErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
 
 			if !isRetryableError(statusErr, resp.StatusCode) {
@@ -371,6 +371,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			_ = resp.Body.Close() //nolint:errcheck
 			// Decode error is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
 			if c.cb != nil {
@@ -379,6 +380,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			return nil, "", fmt.Errorf("litellm embed decode: %w", err)
 		}
 		if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
+			_ = resp.Body.Close() //nolint:errcheck
 			// Empty response is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
 			if c.cb != nil {
@@ -387,6 +389,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			return nil, "", fmt.Errorf("litellm embed: empty response")
 		}
 
+		_ = resp.Body.Close() //nolint:errcheck
 		// Success!
 		vec := result.Data[0].Embedding
 		if c.targetDims > 0 && len(vec) > c.targetDims {
