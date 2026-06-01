@@ -32,10 +32,10 @@ const (
 	RelTypeContradicts = "contradicts" // set by sleep consolidation daemon
 
 	// Semantic types from open-brain vocabulary (additive merge, v3.x).
-	RelTypeSupports    = "supports"      // one memory strengthens another's evidence
-	RelTypeDerivedFrom = "derived_from"  // citation chain — memory derived from source
-	RelTypePartOf      = "part_of"       // hierarchical containment
-	RelTypeFollows     = "follows"       // temporal or sequential ordering
+	RelTypeSupports    = "supports"     // one memory strengthens another's evidence
+	RelTypeDerivedFrom = "derived_from" // citation chain — memory derived from source
+	RelTypePartOf      = "part_of"      // hierarchical containment
+	RelTypeFollows     = "follows"      // temporal or sequential ordering
 )
 
 // MemoryVersionChangeType constants for memory_versions.change_type.
@@ -175,16 +175,16 @@ type Memory struct {
 	// and you want chunks to be built from the full body. Store() passes
 	// m.RawBody to StoreWithRawBody, eliminating the magic-value "" sentinel.
 	// When RawBody is empty (normal memories), behaviour is unchanged.
-	RawBody string `json:"-"`
-	MemoryType  string    `json:"memory_type"`
-	Project     string    `json:"project"`
-	Tags        []string  `json:"tags"`
-	Importance  int       `json:"importance"`
-	AccessCount int       `json:"access_count"`
+	RawBody      string    `json:"-"`
+	MemoryType   string    `json:"memory_type"`
+	Project      string    `json:"project"`
+	Tags         []string  `json:"tags"`
+	Importance   int       `json:"importance"`
+	AccessCount  int       `json:"access_count"`
 	LastAccessed time.Time `json:"last_accessed"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Immutable   bool      `json:"immutable"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Immutable    bool      `json:"immutable"`
 
 	// ExpiresAt is nil when the memory does not expire.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -356,27 +356,30 @@ type ConnectedMemory struct {
 type Handle struct {
 	ID          string  `json:"id"`
 	Project     string  `json:"project"`
-	Summary     string  `json:"summary"`       // "" if not yet summarized
+	Summary     string  `json:"summary"` // "" if not yet summarized
 	Score       float64 `json:"score"`
 	StorageMode string  `json:"storage_mode"`
-	ChunkCount  int     `json:"chunk_count"`   // 0 if unknown at recall time
-	Bytes       int     `json:"bytes"`         // len(content)
-	IsHandle    bool    `json:"is_handle"`     // always true; signals paged-out result
-	FetchHint   string  `json:"fetch_hint"`    // human-readable usage hint
+	ChunkCount  int     `json:"chunk_count"` // 0 if unknown at recall time
+	Bytes       int     `json:"bytes"`       // len(content)
+	IsHandle    bool    `json:"is_handle"`   // always true; signals paged-out result
+	FetchHint   string  `json:"fetch_hint"`  // human-readable usage hint
 }
 
 // MemoryStats summarizes the contents of the store. Returned by the status endpoint.
 type MemoryStats struct {
-	TotalMemories       int            `json:"total_memories"`
-	TotalChunks         int            `json:"total_chunks"`
-	TotalRelationships  int            `json:"total_relationships"`
-	ByType              map[string]int `json:"by_type"`
-	ByImportance        map[string]int `json:"by_importance"`
-	Oldest              *string        `json:"oldest,omitempty"`
-	Newest              *string        `json:"newest,omitempty"`
-	DBSizeBytes         int64          `json:"db_size_bytes"`
-	PendingSummarization int           `json:"pending_summarization"`
-	Summarization       map[string]any `json:"summarization"`
+	TotalMemories          int            `json:"total_memories"`
+	TotalChunks            int            `json:"total_chunks"`
+	ChunksTotal            int            `json:"chunks_total"`
+	ChunksEmbedded         int            `json:"chunks_embedded"`
+	ChunksPendingEmbedding int            `json:"chunks_pending_embedding"`
+	TotalRelationships     int            `json:"total_relationships"`
+	ByType                 map[string]int `json:"by_type"`
+	ByImportance           map[string]int `json:"by_importance"`
+	Oldest                 *string        `json:"oldest,omitempty"`
+	Newest                 *string        `json:"newest,omitempty"`
+	DBSizeBytes            int64          `json:"db_size_bytes"`
+	PendingSummarization   int            `json:"pending_summarization"`
+	Summarization          map[string]any `json:"summarization"`
 }
 
 // FTSResult is an intermediate result from the full-text search layer, before
@@ -393,8 +396,8 @@ type FTSResult struct {
 type ConflictingResult struct {
 	Memory        *Memory `json:"memory"`
 	ContradictsID string  `json:"contradicts_id"` // ID of the recalled memory this contradicts
-	Strength      float64 `json:"strength"`        // contradiction edge strength
-	MatchedChunk  string  `json:"matched_chunk"`   // first 500 bytes of content
+	Strength      float64 `json:"strength"`       // contradiction edge strength
+	MatchedChunk  string  `json:"matched_chunk"`  // first 500 bytes of content
 }
 
 // AggregateRow is one bucket in an aggregate query result.
@@ -404,4 +407,3 @@ type AggregateRow struct {
 	Oldest time.Time `json:"oldest"`
 	Newest time.Time `json:"newest"`
 }
-
