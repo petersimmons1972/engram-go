@@ -158,7 +158,7 @@ func run() error {
 	embedCircuitOpenDuration := fs.Duration("embed-circuit-open-duration", envDuration("ENGRAM_EMBED_CIRCUIT_OPEN_DURATION", 30*time.Second), "Initial cooldown when circuit opens")
 	embedCircuitBackoffMultiplier := fs.Float64("embed-circuit-backoff-multiplier", envFloat("ENGRAM_EMBED_CIRCUIT_BACKOFF_MULTIPLIER", 2.0), "Exponential backoff multiplier for consecutive opens")
 	embedCircuitBackoffCap := fs.Duration("embed-circuit-backoff-cap", envDuration("ENGRAM_EMBED_CIRCUIT_BACKOFF_CAP", 5*time.Minute), "Maximum cooldown duration (cap on exponential backoff)")
-	embedRecallTimeoutMS := fs.Int("embed-recall-timeout-ms", envInt("ENGRAM_EMBED_RECALL_TIMEOUT_MS", 500), "Embed call budget during recall before degrading to BM25+recency (ms; 0 = no timeout)")
+	embedRecallTimeoutMS := fs.Int("embed-recall-timeout-ms", envInt("ENGRAM_EMBED_RECALL_TIMEOUT_MS", 500), "Embed call budget during recall before degrading to BM25+recency (ms; 0 = no embed deadline, parent context governs — caller must supply a bounded context)")
 
 	// Token bucket rate limiter (#611): per-project embed call budget to prevent GPU saturation.
 	embedRatePerSecond := fs.Float64("embed-rate-per-second", envFloat("ENGRAM_EMBED_RATE_PER_SECOND", 0), "Per-project embed call rate limit in calls/s (0 = disabled)")
