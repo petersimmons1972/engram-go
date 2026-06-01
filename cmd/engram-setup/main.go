@@ -21,9 +21,10 @@
 //
 // Usage:
 //
-//	go run ./cmd/engram-setup              # configure with defaults
+//	go run ./cmd/engram-setup              # configure with defaults (k8s ingress)
 //	go run ./cmd/engram-setup --dry-run    # preview changes without writing
-//	go run ./cmd/engram-setup --port 9000  # non-default port
+//	go run ./cmd/engram-setup --url http://127.0.0.1:8788  # local Docker override
+//	go run ./cmd/engram-setup --port 9000  # local port override (sets base to http://127.0.0.1:<port>)
 package main
 
 import (
@@ -49,8 +50,13 @@ func main() {
 	}
 }
 
+// defaultServerURL is the k8s ingress endpoint for the engram MCP server.
+// Override with --url for local Docker development, or --port for a local port.
+const defaultServerURL = "https://engram.petersimmons.com"
+
 func run() error {
-	port := flag.Int("port", 8788, "engram server port")
+	serverURL := flag.String("url", defaultServerURL, "engram server base URL (overrides --port)")
+	port := flag.Int("port", 0, "local port override: sets base URL to http://127.0.0.1:<port> (deprecated; use --url)")
 	name := flag.String("name", "engram", "MCP server name to write in Claude config files")
 	dryRun := flag.Bool("dry-run", false, "print the MCP config diff without writing any files")
 	offline := flag.Bool("offline", false, "preview-only: skip /setup-token call and require --dry-run")
@@ -70,7 +76,11 @@ func run() error {
 		os.Exit(0)
 	}
 
-	base := fmt.Sprintf("http://127.0.0.1:%d", *port)
+	// --port is a legacy local-only shorthand. When set, it overrides --url.
+	base := *serverURL
+	if *port != 0 {
+		base = fmt.Sprintf("http://127.0.0.1:%d", *port)
+	}
 
 	if *offline && !*dryRun {
 		return fmt.Errorf("--offline is preview-only and must be combined with --dry-run")
@@ -81,8 +91,9 @@ func run() error {
 		if err := healthCheck(base); err != nil {
 			return fmt.Errorf(
 				"engram server not reachable at %s/health\n\n"+
-					"  Is it running?  →  docker compose up -d\n"+
-					"  Check logs?     →  make logs\n\n"+
+					"  K8s deployment?  →  kubectl rollout status deploy/engram -n engram\n"+
+					"  Check logs?      →  kubectl logs -n engram deploy/engram --tail=50\n"+
+					"  Local override?  →  go run ./cmd/engram-setup --url http://127.0.0.1:8788\n\n"+
 					"  (original error: %w)", base, err)
 		}
 
@@ -129,7 +140,7 @@ func run() error {
 					fmt.Fprintf(os.Stderr,
 						"engram-setup: /setup-token unavailable (%v) — recovered key from %s\n",
 						setupErr, c.label)
-					stub := &setupResponse{Token: key, Endpoint: fmt.Sprintf("http://127.0.0.1:%d/mcp", *port)}
+					stub := &setupResponse{Token: key, Endpoint: base + "/mcp"}
 					return configureWithSetup(base, *name, *dryRun, *format, stub)
 				}
 			}
@@ -146,7 +157,7 @@ func run() error {
 	stubSetup := &setupResponse{
 		// #693: stable placeholder so dry-run output is idempotent (was: timestamp suffix made every dry-run diff differently).
 		Token:    "stub-offline-token-PLACEHOLDER",
-		Endpoint: fmt.Sprintf("http://127.0.0.1:%d/mcp", *port),
+		Endpoint: base + "/mcp",
 		Name:     *name,
 	}
 	return configureWithSetup(base, *name, *dryRun, *format, stubSetup)
