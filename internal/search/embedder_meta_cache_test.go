@@ -46,7 +46,6 @@ type stubTx struct {
 	committed bool
 	meta      map[string]string // reference to the backend's meta store
 	mu        *sync.Mutex
-	project   string
 }
 
 func (t *stubTx) Commit(_ context.Context) error {
