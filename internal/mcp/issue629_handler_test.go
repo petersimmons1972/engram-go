@@ -92,8 +92,11 @@ func TestIssue629_EpisodeHandlersAndAdminHandlers(t *testing.T) {
 
 	res, err = handleMemoryStatus(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj"}}})
 	require.NoError(t, err)
-	require.Equal(t, float64(3), decodeToolResult(t, res)["total_memories"])
-	require.Equal(t, float64(2), decodeToolResult(t, res)["chunks_pending_embedding"])
+	statusResult := decodeToolResult(t, res)
+	require.Equal(t, float64(3), statusResult["total_memories"])
+	require.Equal(t, float64(6), statusResult["chunks_total"])
+	require.Equal(t, float64(4), statusResult["chunks_embedded"])
+	require.Equal(t, float64(2), statusResult["chunks_pending_embedding"])
 
 	res, err = handleMemoryDiagnose(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj", "question": "what happened?"}}})
 	require.NoError(t, err)

@@ -9,6 +9,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGetStats_ZeroChunks(t *testing.T) {
+	ctx := context.Background()
+	project := uniqueProject("stats-zero-chunks")
+	testDSN(t)
+
+	backend := newTestBackend(t, project)
+	// No chunks stored — all three embedding-backlog fields must be zero.
+	stats, err := backend.GetStats(ctx, project)
+	require.NoError(t, err)
+	require.Equal(t, 0, stats.ChunksTotal)
+	require.Equal(t, 0, stats.ChunksEmbedded)
+	require.Equal(t, 0, stats.ChunksPendingEmbedding)
+}
+
+func TestGetStats_AllEmbedded(t *testing.T) {
+	ctx := context.Background()
+	project := uniqueProject("stats-all-embedded")
+	testDSN(t)
+
+	backend := newTestBackend(t, project)
+	mem := storeMemory(t, backend, project, "all-embedded test")
+
+	// Use a minimal non-nil embedding so the DB accepts the vector.
+	vec := []float32{0.1, 0.2, 0.3}
+	err := backend.StoreChunks(ctx, []*types.Chunk{
+		{
+			ID:        types.NewMemoryID(),
+			MemoryID:  mem.ID,
+			ChunkText: "chunk a",
+			ChunkHash: "chunk-hash-a",
+			Project:   project,
+			ChunkType: "sentence_window",
+			Embedding: vec,
+		},
+		{
+			ID:        types.NewMemoryID(),
+			MemoryID:  mem.ID,
+			ChunkText: "chunk b",
+			ChunkHash: "chunk-hash-b",
+			Project:   project,
+			ChunkType: "sentence_window",
+			Embedding: vec,
+		},
+	})
+	require.NoError(t, err)
+
+	stats, err := backend.GetStats(ctx, project)
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.ChunksTotal)
+	require.Equal(t, 0, stats.ChunksPendingEmbedding)
+	require.Equal(t, stats.ChunksTotal, stats.ChunksEmbedded)
+}
+
 func TestGetStats_ReportsEmbeddingBacklog(t *testing.T) {
 	ctx := context.Background()
 	project := uniqueProject("stats-embedding-backlog")
