@@ -522,6 +522,23 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	// #938 precision re-rank: when --preference-rerank is set and the question
+	// is single-session-preference, re-rank the top-100 recall candidates by a
+	// blended score before truncating to context-topk. This targets the class-B
+	// precision miss: gold session in top-100 but pushed below the top-15 cut.
+	// The blended score is:
+	//   score = 0.5 * existing_normalized_score + 0.5 * pref_signal_score
+	// where pref_signal_score is a TF-overlap of the candidate's text against:
+	//   (a) the question's non-stopword content terms, and
+	//   (b) preference-signal tokens: prefer, like, love, enjoy, favorite,
+	//       usually, always, want, wish, and first-person "I" phrases.
+	// Candidates are fetched in a light pre-fetch pass so scoring uses content.
+	// The re-rank is applied before selectContextIDs so only the top contextLimit
+	// items from the re-ranked list are fetched in the main pass below.
+	if cfg.PreferenceRerank && item.QuestionType == "single-session-preference" {
+		retrievedIDs = preferenceRerankIDs(ctx, cfg, mcpClient, ingest.Project, retrievedIDs, item.Question)
+	}
+
 	// Fetch content for top contextLimit memories.
 	// --context-topk overrides per-type default; 0 means use per-type default.
 	var contextLimit int
@@ -823,4 +840,131 @@ func blockDistanceToTarget(block string, target time.Time) time.Duration {
 		return -delta
 	}
 	return delta
+}
+
+// preferenceStopwords is a small set of common English function words excluded
+// from the TF-overlap preference signal so only content terms score.
+var preferenceStopwords = map[string]bool{
+	"a": true, "an": true, "the": true, "and": true, "or": true, "but": true,
+	"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
+	"with": true, "by": true, "from": true, "that": true, "this": true,
+	"is": true, "are": true, "was": true, "were": true, "be": true, "been": true,
+	"have": true, "has": true, "had": true, "do": true, "does": true, "did": true,
+	"will": true, "would": true, "could": true, "should": true, "may": true,
+	"might": true, "can": true, "it": true, "its": true, "they": true, "them": true,
+	"their": true, "what": true, "which": true, "who": true, "how": true,
+	"when": true, "where": true, "my": true, "me": true, "you": true, "your": true,
+	"he": true, "she": true, "him": true, "her": true, "we": true, "our": true,
+	"if": true, "about": true, "as": true, "not": true, "no": true,
+}
+
+// preferenceSignalTokens are first-person preference-bearing verbs and adverbs
+// that strongly indicate a memory block contains a user preference statement.
+var preferenceSignalTokens = []string{
+	"prefer", "prefers", "preferred", "preference",
+	"like", "likes", "liked", "love", "loves", "loved",
+	"enjoy", "enjoys", "enjoyed", "favorite", "favourite",
+	"usually", "always", "often", "tend", "tends",
+	"want", "wants", "wanted", "wish", "wishes",
+	"hate", "hates", "hated", "dislike", "dislikes",
+}
+
+// questionContentTerms returns the non-stopword lowercase tokens from a question.
+func questionContentTerms(question string) []string {
+	// Split on non-alphanumeric characters.
+	wordRe := regexp.MustCompile(`[a-zA-Z0-9]+`)
+	words := wordRe.FindAllString(strings.ToLower(question), -1)
+	var out []string
+	for _, w := range words {
+		if !preferenceStopwords[w] && len(w) > 2 {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// prefSignalScore scores a single candidate text block against the question's
+// content terms and the preference-signal token list. Returns a float in [0,1].
+// Formula: (content_term_hits / max(1, len(contentTerms))) * 0.6
+//        + (pref_signal_hits / max(1, len(prefSignalTokens))) * 0.4
+// Capped at 1.0. The content-term weight is higher because matching the question
+// subject matter is the more reliable signal for the gold session.
+func prefSignalScore(text string, contentTerms []string) float64 {
+	lower := strings.ToLower(text)
+
+	var contentHits int
+	for _, term := range contentTerms {
+		if strings.Contains(lower, term) {
+			contentHits++
+		}
+	}
+
+	var signalHits int
+	for _, tok := range preferenceSignalTokens {
+		if strings.Contains(lower, tok) {
+			signalHits++
+		}
+	}
+
+	contentMax := len(contentTerms)
+	if contentMax == 0 {
+		contentMax = 1
+	}
+	signalMax := len(preferenceSignalTokens)
+
+	score := float64(contentHits)/float64(contentMax)*0.6 +
+		float64(signalHits)/float64(signalMax)*0.4
+	if score > 1.0 {
+		score = 1.0
+	}
+	return score
+}
+
+// preferenceRerankIDs re-ranks retrievedIDs by a blended score for preference
+// questions, BEFORE truncation to context-topk. The existing recall rank position
+// is treated as the "vector score" and normalized to [0,1] by position in the
+// list (rank 0 = score 1.0, last rank = score 0.0). The blended score is:
+//
+//	blended = 0.5 * normalized_vector_score + 0.5 * pref_signal_score
+//
+// Candidates are light-fetched from Engram for content. Fetch errors are logged
+// and the candidate is retained at its original position (fetch failures should
+// not suppress potentially relevant results). The returned slice is the same
+// IDs re-ordered by blended score descending.
+func preferenceRerankIDs(ctx context.Context, cfg *Config, mc *longmemeval.Client, project string, ids []string, question string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	contentTerms := questionContentTerms(question)
+
+	type scored struct {
+		id    string
+		score float64
+	}
+	results := make([]scored, len(ids))
+	n := float64(len(ids))
+	for i, id := range ids {
+		// Normalized vector rank score: position 0 → 1.0, last → 0.0.
+		vectorScore := 1.0 - float64(i)/n
+		content, fetchErr := mc.FetchContent(ctx, project, id)
+		var pscore float64
+		if fetchErr != nil {
+			log.Printf("WARN preference-rerank [%s] fetch %s: %v — keeping original rank", question, id, fetchErr)
+			// Retain original rank score; no pref signal available.
+			pscore = 0
+		} else {
+			pscore = prefSignalScore(content, contentTerms)
+		}
+		results[i] = scored{id: id, score: 0.5*vectorScore + 0.5*pscore}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	out := make([]string, len(ids))
+	for i, s := range results {
+		out[i] = s.id
+	}
+	return out
 }

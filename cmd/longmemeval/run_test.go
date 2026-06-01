@@ -798,3 +798,107 @@ func TestSelectContextIDsLeavesIncludedSecondaryInPlace(t *testing.T) {
 		t.Fatalf("selectContextIDs() = %v, want %v", got, want)
 	}
 }
+
+// TestPreferenceRerank_ScoringSmokeTest verifies the core pref-signal scoring
+// functions used by preferenceRerankIDs without requiring a live Engram server.
+func TestPreferenceRerank_ScoringSmokeTest(t *testing.T) {
+	question := "What kind of music does the user usually prefer to listen to?"
+	terms := questionContentTerms(question)
+	// Expect non-stopword content words.
+	if len(terms) == 0 {
+		t.Fatal("questionContentTerms returned empty for non-trivial question")
+	}
+	for _, w := range terms {
+		if preferenceStopwords[w] {
+			t.Errorf("stopword %q leaked into content terms", w)
+		}
+	}
+
+	// A block with strong preference signal should score higher than a block
+	// with weak signal.
+	strongBlock := "I usually prefer jazz and classical music. I love listening to piano concertos and always enjoy live performances."
+	weakBlock := "The server returned a 404 error on the API endpoint. Check the configuration file and restart the service."
+
+	strongScore := prefSignalScore(strongBlock, terms)
+	weakScore := prefSignalScore(weakBlock, terms)
+	if strongScore <= weakScore {
+		t.Errorf("strong block score %.3f <= weak block score %.3f; expected strong > weak", strongScore, weakScore)
+	}
+	if strongScore <= 0 {
+		t.Errorf("strong block score %.3f should be > 0", strongScore)
+	}
+}
+
+// TestPreferenceRerank_OrderingWithSyntheticCandidates verifies that a lower
+// vector-ranked candidate containing strong preference signal moves into the
+// top-15 after preference re-rank, and that without re-rank it would be outside
+// top-15. The test exercises the scoring functions (prefSignalScore +
+// questionContentTerms) directly, mirroring the sort in preferenceRerankIDs,
+// without needing a live Engram server.
+//
+// Scenario: 25 candidates total; all fillers except idx=20 (gold session with
+// strong pref signal). Without re-rank idx=20 is at position 20 (outside
+// top-15). With re-rank its blended score lifts it above the weak-signal
+// filler at rank 14 (last item in top-15 without re-rank).
+func TestPreferenceRerank_OrderingWithSyntheticCandidates(t *testing.T) {
+	question := "What kind of hotels does the user prefer when traveling?"
+	const total = 25
+	const goldIdx = 20
+
+	contents := make([]string, total)
+	for i := 0; i < total; i++ {
+		if i == goldIdx {
+			// Gold session: strong preference signal + question content terms.
+			contents[i] = "I usually prefer luxury hotels with ocean views and rooftop pools when traveling. I love upscale properties with premium amenities and always enjoy the premium experience."
+		} else {
+			// Weak-signal filler — no preference signal, no question terms.
+			contents[i] = fmt.Sprintf("Session about unrelated topic number %d. Database null pointer exception. API endpoint returned 404.", i)
+		}
+	}
+
+	contentTerms := questionContentTerms(question)
+
+	// Simulate the sort from preferenceRerankIDs without FetchContent.
+	type scored struct {
+		idx   int
+		score float64
+	}
+	n := float64(total)
+	results := make([]scored, total)
+	for i, content := range contents {
+		vectorScore := 1.0 - float64(i)/n
+		pscore := prefSignalScore(content, contentTerms)
+		results[i] = scored{idx: i, score: 0.5*vectorScore + 0.5*pscore}
+	}
+	// sort descending by blended score
+	for i := 0; i < len(results); i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[j].score > results[i].score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	// Assert gold (idx=goldIdx) is in top-15 after re-rank.
+	goldInTop15 := false
+	for _, r := range results[:15] {
+		if r.idx == goldIdx {
+			goldInTop15 = true
+			break
+		}
+	}
+	if !goldInTop15 {
+		positions := make([]int, 0, total)
+		for _, r := range results {
+			positions = append(positions, r.idx)
+		}
+		t.Errorf("gold candidate (idx=%d) not in top-15 after re-rank; re-ranked order: %v", goldIdx, positions)
+	}
+
+	// Confirm that without re-rank (original order), gold was outside top-15.
+	// In original rank order, idx=goldIdx is at position goldIdx (0-indexed),
+	// which is >= 15 — confirming the re-rank was necessary.
+	if goldIdx < 15 {
+		t.Errorf("test invariant broken: goldIdx=%d should be >= 15 to test re-rank lift", goldIdx)
+	}
+}

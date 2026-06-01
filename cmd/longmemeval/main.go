@@ -81,6 +81,12 @@ type Config struct {
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
 	EvidenceFirstPacked bool // order context blocks by exact overlap before prompt assembly
 
+	// #938 precision re-rank: before truncating top-100→context-topk for
+	// single-session-preference questions, re-rank the top-100 candidates by a
+	// blended score that boosts candidates containing preference-signal tokens
+	// and question content terms. Default OFF; enabled by --preference-rerank.
+	PreferenceRerank bool
+
 	// #749: contention guard
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
@@ -206,6 +212,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")
+	// #938 precision re-rank: BM25/TF-overlap re-rank of top-100 before truncation to context-topk;
+	// targets the 48% class-B precision miss where gold is in top-100 but truncated before top-15.
+	fs.BoolVar(&cfg.PreferenceRerank, "preference-rerank", false, "#938: before truncating top-100→context-topk for preference questions, re-rank by blended vector+preference-signal score (default off)")
 	// #749: contention guard. --no-exclusive-backend is the negation flag.
 	// Default is exclusive=true; --no-exclusive-backend sets it false.
 	var noExclusiveBackend bool
