@@ -14,6 +14,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/embedmodel"
+	"github.com/petersimmons1972/engram/internal/envconf"
 	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/minhash"
 	"github.com/petersimmons1972/engram/internal/reembed"
@@ -248,7 +249,8 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		decayer:             dec,
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
-		embedRecallTimeout:  defaultEmbedRecallTimeoutMS * time.Millisecond,
+		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
+		embedRecallTimeout:  time.Duration(envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)) * time.Millisecond,
 	}
 }
 
