@@ -84,6 +84,9 @@ func buildRecallQuery(question, questionType string, disableRewrite bool) string
 }
 
 var relativeAgoRe = regexp.MustCompile(`(?i)\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks|month|months|year|years)\s+ago\b`)
+var urlRe = regexp.MustCompile(`https?://[^\s)]+`)
+var phoneRe = regexp.MustCompile(`\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b`)
+var quotedRe = regexp.MustCompile(`"([^"]+)"`)
 
 func parseAgoAmount(raw string) (int, bool) {
 	if n, err := strconv.Atoi(raw); err == nil {
@@ -446,6 +449,18 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 	secondaryContextIDs := temporalFallbackIDs
+	if cfg.RetrievalFusion {
+		variants := buildRecallVariants(item.Question, recallQuery, cfg.DisableQueryRewrite, true)
+		for _, q := range variants[1:] {
+			ids, qErr := recallDefault(q, cfg.RecallTopK)
+			if qErr != nil {
+				log.Printf("WARN run [%s] fusion recall (%q): %v", item.QuestionID, q, qErr)
+				continue
+			}
+			secondaryContextIDs = append(secondaryContextIDs, ids...)
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, ids)
+		}
+	}
 
 	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
 	// the object noun-phrase for count-shaped questions and union with primary.
@@ -515,6 +530,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
 	contextBlocks := make([]string, 0, contextLimit)
+	contentByID := make(map[string]string, contextLimit)
 	for _, id := range contextIDs {
 		content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
 		if err != nil {
@@ -522,8 +538,24 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			continue
 		}
 		if content != "" {
+			contentByID[id] = content
 			contextBlocks = append(contextBlocks, content)
 		}
+	}
+	if cfg.ExactSignalBoost {
+		ranked := rankIDsByExactSignals(contextIDs, item.Question, contentByID)
+		reordered := make([]string, 0, len(ranked))
+		for _, id := range ranked {
+			if c := contentByID[id]; c != "" {
+				reordered = append(reordered, c)
+			}
+		}
+		if len(reordered) > 0 {
+			contextBlocks = reordered
+		}
+	}
+	if cfg.EvidenceFirstPacked {
+		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 
 	// --max-block-chars: truncate each block so the assembled prompt stays within
@@ -588,6 +620,69 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		RetrievedIDs: retrievedIDs,
 		Status:       "done",
 	}
+}
+
+func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {
+	seen := map[string]bool{}
+	add := func(dst []string, q string) []string {
+		q = strings.TrimSpace(q)
+		if q == "" || seen[q] {
+			return dst
+		}
+		seen[q] = true
+		return append(dst, q)
+	}
+	out := add(nil, primary)
+	if !disableRewrite {
+		out = add(out, question)
+	}
+	if includeIdentifiers {
+		for _, idq := range extractExactSignals(question) {
+			out = add(out, idq)
+		}
+	}
+	return out
+}
+
+func extractExactSignals(question string) []string {
+	var out []string
+	out = append(out, urlRe.FindAllString(question, -1)...)
+	out = append(out, phoneRe.FindAllString(question, -1)...)
+	for _, m := range quotedRe.FindAllStringSubmatch(question, -1) {
+		if len(m) > 1 {
+			out = append(out, m[1])
+		}
+	}
+	return longmemeval.DeduplicateIDs(out)
+}
+
+func scoreExactSignals(text, question string) int {
+	score := 0
+	lower := strings.ToLower(text)
+	for _, sig := range extractExactSignals(question) {
+		if strings.Contains(lower, strings.ToLower(sig)) {
+			score += 3
+		}
+	}
+	return score
+}
+
+func rankIDsByExactSignals(ids []string, question string, contentByID map[string]string) []string {
+	out := make([]string, len(ids))
+	copy(out, ids)
+	sort.SliceStable(out, func(i, j int) bool {
+		return scoreExactSignals(contentByID[out[i]], question) > scoreExactSignals(contentByID[out[j]], question)
+	})
+	return out
+}
+
+func orderContextEvidenceFirst(blocks []string, question string) []string {
+	out := make([]string, len(blocks))
+	copy(out, blocks)
+	sort.SliceStable(out, func(i, j int) bool {
+		return scoreExactSignals(out[i], question) > scoreExactSignals(out[j], question)
+	})
+	return out
 }
 
 func selectContextIDs(retrievedIDs, secondaryIDs []string, limit int) []string {

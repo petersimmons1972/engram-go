@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -315,6 +316,56 @@ func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
 	// The flag registration must use default value 0.
 	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
 		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	}
+}
+
+func TestBuildRecallVariants_IncludesRawAndIdentifierQueries(t *testing.T) {
+	question := "What song did we discuss at https://foo.test/bar with 555-121-3434?"
+	primary := "recent song discussed"
+	got := buildRecallVariants(question, primary, false, true)
+	if len(got) < 3 {
+		t.Fatalf("expected at least 3 variants, got %d: %v", len(got), got)
+	}
+	if got[0] != primary {
+		t.Fatalf("expected primary query first, got %q", got[0])
+	}
+	joined := strings.Join(got, " | ")
+	if !strings.Contains(joined, "https://foo.test/bar") {
+		t.Fatalf("expected URL identifier variant in %v", got)
+	}
+	if !strings.Contains(joined, "555-121-3434") {
+		t.Fatalf("expected phone identifier variant in %v", got)
+	}
+}
+
+func TestRankIDsByExactSignals_BoostsIdentifierMatches(t *testing.T) {
+	question := "Which venue was this at 555-121-3434?"
+	ids := []string{"m1", "m2"}
+	contentByID := map[string]string{
+		"m1": "generic notes with no matching identifiers",
+		"m2": "Venue details include phone 555-121-3434 and event name",
+	}
+	got := rankIDsByExactSignals(ids, question, contentByID)
+	if got[0] != "m2" {
+		t.Fatalf("expected exact-identifier match to rank first, got %v", got)
+	}
+}
+
+func TestOrderContextEvidenceFirst_PrioritizesIdentifierOverlap(t *testing.T) {
+	question := "What URL did I share? https://x.test/a"
+	blocks := []string{
+		"Session date: 2024-01-02\nGeneric update text with no url.",
+		"Session date: 2024-01-03\nShared link https://x.test/a during planning.",
+	}
+	got := orderContextEvidenceFirst(blocks, question)
+	if len(got) != len(blocks) {
+		t.Fatalf("unexpected length: got %d want %d", len(got), len(blocks))
+	}
+	if got[0] != blocks[1] {
+		t.Fatalf("expected identifier-matching block first, got %#v", got)
+	}
+	if reflect.DeepEqual(blocks, got) {
+		t.Fatalf("expected reordering but output matches input: %#v", got)
 	}
 }
 
