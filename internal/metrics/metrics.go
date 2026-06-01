@@ -30,6 +30,13 @@ var (
 		Help: "Background worker error count",
 	}, []string{"worker"})
 
+	// WorkerPoolResets counts the number of times the embed worker pool has been reset.
+	// A pool reset closes stale connections after repeated errors (e.g. Postgres restart).
+	WorkerPoolResets = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_worker_pool_resets_total",
+		Help: "Number of times the embed worker pool has been reset.",
+	}, []string{"worker"})
+
 	// ChunksPendingReembed is the current number of chunks with NULL embedding_vec.
 	ChunksPendingReembed = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "engram_chunks_pending_reembed",
@@ -195,6 +202,7 @@ func init() {
 		ToolDuration,
 		WorkerTicks,
 		WorkerErrors,
+		WorkerPoolResets,
 		ChunksPendingReembed,
 		IngestQueueDepth,
 		EpisodesStartedTotal,

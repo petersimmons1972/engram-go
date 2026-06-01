@@ -255,7 +255,7 @@ func (c *OllamaClient) pullModel(ctx context.Context) error {
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		return fmt.Errorf("ollama pull: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
