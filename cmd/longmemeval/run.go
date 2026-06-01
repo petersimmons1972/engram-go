@@ -590,6 +590,14 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 
+	// #938: --atom-mode: fetch extracted preference atoms for the project and
+	// prepend them as a labeled block in the generation prompt. This code path
+	// is OFF by default. It is the Milestone 1 eval gate switch; enable ONLY
+	// after the post-reset atom extraction pass has been completed.
+	var atomContextBlock string
+	if cfg.AtomMode {
+		atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID)
+	}
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
 	// the two are mutually exclusive. When both are set, aug wins.
 	// H12 (--enumerate-first) is orthogonal — it only fires for aggregation
@@ -604,6 +612,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
+	}
+
+	// #938: prepend atom context block before the memory context when --atom-mode is set.
+	if atomContextBlock != "" {
+		prompt = atomContextBlock + "\n" + prompt
 	}
 	var hypothesis string
 	if cfg.LLMBaseURL != "" {

@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/atom"
 )
 
 // Client wraps the MCP SSE client with retry logic for eval use.
@@ -578,6 +579,61 @@ func sanitizeControlChars(s string) string {
 		sb.WriteRune(r)
 	}
 	return sb.String()
+}
+
+// FetchAtoms retrieves active preference atoms for a project via the REST
+// /atoms endpoint. This is the Milestone 1 (#938) atom recall path used by
+// the --atom-mode flag in cmd/longmemeval/run.go.
+//
+// The /atoms endpoint does not exist in the current server — it is a
+// forward-reference for the M2 server-side implementation. Until M2, this
+// method returns an empty slice (non-fatal; the run continues without atoms).
+// This enables the --atom-mode code path to be exercised in unit tests.
+//
+// topK: maximum number of atoms to return (0 = server default).
+func (c *Client) FetchAtoms(ctx context.Context, project string, atomType string, topK int) ([]atom.Atom, error) {
+	body := map[string]any{
+		"project":   project,
+		"atom_type": atomType,
+		"top_k":     topK,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal FetchAtoms body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(c.serverURL, "/")+"/atoms", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		// Non-fatal: endpoint not yet implemented; caller logs a warning.
+		return nil, fmt.Errorf("fetch atoms: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNotImplemented {
+		// Endpoint not yet deployed — treat as empty result, not an error.
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch atoms: unexpected status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Atoms []atom.Atom `json:"atoms"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("fetch atoms decode: %w", err)
+	}
+	return result.Atoms, nil
 }
 
 // IsStaleSessionError returns true when err represents an MCP session that
