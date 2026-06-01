@@ -193,6 +193,16 @@ func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 	e.embedGateway = g
 }
 
+// SetEmbedRecallTimeout overrides the embed call budget used during recall.
+// When ms > 0 the engine uses that value instead of the 500ms default; when ms
+// is 0 the default is preserved. Call this after New() to thread the value from
+// the --embed-recall-timeout-ms CLI flag (#932).
+func (e *SearchEngine) SetEmbedRecallTimeout(ms int) {
+	if ms > 0 {
+		e.embedRecallTimeout = time.Duration(ms) * time.Millisecond
+	}
+}
+
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
 // and spaced-repetition importance decay). claudeClient may be nil, in which case
 // summarization falls back to Ollama. decayInterval controls how often the decay
@@ -226,7 +236,6 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	if len(targetDims) > 0 {
 		dims = targetDims[0]
 	}
-	recallTimeoutMS := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
 
 	return &SearchEngine{
 		backend:             backend,
@@ -240,7 +249,8 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		decayer:             dec,
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
-		embedRecallTimeout:  time.Duration(recallTimeoutMS) * time.Millisecond,
+		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
+		embedRecallTimeout:  time.Duration(envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)) * time.Millisecond,
 	}
 }
 
