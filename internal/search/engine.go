@@ -14,7 +14,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/embedmodel"
-	"github.com/petersimmons1972/engram/internal/envconf"
 	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/minhash"
 	"github.com/petersimmons1972/engram/internal/reembed"
@@ -196,7 +195,12 @@ func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
 // and spaced-repetition importance decay). claudeClient may be nil, in which case
 // summarization falls back to Ollama. decayInterval controls how often the decay
-// pass runs; pass 0 to use the default (8 hours).
+// pass 0 to use the default (8 hours).
+//
+// Optional variadic args:
+// targetDims[0]  -> target embedding dimensions override (or 0 = native output)
+// targetDims[1]  -> recall timeout in milliseconds for per-recall embedding calls
+//                   (defaults to defaultEmbedRecallTimeoutMS when omitted)
 func New(ctx context.Context, backend db.Backend, embedder embed.Client, project string,
 	ollamaURL, summarizeModel string, summarizeEnabled bool,
 	claudeClient summarize.ClaudeCompleter, decayInterval time.Duration, targetDims ...int) *SearchEngine {
@@ -226,7 +230,10 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 	if len(targetDims) > 0 {
 		dims = targetDims[0]
 	}
-	recallTimeoutMS := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
+	recallTimeoutMS := defaultEmbedRecallTimeoutMS
+	if len(targetDims) > 1 {
+		recallTimeoutMS = targetDims[1]
+	}
 
 	return &SearchEngine{
 		backend:             backend,

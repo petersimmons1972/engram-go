@@ -120,6 +120,7 @@ func run() error {
 	exploreMaxIters := fs.Int("explore-max-iters", envInt("ENGRAM_EXPLORE_MAX_ITERS", 5), "Maximum iterations for explore_context")
 	exploreMaxWorkers := fs.Int("explore-max-workers", envInt("ENGRAM_EXPLORE_MAX_WORKERS", 8), "Maximum parallel workers for explore_context")
 	exploreTokenBudget := fs.Int("explore-token-budget", envInt("ENGRAM_EXPLORE_TOKEN_BUDGET", 20000), "Token budget for explore_context")
+	embedRecallTimeoutMS := fs.Int("embed-recall-timeout-ms", envInt("ENGRAM_EMBED_RECALL_TIMEOUT_MS", 500), "Per-recall embedding timeout in milliseconds")
 	maxDocumentBytes := fs.Int("max-document-bytes", envInt("ENGRAM_MAX_DOCUMENT_BYTES", 8*1024*1024), "Maximum document size for ingest operations")
 	rawDocumentMaxBytes := fs.Int("raw-document-max-bytes", envInt("ENGRAM_RAW_DOCUMENT_MAX_BYTES", 50*1024*1024), "Maximum raw document size before rejection")
 	ragMaxTokens := fs.Int("rag-max-tokens", envInt("ENGRAM_RAG_MAX_TOKENS", 4096), "Maximum tokens for RAG context assembly")
@@ -375,7 +376,7 @@ func run() error {
 		if err != nil {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
-		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims, *embedRecallTimeoutMS)
 		if embedGateway != nil {
 			engine.SetEmbedGateway(embedGateway)
 		} else {
