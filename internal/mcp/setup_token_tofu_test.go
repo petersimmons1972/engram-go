@@ -29,9 +29,8 @@ func newTOFUTestServer(t *testing.T, apiKey string) *Server {
 }
 
 // buildSetupTokenTOFUHandler returns the TOFU-aware handler for /setup-token.
-// Will FAIL TO COMPILE until Server.setupTokenTOFUHandler is implemented.
 func buildSetupTokenTOFUHandler(s *Server, apiKey string) http.Handler {
-	return s.setupTokenTOFUHandler(apiKey) // method doesn't exist yet
+	return s.setupTokenTOFUHandler(context.Background(), apiKey)
 }
 
 // TestSetupToken_TOFUFirstLocalhostSucceeds verifies that the very first
