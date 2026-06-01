@@ -360,6 +360,53 @@ func GenerateParaphrases(ctx context.Context, query string, n, retries int) ([]s
 	return generateParaphrasesWith(ctx, query, n, retries, GenerateHaiku)
 }
 
+// ---------------------------------------------------------------------------
+// PA (#938): preference-anchoring generation prompt
+// ---------------------------------------------------------------------------
+
+// preferenceAnchoringInstructions are the three lines injected into the
+// single-session-preference generation prompt when --preference-anchor is set.
+// They directly counter the dominant failure mode observed in Tier-1 eval:
+// the generator averaging across all retrieved sessions instead of anchoring
+// on the single gold preference session (23/27 residual failures, #938).
+const preferenceAnchoringInstructions = `IMPORTANT — preference anchoring instructions:
+1. Identify the SINGLE retrieved session that most directly addressed this exact topic, and weight it heavily.
+2. Do NOT average across all retrieved sessions. The user's preference on THIS topic is determined by what they said specifically about this topic — not by their general lifestyle/profile inferred from other sessions.
+3. If a session mentions a specific product, platform, style, place, or prior experience directly relevant to the question, that detail OVERRIDES general preferences inferred elsewhere.`
+
+// preferenceAnchorGenerationPrompt returns the single-session-preference prompt
+// augmented with the three anchoring instructions from #938. Only called when
+// --preference-anchor is set and the question type is "single-session-preference".
+func preferenceAnchorGenerationPrompt(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+%s
+
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`,
+		questionDate, ctx, questionDate, question, preferenceAnchoringInstructions)
+}
+
+// GenerationPromptForTypeWithPreferenceAnchor (PA, #938) is like
+// GenerationPromptForType but injects preference-anchoring instructions when
+// preferenceAnchor is true AND the question type is "single-session-preference".
+// For all other question types the flag is a no-op — the standard prompt is
+// returned unchanged. Activated by --preference-anchor (Config.PreferenceAnchor).
+// Off by default so baseline behaviour is unaffected.
+func GenerationPromptForTypeWithPreferenceAnchor(question, questionType, questionDate string, contextBlocks []string, preferenceAnchor bool) string {
+	if preferenceAnchor && questionType == "single-session-preference" {
+		return preferenceAnchorGenerationPrompt(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
 // temporalGenerationPromptWithDateInjection is the H16 variant of
 // temporalGenerationPrompt. It places "Today's date is: {questionDate}" as the
 // very first line of the prompt so the model anchors all relative-time

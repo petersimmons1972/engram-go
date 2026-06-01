@@ -443,3 +443,88 @@ func TestGenerateParaphrasesWith_GeneratorError_Propagates(t *testing.T) {
 		t.Errorf("error should contain 'paraphrase' prefix, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// PA (#938) — GenerationPromptForTypeWithPreferenceAnchor
+// ---------------------------------------------------------------------------
+
+// TestGenerationPromptForTypeWithPreferenceAnchor_On_ContainsInstructions
+// verifies that when preferenceAnchor=true and the question type is
+// "single-session-preference", the assembled prompt contains all three
+// anchoring instructions that counteract session-averaging (#938).
+func TestGenerationPromptForTypeWithPreferenceAnchor_On_ContainsInstructions(t *testing.T) {
+	question := "Can you recommend a running shoe for road races?"
+	questionDate := "2024-03-10"
+	blocks := []string{
+		"Session date: 2024-01-05\nI bought Nike Pegasus for road running and love them.",
+		"Session date: 2023-11-20\nConsidering trail shoes from Brooks.",
+	}
+
+	prompt := longmemeval.GenerationPromptForTypeWithPreferenceAnchor(
+		question, "single-session-preference", questionDate, blocks, true)
+
+	anchors := []string{
+		"Identify the SINGLE retrieved session",
+		"Do NOT average across all retrieved sessions",
+		"OVERRIDES general preferences inferred elsewhere",
+	}
+	for _, anchor := range anchors {
+		if !strings.Contains(prompt, anchor) {
+			t.Errorf("prompt missing anchoring instruction %q\nfull prompt:\n%s", anchor, prompt)
+		}
+	}
+	// Question and context blocks must also appear.
+	if !strings.Contains(prompt, question) {
+		t.Errorf("prompt should contain the question")
+	}
+	if !strings.Contains(prompt, "Nike Pegasus") {
+		t.Errorf("prompt should include context block content")
+	}
+}
+
+// TestGenerationPromptForTypeWithPreferenceAnchor_Off_MatchesStandard verifies
+// that when preferenceAnchor=false the output is identical to GenerationPromptForType,
+// confirming the default-off contract (#938 requirement: no change to baseline).
+func TestGenerationPromptForTypeWithPreferenceAnchor_Off_MatchesStandard(t *testing.T) {
+	question := "Can you recommend a running shoe for road races?"
+	questionDate := "2024-03-10"
+	blocks := []string{"Session date: 2024-01-05\nI bought Nike Pegasus."}
+
+	anchored := longmemeval.GenerationPromptForTypeWithPreferenceAnchor(
+		question, "single-session-preference", questionDate, blocks, false)
+	standard := longmemeval.GenerationPromptForType(
+		question, "single-session-preference", questionDate, blocks)
+
+	if anchored != standard {
+		t.Errorf("preferenceAnchor=false should return the standard prompt unchanged, but prompts differ")
+	}
+	// Anchoring text must not appear in the off-path prompt.
+	if strings.Contains(anchored, "Do NOT average across all retrieved sessions") {
+		t.Errorf("anchoring instruction must not appear when flag is off")
+	}
+}
+
+// TestGenerationPromptForTypeWithPreferenceAnchor_OtherTypes_NoOp verifies that
+// the flag is a no-op for all non-preference question types — none of the other
+// types should have their prompts changed, preserving baseline behaviour (#938).
+func TestGenerationPromptForTypeWithPreferenceAnchor_OtherTypes_NoOp(t *testing.T) {
+	question := "When did I last visit Paris?"
+	questionDate := "2024-03-10"
+	blocks := []string{"Session date: 2023-06-15\nVisited Paris for a conference."}
+
+	otherTypes := []string{
+		"temporal-reasoning",
+		"multi-session",
+		"knowledge-update",
+		"single-session-user",
+		"",
+	}
+	for _, qt := range otherTypes {
+		anchored := longmemeval.GenerationPromptForTypeWithPreferenceAnchor(
+			question, qt, questionDate, blocks, true)
+		standard := longmemeval.GenerationPromptForType(question, qt, questionDate, blocks)
+		if anchored != standard {
+			t.Errorf("questionType=%q: preferenceAnchor=true should be a no-op for non-preference types, but prompts differ", qt)
+		}
+	}
+}

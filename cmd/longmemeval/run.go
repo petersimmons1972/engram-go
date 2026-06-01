@@ -559,6 +559,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.EnumerateFirst:
 		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	case cfg.PreferenceAnchor:
+		// PA (#938): inject anchoring instructions for single-session-preference
+		// questions to prevent the generator from averaging across sessions.
+		// GenerationPromptForTypeWithPreferenceAnchor is a no-op for other types.
+		prompt = longmemeval.GenerationPromptForTypeWithPreferenceAnchor(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
