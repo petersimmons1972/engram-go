@@ -380,6 +380,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			return nil, "", fmt.Errorf("litellm embed decode: %w", err)
 		}
 		if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
+			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close() //nolint:errcheck
 			// Empty response is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
@@ -389,6 +390,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			return nil, "", fmt.Errorf("litellm embed: empty response")
 		}
 
+		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close() //nolint:errcheck
 		// Success!
 		vec := result.Data[0].Embedding

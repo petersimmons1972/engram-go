@@ -132,31 +132,35 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	if err != nil {
 		return nil, err
 	}
+	defer typeRows.Close()
 	for typeRows.Next() {
 		var mt string
 		var c int
 		if err := typeRows.Scan(&mt, &c); err != nil {
-			typeRows.Close()
 			return nil, err
 		}
 		stats.ByType[mt] = c
 	}
-	typeRows.Close()
+	if err := typeRows.Err(); err != nil {
+		return nil, err
+	}
 
 	impRows, err := b.pool.Query(ctx,
 		"SELECT importance, COUNT(*) FROM memories WHERE project=$1 AND valid_to IS NULL GROUP BY importance", project)
 	if err != nil {
 		return nil, err
 	}
+	defer impRows.Close()
 	for impRows.Next() {
 		var imp, c int
 		if err := impRows.Scan(&imp, &c); err != nil {
-			impRows.Close()
 			return nil, err
 		}
 		stats.ByImportance[fmt.Sprintf("%d", imp)] = c
 	}
-	impRows.Close()
+	if err := impRows.Err(); err != nil {
+		return nil, err
+	}
 
 	var oldest, newest *time.Time
 	if err := b.pool.QueryRow(ctx, "SELECT MIN(created_at) FROM memories WHERE project=$1 AND valid_to IS NULL", project).Scan(&oldest); err != nil {
