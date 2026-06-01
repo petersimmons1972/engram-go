@@ -367,16 +367,24 @@ type Handle struct {
 
 // MemoryStats summarizes the contents of the store. Returned by the status endpoint.
 type MemoryStats struct {
-	TotalMemories       int            `json:"total_memories"`
-	TotalChunks         int            `json:"total_chunks"`
-	TotalRelationships  int            `json:"total_relationships"`
-	ByType              map[string]int `json:"by_type"`
-	ByImportance        map[string]int `json:"by_importance"`
-	Oldest              *string        `json:"oldest,omitempty"`
-	Newest              *string        `json:"newest,omitempty"`
-	DBSizeBytes         int64          `json:"db_size_bytes"`
-	PendingSummarization int           `json:"pending_summarization"`
-	Summarization       map[string]any `json:"summarization"`
+	TotalMemories int `json:"total_memories"`
+	// TotalChunks is the legacy name for the total chunk count (json: "total_chunks").
+	// For embedding-backlog consumers, prefer the embedding-view fields below.
+	TotalChunks int `json:"total_chunks"`
+	// ChunksTotal mirrors TotalChunks in the embedding-backlog view.
+	// Invariant: chunks_total == chunks_embedded + chunks_pending_embedding.
+	// Both keys are returned to satisfy consumers that rely on either name.
+	ChunksTotal            int            `json:"chunks_total"`
+	ChunksEmbedded         int            `json:"chunks_embedded"`
+	ChunksPendingEmbedding int            `json:"chunks_pending_embedding"`
+	TotalRelationships     int            `json:"total_relationships"`
+	ByType                 map[string]int `json:"by_type"`
+	ByImportance           map[string]int `json:"by_importance"`
+	Oldest                 *string        `json:"oldest,omitempty"`
+	Newest                 *string        `json:"newest,omitempty"`
+	DBSizeBytes            int64          `json:"db_size_bytes"`
+	PendingSummarization   int            `json:"pending_summarization"`
+	Summarization          map[string]any `json:"summarization"`
 }
 
 // FTSResult is an intermediate result from the full-text search layer, before
@@ -404,4 +412,3 @@ type AggregateRow struct {
 	Oldest time.Time `json:"oldest"`
 	Newest time.Time `json:"newest"`
 }
-

@@ -40,7 +40,13 @@ func newIssue629Pool(t *testing.T) *EnginePool {
 	t.Helper()
 	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
 		engine := search.New(ctx, issue629Backend{
-			stats:    &types.MemoryStats{TotalMemories: 3},
+			stats: &types.MemoryStats{
+				TotalMemories:          3,
+				TotalChunks:            6,
+				ChunksTotal:            6,
+				ChunksEmbedded:         4,
+				ChunksPendingEmbedding: 2,
+			},
 			projects: []string{"alpha", "beta"},
 			episode:  &types.Episode{ID: "ep-1", Project: project},
 			memories: []*types.Memory{{ID: "m-1", Project: project}},
@@ -86,7 +92,11 @@ func TestIssue629_EpisodeHandlersAndAdminHandlers(t *testing.T) {
 
 	res, err = handleMemoryStatus(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj"}}})
 	require.NoError(t, err)
-	require.Equal(t, float64(3), decodeToolResult(t, res)["total_memories"])
+	statusResult := decodeToolResult(t, res)
+	require.Equal(t, float64(3), statusResult["total_memories"])
+	require.Equal(t, float64(6), statusResult["chunks_total"])
+	require.Equal(t, float64(4), statusResult["chunks_embedded"])
+	require.Equal(t, float64(2), statusResult["chunks_pending_embedding"])
 
 	res, err = handleMemoryDiagnose(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj", "question": "what happened?"}}})
 	require.NoError(t, err)

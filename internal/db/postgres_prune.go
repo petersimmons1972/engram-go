@@ -122,11 +122,6 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 		return nil, err
 	}
 	if err := b.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM chunks c JOIN memories m ON m.id=c.memory_id WHERE m.project=$1 AND m.valid_to IS NULL`, project,
-	).Scan(&stats.TotalChunks); err != nil {
-		return nil, err
-	}
-	if err := b.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM relationships WHERE project=$1`, project,
 	).Scan(&stats.TotalRelationships); err != nil {
 		return nil, err
@@ -200,6 +195,25 @@ func (b *PostgresBackend) GetStats(ctx context.Context, project string) (*types.
 	if err := b.pool.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&stats.DBSizeBytes); err != nil {
 		return nil, err
 	}
+
+	// Single-snapshot query: total and pending come from the same COUNT so
+	// ChunksEmbedded = total - pending is guaranteed non-negative even under
+	// concurrent inserts (avoids the TOCTOU race between two separate COUNTs).
+	// TotalChunks is also set from this snapshot so all three chunk-count fields
+	// are consistent with each other.
+	var chunksTotal, chunksPending int
+	if err := b.pool.QueryRow(ctx, `
+		SELECT COUNT(*) AS total,
+		       COUNT(*) FILTER (WHERE c.embedding IS NULL) AS pending
+		FROM chunks c JOIN memories m ON m.id = c.memory_id
+		WHERE m.project = $1 AND m.valid_to IS NULL`, project,
+	).Scan(&chunksTotal, &chunksPending); err != nil {
+		return nil, err
+	}
+	stats.TotalChunks = chunksTotal
+	stats.ChunksTotal = chunksTotal
+	stats.ChunksPendingEmbedding = chunksPending
+	stats.ChunksEmbedded = chunksTotal - chunksPending
 
 	return stats, nil
 }
