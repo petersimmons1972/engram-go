@@ -7,7 +7,8 @@ import (
 )
 
 // TestModelMaxTokensKnownModels verifies that the curated models have correct
-// max-token values — mxbai-embed-large and nomic-embed-text cap at 512 tokens.
+// max-token values — mxbai-embed-large and nomic-embed-text cap at 512 tokens;
+// unrecognised short names fall through to the default (8192 for bge-m3 era).
 func TestModelMaxTokensKnownModels(t *testing.T) {
 	cases := []struct {
 		model string
@@ -15,7 +16,9 @@ func TestModelMaxTokensKnownModels(t *testing.T) {
 	}{
 		{"mxbai-embed-large", 512},
 		{"nomic-embed-text", 512},
-		{"bge-m3", 512},
+		// "bge-m3" is not a registered name (SuggestedModels uses "BAAI/bge-m3");
+		// it falls through to defaultModelMaxTokens, which is 8192 since #933.
+		{"bge-m3", 8192},
 	}
 	for _, tc := range cases {
 		t.Run(tc.model, func(t *testing.T) {
