@@ -543,6 +543,7 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		episodeID                          *string
 		documentID                         *string
 		patternConfidence                  *float64
+		clusterID                          *string // (028_mempalace_clusters); scanned-but-ignored
 		rank                               float64
 	)
 	// Column order matches the live DB schema (search_vector was added between
@@ -552,7 +553,7 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 	//   summary, content_hash, storage_mode, valid_from, valid_to, invalidation_reason,
 	//   dynamic_importance, retrieval_interval_hrs, next_review_at, times_retrieved,
 	//   times_useful, retrieval_precision, episode_id, document_id,
-	//   pattern_confidence (+rank appended by FTSSearch query).
+	//   pattern_confidence, cluster_id (028_mempalace) (+rank appended by FTSSearch query).
 	if err := row.Scan(
 		&id, &content, &memType, &proj, &tags,
 		&importance, &accessCount, &lastAccessed, &createdAt, &updatedAt,
@@ -561,7 +562,7 @@ func rowToFTSResult(row pgx.CollectableRow) (FTSResult, error) {
 		&validFrom, &validTo, &invalidationReason,
 		&dynamicImportance, &retrievalIntervalHrs, &nextReviewAt,
 		&timesRetrieved, &timesUseful, &retrievalPrecision, &episodeID, &documentID,
-		&patternConfidence, &rank,
+		&patternConfidence, &clusterID, &rank,
 	); err != nil {
 		return FTSResult{}, err
 	}
@@ -648,6 +649,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		EpisodeID            *string  // nullable FK
 		DocumentID           *string  // nullable FK (010_documents)
 		PatternConfidence    *float64 // nullable (021_pattern_confidence)
+		ClusterID            *string  // nullable (028_mempalace_clusters); scanned-but-ignored filter column
 	}
 	var r raw
 	// Column order matches the live DB schema. search_vector was added between
@@ -662,6 +664,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 	//   episode_id                                           (008_episodes)
 	//   document_id                                          (010_documents)
 	//   pattern_confidence                                   (021_pattern_confidence)
+	//   cluster_id                                           (028_mempalace_clusters)
 	err := row.Scan(
 		&r.ID, &r.Content, &r.MemoryType, &r.Project, &r.Tags,
 		&r.Importance, &r.AccessCount, &r.LastAccessed, &r.CreatedAt, &r.UpdatedAt,
@@ -670,7 +673,7 @@ func rowToMemory(row pgx.CollectableRow) (*types.Memory, error) {
 		&r.ValidFrom, &r.ValidTo, &r.InvalidationReason,
 		&r.DynamicImportance, &r.RetrievalIntervalHrs, &r.NextReviewAt,
 		&r.TimesRetrieved, &r.TimesUseful, &r.RetrievalPrecision, &r.EpisodeID,
-		&r.DocumentID, &r.PatternConfidence,
+		&r.DocumentID, &r.PatternConfidence, &r.ClusterID,
 	)
 	if err != nil {
 		return nil, err

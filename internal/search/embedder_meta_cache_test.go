@@ -344,6 +344,19 @@ func (b *cacheMetaBackend) ListExpiredProjects(_ context.Context, _ string, _ ti
 	return nil, nil
 }
 
+func (b *cacheMetaBackend) StoreMemoryCluster(_ context.Context, _ *db.MemoryCluster) error {
+	return nil
+}
+func (b *cacheMetaBackend) SetMemoryClusterID(_ context.Context, _, _ string) error { return nil }
+func (b *cacheMetaBackend) FindNearestClusters(_ context.Context, _ string, _ []float32, _ int) ([]string, error) {
+	return nil, nil
+}
+func (b *cacheMetaBackend) VectorSearchWithClusters(_ context.Context, _ string, _ []float32, _ int, _ []string, _, _ *time.Time) ([]db.VectorHit, error) {
+	return nil, nil
+}
+func (b *cacheMetaBackend) TableExists(_ context.Context, _ string) (bool, error)     { return false, nil }
+func (b *cacheMetaBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+
 // compile-time check: cacheMetaBackend must satisfy db.Backend.
 var _ db.Backend = (*cacheMetaBackend)(nil)
 
