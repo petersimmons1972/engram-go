@@ -193,6 +193,9 @@ func (d *DockerManager) Ensure(ctx context.Context, spec ModelSpec, policyVersio
 	containerEnv := []string{
 		"HF_HOME=/mnt/ai-models/hf-cache",
 		"HUGGING_FACE_HUB_TOKEN=" + os.Getenv("HUGGING_FACE_HUB_TOKEN"),
+		// Reduce HIP/ROCm VRAM fragmentation on AMD GPUs so large batches
+		// don't OOM when reserved-but-unallocated segments accumulate.
+		"PYTORCH_HIP_ALLOC_CONF=expandable_segments:True",
 	}
 	containerEnv = append(containerEnv, spec.EnvVars...)
 	body := map[string]any{
@@ -367,7 +370,7 @@ func healthConfig(spec ModelSpec) map[string]any {
 				`curl -sf -X POST http://localhost:%d%s/embeddings`+
 					` -H 'Content-Type: application/json'`+
 					` -d '{"model":"%s","input":["probe"]}'`+
-					` --max-time 25 | grep -q '"object":"list"'`,
+					` --max-time 25 | grep -q '"object":"embedding"'`,
 				spec.Port, prefix, spec.Repo,
 			)},
 			"Interval":    int64(60 * time.Second),

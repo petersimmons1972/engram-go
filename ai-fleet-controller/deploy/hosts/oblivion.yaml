@@ -5,6 +5,7 @@ metadata:
   namespace: ai-fleet
 spec:
   host: oblivion.petersimmons.com
+  hostIP: "192.168.0.211"
   reservedMemoryGB: 8
   nfsMount: "truenas.petersimmons.com:/mnt/zp1/ai-models"
   models:

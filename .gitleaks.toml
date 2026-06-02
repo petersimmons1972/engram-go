@@ -1,0 +1,44 @@
+# Gitleaks configuration for petersimmons1972/homelab-config
+# Run: gitleaks detect --source . --config .gitleaks.toml
+# CI:  gitleaks protect --staged --config .gitleaks.toml  (pre-commit mode)
+#
+# Baseline: gitleaks built-in ruleset covers common credentials (GitHub PATs,
+# AWS keys, Anthropic keys, etc.). The rules below add homelab-specific patterns.
+
+title = "homelab-config secret detection"
+
+[extend]
+# Use the default gitleaks ruleset as the base
+useDefault = true
+
+[[rules]]
+id          = "engram-bearer-token"
+description = "Engram MCP Bearer token hardcoded in config"
+regex       = '''(?i)"Authorization"\s*:\s*"Bearer\s+[A-Za-z0-9_\-]{16,}"'''
+tags        = ["secret", "engram", "bearer"]
+
+[[rules]]
+id          = "infisical-token"
+description = "Infisical machine identity token"
+regex       = '''(?i)(infisical[_-]?token|INFISICAL_TOKEN)\s*[=:]\s*["']?[A-Za-z0-9+/=]{32,}'''
+tags        = ["secret", "infisical"]
+
+[[rules]]
+id          = "truenas-api-key"
+description = "TrueNAS API key"
+regex       = '''(?i)(truenas[_-]?api[_-]?key|TRUENAS_API_KEY)\s*[=:]\s*["']?[0-9]+-[A-Za-z0-9]{32,}'''
+tags        = ["secret", "truenas"]
+
+[allowlist]
+description = "Safe patterns — template placeholders and example files"
+regexes     = [
+  # Template placeholders are intentionally not real secrets
+  '''\$\{[A-Z_]+\}''',
+  # Example files by convention contain only placeholders
+]
+paths       = [
+  # Example / template files are safe by definition
+  '''.+\.example$''',
+  # Historical documentation may reference token patterns by name only
+  '''SECURITY-INCIDENT-.*\.md''',
+]

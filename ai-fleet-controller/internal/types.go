@@ -25,12 +25,20 @@ type ModelSpec struct {
 	ReadinessTimeoutSec int      `json:"readinessTimeoutSec,omitempty"`
 	GpuDriver           string   `json:"gpuDriver,omitempty"`
 	RenderDevice        string   `json:"renderDevice,omitempty"`
+	// StopTimeoutSec is forwarded to the watcher as the Docker stop timeout (SIGTERM
+	// grace period before SIGKILL). 0 = Docker default (10s). Set to 30 for ROCm
+	// containers so HIP worker threads can release /dev/kfd before SIGKILL.
+	StopTimeoutSec      int      `json:"stopTimeoutSec,omitempty"`
 }
 
 type GPUHostSpec struct {
 	Host             string      `json:"host"`
 	ReservedMemoryGB int         `json:"reservedMemoryGB"`
 	NFSMount         string      `json:"nfsMount"`
+	// HostIP is the static IPv4 address for this GPU host. Used by the
+	// NetworkPolicy reconciler to emit ipBlock rules without DNS resolution
+	// at reconcile time. Must be set for NetworkPolicy egress to work.
+	HostIP           string      `json:"hostIP,omitempty"`
 	Models           []ModelSpec `json:"models"`
 }
 

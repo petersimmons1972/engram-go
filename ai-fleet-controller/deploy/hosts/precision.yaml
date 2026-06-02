@@ -1,0 +1,34 @@
+apiVersion: ai.petersimmons.com/v1
+kind: GPUHost
+metadata:
+  name: precision
+  namespace: ai-fleet
+spec:
+  host: precision.petersimmons.com
+  hostIP: "192.168.0.90"
+  reservedMemoryGB: 8
+  nfsMount: "truenas.petersimmons.com:/mnt/zp1/ai-models"
+  models:
+  # MI-50 / Radeon VII (16 GB, gfx906) -- BAAI/bge-m3 via llama.cpp
+  # PRIMARY embed endpoint. priority=200 in olla static discovery.
+  # stopTimeoutSec=30: allows HIP worker threads to release /dev/kfd before SIGKILL.
+  - name: ai-fleet-embed-mi50
+    framework: llama-cpp
+    repo: BAAI/bge-m3-GGUF/bge-m3-Q8_0.gguf
+    port: 8007
+    image: registry.petersimmons.com/ai-fleet/llama-cpp:rocm-v0.1.2
+    gpuDriver: rocm
+    renderDevice: /dev/dri/renderD128  # VERIFY against live rocm-smi on precision before apply
+    stopTimeoutSec: 30
+
+  # W6800 (32 GB, gfx1030) -- bge-m3-Q8_0.gguf via llama.cpp
+  # Secondary embed endpoint. priority=100 in olla static discovery.
+  # stopTimeoutSec=30: allows HIP worker threads to release /dev/kfd before SIGKILL.
+  - name: precision-w6800-llamacpp
+    framework: llama-cpp
+    repo: BAAI/bge-m3-GGUF/bge-m3-Q8_0.gguf
+    port: 8005
+    image: registry.petersimmons.com/ai-fleet/llama-cpp:rocm-v0.1.2
+    gpuDriver: rocm
+    renderDevice: /dev/dri/renderD129
+    stopTimeoutSec: 30

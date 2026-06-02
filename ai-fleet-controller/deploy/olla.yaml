@@ -54,6 +54,17 @@ data:
             circuit_breaker_timeout: 2000s
             circuit_breaker_threshold: 10
 
+          # RX 7900 XT (20 GB, gfx1100, leviathan) -- Qwen3-14B-Instruct AWQ via vLLM port 8000
+          # Dual-model coexistence deployed 2026-05-23 (closes #113, phase 3 of #107).
+          # Inference only -- NOT an embedder. No embeddings capability.
+          # circuit_breaker_timeout: 600s (cold-start for 14B AWQ from NFS is ~5-8 min).
+          - url: "http://leviathan.petersimmons.com:8000"
+            name: "leviathan-7900xt-vllm"
+            type: "openai-compatible"
+            priority: 150
+            circuit_breaker_timeout: 600s
+            circuit_breaker_threshold: 5
+
           # MI-50 / Radeon VII (16 GB, gfx906, precision) -- BAAI/bge-m3 via llama.cpp port 8007
           # PRIMARY embed endpoint. Confirmed HEALTHY (advertises BAAI/bge-m3, 1024-dim).
           # Highest priority embed endpoint -- priority-LB routes all embed traffic here first.

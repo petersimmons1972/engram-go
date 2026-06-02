@@ -31,8 +31,8 @@ func TestHealthConfigInfinity(t *testing.T) {
 	if !strings.Contains(test[1], "POST") {
 		t.Errorf("infinity probe must use POST /embeddings, got: %s", test[1])
 	}
-	if !strings.Contains(test[1], `"object":"list"`) {
-		t.Errorf("infinity probe must grep for object:list, got: %s", test[1])
+	if !strings.Contains(test[1], `"object":"embedding"`) {
+		t.Errorf("infinity probe must grep for object:embedding (Infinity response format), got: %s", test[1])
 	}
 	if hc["Retries"] != 2 {
 		t.Errorf("infinity retries must be 2, got %v", hc["Retries"])

@@ -35,7 +35,7 @@ live elsewhere:
 
 - **clearwatch** — revenue product (`~/projects/clearwatch`)
 - **aifleet** — agent fleet controller (`~/projects/aifleet`)
-- **longhorn-nfs / supabase-homelab** — storage and data layer
+- **supabase-homelab** — data layer (NFS storage via `nfs-proxmox` StorageClass)
 - **engram** — memory service (`~/projects/engram`)
 
 ## Running the Ansible playbook

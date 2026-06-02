@@ -37,6 +37,9 @@ spec:
                 default: 8
               nfsMount:
                 type: string
+              hostIP:
+                type: string
+                description: "Static IPv4 address for this GPU host. Used by the NetworkPolicy reconciler to emit ipBlock rules without DNS resolution at reconcile time."
               models:
                 type: array
                 items:
@@ -68,3 +71,6 @@ spec:
                       enum: [nvidia, rocm]
                     renderDevice:
                       type: string
+                    stopTimeoutSec:
+                      type: integer
+                      description: "Seconds to wait for graceful SIGTERM before SIGKILL. 0 = Docker default (10s). Set to 30 for ROCm containers to allow HIP worker threads to release /dev/kfd."
