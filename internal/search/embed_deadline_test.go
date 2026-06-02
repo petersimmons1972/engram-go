@@ -209,11 +209,15 @@ func TestRecallDegradedSignal_TimeoutReason(t *testing.T) {
 // a hard error (not a context cancellation), the reason label is "embed_error"
 // rather than "embed_timeout" — letting operators distinguish saturation from
 // model crashes (#917).
+//
+// Uses immediateErrorEmbedder (synchronous hard error, no timing dependency)
+// so the test is deterministic. The previous holdFor=1ms blockingClient could
+// race the 500ms embed deadline and misclassify as embed_timeout (#973 blocker fix).
 func TestRecallDegradedSignal_ErrorReason(t *testing.T) {
 	proj := uniqueProject("degraded-signal-error")
-	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 1 * time.Millisecond})
-	// blockingClient with holdFor=1ms fires its own internal timer, not ctx.Done(),
-	// so embedCtx.Err() == nil and the reason must be "embed_error".
+	// immediateErrorEmbedder returns an error synchronously with ctx.Err()==nil,
+	// so the engine must classify the reason as "embed_error", not "embed_timeout".
+	eng := newEngineWithEmbedder(t, proj, &immediateErrorEmbedder{dims: 768})
 
 	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -230,4 +234,119 @@ func TestRecallDegradedSignal_ErrorReason(t *testing.T) {
 	after := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
 	require.Equal(t, before+1, after,
 		"engram_recall_degraded_total{reason=embed_error} must increment by 1 on hard error")
+}
+
+// ── #917/#973: RecallWithinMemory degradation signal (Blocker 3) ─────────────
+
+// TestRecallWithinMemoryDegradedSignal_TimeoutReason verifies that when the embed
+// deadline fires during RecallWithinMemory, RecallDegradedTotal is incremented
+// exactly once with reason="embed_timeout". This mirrors the RecallWithOpts test
+// above for the second recall path (#917 blocker fix — missing coverage).
+func TestRecallWithinMemoryDegradedSignal_TimeoutReason(t *testing.T) {
+	proj := uniqueProject("within-degraded-timeout")
+	// Embedder blocks for 60s — far longer than the 500ms embed deadline.
+	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	before := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+
+	// RecallWithinMemory degrades to keyword fallback on embed timeout — no error.
+	_, err := eng.RecallWithinMemory(callerCtx, "test query", "nonexistent-id", 5, "summary")
+
+	require.NoError(t, err, "RecallWithinMemory must degrade gracefully on embed timeout, not return error")
+
+	after := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	require.Equal(t, before+1, after,
+		"engram_recall_degraded_total{reason=embed_timeout} must increment exactly once via RecallWithinMemory")
+}
+
+// TestRecallWithinMemoryDegradedSignal_ErrorReason verifies that when the embedder
+// returns a hard synchronous error during RecallWithinMemory, RecallDegradedTotal
+// is incremented exactly once with reason="embed_error" (not "embed_timeout").
+// Uses immediateErrorEmbedder for determinism (#973 blocker fix — missing coverage).
+func TestRecallWithinMemoryDegradedSignal_ErrorReason(t *testing.T) {
+	proj := uniqueProject("within-degraded-error")
+	eng := newEngineWithEmbedder(t, proj, &immediateErrorEmbedder{dims: 768})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	before := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+
+	_, err := eng.RecallWithinMemory(callerCtx, "test query", "nonexistent-id", 5, "summary")
+
+	require.NoError(t, err, "RecallWithinMemory must degrade gracefully on hard embed error, not return error")
+
+	after := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+	require.Equal(t, before+1, after,
+		"engram_recall_degraded_total{reason=embed_error} must increment exactly once via RecallWithinMemory")
+}
+
+// TestNoDoubleCount_RecallWithOpts_MCPLayer verifies that a single degraded
+// RecallWithOpts call increments RecallDegradedTotal exactly once, not twice.
+// Before the fix, the engine layer and the MCP layer both called .Inc() causing
+// a double-count (#973 blocker fix).
+//
+// This test exercises the engine directly (the MCP layer's addRecallDegradedWarning
+// no longer contains a .Inc() call, so invoking it after RecallWithOpts will not
+// increment the counter a second time — confirmed by this test).
+func TestNoDoubleCount_RecallWithOpts_MCPLayer(t *testing.T) {
+	proj := uniqueProject("no-double-count")
+	eng := newEngineWithEmbedder(t, proj, &immediateErrorEmbedder{dims: 768})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	beforeTimeout := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	beforeError := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+
+	var degraded bool
+	opts := search.RecallOpts{EmbedDegraded: &degraded}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err)
+	require.True(t, degraded)
+
+	afterTimeout := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	afterError := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+
+	// embed_timeout must NOT have incremented (this was a hard error, not a timeout).
+	require.Equal(t, beforeTimeout, afterTimeout,
+		"embed_timeout counter must not increment for a hard embed error")
+	// embed_error must increment exactly once — not twice from engine + MCP.
+	require.Equal(t, beforeError+1, afterError,
+		"engram_recall_degraded_total{reason=embed_error} must increment exactly once (engine is sole owner)")
+}
+
+// ── #973 Blocker 2: ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 via New() ───────────────
+
+// TestEnvVarZero_DisablesDeadline_RecallWithOpts verifies that when
+// ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 in the environment, New() initialises
+// embedRecallTimeout to noEmbedTimeout (not 0) so the embed deadline is disabled.
+// Before the fix, env=0 stored 0*ms=0 in embedRecallTimeout, causing
+// context.WithTimeout(ctx, 0) which is an immediate cancel (#973 blocker fix).
+func TestEnvVarZero_DisablesDeadline_RecallWithOpts(t *testing.T) {
+	t.Setenv("ENGRAM_EMBED_RECALL_TIMEOUT_MS", "0")
+
+	proj := uniqueProject("envvar-zero-recall")
+	// Embedder blocks for 60s — longer than any reasonable deadline.
+	// With env=0 correctly mapped to noEmbedTimeout, the embed must block
+	// until the parent deadline fires (not immediately cancel).
+	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
+
+	parentCtx, parentCancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer parentCancel()
+
+	start := time.Now()
+	_, _ = eng.RecallWithOpts(parentCtx, "test query", 5, "summary", search.RecallOpts{})
+	elapsed := time.Since(start)
+
+	// Must block until the parent deadline fires (~800ms), not return immediately
+	// (which would happen if env=0 stored 0 duration → immediate context cancel).
+	require.GreaterOrEqual(t, elapsed, 700*time.Millisecond,
+		"ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 must disable the embed deadline via New(); got %s, want ≥700ms", elapsed)
+	require.ErrorIs(t, parentCtx.Err(), context.DeadlineExceeded,
+		"parent ctx must have expired (not the internal embed deadline)")
 }
