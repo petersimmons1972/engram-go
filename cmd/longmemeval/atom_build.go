@@ -259,7 +259,11 @@ func atomBuildWorker(
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// 10-minute cap: slow reasoning models (Qwen3 thinking via olla) can take
+		// several minutes on long session concatenations. Must exceed the embed
+		// client's internal timeout headroom; the GenerateOAI call inside Extract
+		// has its own 600s per-attempt cap (generateTimeout).
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		atoms, err := extractor.Extract(ctx, sessionText)
 		cancel()
 		if err != nil {

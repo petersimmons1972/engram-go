@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/atom"
 )
 
@@ -42,6 +43,10 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 // InsertAtom. Uses ON CONFLICT DO UPDATE so re-embedding an atom (e.g. after a
 // model change) overwrites the stale vector rather than silently skipping it.
 func (p *PostgresBackend) InsertAtomEmbedding(ctx context.Context, atomID string, vec []float32) error {
+	// pgvector.NewVector wraps the []float32 so pgx encodes it as the pgvector
+	// `vector` type rather than a Postgres float array literal. Passing the raw
+	// slice yields "{...}" which the vector column rejects (SQLSTATE 22P02).
+	// Mirrors UpdateChunkEmbedding / StoreChunks.
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO atom_embeddings (atom_id, embedding, embedder, created_at)
 		VALUES ($1, $2, 'olla', NOW())
@@ -49,7 +54,7 @@ func (p *PostgresBackend) InsertAtomEmbedding(ctx context.Context, atomID string
 			SET embedding = EXCLUDED.embedding,
 			    embedder  = EXCLUDED.embedder,
 			    created_at = NOW()`,
-		atomID, vec)
+		atomID, pgvector.NewVector(vec))
 	return err
 }
 
