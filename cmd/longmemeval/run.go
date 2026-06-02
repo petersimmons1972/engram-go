@@ -434,6 +434,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
+
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
 		if cfg.ExactSignalBoost {
 			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
@@ -446,16 +447,41 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
 	}
-	retrievedIDs, temporalFallbackIDs, err := recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
-	if err != nil {
-		return longmemeval.RunEntry{
-			QuestionID: item.QuestionID,
-			Status:     "error",
-			Error:      fmt.Sprintf("recall: %v", err),
+
+	// H-NEW-1: when --temporal-window-recall is set, hand temporal anchoring to the
+	// server for temporal-reasoning questions. The server runs a two-pass
+	// date-windowed recall (unfiltered + valid_from-filtered, unioned) using the raw
+	// question and question_date, and falls back to baseline single-pass recall
+	// server-side for non-windowable questions ("how many X ago"). This path is
+	// exclusive of the client-side temporal fallback and the recall-augmentation
+	// passes below (fusion/paraphrase/aggregation) so the lever is measured cleanly.
+	var (
+		retrievedIDs        []string
+		temporalFallbackIDs []string
+		err                 error
+	)
+	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
+	if serverTemporalWindow {
+		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, cfg.RecallTopK, item.Question, item.QuestionDate)
+		if err != nil {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("temporal-window recall: %v", err),
+			}
+		}
+	} else {
+		retrievedIDs, temporalFallbackIDs, err = recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
+		if err != nil {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("recall: %v", err),
+			}
 		}
 	}
 	secondaryContextIDs := temporalFallbackIDs
-	if cfg.RetrievalFusion {
+	if cfg.RetrievalFusion && !serverTemporalWindow {
 		// Fix #938: fusion candidates flow through retrievedIDs (primary) only —
 		// NOT secondaryContextIDs — to avoid the reserve≤3 secondary-slot cap in
 		// selectContextIDs. UnionMemoryIDs deduplicates and preserves primary order,
@@ -475,7 +501,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 
 	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
 	// the object noun-phrase for count-shaped questions and union with primary.
-	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
+	if cfg.ExhaustiveAggregation && !serverTemporalWindow && longmemeval.IsAggregationQuestion(item.Question) {
 		const aggregationSweepTopK = 500
 		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
 		sweepIDs, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
@@ -510,7 +536,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// union all retrieved IDs (deduped, primary-pass order preserved first).
 	// On paraphrase or recall errors we log a warning and continue with the IDs
 	// collected so far — a partial union is strictly better than no union.
-	if cfg.QueryParaphrasePasses > 0 {
+	if cfg.QueryParaphrasePasses > 0 && !serverTemporalWindow {
 		paraphrases, pErr := longmemeval.GenerateParaphrases(ctx, recallQuery, cfg.QueryParaphrasePasses, cfg.Retries)
 		if pErr != nil {
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)

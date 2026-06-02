@@ -132,6 +132,20 @@ type RecallOpts struct {
 	// Default OFF (false). Ablatable: flag-off → baseline identical.
 	// Composable with DualPreferenceRecall (H15). Server-side only. (#H-NEW-2)
 	PreferenceMMR bool
+	// TemporalWindowRecall enables H-NEW-1 server-side two-pass date-windowed
+	// recall. When true and QuestionText resolves to a temporal window via
+	// ParseTemporalWindow(QuestionText, QuestionDate), Recall runs a second,
+	// date-filtered pass and unions it with the unfiltered pass so the caller
+	// receives a temporally-scoped candidate set. Default false = baseline.
+	TemporalWindowRecall bool
+	// QuestionText is the raw natural-language question used only for temporal
+	// anchor parsing when TemporalWindowRecall is true. When empty the recall
+	// query itself is used. Has no effect unless TemporalWindowRecall is true.
+	QuestionText string
+	// QuestionDate is the asked-on reference date (LongMemEval question_date
+	// format, e.g. "2023/06/09 (Fri)") used to resolve relative anchors such as
+	// "3 days ago". Has no effect unless TemporalWindowRecall is true.
+	QuestionDate string
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -651,6 +665,24 @@ func (e *SearchEngine) Recall(ctx context.Context, query string, topK int, detai
 func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, error) {
 	if topK <= 0 {
 		topK = 10
+	}
+
+	// H-NEW-1: server-side two-pass date-windowed temporal recall. Delegated here
+	// (before any work) so the existing single-pass scoring path below stays
+	// untouched and fully ablatable. The branch is taken only when the caller opts
+	// in AND a temporal window resolves; otherwise recall is byte-for-byte baseline.
+	if opts.TemporalWindowRecall {
+		anchorText := opts.QuestionText
+		if anchorText == "" {
+			anchorText = query
+		}
+		if since, before := ParseTemporalWindow(anchorText, opts.QuestionDate); since != nil || before != nil {
+			return e.recallTwoPassTemporal(ctx, query, topK, detail, opts, since, before)
+		}
+		// No window resolved (e.g. "how many X ago", non-temporal): fall through
+		// to the unfiltered single-pass path below. TemporalWindowRecall=true is
+		// harmless at this point — the flag is not re-checked on this path and
+		// RecallWithOpts is not called recursively here.
 	}
 
 	// Guard: ensure the current embedder matches the stored metadata before
@@ -1291,6 +1323,137 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 
 	return results, nil
+}
+
+// recallTwoPassTemporal implements H-NEW-1: a date-windowed two-pass recall.
+//
+// Pass 1 is the standard unfiltered recall (topical scope). Pass 2 re-runs recall
+// constrained to [since, before) via the indexed valid_from filter (temporal scope).
+// The two result sets are unioned with pass-1 order preserved first, deduplicated by
+// memory ID, and truncated to topK. This gives the model a candidate set that is both
+// topically relevant AND temporally scoped, so it can resolve which retrieved session
+// belongs to the asked-about time window — the failure mode behind temporal PARTIALs.
+//
+// Both passes clear TemporalWindowRecall to prevent re-entry, and pass 1 clears any
+// DateSince/DateBefore so it stays a true unfiltered baseline pass.
+//
+// Re-ranking: both internal passes suppress opts.Reranker so the reranker runs
+// exactly once — on the merged, deduplicated, topK-truncated result set. Running
+// it per-pass would produce two independently-ranked lists merged in incoherent
+// order and double the latency/cost.
+func (e *SearchEngine) recallTwoPassTemporal(ctx context.Context, query string, topK int, detail string, opts RecallOpts, since, before *time.Time) ([]types.SearchResult, error) {
+	pass1Opts := opts
+	pass1Opts.TemporalWindowRecall = false
+	pass1Opts.QuestionText = ""
+	pass1Opts.QuestionDate = ""
+	pass1Opts.DateSince = nil
+	pass1Opts.DateBefore = nil
+	// Suppress reranker inside both passes; apply it once to the merged result below.
+	pass1Opts.Reranker = nil
+	pass1, err := e.RecallWithOpts(ctx, query, topK, detail, pass1Opts)
+	if err != nil {
+		return nil, err
+	}
+
+	pass2Opts := pass1Opts
+	pass2Opts.DateSince = since
+	pass2Opts.DateBefore = before
+	// EmbedDegraded pointers were populated by pass 1; do not let pass 2 overwrite
+	// the caller-visible signal (a degraded pass 1 is the meaningful event).
+	pass2Opts.EmbedDegraded = nil
+	pass2Opts.EmbedDegradedReason = nil
+	// pass2Opts.Reranker is already nil (inherited from pass1Opts above).
+	pass2, err := e.RecallWithOpts(ctx, query, topK, detail, pass2Opts)
+	if err != nil {
+		// Pass 2 is additive. If the date-filtered pass fails, return pass 1 rather
+		// than failing the whole recall — a topically-scoped set still beats nothing.
+		// Apply reranker to pass 1 alone before returning so the caller still gets
+		// reranked output when pass 2 is unavailable.
+		slog.Warn("temporal-window recall: pass 2 failed, returning pass 1 only",
+			"project", e.project, "err", err)
+		return e.maybeRerank(ctx, query, topK, pass1, opts.Reranker), nil
+	}
+
+	merged := mergeSearchResults(pass1, pass2, topK)
+	// Apply reranker once to the coherent merged set.
+	return e.maybeRerank(ctx, query, topK, merged, opts.Reranker), nil
+}
+
+// maybeRerank applies reranker to results if reranker is non-nil, otherwise returns
+// results unchanged. It mirrors the reranking block in RecallWithOpts so the
+// temporal two-pass path and the single-pass path produce identically-sorted output.
+func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, results []types.SearchResult, reranker ResultReranker) []types.SearchResult {
+	if reranker == nil || len(results) == 0 {
+		return results
+	}
+	rerankCandidates := results
+	if len(rerankCandidates) > topK {
+		rerankCandidates = rerankCandidates[:topK]
+	}
+	items := make([]RerankItem, len(rerankCandidates))
+	for i, r := range rerankCandidates {
+		summary := ""
+		if r.Memory.Summary != nil {
+			summary = *r.Memory.Summary
+		} else {
+			summary = r.Memory.Content
+			if len(summary) > 500 {
+				summary = summary[:500]
+			}
+		}
+		items[i] = RerankItem{
+			ID:      r.Memory.ID,
+			Summary: summary,
+			Score:   r.Score,
+		}
+	}
+	reranked, err := reranker.RerankResults(ctx, query, items)
+	if err == nil && len(reranked) > 0 {
+		scoreMap := make(map[string]float64, len(reranked))
+		for _, rr := range reranked {
+			scoreMap[rr.ID] = rr.Score
+		}
+		for i := range results {
+			if newScore, ok := scoreMap[results[i].Memory.ID]; ok {
+				results[i].Score = newScore
+			}
+		}
+		sortResults(results)
+	}
+	return results
+}
+
+// mergeSearchResults unions two result slices, preserving the order of a first and
+// appending only the IDs from b that a did not already contain, then truncates to
+// limit. Results with a nil Memory are dropped. Pass-1 order is preserved because the
+// unfiltered pass carries the composite-scored ranking the caller expects on top.
+func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResult {
+	merged := make([]types.SearchResult, 0, len(a)+len(b))
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for _, r := range a {
+		if r.Memory == nil {
+			continue
+		}
+		if _, dup := seen[r.Memory.ID]; dup {
+			continue
+		}
+		seen[r.Memory.ID] = struct{}{}
+		merged = append(merged, r)
+	}
+	for _, r := range b {
+		if r.Memory == nil {
+			continue
+		}
+		if _, dup := seen[r.Memory.ID]; dup {
+			continue
+		}
+		seen[r.Memory.ID] = struct{}{}
+		merged = append(merged, r)
+	}
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }
 
 // RecallWithinMemory returns up to topK chunks from a single memory's document

@@ -276,6 +276,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
+	// H-NEW-1: server-side two-pass date-windowed temporal recall (flag-gated,
+	// default off). When enabled, the engine parses temporal anchors from
+	// question_text (falling back to query) against question_date and runs a
+	// second, date-filtered pass unioned with the first.
+	temporalWindowRecall := getBool(args, "temporal_window_recall", false)
+	questionText := getString(args, "question_text", "")
+	questionDate := getString(args, "question_date", "")
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames, err := toStringSlice(args["projects"])
@@ -365,6 +372,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
 	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
+	opts.TemporalWindowRecall = temporalWindowRecall
+	opts.QuestionText = questionText
+	opts.QuestionDate = questionDate
 	// Claude reranker is opt-in via rerank=true.
 	claudeRerankEnabled := cfg.ClaudeRerankEnabled
 	if cfg.RuntimeConfig != nil {
@@ -426,7 +436,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if recordEvent {
 			eventID = recordRecallEvent(ctx, h, project, query, results, "rerank path")
 		}
-	} else if opts.CurrentEpisodeID != "" || opts.DateSince != nil || opts.DateBefore != nil {
+	} else if opts.CurrentEpisodeID != "" || opts.DateSince != nil || opts.DateBefore != nil || opts.TemporalWindowRecall {
 		results, err = h.Engine.RecallWithOpts(ctx, query, topK, detail, opts)
 		if err != nil {
 			return nil, err

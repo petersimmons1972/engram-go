@@ -693,6 +693,32 @@ func TestTemporalRecallWindow_HowManyAgoDoesNotFilter(t *testing.T) {
 	}
 }
 
+// TestTemporalRecallWindow_Yesterday verifies that "yesterday" questions produce a
+// one-day window anchored to the day before the question_date. This aligns the
+// client-side temporalRecallWindow with the server-side ParseTemporalWindow.
+func TestTemporalRecallWindow_Yesterday(t *testing.T) {
+	// question_date 2023/06/09 → "yesterday" → target 2023/06/08, window [2023/06/08, 2023/06/09)
+	since, before := temporalRecallWindow(
+		"What happened yesterday with my dentist appointment?",
+		"temporal-reasoning",
+		"2023/06/09 (Fri)",
+	)
+	if since == nil || before == nil {
+		t.Fatal("temporalRecallWindow returned nil bounds for 'yesterday' question")
+	}
+	wantSince := time.Date(2023, 6, 8, 0, 0, 0, 0, time.UTC)
+	wantBefore := time.Date(2023, 6, 9, 0, 0, 0, 0, time.UTC)
+	if !since.Equal(wantSince) {
+		t.Errorf("since = %s, want %s", since.Format("2006-01-02"), wantSince.Format("2006-01-02"))
+	}
+	if !before.Equal(wantBefore) {
+		t.Errorf("before = %s, want %s", before.Format("2006-01-02"), wantBefore.Format("2006-01-02"))
+	}
+	if !since.Before(*before) {
+		t.Errorf("since must be before before: since=%s before=%s", since.Format(time.RFC3339), before.Format(time.RFC3339))
+	}
+}
+
 func TestTargetDateFromQuestion_RelativeAgo(t *testing.T) {
 	got, ok := targetDateFromQuestion(
 		"What did I buy 3 weeks ago?",
