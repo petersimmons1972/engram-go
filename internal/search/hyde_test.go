@@ -96,119 +96,214 @@ var _ db.Backend = (*hydeStubBackend)(nil)
 
 type noopBackend struct{}
 
-func (noopBackend) Close()                                                                                {}
-func (noopBackend) GetMeta(_ context.Context, _, _ string) (string, bool, error)                         { return "", false, nil }
-func (noopBackend) SetMeta(_ context.Context, _, _, _ string) error                                      { return nil }
-func (noopBackend) SetMetaTx(_ context.Context, _ db.Tx, _, _, _ string) error                          { return nil }
-func (noopBackend) StoreMemory(_ context.Context, _ *types.Memory) error                                  { return nil }
-func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) error                     { return nil }
-func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error)                          { return nil, nil }
-func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error)                      { return nil, nil }
-func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error)    { return nil, nil }
+// MemPalace interface methods (LME exp #9 widened db.Backend). These stubs
+// return zero values; HyDE unit tests do not exercise cluster behavior.
+func (noopBackend) StoreMemoryCluster(_ context.Context, _ *db.MemoryCluster) error { return nil }
+func (noopBackend) SetMemoryClusterID(_ context.Context, _, _ string) error         { return nil }
+func (noopBackend) FindNearestClusters(_ context.Context, _ string, _ []float32, _ int) ([]string, error) {
+	return nil, nil
+}
+func (noopBackend) VectorSearchWithClusters(_ context.Context, _ string, _ []float32, _ int, _ []string, _, _ *time.Time) ([]db.VectorHit, error) {
+	return nil, nil
+}
+func (noopBackend) TableExists(_ context.Context, _ string) (bool, error)     { return false, nil }
+func (noopBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+
+func (noopBackend) Close() {}
+func (noopBackend) GetMeta(_ context.Context, _, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (noopBackend) SetMeta(_ context.Context, _, _, _ string) error                  { return nil }
+func (noopBackend) SetMetaTx(_ context.Context, _ db.Tx, _, _, _ string) error       { return nil }
+func (noopBackend) StoreMemory(_ context.Context, _ *types.Memory) error             { return nil }
+func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) error  { return nil }
+func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error)     { return nil, nil }
+func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
+func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
+	return nil, nil
+}
 func (noopBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
-func (noopBackend) DeleteMemory(_ context.Context, _ string) (bool, error)                                { return false, nil }
-func (noopBackend) DeleteMemoryAtomic(_ context.Context, _, _ string, _ bool) (bool, error)               { return false, nil }
-func (noopBackend) MergeMemoriesAtomic(_ context.Context, _, _, _, _ string) error                        { return nil }
-func (noopBackend) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error)   { return nil, nil }
-func (noopBackend) TouchMemory(_ context.Context, _ string) error                                         { return nil }
-func (noopBackend) TouchMemories(_ context.Context, _ []string) error                                     { return nil }
-func (noopBackend) StoreChunks(_ context.Context, _ []*types.Chunk) error                                 { return nil }
-func (noopBackend) StoreChunksTx(_ context.Context, _ db.Tx, _ []*types.Chunk) error                    { return nil }
-func (noopBackend) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error)               { return nil, nil }
-func (noopBackend) GetAllChunksWithEmbeddings(_ context.Context, _ string, _ int) ([]*types.Chunk, error) { return nil, nil }
-func (noopBackend) GetAllChunkTexts(_ context.Context, _ string, _ int) ([]string, error)                 { return nil, nil }
-func (noopBackend) GetChunksForMemories(_ context.Context, _ []string) ([]*types.Chunk, error)            { return nil, nil }
-func (noopBackend) ChunkHashExists(_ context.Context, _, _ string) (bool, error)                          { return false, nil }
-func (noopBackend) DeleteChunksForMemory(_ context.Context, _ string) error                               { return nil }
-func (noopBackend) DeleteChunksForMemoryTx(_ context.Context, _ db.Tx, _ string) error                  { return nil }
-func (noopBackend) DeleteChunksByIDs(_ context.Context, _ []string) (int, error)                          { return 0, nil }
-func (noopBackend) NullAllEmbeddings(_ context.Context, _ string) (int, error)                            { return 0, nil }
-func (noopBackend) NullAllEmbeddingsTx(_ context.Context, _ db.Tx, _ string) (int, error)               { return 0, nil }
-func (noopBackend) GetChunksPendingEmbedding(_ context.Context, _ string, _ int) ([]*types.Chunk, error) { return nil, nil }
-func (noopBackend) UpdateChunkEmbedding(_ context.Context, _ string, _ []float32) (int, error)            { return 0, nil }
-func (noopBackend) VectorSearch(_ context.Context, _ string, _ []float32, _ int) ([]db.VectorHit, error) { return nil, nil }
+func (noopBackend) DeleteMemory(_ context.Context, _ string) (bool, error) { return false, nil }
+func (noopBackend) DeleteMemoryAtomic(_ context.Context, _, _ string, _ bool) (bool, error) {
+	return false, nil
+}
+func (noopBackend) MergeMemoriesAtomic(_ context.Context, _, _, _, _ string) error { return nil }
+func (noopBackend) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error) {
+	return nil, nil
+}
+func (noopBackend) TouchMemory(_ context.Context, _ string) error                    { return nil }
+func (noopBackend) TouchMemories(_ context.Context, _ []string) error                { return nil }
+func (noopBackend) StoreChunks(_ context.Context, _ []*types.Chunk) error            { return nil }
+func (noopBackend) StoreChunksTx(_ context.Context, _ db.Tx, _ []*types.Chunk) error { return nil }
+func (noopBackend) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error) {
+	return nil, nil
+}
+func (noopBackend) GetAllChunksWithEmbeddings(_ context.Context, _ string, _ int) ([]*types.Chunk, error) {
+	return nil, nil
+}
+func (noopBackend) GetAllChunkTexts(_ context.Context, _ string, _ int) ([]string, error) {
+	return nil, nil
+}
+func (noopBackend) GetChunksForMemories(_ context.Context, _ []string) ([]*types.Chunk, error) {
+	return nil, nil
+}
+func (noopBackend) ChunkHashExists(_ context.Context, _, _ string) (bool, error)       { return false, nil }
+func (noopBackend) DeleteChunksForMemory(_ context.Context, _ string) error            { return nil }
+func (noopBackend) DeleteChunksForMemoryTx(_ context.Context, _ db.Tx, _ string) error { return nil }
+func (noopBackend) DeleteChunksByIDs(_ context.Context, _ []string) (int, error)       { return 0, nil }
+func (noopBackend) NullAllEmbeddings(_ context.Context, _ string) (int, error)         { return 0, nil }
+func (noopBackend) NullAllEmbeddingsTx(_ context.Context, _ db.Tx, _ string) (int, error) {
+	return 0, nil
+}
+func (noopBackend) GetChunksPendingEmbedding(_ context.Context, _ string, _ int) ([]*types.Chunk, error) {
+	return nil, nil
+}
+func (noopBackend) UpdateChunkEmbedding(_ context.Context, _ string, _ []float32) (int, error) {
+	return 0, nil
+}
+func (noopBackend) VectorSearch(_ context.Context, _ string, _ []float32, _ int) ([]db.VectorHit, error) {
+	return nil, nil
+}
 func (noopBackend) VectorSearchWithDateRange(_ context.Context, _ string, _ []float32, _ int, _, _ *time.Time) ([]db.VectorHit, error) {
 	return nil, nil
 }
 func (noopBackend) SearchChunksWithinMemory(_ context.Context, _ []float32, _ string, _ int) ([]*types.Chunk, error) {
 	return nil, nil
 }
-func (noopBackend) ChunkEmbeddingDistance(_ context.Context, _, _ string) (float64, error)               { return 2.0, nil }
-func (noopBackend) UpdateChunkLastMatched(_ context.Context, _ string) error                             { return nil }
-func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, error)                    { return 0, nil }
-func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error                               { return nil }
-func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error                     { return nil }
-func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error)        { return nil, nil }
-func (noopBackend) BoostEdgesForMemory(_ context.Context, _ string, _ float64) (int, error)              { return 0, nil }
-func (noopBackend) DecayEdgesForMemory(_ context.Context, _ string, _ float64) (int, error)              { return 0, nil }
-func (noopBackend) GetConnectionCount(_ context.Context, _, _ string) (int, error)                       { return 0, nil }
-func (noopBackend) DecayAllEdges(_ context.Context, _ string, _, _ float64) (int, int, error)            { return 0, 0, nil }
-func (noopBackend) DeleteRelationshipsForMemory(_ context.Context, _ string) error                       { return nil }
-func (noopBackend) GetRelationships(_ context.Context, _, _ string) ([]types.Relationship, error)        { return nil, nil }
+func (noopBackend) ChunkEmbeddingDistance(_ context.Context, _, _ string) (float64, error) {
+	return 2.0, nil
+}
+func (noopBackend) UpdateChunkLastMatched(_ context.Context, _ string) error          { return nil }
+func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, error) { return 0, nil }
+func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error            { return nil }
+func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error  { return nil }
+func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
+	return nil, nil
+}
+func (noopBackend) BoostEdgesForMemory(_ context.Context, _ string, _ float64) (int, error) {
+	return 0, nil
+}
+func (noopBackend) DecayEdgesForMemory(_ context.Context, _ string, _ float64) (int, error) {
+	return 0, nil
+}
+func (noopBackend) GetConnectionCount(_ context.Context, _, _ string) (int, error) { return 0, nil }
+func (noopBackend) DecayAllEdges(_ context.Context, _ string, _, _ float64) (int, int, error) {
+	return 0, 0, nil
+}
+func (noopBackend) DeleteRelationshipsForMemory(_ context.Context, _ string) error { return nil }
+func (noopBackend) GetRelationships(_ context.Context, _, _ string) ([]types.Relationship, error) {
+	return nil, nil
+}
 func (noopBackend) GetRelationshipsBatch(_ context.Context, _ string, _ []string) (map[string][]types.Relationship, error) {
 	return nil, nil
 }
-func (noopBackend) GetMemoryHistory(_ context.Context, _, _ string) ([]*types.MemoryVersion, error)      { return nil, nil }
-func (noopBackend) SoftDeleteMemory(_ context.Context, _, _, _ string) (bool, error)                     { return false, nil }
+func (noopBackend) GetMemoryHistory(_ context.Context, _, _ string) ([]*types.MemoryVersion, error) {
+	return nil, nil
+}
+func (noopBackend) SoftDeleteMemory(_ context.Context, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetMemoriesAsOf(_ context.Context, _ string, _ time.Time, _ int) ([]*types.Memory, error) {
 	return nil, nil
 }
-func (noopBackend) StoreRetrievalEvent(_ context.Context, _ *types.RetrievalEvent) error                 { return nil }
-func (noopBackend) GetRetrievalEvent(_ context.Context, _ string) (*types.RetrievalEvent, error)          { return nil, nil }
-func (noopBackend) RecordFeedback(_ context.Context, _ string, _ []string) error                         { return nil }
-func (noopBackend) RecordFeedbackWithClass(_ context.Context, _ string, _ []string, _ string) error      { return nil }
+func (noopBackend) StoreRetrievalEvent(_ context.Context, _ *types.RetrievalEvent) error { return nil }
+func (noopBackend) GetRetrievalEvent(_ context.Context, _ string) (*types.RetrievalEvent, error) {
+	return nil, nil
+}
+func (noopBackend) RecordFeedback(_ context.Context, _ string, _ []string) error { return nil }
+func (noopBackend) RecordFeedbackWithClass(_ context.Context, _ string, _ []string, _ string) error {
+	return nil
+}
 func (noopBackend) AggregateMemories(_ context.Context, _, _, _ string, _ int) ([]types.AggregateRow, error) {
 	return nil, nil
 }
 func (noopBackend) AggregateFailureClasses(_ context.Context, _ string, _ int) ([]types.AggregateRow, error) {
 	return nil, nil
 }
-func (noopBackend) IncrementTimesRetrieved(_ context.Context, _ []string) error                          { return nil }
-func (noopBackend) UpdateDynamicImportance(_ context.Context, _ string, _, _ float64) error              { return nil }
-func (noopBackend) SetNextReviewAt(_ context.Context, _ string, _ time.Time) error                       { return nil }
-func (noopBackend) DecayStaleImportance(_ context.Context, _ string, _ float64) (int, error)             { return 0, nil }
-func (noopBackend) PruneStaleMemories(_ context.Context, _ string, _ float64, _ int) (int, error)        { return 0, nil }
-func (noopBackend) PruneColdDocuments(_ context.Context, _ string, _ float64, _ int) (int, error)        { return 0, nil }
-func (noopBackend) DeleteProject(_ context.Context, _ string) error                                      { return nil }
-func (noopBackend) SetProjectTTL(_ context.Context, _ string, _ time.Time, _ *time.Time) error           { return nil }
+func (noopBackend) IncrementTimesRetrieved(_ context.Context, _ []string) error { return nil }
+func (noopBackend) UpdateDynamicImportance(_ context.Context, _ string, _, _ float64) error {
+	return nil
+}
+func (noopBackend) SetNextReviewAt(_ context.Context, _ string, _ time.Time) error { return nil }
+func (noopBackend) DecayStaleImportance(_ context.Context, _ string, _ float64) (int, error) {
+	return 0, nil
+}
+func (noopBackend) PruneStaleMemories(_ context.Context, _ string, _ float64, _ int) (int, error) {
+	return 0, nil
+}
+func (noopBackend) PruneColdDocuments(_ context.Context, _ string, _ float64, _ int) (int, error) {
+	return 0, nil
+}
+func (noopBackend) DeleteProject(_ context.Context, _ string) error { return nil }
+func (noopBackend) SetProjectTTL(_ context.Context, _ string, _ time.Time, _ *time.Time) error {
+	return nil
+}
 func (noopBackend) ListExpiredProjects(_ context.Context, _ string, _ time.Time, _ int) ([]string, error) {
 	return nil, nil
 }
 func (noopBackend) FTSSearch(_ context.Context, _, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
 	return nil, nil
 }
-func (noopBackend) RebuildFTS(_ context.Context) error                                                   { return nil }
-func (noopBackend) GetStats(_ context.Context, _ string) (*types.MemoryStats, error)                     { return nil, nil }
-func (noopBackend) ListAllProjects(_ context.Context) ([]string, error)                                   { return nil, nil }
-func (noopBackend) GetAllMemoryIDs(_ context.Context, _ string) (map[string]struct{}, error)              { return nil, nil }
-func (noopBackend) GetMemoryTypeMap(_ context.Context, _ string) (map[string]string, error)               { return nil, nil }
-func (noopBackend) GetMemoriesPendingSummary(_ context.Context, _ string, _ int) ([]db.IDContent, error)  { return nil, nil }
-func (noopBackend) StoreSummary(_ context.Context, _, _ string) error                                    { return nil }
-func (noopBackend) GetPendingSummaryCount(_ context.Context, _ string) (int, error)                      { return 0, nil }
-func (noopBackend) ClearSummaries(_ context.Context, _ string) (int, error)                               { return 0, nil }
-func (noopBackend) GetMemoriesMissingHash(_ context.Context, _ string, _ int) ([]db.IDContent, error)    { return nil, nil }
-func (noopBackend) UpdateMemoryHash(_ context.Context, _, _ string) error                                { return nil }
-func (noopBackend) ExistsWithContentHash(_ context.Context, _, _ string) (bool, error)                   { return false, nil }
-func (noopBackend) GetIntegrityStats(_ context.Context, _ string) (db.IntegrityStats, error)              { return db.IntegrityStats{}, nil }
-func (noopBackend) StartEpisode(_ context.Context, _, _ string) (*types.Episode, error)                   { return nil, nil }
-func (noopBackend) EndEpisode(_ context.Context, _, _ string) error                                      { return nil }
-func (noopBackend) ListEpisodes(_ context.Context, _ string, _ int) ([]*types.Episode, error)             { return nil, nil }
-func (noopBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memory, error)                    { return nil, nil }
-func (noopBackend) CloseStaleEpisodes(_ context.Context, _ time.Duration) (int64, error)                 { return 0, nil }
-func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error)                          { return "", nil }
-func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)                               { return "", nil }
-func (noopBackend) DeleteDocument(_ context.Context, _ string) (bool, error)                              { return false, nil }
-func (noopBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error)                 { return false, nil }
-func (noopBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error)         { return false, nil }
-func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error                             { return nil }
-func (noopBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error)                     { return "", nil }
-func (noopBackend) GetEntitiesByProject(_ context.Context, _ string) ([]entity.Entity, error)            { return nil, nil }
-func (noopBackend) EnqueueExtractionJob(_ context.Context, _, _ string) error                            { return nil }
-func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db.ExtractionJob, error)   { return nil, nil }
-func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error                     { return nil }
-func (noopBackend) Begin(_ context.Context) (db.Tx, error)                                               { return nil, nil }
+func (noopBackend) RebuildFTS(_ context.Context) error                               { return nil }
+func (noopBackend) GetStats(_ context.Context, _ string) (*types.MemoryStats, error) { return nil, nil }
+func (noopBackend) ListAllProjects(_ context.Context) ([]string, error)              { return nil, nil }
+func (noopBackend) GetAllMemoryIDs(_ context.Context, _ string) (map[string]struct{}, error) {
+	return nil, nil
+}
+func (noopBackend) GetMemoryTypeMap(_ context.Context, _ string) (map[string]string, error) {
+	return nil, nil
+}
+func (noopBackend) GetMemoriesPendingSummary(_ context.Context, _ string, _ int) ([]db.IDContent, error) {
+	return nil, nil
+}
+func (noopBackend) StoreSummary(_ context.Context, _, _ string) error               { return nil }
+func (noopBackend) GetPendingSummaryCount(_ context.Context, _ string) (int, error) { return 0, nil }
+func (noopBackend) ClearSummaries(_ context.Context, _ string) (int, error)         { return 0, nil }
+func (noopBackend) GetMemoriesMissingHash(_ context.Context, _ string, _ int) ([]db.IDContent, error) {
+	return nil, nil
+}
+func (noopBackend) UpdateMemoryHash(_ context.Context, _, _ string) error { return nil }
+func (noopBackend) ExistsWithContentHash(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+func (noopBackend) GetIntegrityStats(_ context.Context, _ string) (db.IntegrityStats, error) {
+	return db.IntegrityStats{}, nil
+}
+func (noopBackend) StartEpisode(_ context.Context, _, _ string) (*types.Episode, error) {
+	return nil, nil
+}
+func (noopBackend) EndEpisode(_ context.Context, _, _ string) error { return nil }
+func (noopBackend) ListEpisodes(_ context.Context, _ string, _ int) ([]*types.Episode, error) {
+	return nil, nil
+}
+func (noopBackend) RecallEpisode(_ context.Context, _ string) ([]*types.Memory, error) {
+	return nil, nil
+}
+func (noopBackend) CloseStaleEpisodes(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
+}
+func (noopBackend) StoreDocument(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (noopBackend) GetDocument(_ context.Context, _ string) (string, error)      { return "", nil }
+func (noopBackend) DeleteDocument(_ context.Context, _ string) (bool, error)     { return false, nil }
+func (noopBackend) DeleteDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (noopBackend) DeleteOrphanedDocumentTx(_ context.Context, _ db.Tx, _ string) (bool, error) {
+	return false, nil
+}
+func (noopBackend) SetMemoryDocumentID(_ context.Context, _, _ string) error         { return nil }
+func (noopBackend) UpsertEntity(_ context.Context, _ *entity.Entity) (string, error) { return "", nil }
+func (noopBackend) GetEntitiesByProject(_ context.Context, _ string) ([]entity.Entity, error) {
+	return nil, nil
+}
+func (noopBackend) EnqueueExtractionJob(_ context.Context, _, _ string) error { return nil }
+func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db.ExtractionJob, error) {
+	return nil, nil
+}
+func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
+func (noopBackend) Begin(_ context.Context) (db.Tx, error)                           { return nil, nil }
 
 var _ db.Backend = (*noopBackend)(nil)
 
