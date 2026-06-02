@@ -1,16 +1,9 @@
----
-description: Bulk-load files, directories, or exported chat histories into Engram; export memories to markdown
----
-
-# engram-ingest
+# Ingest Operations
 
 Load large volumes of content into Engram memory without hand-crafting
 individual `memory_store` calls. Supports local files and directories, exported
 chat histories from Slack, Claude, and ChatGPT, and full memory exports for
 backup.
-
-These tools are hidden from the normal tools/list. This skill calls them
-directly via HTTP.
 
 ## When to Use
 
@@ -91,10 +84,10 @@ off memory content to another system.
 
 | Tool | Arguments | Effect |
 |------|-----------|--------|
-| `memory_ingest` | `path` (string), `project` (string) | Ingest local file or directory; returns `job_id` |
+| `memory_ingest`        | `path` (string), `project` (string) | Ingest local file or directory; returns `job_id` |
 | `memory_ingest_export` | `path` (string), `project` (string), `source` ("slack"\|"claude"\|"chatgpt") | Parse exported chat history; returns `job_id` |
 | `memory_ingest_status` | `job_id` (string) | Check async job status and progress |
-| `memory_export_all` | `project` (string), `output_dir` (string) | Export all project memories to markdown files |
+| `memory_export_all`    | `project` (string), `output_dir` (string) | Export all project memories to markdown files |
 
 ## Typical Ingest Workflow
 

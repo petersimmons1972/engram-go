@@ -1,13 +1,7 @@
----
-description: Compress and prune Engram memory after long sessions or when the store feels cluttered
----
-
-# engram-consolidate
+# Consolidation Operations
 
 Run memory maintenance operations against the Engram MCP server. These tools
-are hidden from the normal tools/list to keep context lean. This skill calls
-them directly via HTTP so you can trigger consolidation without bloating the
-active tool roster.
+are hidden from the normal tools/list to keep context lean.
 
 ## When to Use
 
@@ -20,8 +14,7 @@ active tool roster.
 ## How to Use
 
 Identify which operation the user wants, then issue the matching `xh` call
-below. All calls go to the MCP JSON-RPC endpoint. Capture the response and
-report the result (or error) to the user.
+below. Capture the response and report the result (or error) to the user.
 
 ### 1. Quick consolidation — prune stale entries, decay edges, merge near-duplicates
 
@@ -78,12 +71,12 @@ regenerate all of them within approximately 60 seconds.
 
 ## Tools Available
 
-| Tool | Arguments | Effect |
-|------|-----------|--------|
-| `memory_consolidate` | `project` (string) | Prune stale memories, decay graph edges, merge near-duplicates. Fast. |
-| `memory_sleep` | `project` (string) | Full consolidation cycle with relationship inference. Slow but thorough. |
-| `memory_summarize` | `id` (string) | Immediately summarize a single memory by ID. |
-| `memory_resummarize` | `project` (string) | Clear all summaries for a project so they regenerate fresh. |
+| Tool                  | Arguments           | Effect |
+|-----------------------|---------------------|--------|
+| `memory_consolidate`  | `project` (string)  | Prune stale memories, decay graph edges, merge near-duplicates. Fast. |
+| `memory_sleep`        | `project` (string)  | Full consolidation cycle with relationship inference. Slow but thorough. |
+| `memory_summarize`    | `id` (string)       | Immediately summarize a single memory by ID. |
+| `memory_resummarize`  | `project` (string)  | Clear all summaries for a project so they regenerate fresh. |
 
 ## Decision Order
 
