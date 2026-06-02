@@ -320,6 +320,71 @@ func TestNoDoubleCount_RecallWithOpts_MCPLayer(t *testing.T) {
 		"engram_recall_degraded_total{reason=embed_error} must increment exactly once (engine is sole owner)")
 }
 
+// ── #989: EmbedDegradedReason must reflect actual cause, not hardcoded string ──
+
+// TestEmbedDegradedReason_Timeout verifies that when the embed deadline fires,
+// RecallWithOpts populates EmbedDegradedReason with "embed_timeout" — not the
+// hardcoded literal that the MCP layer used to supply (#989).
+func TestEmbedDegradedReason_Timeout(t *testing.T) {
+	proj := uniqueProject("degraded-reason-timeout")
+	// Embedder blocks for 60s — far longer than the 500ms default deadline.
+	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var degraded bool
+	var reason string
+	opts := search.RecallOpts{EmbedDegraded: &degraded, EmbedDegradedReason: &reason}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err, "timeout degradation must not return an error")
+	require.True(t, degraded, "EmbedDegraded must be true on embed timeout")
+	require.Equal(t, "embed_timeout", reason,
+		"EmbedDegradedReason must be 'embed_timeout' when the embed deadline fires (#989)")
+}
+
+// TestEmbedDegradedReason_HardError verifies that when the embedder returns a
+// hard synchronous error (not a context cancellation), RecallWithOpts populates
+// EmbedDegradedReason with "embed_error" — allowing operators to distinguish
+// backend saturation from model crashes (#989).
+func TestEmbedDegradedReason_HardError(t *testing.T) {
+	proj := uniqueProject("degraded-reason-error")
+	eng := newEngineWithEmbedder(t, proj, &immediateErrorEmbedder{dims: 768})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var degraded bool
+	var reason string
+	opts := search.RecallOpts{EmbedDegraded: &degraded, EmbedDegradedReason: &reason}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err, "hard embed error must degrade gracefully, not return error")
+	require.True(t, degraded, "EmbedDegraded must be true on hard embed error")
+	require.Equal(t, "embed_error", reason,
+		"EmbedDegradedReason must be 'embed_error' on hard embed failure, not 'embed_timeout' (#989)")
+}
+
+// TestEmbedDegradedReason_NoDegrade verifies that when the embed succeeds,
+// EmbedDegradedReason is left empty and EmbedDegraded is false.
+func TestEmbedDegradedReason_NoDegrade(t *testing.T) {
+	proj := uniqueProject("degraded-reason-nodeg")
+	eng := newEngineWithEmbedder(t, proj, &fakeClient{dims: 768})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var degraded bool
+	var reason string
+	opts := search.RecallOpts{EmbedDegraded: &degraded, EmbedDegradedReason: &reason}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err)
+	require.False(t, degraded, "EmbedDegraded must be false when embed succeeds")
+	require.Empty(t, reason, "EmbedDegradedReason must be empty when embed succeeds (#989)")
+}
+
 // ── #973 Blocker 2: ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 via New() ───────────────
 
 // TestEnvVarZero_DisablesDeadline_RecallWithOpts verifies that when
