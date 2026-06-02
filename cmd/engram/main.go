@@ -320,6 +320,15 @@ func run() error {
 		liteLLMClient.StartBackgroundProbe(ctx, *embedCircuitOpenDuration)
 		slog.Info("embed circuit breaker background probe started",
 			"interval", *embedCircuitOpenDuration)
+	} else {
+		// If the embed client is ever wrapped or swapped, the background probe
+		// silently would not start and circuit-breaker recovery would again
+		// depend entirely on demand traffic — the exact 18-hour stuck-open
+		// failure #1000 fixes. Log loudly so this regression is never silent.
+		slog.Warn("embed circuit breaker background probe NOT started: "+
+			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
+			"circuit will depend on demand-path traffic only (#1000)",
+			"embed_client_type", fmt.Sprintf("%T", embedClient))
 	}
 
 	dsn := *databaseURL

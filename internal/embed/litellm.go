@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"math/rand"
 	"net"
@@ -30,6 +31,10 @@ type LiteLLMClient struct {
 	targetDims int
 	http       *http.Client
 	cb         *CircuitBreaker
+	// probeFunc performs the recovery health check. Defaults to c.Probe (a
+	// real GET /v1/models). Overridable in tests so the background-probe loop
+	// can be driven deterministically without a network or wall-clock sleeps.
+	probeFunc func(ctx context.Context) (ok bool, reason string)
 }
 
 // newLiteLLMHTTPClient builds a *http.Client for the LiteLLM/olla endpoint.
@@ -495,33 +500,73 @@ func (c *LiteLLMClient) StartBackgroundProbe(ctx context.Context, interval time.
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Only fire when Open. This prevents unnecessary probe calls during
-				// normal (Closed) operation and avoids perturbing the HalfOpen
-				// state from a previous demand-driven Allow() call.
-				if c.cb.State() != StateOpen {
-					continue
+				// Guard shutdown BEFORE claiming a probe slot: if ctx is already
+				// cancelled, deriving a probe context from it would fail
+				// immediately and record a spurious failure that inflates
+				// backoff on the way down. Checking first means we neither claim
+				// the slot nor record anything — we just exit. Mirrors the
+				// EmbedWithModel ctx guard. #1000 review.
+				if ctx.Err() != nil {
+					return
 				}
-				// Allow() handles the Open→HalfOpen transition, enforces
-				// nextProbeAt, and guards the one-probe-at-a-time invariant.
-				if err := c.cb.Allow(); err != nil {
-					// Not ready: probeInFlight or still within backoff window.
+
+				// AllowProbe() makes the whole decision atomically under one
+				// lock: it returns nil only when the circuit is degraded (Open
+				// past cooldown, or HalfOpen with a free slot) and claims the
+				// probe slot in the same critical section. This closes the
+				// TOCTOU window a State()+Allow() two-step would open, where a
+				// demand-path Allow could interleave and launch a second probe.
+				if err := c.cb.AllowProbe(); err != nil {
+					// Not degraded, within backoff, or a probe is already in
+					// flight. Nothing to do this tick.
 					continue
 				}
 
-				// Run the cheap GET /v1/models probe with a dedicated timeout
-				// that is independent of the recall budget.
-				probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-				ok, _ := c.Probe(probeCtx)
-				cancel()
-
-				if ok {
-					c.cb.RecordSuccess()
-				} else {
-					c.cb.RecordFailure()
-				}
+				// runProbe isolates the probe call so a panic can never leave
+				// the breaker wedged in HalfOpen with probeInFlight=true: the
+				// deferred recover guarantees exactly one of
+				// RecordSuccess/RecordFailure runs. #1000 review.
+				c.runProbe(ctx, probeTimeout)
 			}
 		}
 	}()
+}
+
+// runProbe executes a single background recovery probe and records the result
+// on the circuit breaker. It is panic-safe: if c.Probe panics, the deferred
+// recover records a failure so the probe slot (probeInFlight) is always
+// released and the breaker cannot wedge in HalfOpen.
+func (c *LiteLLMClient) runProbe(ctx context.Context, probeTimeout time.Duration) {
+	recorded := false
+	record := func(ok bool) {
+		if recorded {
+			return
+		}
+		recorded = true
+		if ok {
+			c.cb.RecordSuccess()
+		} else {
+			c.cb.RecordFailure()
+		}
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("embed background probe panicked — recording failure", "panic", r)
+			record(false)
+		}
+	}()
+
+	// Run the cheap GET /v1/models probe with a dedicated timeout that is
+	// independent of the recall budget. probeFunc defaults to c.Probe; tests
+	// override it to drive this real loop deterministically.
+	probe := c.probeFunc
+	if probe == nil {
+		probe = c.Probe
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ok, _ := probe(probeCtx)
+	cancel()
+	record(ok)
 }
 
 // InfinityModelStats holds per-model GPU queue statistics from the Infinity

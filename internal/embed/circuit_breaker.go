@@ -104,6 +104,56 @@ func (cb *CircuitBreaker) Allow() error {
 	return errCircuitOpen
 }
 
+// AllowProbe is the background-recovery counterpart to Allow. It atomically
+// decides whether the caller may run a recovery probe, returning nil only when
+// the circuit is degraded and a probe slot is available:
+//
+//   - Closed: returns errCircuitOpen — a healthy circuit needs no background
+//     probe (this is what makes a Closed-state tick a no-op).
+//   - Open and past nextProbeAt: transitions to HalfOpen, claims the probe
+//     slot, returns nil.
+//   - Open within the backoff window: returns errCircuitOpen.
+//   - HalfOpen with no probe in flight: claims the probe slot, returns nil.
+//   - HalfOpen with a probe already in flight: returns errCircuitOpen.
+//
+// Unlike Allow, AllowProbe never returns nil for a Closed circuit. This single
+// lock acquisition replaces the racy State()+Allow() two-step in the background
+// probe loop, eliminating the TOCTOU window where a demand-path Allow could
+// interleave and trigger a second concurrent probe.
+func (cb *CircuitBreaker) AllowProbe() error {
+	if !cb.cfg.Enabled {
+		return errCircuitOpen
+	}
+
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	now := cb.now()
+
+	switch cb.state {
+	case StateClosed:
+		// Healthy: no background probe needed.
+		return errCircuitOpen
+
+	case StateOpen:
+		if now.After(cb.nextProbeAt) {
+			cb.transitionTo(StateHalfOpen)
+			cb.probeInFlight = true
+			return nil
+		}
+		return errCircuitOpen
+
+	case StateHalfOpen:
+		if cb.probeInFlight {
+			return errCircuitOpen
+		}
+		cb.probeInFlight = true
+		return nil
+	}
+
+	return errCircuitOpen
+}
+
 // RecordSuccess records a successful request. Transitions to Closed if in HalfOpen.
 func (cb *CircuitBreaker) RecordSuccess() {
 	if !cb.cfg.Enabled {
@@ -152,18 +202,22 @@ func (cb *CircuitBreaker) RecordFailure() {
 	if len(cb.failures) >= cb.cfg.FailureThreshold {
 		switch cb.state {
 		case StateClosed:
-			// Transition to Open
-			cb.transitionTo(StateOpen)
+			// Compute backoff state BEFORE transitionTo so the OPEN log line
+			// reports the freshly-computed next_probe_at rather than a stale
+			// (here: zero) value (#1000 review).
 			cb.openedAt = now
 			cb.consecutiveOpens = 1
 			cb.updateNextProbeTime()
+			cb.transitionTo(StateOpen)
 
 		case StateHalfOpen:
-			// Probe failed; reopen with exponential backoff
-			cb.transitionTo(StateOpen)
+			// Probe failed; reopen with exponential backoff. Compute backoff
+			// state BEFORE transitionTo so the OPEN log reports the fresh
+			// next_probe_at (#1000 review).
 			cb.openedAt = now
 			cb.consecutiveOpens++
 			cb.updateNextProbeTime()
+			cb.transitionTo(StateOpen)
 			cb.failures = make([]time.Time, 0) // reset window
 		}
 	}
