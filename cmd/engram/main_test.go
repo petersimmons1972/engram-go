@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/netutil"
 )
@@ -261,5 +262,199 @@ func TestEngramReadyLog_IncludesVersion(t *testing.T) {
 	want := `slog.Info("engram ready", "version", Version`
 	if !strings.Contains(string(src), want) {
 		t.Errorf("main.go missing version key in 'engram ready' slog.Info call (#674)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// envInt
+// ---------------------------------------------------------------------------
+
+func TestEnvInt_SetValid(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT", "42")
+	got := envInt("ENGRAM_TEST_INT", 0)
+	if got != 42 {
+		t.Errorf("envInt set valid = %d, want 42", got)
+	}
+}
+
+func TestEnvInt_Unset(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT_UNSET", "")
+	got := envInt("ENGRAM_TEST_INT_UNSET", 7)
+	if got != 7 {
+		t.Errorf("envInt unset = %d, want 7 (default)", got)
+	}
+}
+
+func TestEnvInt_ParseError(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT_BAD", "notanint")
+	got := envInt("ENGRAM_TEST_INT_BAD", 99)
+	if got != 99 {
+		t.Errorf("envInt parse error = %d, want 99 (default)", got)
+	}
+}
+
+func TestEnvInt_NegativeValue(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT_NEG", "-5")
+	got := envInt("ENGRAM_TEST_INT_NEG", 0)
+	if got != -5 {
+		t.Errorf("envInt negative = %d, want -5", got)
+	}
+}
+
+func TestEnvInt_Zero(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_INT_ZERO", "0")
+	// "0" is a valid value but os.Getenv returns "0" (non-empty) → parsed → 0 returned.
+	got := envInt("ENGRAM_TEST_INT_ZERO", 10)
+	if got != 0 {
+		t.Errorf("envInt zero = %d, want 0", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// envFloat
+// ---------------------------------------------------------------------------
+
+func TestEnvFloat_SetValid(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_FLOAT", "3.14")
+	got := envFloat("ENGRAM_TEST_FLOAT", 0.0)
+	if got < 3.139 || got > 3.141 {
+		t.Errorf("envFloat set valid = %v, want ~3.14", got)
+	}
+}
+
+func TestEnvFloat_Unset(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_FLOAT_UNSET", "")
+	got := envFloat("ENGRAM_TEST_FLOAT_UNSET", 2.718)
+	if got != 2.718 {
+		t.Errorf("envFloat unset = %v, want 2.718 (default)", got)
+	}
+}
+
+func TestEnvFloat_ParseError(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_FLOAT_BAD", "notafloat")
+	got := envFloat("ENGRAM_TEST_FLOAT_BAD", 1.0)
+	if got != 1.0 {
+		t.Errorf("envFloat parse error = %v, want 1.0 (default)", got)
+	}
+}
+
+func TestEnvFloat_NegativeValue(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_FLOAT_NEG", "-1.5")
+	got := envFloat("ENGRAM_TEST_FLOAT_NEG", 0.0)
+	if got != -1.5 {
+		t.Errorf("envFloat negative = %v, want -1.5", got)
+	}
+}
+
+func TestEnvFloat_Zero(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_FLOAT_ZERO", "0")
+	got := envFloat("ENGRAM_TEST_FLOAT_ZERO", 5.0)
+	if got != 0.0 {
+		t.Errorf("envFloat zero = %v, want 0.0", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// envBool
+// ---------------------------------------------------------------------------
+
+func TestEnvBool_TrueVariants(t *testing.T) {
+	for _, v := range []string{"1", "true", "yes", "TRUE", "True", "YES", "Yes"} {
+		t.Setenv("ENGRAM_TEST_BOOL", v)
+		got := envBool("ENGRAM_TEST_BOOL", false)
+		if !got {
+			t.Errorf("envBool(%q) = false, want true", v)
+		}
+	}
+}
+
+func TestEnvBool_FalseVariants(t *testing.T) {
+	for _, v := range []string{"0", "false", "no", "FALSE", "False", "NO", "No"} {
+		t.Setenv("ENGRAM_TEST_BOOL", v)
+		got := envBool("ENGRAM_TEST_BOOL", true)
+		if got {
+			t.Errorf("envBool(%q) = true, want false", v)
+		}
+	}
+}
+
+func TestEnvBool_Unset_DefaultFalse(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_BOOL_UNSET", "")
+	got := envBool("ENGRAM_TEST_BOOL_UNSET", false)
+	if got {
+		t.Errorf("envBool unset, default=false: got true, want false")
+	}
+}
+
+func TestEnvBool_Unset_DefaultTrue(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_BOOL_UNSET_T", "")
+	got := envBool("ENGRAM_TEST_BOOL_UNSET_T", true)
+	if !got {
+		t.Errorf("envBool unset, default=true: got false, want true")
+	}
+}
+
+func TestEnvBool_UnknownValue_ReturnsDefault(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_BOOL_UNK", "maybe")
+	got := envBool("ENGRAM_TEST_BOOL_UNK", true)
+	if !got {
+		t.Errorf("envBool unknown value, default=true: got false, want true")
+	}
+	t.Setenv("ENGRAM_TEST_BOOL_UNK2", "maybe")
+	got2 := envBool("ENGRAM_TEST_BOOL_UNK2", false)
+	if got2 {
+		t.Errorf("envBool unknown value, default=false: got true, want false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// envDuration
+// ---------------------------------------------------------------------------
+
+func TestEnvDuration_SetValid(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR", "30s")
+	got := envDuration("ENGRAM_TEST_DUR", 0)
+	if got != 30*time.Second {
+		t.Errorf("envDuration '30s' = %v, want 30s", got)
+	}
+}
+
+func TestEnvDuration_SetMinutes(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR_MIN", "5m")
+	got := envDuration("ENGRAM_TEST_DUR_MIN", 0)
+	if got != 5*time.Minute {
+		t.Errorf("envDuration '5m' = %v, want 5m", got)
+	}
+}
+
+func TestEnvDuration_SetHours(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR_HOUR", "2h")
+	got := envDuration("ENGRAM_TEST_DUR_HOUR", 0)
+	if got != 2*time.Hour {
+		t.Errorf("envDuration '2h' = %v, want 2h", got)
+	}
+}
+
+func TestEnvDuration_Unset(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR_UNSET", "")
+	got := envDuration("ENGRAM_TEST_DUR_UNSET", 10*time.Second)
+	if got != 10*time.Second {
+		t.Errorf("envDuration unset = %v, want 10s (default)", got)
+	}
+}
+
+func TestEnvDuration_ParseError(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR_BAD", "notaduration")
+	got := envDuration("ENGRAM_TEST_DUR_BAD", time.Minute)
+	if got != time.Minute {
+		t.Errorf("envDuration parse error = %v, want 1m (default)", got)
+	}
+}
+
+func TestEnvDuration_Zero(t *testing.T) {
+	t.Setenv("ENGRAM_TEST_DUR_ZERO", "0s")
+	got := envDuration("ENGRAM_TEST_DUR_ZERO", time.Hour)
+	if got != 0 {
+		t.Errorf("envDuration '0s' = %v, want 0", got)
 	}
 }
