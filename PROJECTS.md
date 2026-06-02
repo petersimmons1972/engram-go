@@ -1,13 +1,14 @@
 # Project Index
 
 _Generated from per-project CLAUDE.md frontmatter. Regenerate with `bin/regen-projects-index.sh`._
-_Last generated: 2026-05-28T16:25Z_
+_Last generated: 2026-06-02T06:29Z_
 
 ## Active — Priority Stack
 
 | # | Project | Purpose | Path |
 |---|---------|---------|------|
 | 1 | **clearwatch** | Automated EDR/XDR vendor comparison report platform that generates and sells PDF/HTML analysis reports to mid-market IT teams. | `~/projects/clearwatch/` |
+| 1 | **clearwatch-research** | Fractional competitive intelligence and sales enablement practice for B2B software companies — battle cards, CI briefs, competitive landscapes, retainer programs. | `~/projects/clearwatch-research/` |
 | 2 | **infrastructure** | Runbooks, Terraform, and Ansible configurations for on-premise Proxmox and K8s homelab infrastructure that hosts all other projects. | `~/projects/infrastructure/` |
 | 3 | **job-search-system** | Web application for tracking job applications, interviews, contacts, and research across AngelList, Greenhouse, and LinkedIn sources. | `~/projects/job-search-system/` |
 
@@ -49,6 +50,7 @@ _Last generated: 2026-05-28T16:25Z_
 |---------|---------|------|-------|
 | **archived-democratic-csi-truenas** | K8s persistent-storage migration tooling — Longhorn to NFS with TrueNAS/Proxmox API scripts. | `~/projects/archived-democratic-csi-truenas/` | Directory prefix "archived-" confirms intentional archival. |
 | **bambu** | MCP server exposing Bambu Lab P1S printer control to Claude Code via Docker. | `~/archive/bambu/` | Lives in ~/archive/ — superseded or parked. |
+| **bambu** | MCP server exposing Bambu Lab P1S printer control to Claude Code via Docker. | `~/projects/homelab-config/archive/bambu/` | Lives in ~/archive/ — superseded or parked. |
 | **engram** | Archived Python v1 of the Engram persistent memory service for AI agents; superseded by engram-go. | `~/projects/engram/` | v1 — no new features. Active work is in engram-go. NEVER run docker compose down -v. |
 | **nextcloud-deployment** | Completed Nextcloud production deployment for nextcloud.petersimmons.com (Dec 2025). | `~/projects/archive/nextcloud-deployment/` | FINAL-PROJECT-ARCHIVE.md confirms status "COMPLETE — Production Ready" as of 2025-12-17. |
 
@@ -60,5 +62,7 @@ _Active projects deliberately excluded from this index:_
 
 ## Parse Warnings
 _The following files were skipped — no frontmatter or missing required fields:_
+- `/home/psimmons/projects/agentgateway-v2/CLAUDE.md (no frontmatter)`
 - `/home/psimmons/projects/generals/CLAUDE.md (no frontmatter)`
+- `/home/psimmons/projects/homelab-config/CLAUDE.md (no frontmatter)`
 - `/home/psimmons/projects/security-intelligence-business/CLAUDE.md (no frontmatter)`
