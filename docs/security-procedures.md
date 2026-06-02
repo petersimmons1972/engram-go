@@ -317,7 +317,7 @@ Label the issue: `security/incident` + appropriate `severity/*` label.
 | Incident                                                              | Status               | Action needed                                          |
 |-----------------------------------------------------------------------|----------------------|-------------------------------------------------------|
 | Engram DB password captured in k8s pod logs (PR #1 QA)               | VERIFIED 2026-05-30: Rotated 2026-05-19, issue #743 closed | None — rotation complete. |
-| ENGRAM_API_KEY Bearer token appeared in two local (never-pushed) commits; history soft-reset before push; .claude/mcp_servers.json now gitignored (issue #65) | Contained — not pushed. | Rotate ENGRAM_API_KEY as precaution; add gitleaks pre-commit hook. |
+| ENGRAM_API_KEY Bearer token appeared in two local (never-pushed) commits; history soft-reset before push; .claude/mcp_servers.json now gitignored (issue #65) | REMEDIATED — `.claude/mcp_servers.json` gitignored; `.claude/mcp_servers.json.example` template added; `.gitleaks.toml` added for repo-level secret scanning (fix/65-redact-engram-token). | ⚠️ FOUNDER ACTION: Rotate ENGRAM_API_KEY as precaution even though token never reached remote. History decision: token present in local commits only — assess whether BFG/filter-repo scrub is warranted. |
 
 ---
 
