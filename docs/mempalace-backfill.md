@@ -2,7 +2,7 @@
 
 ## Overview
 
-Migration 026 adds a 2-level hierarchical recall path (MemPalace). The schema is in place
+Migration 028 adds a 2-level hierarchical recall path (MemPalace). The schema is in place
 after `go run ./cmd/engram-setup` or server startup, but **existing memories have
 `cluster_id = NULL` and gain no benefit until back-fill runs.**
 

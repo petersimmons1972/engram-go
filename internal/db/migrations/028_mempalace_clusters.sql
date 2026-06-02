@@ -1,4 +1,4 @@
--- Migration 026: MemPalace hierarchical clustering tables (LME experiment #9)
+-- Migration 028: MemPalace hierarchical clustering tables (LME experiment #9)
 --
 -- Adds a 2-level coarse→fine hierarchy for hierarchical recall filtering:
 --   Level 1 (coarse): memory_clusters — one centroid vector per topic cluster per project

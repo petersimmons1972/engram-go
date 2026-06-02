@@ -289,12 +289,12 @@ func TestMemPalace_Migration_SchemaObjectsExist(t *testing.T) {
 	// Verify memory_clusters table exists by checking information_schema.
 	tableExists, err := backend.TableExists(ctx, "memory_clusters")
 	require.NoError(t, err)
-	require.True(t, tableExists, "memory_clusters table must exist after migration 026")
+	require.True(t, tableExists, "memory_clusters table must exist after migration 028")
 
 	// Verify cluster_id column on memories table.
 	colExists, err := backend.ColumnExists(ctx, "memories", "cluster_id")
 	require.NoError(t, err)
-	require.True(t, colExists, "memories.cluster_id column must exist after migration 026")
+	require.True(t, colExists, "memories.cluster_id column must exist after migration 028")
 }
 
 // ── T6: NULL cluster_id falls back gracefully ─────────────────────────────────
