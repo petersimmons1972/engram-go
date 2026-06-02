@@ -30,18 +30,24 @@ type Server struct {
 
 // NewServer binds a Unix socket at sockPath and returns a ready Server. Any
 // stale socket file at sockPath is removed first (a leftover from a crashed
-// daemon). The caller owns Run and Close.
-func NewServer(d *Daemon, sockPath string) (*Server, error) {
+// daemon). The caller owns Run and Close. ctx scopes the bind and the
+// liveness-probe dial.
+func NewServer(ctx context.Context, d *Daemon, sockPath string) (*Server, error) {
 	// Remove a stale socket if no daemon is actually listening. If a live daemon
 	// owns it, the bind below will fail and we surface that to the caller.
 	if _, err := os.Stat(sockPath); err == nil {
-		if c, derr := net.Dial("unix", sockPath); derr == nil {
+		var dialer net.Dialer
+		probeCtx, cancel := context.WithTimeout(ctx, time.Second)
+		c, derr := dialer.DialContext(probeCtx, "unix", sockPath)
+		cancel()
+		if derr == nil {
 			_ = c.Close()
 			return nil, fmt.Errorf("hookdaemon: socket %s already has a live daemon", sockPath)
 		}
 		_ = os.Remove(sockPath)
 	}
-	ln, err := net.Listen("unix", sockPath)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "unix", sockPath)
 	if err != nil {
 		return nil, fmt.Errorf("hookdaemon: listen %s: %w", sockPath, err)
 	}
@@ -108,7 +114,7 @@ func (s *Server) idleWatchdog(ctx context.Context) {
 // handleConn reads one Request, dispatches it, and writes one Response. The
 // protocol is one JSON request line in, one JSON response line out, then close.
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(perConnTimeout))
 
 	var req Request

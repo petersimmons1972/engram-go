@@ -20,7 +20,7 @@ func newServerForTest(t *testing.T, idle time.Duration) (*Server, *fakeClock) {
 		t.Fatalf("New: %v", err)
 	}
 	sock := filepath.Join(t.TempDir(), "hook.sock")
-	srv, err := NewServer(d, sock)
+	srv, err := NewServer(context.Background(), d, sock)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestServer_RejectsLiveSocket(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	d, _ := New(Config{Engram: &fakeEngram{}, Tokens: &fakeTokens{}})
-	if _, err := NewServer(d, srv.SocketPath()); err == nil {
+	if _, err := NewServer(context.Background(), d, srv.SocketPath()); err == nil {
 		t.Fatal("expected NewServer to reject an already-live socket")
 	}
 }
@@ -98,7 +98,7 @@ func TestSendWithRetry_StartsDaemonOnDialFailure(t *testing.T) {
 			Engram: &fakeEngram{authOK: true, recallByProj: map[string][]byte{}},
 			Tokens: &fakeTokens{token: "tok"}, Clock: clk, IdleTimeout: time.Minute,
 		})
-		srv, err := NewServer(d, sock)
+		srv, err := NewServer(context.Background(), d, sock)
 		if err != nil {
 			return err
 		}

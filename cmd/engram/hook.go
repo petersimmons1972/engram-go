@@ -23,22 +23,26 @@ func hookSocketPath() string {
 }
 
 // runHookDaemon implements `engram hook-daemon [--detach]`. Thin wiring: build
-// the production adapters, then hand off to the hookdaemon package. (#396)
+// the production adapters, then hand off to the hookdaemon package (#396).
 func runHookDaemon(args []string) error {
 	if len(args) > 0 && args[0] == "--detach" {
 		return detachHookDaemon()
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 	d, err := newHookDaemon()
 	if err != nil {
 		return err
 	}
-	srv, err := hookdaemon.NewServer(d, hookSocketPath())
+	srv, err := hookdaemon.NewServer(ctx, d, hookSocketPath())
 	if err != nil {
 		return err
 	}
-	defer srv.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+	defer func() {
+		if cerr := srv.Close(); cerr != nil {
+			slog.Warn("hook daemon: socket close", "err", cerr)
+		}
+	}()
 	slog.Info("engram hook daemon started", "socket", srv.SocketPath())
 	return srv.Run(ctx)
 }
@@ -83,7 +87,7 @@ func claudeProjectSlug(path string) string {
 }
 
 // detachHookDaemon re-execs this binary as a background hook-daemon, with stderr
-// redirected to the rotating log file, then returns immediately. (#396)
+// redirected to the rotating log file, then returns immediately (#396).
 func detachHookDaemon() error {
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".claude", "logs")
@@ -94,12 +98,14 @@ func detachHookDaemon() error {
 	if err != nil {
 		return err
 	}
-	defer lf.Close()
+	defer func() { _ = lf.Close() }()
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "hook-daemon")
+	// The child is intentionally detached and outlives this process, so it is
+	// not bound to a cancellable context (Setsid reparents it to init).
+	cmd := exec.CommandContext(context.Background(), exe, "hook-daemon")
 	cmd.Stdout = lf
 	cmd.Stderr = lf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from session
@@ -108,7 +114,7 @@ func detachHookDaemon() error {
 }
 
 // rotateHookLog renames the log to .1 when it exceeds 5 MiB (simple 1-file
-// rotation; keeps the daemon log from growing unbounded). (#396)
+// rotation; keeps the daemon log from growing unbounded) (#396).
 func rotateHookLog(path string) {
 	const maxBytes = 5 << 20
 	if fi, err := os.Stat(path); err == nil && fi.Size() > maxBytes {
@@ -118,7 +124,7 @@ func rotateHookLog(path string) {
 
 // runHookShim implements `engram hook <EventName>`: read stdin, forward to the
 // daemon (lazy-starting it on dial failure), print response stdout, exit with
-// the daemon's exit code. (#396)
+// the daemon's exit code (#396).
 func runHookShim(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: engram hook <EventName>")
@@ -162,7 +168,9 @@ func hookStatus() error {
 // inferEngramProject maps the current git repo name to an Engram project,
 // mirroring engram-session-recall.sh. Returns "" when no mapping applies.
 func inferEngramProject() string {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}

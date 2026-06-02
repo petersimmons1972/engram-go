@@ -2,6 +2,7 @@ package hookdaemon
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,11 +17,14 @@ const dialTimeout = 5 * time.Second
 // Response. It is the core of the `engram hook <EventName>` shim. No socat
 // dependency — pure Go.
 func SendRequest(sockPath string, req Request) (Response, error) {
-	conn, err := net.DialTimeout("unix", sockPath, dialTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		return Response{}, fmt.Errorf("dial %s: %w", sockPath, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(perConnTimeout))
 
 	b, err := json.Marshal(req)

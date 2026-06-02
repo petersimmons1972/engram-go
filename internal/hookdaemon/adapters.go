@@ -48,7 +48,7 @@ func (c *httpEngramClient) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health: status %d", resp.StatusCode)
 	}
@@ -70,7 +70,7 @@ func (c *httpEngramClient) CheckAuth(ctx context.Context, token string) (bool, e
 		// 000-equivalent: unreachable → not OK.
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// 401 = bad token; anything else (incl. 500) = token accepted. Matches the
 	// shell scripts' auth semantics exactly.
 	return resp.StatusCode != http.StatusUnauthorized, nil
@@ -90,7 +90,7 @@ func (c *httpEngramClient) Recall(ctx context.Context, token, query, project str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("recall: status %d", resp.StatusCode)
 	}
@@ -110,7 +110,7 @@ func (c *httpEngramClient) QuickStore(ctx context.Context, token string, body []
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("quick-store: status %d", resp.StatusCode)
 	}
