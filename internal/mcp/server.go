@@ -824,6 +824,11 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// active SSE session (e.g. Python subprocesses in the Clearwatch pipeline).
 	mux.Handle("/quick-recall", s.applyMiddleware(http.HandlerFunc(s.handleQuickRecall), apiKey, rl))
 
+	// /atoms — Milestone 1 (#938) atom REST endpoint.
+	// POST {"action":"store","project":...,"atom":{...},"embedding":[...]} → stores atom + embedding.
+	// POST {"project":...,"atom_type":...,"top_k":N} → returns {"atoms":[...]} for --atom-mode recall.
+	mux.Handle("/atoms", s.applyMiddleware(http.HandlerFunc(s.handleAtoms), apiKey, rl))
+
 	// All other authenticated routes (including /sse) go through the standard middleware.
 	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
 
