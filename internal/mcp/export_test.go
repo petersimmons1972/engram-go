@@ -262,21 +262,31 @@ func CallHandleMemoryRecall(
 // path (projects list) and returns the decoded output map. conflictSlice
 // entries in "conflicting_results" are re-hydrated to []types.ConflictingResult
 // so callers can make typed assertions.
+//
+// topK controls the top_k recall parameter. Conflict-enrichment tests should
+// pass topK=1 so that only one memory wins the primary slot, leaving its
+// contradicting peer available to EnrichWithConflicts (which skips memories
+// already present in primary results). Use topK=10 or higher when the test
+// only needs the absence/presence of the key, not a specific conflict entry.
 func CallHandleMemoryRecallFederated(
 	ctx context.Context,
 	t *testing.T,
 	pool *EnginePool,
 	projects []string,
 	query string,
+	topK int,
 	includeConflicts bool,
 ) map[string]any {
 	t.Helper()
 
+	if topK <= 0 {
+		topK = 10
+	}
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"projects":          projects,
 		"query":             query,
-		"top_k":             float64(10),
+		"top_k":             float64(topK),
 		"detail":            "full",
 		"include_conflicts": includeConflicts,
 	}

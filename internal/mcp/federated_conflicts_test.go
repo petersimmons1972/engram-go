@@ -25,11 +25,22 @@ import (
 // include_conflicts=true, the response contains a "conflicting_results" key
 // with at least one entry for a known contradiction.
 //
-// Before the fix in #154 this test will fail because the federated branch
+// Before the fix in #154 this test failed because the federated branch
 // returned immediately without reading include_conflicts, so
 // conflicting_results was never populated.
+//
+// Two setup requirements (mirroring TestHandleMemoryRecall_IncludeConflicts_Integration):
+//  1. FlushPendingEmbeddings must be called for BOTH projects: Store() writes
+//     chunks with nil embeddings and relies on the background reembed worker to
+//     fill them in; tests don't run that worker, so flushing synchronously is
+//     required for vector search to return any results at all.
+//  2. top_k must be 1: EnrichWithConflicts skips memories already present in
+//     the primary results slice (to avoid duplicating the same memory in both
+//     results and conflicting_results). With two memories and top_k≥2 both
+//     entries land in primary, and the contradicts edge is never surfaced.
+//     Using top_k=1 ensures only memA's engine wins the primary slot, leaving
+//     memB available to be discovered via the contradicts edge.
 func TestFederatedRecall_IncludeConflicts_NotSilentlyDropped(t *testing.T) {
-	t.Skip("blocked on cross-project StoreRelationship + GetMemory product decision — see #430")
 	dsn := testRecallDSN(t) // defined in conflicts_test.go; skips without TEST_DATABASE_URL
 	ctx := context.Background()
 
@@ -51,6 +62,9 @@ func TestFederatedRecall_IncludeConflicts_NotSilentlyDropped(t *testing.T) {
 	require.NoError(t, err)
 
 	// memA lives in proj1, memB in proj2. They contradict each other.
+	// The query "Friday fast iteration" targets memA's content strongly;
+	// memB's "too risky" phrasing scores lower, so memA wins the top_k=1
+	// primary slot and memB is surfaced via the contradicts edge.
 	memA := &types.Memory{
 		ID:          types.NewMemoryID(),
 		Content:     "Federated test: deploy every Friday for fast iteration.",
@@ -80,8 +94,15 @@ func TestFederatedRecall_IncludeConflicts_NotSilentlyDropped(t *testing.T) {
 	}
 	require.NoError(t, h1.Engine.Backend().StoreRelationship(ctx, rel))
 
-	// Invoke the federated path with include_conflicts=true.
-	out := internalmcp.CallHandleMemoryRecallFederated(ctx, t, pool, []string{proj1, proj2}, "deploy Friday", true)
+	// Backfill NULL embeddings for both projects synchronously so vector search
+	// returns results. Production relies on the background reembed worker;
+	// tests must flush manually (see FlushPendingEmbeddings doc in export_test.go).
+	internalmcp.FlushPendingEmbeddings(t, ctx, dsn, proj1)
+	internalmcp.FlushPendingEmbeddings(t, ctx, dsn, proj2)
+
+	// Invoke the federated path with include_conflicts=true and top_k=1 so
+	// only memA wins the primary slot and memB can be surfaced as a conflict.
+	out := internalmcp.CallHandleMemoryRecallFederated(ctx, t, pool, []string{proj1, proj2}, "Friday fast iteration", 1, true)
 
 	conflicts, ok := out["conflicting_results"]
 	require.True(t, ok, "conflicting_results key must be present in federated recall when include_conflicts=true")
@@ -123,7 +144,7 @@ func TestFederatedRecall_IncludeConflicts_FalseNoConflicts(t *testing.T) {
 	}
 	require.NoError(t, h1.Engine.Store(ctx, memA))
 
-	out := internalmcp.CallHandleMemoryRecallFederated(ctx, t, pool, []string{proj1, proj2}, "test before shipping", false)
+	out := internalmcp.CallHandleMemoryRecallFederated(ctx, t, pool, []string{proj1, proj2}, "test before shipping", 10, false)
 
 	_, present := out["conflicting_results"]
 	assert.False(t, present, "conflicting_results must be absent when include_conflicts=false on federated path")
