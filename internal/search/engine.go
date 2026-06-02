@@ -270,7 +270,16 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
 		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
-		embedRecallTimeout:  time.Duration(envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)) * time.Millisecond,
+		// Apply the same 0 → noEmbedTimeout mapping as SetEmbedRecallTimeout so
+		// ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 disables the embed deadline at startup
+		// (0*ms == 0, which would cause context.WithTimeout(ctx, 0) = immediate cancel, #973).
+		embedRecallTimeout: func() time.Duration {
+			ms := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
+			if ms == 0 {
+				return noEmbedTimeout
+			}
+			return time.Duration(ms) * time.Millisecond
+		}(),
 	}
 }
 
@@ -605,8 +614,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		if embedCtx.Err() != nil {
 			degradeReason = "embed_timeout"
 		}
+		timeoutField := slog.Int64("timeout_ms", e.embedRecallTimeout.Milliseconds())
+		if e.embedRecallTimeout == noEmbedTimeout {
+			timeoutField = slog.String("timeout_ms", "disabled")
+		}
 		slog.Warn("embed query failed, degrading to BM25+recency only",
-			"project", e.project, "timeout_ms", e.embedRecallTimeout.Milliseconds(),
+			"project", e.project, timeoutField,
 			"reason", degradeReason, "err", err)
 		queryVec = nil
 		embedDegraded = true
@@ -1048,8 +1061,12 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 		}
 		metrics.RecallEmbedTimeoutTotal.Inc()
 		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
+		withinTimeoutField := slog.Int64("timeout_ms", e.embedRecallTimeout.Milliseconds())
+		if e.embedRecallTimeout == noEmbedTimeout {
+			withinTimeoutField = slog.String("timeout_ms", "disabled")
+		}
 		slog.Warn("RecallWithinMemory embed failed, degrading to keyword search",
-			"memory_id", memoryID, "timeout_ms", e.embedRecallTimeout.Milliseconds(),
+			"memory_id", memoryID, withinTimeoutField,
 			"reason", degradeReason, "err", embedErr)
 		return e.recallWithinMemoryKeywordFallback(ctx, query, memoryID, topK)
 	}
