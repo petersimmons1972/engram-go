@@ -183,6 +183,7 @@ type SearchEngine struct {
 	globalReembedder    globalNotifier      // non-nil after SetGlobalReembedder; woken on chunk store
 	embedGateway        embedGateway        // non-nil when ENGRAM_EMBED_GW_ENABLED=true
 	PreferenceExtractor PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
+	hydeIndexer         *HydeIndexer        // nil when ENGRAM_HYDE_ENABLED=false or backend lacks hydeBackend
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
@@ -220,6 +221,13 @@ func (e *SearchEngine) SetGlobalReembedder(n globalNotifier) {
 
 func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 	e.embedGateway = g
+}
+
+// SetHydeIndexer wires a HydeIndexer so that StoreWithRawBody generates and
+// stores a HyDE embedding for each memory when ENGRAM_HYDE_ENABLED=true.
+// Call once after New(), with a nil guard: passing nil disables HyDE indexing.
+func (e *SearchEngine) SetHydeIndexer(idx *HydeIndexer) {
+	e.hydeIndexer = idx
 }
 
 // SetEmbedRecallTimeout overrides the embed call budget used during recall.
@@ -484,6 +492,14 @@ func (e *SearchEngine) StoreWithRawBody(ctx context.Context, m *types.Memory, ra
 		}
 		if e.globalReembedder != nil && e.embedGateway == nil {
 			e.globalReembedder.Notify()
+		}
+	}
+	// HyDE indexing: generate and store a hypothetical question embedding for
+	// the memory. Best-effort: log but do not fail if this step errors.
+	// Gated on ENGRAM_HYDE_ENABLED=true and hydeIndexer being set.
+	if HydeEnabled() && e.hydeIndexer != nil {
+		if idxErr := e.hydeIndexer.IndexHydeForMemory(ctx, m); idxErr != nil {
+			slog.Warn("hyde: failed to index memory", "memory_id", m.ID, "err", idxErr)
 		}
 	}
 	// Count each store call that returned before embedding completed.
