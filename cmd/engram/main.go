@@ -460,15 +460,15 @@ func run() error {
 			}
 			return "closed"
 		},
-		DegradedErrorMode:        envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
-		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
-		IngestQueue:              ingestQ,
-		RateLimitRPS:             *rateLimitRPS,
-		RateLimitBurst:           *rateLimitBurst,
-		RateLimitDisable:         *rateLimitDisable,
-		SessionRehydrateWindow:   sessionRehydrateWindow,
-		EmbedRatePerSecond:       *embedRatePerSecond,
-		LogLevelVar:              logLevelVar,
+		DegradedErrorMode:      envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
+		SessionDB:              retentionBackend, // retentionBackend satisfies db.SessionRegistry
+		IngestQueue:            ingestQ,
+		RateLimitRPS:           *rateLimitRPS,
+		RateLimitBurst:         *rateLimitBurst,
+		RateLimitDisable:       *rateLimitDisable,
+		SessionRehydrateWindow: sessionRehydrateWindow,
+		EmbedRatePerSecond:     *embedRatePerSecond,
+		LogLevelVar:            logLevelVar,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/cache"
 	"github.com/petersimmons1972/engram/internal/benchmark"
+	"github.com/petersimmons1972/engram/internal/cache"
 )
 
 func TestRoundTrip(t *testing.T) {

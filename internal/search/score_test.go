@@ -20,8 +20,8 @@ func TestRecencyDecay(t *testing.T) {
 func TestImportanceBoost(t *testing.T) {
 	// importance scale: 0=critical (highest boost), 4=trivial (lowest boost)
 	require.InDelta(t, 5.0/3.0, search.ImportanceBoost(0), 0.001) // critical
-	require.InDelta(t, 1.0, search.ImportanceBoost(2), 0.001)      // neutral
-	require.InDelta(t, 1.0/3.0, search.ImportanceBoost(4), 0.001)  // trivial
+	require.InDelta(t, 1.0, search.ImportanceBoost(2), 0.001)     // neutral
+	require.InDelta(t, 1.0/3.0, search.ImportanceBoost(4), 0.001) // trivial
 	// boost decreases as importance value increases (more trivial)
 	require.Greater(t, search.ImportanceBoost(0), search.ImportanceBoost(4))
 }

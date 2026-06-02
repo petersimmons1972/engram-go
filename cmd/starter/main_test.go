@@ -43,7 +43,7 @@ func TestPatchDatabaseURLPassword(t *testing.T) {
 			dsn:      "postgres://user:old@host/db",
 			password: "p@ss!w0rd#$%",
 			// url.String() percent-encodes special chars in the password
-			want:     "postgres://user:p%40ss%21w0rd%23$%25@host/db",
+			want: "postgres://user:p%40ss%21w0rd%23$%25@host/db",
 		},
 		{
 			name:     "empty DSN returns unchanged",

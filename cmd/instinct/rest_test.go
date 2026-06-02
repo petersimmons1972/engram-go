@@ -377,4 +377,3 @@ func init() {
 	// Ensure hybridEngram implements engramAPI at compile time.
 	var _ engramAPI = (*hybridEngram)(nil)
 }
-

@@ -138,9 +138,9 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	degraded := map[string]any{"embed": !ok, "reason": reason}
 
 	return toolResult(map[string]any{
-		"id":        m.ID,
-		"status":    "stored",
-		"degraded":  degraded,
+		"id":       m.ID,
+		"status":   "stored",
+		"degraded": degraded,
 	})
 }
 
@@ -346,9 +346,9 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	degraded := map[string]any{"embed": !ok, "reason": reason}
 
 	return toolResult(map[string]any{
-		"ids":       ids,
-		"count":     len(ids),
-		"degraded":  degraded,
+		"ids":      ids,
+		"count":    len(ids),
+		"degraded": degraded,
 	})
 }
 

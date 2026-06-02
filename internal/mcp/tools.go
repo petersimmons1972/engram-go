@@ -29,7 +29,7 @@ type Config struct {
 	ClaudeConsolidateEnabled bool
 	ClaudeRerankEnabled      bool
 	RuntimeConfig            *RuntimeConfig
-	LogLevelVar             *slog.LevelVar
+	LogLevelVar              *slog.LevelVar
 	// DataDir is the base directory for all file-system operations (export,
 	// import, ingest). Paths provided by callers are validated to stay within
 	// this directory. Must be set; file-operation tools return an error if empty.

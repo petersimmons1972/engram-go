@@ -3,8 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -122,7 +122,7 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		InferRelationshipsLimit:         limit,
 		ContradictionDetectionLimit:     contradictionLimit,
 		LLMContradictionDetection:       llmDetect,
-		RouterURL:                        cfg.RouterURL,
+		RouterURL:                       cfg.RouterURL,
 		OllamaModel:                     llmModel,
 		LLMMaxCalls:                     llmMaxCalls,
 		AutoSupersede:                   autoSupersede,
@@ -156,9 +156,10 @@ func handleMemoryVerify(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 // project cleanup (#384).
 //
 // A-4 (#689) authorization gate: requires BOTH
-//   1. Server started with ENGRAM_ALLOW_PROJECT_DELETE=1 (out-of-band gate
-//      that an LLM cannot flip).
-//   2. confirm argument exactly matches the project argument (typo guard).
+//  1. Server started with ENGRAM_ALLOW_PROJECT_DELETE=1 (out-of-band gate
+//     that an LLM cannot flip).
+//  2. confirm argument exactly matches the project argument (typo guard).
+//
 // Both failures return a tool-level error (isError=true), not a Go error,
 // so the calling LLM sees structured guidance — not a transport failure.
 func handleMemoryDeleteProject(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

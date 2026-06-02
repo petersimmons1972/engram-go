@@ -149,4 +149,3 @@ func TestAsker_DefaultModel(t *testing.T) {
 // They will compile only once those interfaces are defined in the rag package.
 var _ rag.Recaller = (*stubRecaller)(nil)
 var _ rag.ClaudeCompleter = (*stubCompleter)(nil)
-

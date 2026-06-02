@@ -1,8 +1,8 @@
 package embed
 
 import (
-	"log/slog"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -44,26 +44,26 @@ type CircuitConfig struct {
 // CircuitBreaker implements the circuit breaker pattern with three states:
 // Closed (normal operation), Open (short-circuit), and HalfOpen (testing recovery).
 type CircuitBreaker struct {
-	mu                sync.Mutex
-	state             CircuitState
-	failures          []time.Time // sliding window of failure timestamps
-	openedAt          time.Time
-	nextProbeAt       time.Time
-	consecutiveOpens  int
-	cfg               CircuitConfig
-	probeInFlight     bool
-	onStateChange     func(from, to CircuitState) // callback for transitions
-	now               func() time.Time             // injectable time for testing
+	mu               sync.Mutex
+	state            CircuitState
+	failures         []time.Time // sliding window of failure timestamps
+	openedAt         time.Time
+	nextProbeAt      time.Time
+	consecutiveOpens int
+	cfg              CircuitConfig
+	probeInFlight    bool
+	onStateChange    func(from, to CircuitState) // callback for transitions
+	now              func() time.Time            // injectable time for testing
 }
 
 // NewCircuitBreaker creates a new circuit breaker with the given config.
 func NewCircuitBreaker(cfg CircuitConfig) *CircuitBreaker {
 	return &CircuitBreaker{
-		state:        StateClosed,
-		failures:     make([]time.Time, 0),
-		cfg:          cfg,
+		state:         StateClosed,
+		failures:      make([]time.Time, 0),
+		cfg:           cfg,
 		probeInFlight: false,
-		now:          time.Now,
+		now:           time.Now,
 	}
 }
 

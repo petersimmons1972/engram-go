@@ -32,13 +32,13 @@ const consecutiveErrorThreshold = 3
 // It uses FOR UPDATE SKIP LOCKED so multiple server instances can safely
 // run concurrent GlobalReembedders against the same database (#359).
 type GlobalReembedder struct {
-	pool             *pgxpool.Pool
-	embedder         embed.Client
-	batchSize        int
-	interval         time.Duration
-	startOnce        sync.Once
-	done             chan struct{}
-	notify           chan struct{}
+	pool              *pgxpool.Pool
+	embedder          embed.Client
+	batchSize         int
+	interval          time.Duration
+	startOnce         sync.Once
+	done              chan struct{}
+	notify            chan struct{}
 	consecutiveErrors atomic.Int64 // counts consecutive batch errors; resets on success
 }
 
@@ -269,7 +269,6 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) (int, error) {
 	_ = eg.Wait()
 	return len(chunks), nil
 }
-
 
 // safeRunBatch wraps runBatch with per-iteration panic recovery, mirroring
 // internal/reembed/worker.go's per-project Worker.safeRunBatch. Without this,

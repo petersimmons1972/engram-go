@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/benchmark"
+	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 

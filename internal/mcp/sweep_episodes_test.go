@@ -22,10 +22,10 @@ import (
 
 type sweepTrackingBackend struct {
 	noopBackend
-	calls    atomic.Int32   // number of CloseStaleEpisodes calls
-	lastTTL  atomic.Value   // stores time.Duration of last call
-	returnN  int64          // rows to report as affected
-	returnErr error         // error to return (nil by default)
+	calls     atomic.Int32 // number of CloseStaleEpisodes calls
+	lastTTL   atomic.Value // stores time.Duration of last call
+	returnN   int64        // rows to report as affected
+	returnErr error        // error to return (nil by default)
 }
 
 func (b *sweepTrackingBackend) CloseStaleEpisodes(_ context.Context, olderThan time.Duration) (int64, error) {

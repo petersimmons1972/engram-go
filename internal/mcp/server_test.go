@@ -391,7 +391,7 @@ func TestHealthProbe_OllamaDegraded_Returns200WithDegradedField(t *testing.T) {
 	b.Store(true)
 	s := &Server{
 		cfg: Config{
-			RouterURL:      unreachableOllama,
+			RouterURL:     unreachableOllama,
 			EmbedDegraded: true, // set as if startup probe failed
 		},
 		embedDegraded: b,
@@ -428,7 +428,7 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 	b.Store(true)
 	s := &Server{
 		cfg: Config{
-			RouterURL:      fakeOllama.URL,
+			RouterURL:     fakeOllama.URL,
 			EmbedDegraded: true, // startup probe failed, but Ollama recovered
 		},
 		embedDegraded: b,
@@ -456,10 +456,10 @@ func TestHealthProbe_OllamaDegraded_RecoveredOllamaReportsOK(t *testing.T) {
 // unit tests that need to fire session hooks without a real SSE connection.
 type fakeClientSession struct{ id string }
 
-func (f *fakeClientSession) SessionID() string                                      { return f.id }
-func (f *fakeClientSession) Initialize()                                             {}
-func (f *fakeClientSession) Initialized() bool                                       { return true }
-func (f *fakeClientSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification    { return nil }
+func (f *fakeClientSession) SessionID() string                                     { return f.id }
+func (f *fakeClientSession) Initialize()                                           {}
+func (f *fakeClientSession) Initialized() bool                                     { return true }
+func (f *fakeClientSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification { return nil }
 
 // TestSSEConnect_DoesNotAutoStartEpisode verifies that the OnRegisterSession
 // hook only stores the HMAC fingerprint and does NOT call StartEpisode.

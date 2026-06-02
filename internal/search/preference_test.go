@@ -219,7 +219,7 @@ func TestKnowledgeUpdateWeightsBoostRecency(t *testing.T) {
 }
 
 func TestTemporalAnchorHours_UsesValidFrom(t *testing.T) {
-	old := time.Now().Add(-720 * time.Hour)  // 30 days ago
+	old := time.Now().Add(-720 * time.Hour)   // 30 days ago
 	recent := time.Now().Add(-24 * time.Hour) // 1 day ago
 
 	mOld := types.Memory{LastAccessed: time.Now(), ValidFrom: &old}

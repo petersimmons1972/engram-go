@@ -127,7 +127,7 @@ func (b *cacheMetaBackend) MergeMemoriesAtomic(_ context.Context, _, _, _, _ str
 func (b *cacheMetaBackend) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error) {
 	return nil, nil
 }
-func (b *cacheMetaBackend) TouchMemory(_ context.Context, _ string) error  { return nil }
+func (b *cacheMetaBackend) TouchMemory(_ context.Context, _ string) error     { return nil }
 func (b *cacheMetaBackend) TouchMemories(_ context.Context, _ []string) error { return nil }
 
 func (b *cacheMetaBackend) StoreChunks(_ context.Context, _ []*types.Chunk) error { return nil }

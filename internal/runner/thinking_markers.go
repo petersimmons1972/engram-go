@@ -10,7 +10,7 @@ var thinkingMarkers = []string{
 	"</think>",
 	"<thinking>",
 	"</thinking>",
-	" Thought:",            // DeepSeek R1 style
+	" Thought:",           // DeepSeek R1 style
 	"<|channel|>analysis", // GPT-OSS Harmony format
 }
 
