@@ -15,19 +15,12 @@ import (
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/search"
-	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
 // makeItem is a helper to construct a RerankItem with a preset score.
 func makeItem(id, summary string, score float64) search.RerankItem {
 	return search.RerankItem{ID: id, Summary: summary, Score: score}
-}
-
-// makeMem builds a minimal *types.Memory with the given ID and content.
-// Retained for future tests that exercise memory-level logic.
-func makeMem(id, content string) *types.Memory {
-	return &types.Memory{ID: id, Content: content}
 }
 
 // --- Unit tests for AnswerabilityScore ---
