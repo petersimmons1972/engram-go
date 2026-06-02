@@ -44,6 +44,8 @@ type AtomBuildConfig struct {
 	Retries      int
 	DatabaseURL  string // when set, store atoms directly via DB connection (--direct-db path)
 	AtomCacheDir string // when set, also write atoms to <dir>/<project>.json for local fallback
+	Extractor    string // "olla" (default, GenerateOAI) or "sonnet" (claude --print --model sonnet)
+	MaxSessions  int    // cap sessions extracted per question (0 = all); answer sessions always included
 }
 
 // oaiCompleterAdapter wraps GenerateOAI to satisfy atom.ClaudeCompleter.
@@ -58,6 +60,20 @@ type oaiCompleterAdapter struct {
 func (a *oaiCompleterAdapter) Complete(ctx context.Context, system, prompt, _, _ string, _ int, maxTokens int) (string, error) {
 	combined := system + "\n\n" + prompt
 	return longmemeval.GenerateOAI(ctx, combined, a.baseURL, a.model, a.retries)
+}
+
+// sonnetCompleterAdapter satisfies atom.ClaudeCompleter by calling
+// `claude --print --model sonnet` (the GenerateSonnet path). Used for the
+// best-case extraction arm (founder-authorized Sonnet extraction). The atom
+// extractor passes system + prompt; we concatenate them for the single-prompt
+// claude --print interface.
+type sonnetCompleterAdapter struct {
+	retries int
+}
+
+func (a *sonnetCompleterAdapter) Complete(ctx context.Context, system, prompt, _, _ string, _ int, _ int) (string, error) {
+	combined := system + "\n\n" + prompt
+	return longmemeval.GenerateSonnet(ctx, combined, a.retries)
 }
 
 // atomBuildEntry is written to checkpoint-atom-build.jsonl.
@@ -76,19 +92,28 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
 		return 1
 	}
-	if cfg.LLMBaseURL == "" {
-		_, _ = fmt.Fprintln(stderr, "--llm-url is required (local olla endpoint)")
-		return 1
-	}
-	if cfg.LLMModel == "" {
-		_, _ = fmt.Fprintln(stderr, "--llm-model is required")
-		return 1
+	// --llm-url / --llm-model are only required for the olla extractor.
+	// The sonnet extractor uses claude --print and needs neither.
+	if cfg.Extractor != "sonnet" {
+		if cfg.LLMBaseURL == "" {
+			_, _ = fmt.Fprintln(stderr, "--llm-url is required (local olla endpoint) unless --extractor sonnet")
+			return 1
+		}
+		if cfg.LLMModel == "" {
+			_, _ = fmt.Fprintln(stderr, "--llm-model is required unless --extractor sonnet")
+			return 1
+		}
 	}
 	if cfg.EmbedURL == "" {
 		cfg.EmbedURL = cfg.LLMBaseURL
 	}
 	if cfg.EmbedModel == "" {
 		cfg.EmbedModel = "BAAI/bge-m3"
+	}
+	// Embedding always needs a real endpoint (Claude has no embedding API).
+	if cfg.EmbedURL == "" {
+		_, _ = fmt.Fprintln(stderr, "--embed-url is required (bge-m3 via olla)")
+		return 1
 	}
 
 	// Load ingest checkpoint to know which (project, question_id) pairs exist.
@@ -122,8 +147,20 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 	// Build embedding client (olla OAI-compatible /v1/embeddings).
 	embedClient := embed.NewLiteLLMClientNoProbe(cfg.EmbedURL, cfg.EmbedModel, "", 1024)
 
-	// Build extractor backed by olla.
-	completer := &oaiCompleterAdapter{baseURL: cfg.LLMBaseURL, model: cfg.LLMModel, retries: cfg.Retries}
+	// Build the extraction completer. "sonnet" uses claude --print --model sonnet
+	// (best-case extraction arm); "olla" (default) uses the local OAI endpoint.
+	var completer atom.ClaudeCompleter
+	switch cfg.Extractor {
+	case "sonnet":
+		completer = &sonnetCompleterAdapter{retries: cfg.Retries}
+		log.Printf("atom-build: extractor=sonnet (claude --print)")
+	case "", "olla":
+		completer = &oaiCompleterAdapter{baseURL: cfg.LLMBaseURL, model: cfg.LLMModel, retries: cfg.Retries}
+		log.Printf("atom-build: extractor=olla (%s)", cfg.LLMModel)
+	default:
+		_, _ = fmt.Fprintf(stderr, "invalid --extractor %q: must be olla or sonnet\n", cfg.Extractor)
+		return 1
+	}
 	extractor := atom.NewClaudeExtractor(completer)
 
 	// Build the atom storage function.
@@ -208,7 +245,7 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			atomBuildWorker(extractor, embedClient, storeAtom, cfg.AtomCacheDir, workCh, ckptCh)
+			atomBuildWorker(extractor, embedClient, storeAtom, cfg.AtomCacheDir, cfg.MaxSessions, workCh, ckptCh)
 		}()
 	}
 	wg.Wait()
@@ -239,6 +276,7 @@ func atomBuildWorker(
 	embedClient *embed.LiteLLMClient,
 	storeAtom atomStoreFunc,
 	atomCacheDir string,
+	maxSessions int,
 	workCh <-chan atomBuildWorkItem,
 	ckptCh chan<- atomBuildEntry,
 ) {
@@ -251,29 +289,53 @@ func atomBuildWorker(
 			Project:    entry.Project,
 		}
 
-		sessionText := buildSessionText(item)
-		if sessionText == "" {
+		// Extract PER-SESSION, not from a truncated concatenation. The haystack
+		// for one LME question is ~470 sessions / up to 5 MB of text; the previous
+		// concat-then-truncate(6000) approach only ever saw the first ~2 sessions,
+		// so the answer session (median offset ~2.7 MB) was never read and no
+		// gold-relevant atom could be extracted. Per-session extraction mirrors the
+		// production atom worker (internal/atom/worker.go extracts per memory).
+		sessionTexts := buildSessionTexts(item, maxSessions)
+		if len(sessionTexts) == 0 {
 			result.Status = "error"
 			result.Error = "no session text"
 			ckptCh <- result
 			continue
 		}
 
-		// 10-minute cap: slow reasoning models (Qwen3 thinking via olla) can take
-		// several minutes on long session concatenations. Must exceed the embed
-		// client's internal timeout headroom; the GenerateOAI call inside Extract
-		// has its own 600s per-attempt cap (generateTimeout).
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		atoms, err := extractor.Extract(ctx, sessionText)
-		cancel()
-		if err != nil {
-			log.Printf("WARN atom-build [%s] extract: %v", entry.QuestionID, err)
+		var atoms []atom.Atom
+		var extractErr error
+		for _, st := range sessionTexts {
+			if st.text == "" {
+				continue
+			}
+			// 5-minute cap per session. Each session is small (well under the
+			// extractor's 6000-char window), so this is generous.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			sa, err := extractor.Extract(ctx, st.text)
+			cancel()
+			if err != nil {
+				// Record the first error but keep going — one bad session must not
+				// zero out the whole question's atoms.
+				if extractErr == nil {
+					extractErr = err
+				}
+				log.Printf("WARN atom-build [%s] session %s extract: %v", entry.QuestionID, st.sessionID, err)
+				continue
+			}
+			// Stamp provenance: the session ID this atom came from.
+			for i := range sa {
+				sa[i].ProvenanceSpan = "session:" + st.sessionID
+			}
+			atoms = append(atoms, sa...)
+		}
+		result.AtomsFound = len(atoms)
+		if len(atoms) == 0 && extractErr != nil {
 			result.Status = "error"
-			result.Error = err.Error()
+			result.Error = extractErr.Error()
 			ckptCh <- result
 			continue
 		}
-		result.AtomsFound = len(atoms)
 
 		ok := 0
 		for i := range atoms {
@@ -302,7 +364,7 @@ func atomBuildWorker(
 		result.AtomsOK = ok
 		result.Status = "done"
 		ckptCh <- result
-		log.Printf("atom-build [%s] project=%s atoms=%d/%d", entry.QuestionID, entry.Project, ok, len(atoms))
+		log.Printf("atom-build [%s] project=%s atoms=%d/%d (sessions=%d)", entry.QuestionID, entry.Project, ok, len(atoms), len(sessionTexts))
 
 		// Write atom cache file for the --atom-cache-dir fallback.
 		if atomCacheDir != "" && len(atoms) > 0 {
@@ -313,19 +375,65 @@ func atomBuildWorker(
 	}
 }
 
-// buildSessionText concatenates all haystack session turns into a single text blob.
-func buildSessionText(item longmemeval.Item) string {
-	var sb strings.Builder
-	for i, session := range item.HaystackSessions {
-		if i < len(item.HaystackSessionIDs) {
-			sb.WriteString("Session: " + item.HaystackSessionIDs[i] + "\n")
-		}
+// sessionText pairs a haystack session ID with its formatted text.
+type sessionText struct {
+	sessionID string
+	text      string
+}
+
+// buildSessionTexts formats each haystack session independently so the extractor
+// reads every session (not just the first 6000 chars of a giant concatenation).
+//
+// maxSessions caps how many sessions are extracted per question (0 = all). When
+// capped, the answer session(s) are ALWAYS included (so the best-case validation
+// is meaningful), and the remainder are filled deterministically from the front
+// of the haystack to provide realistic non-gold preference noise.
+func buildSessionTexts(item longmemeval.Item, maxSessions int) []sessionText {
+	format := func(session []longmemeval.Turn) string {
+		var sb strings.Builder
 		for _, turn := range session {
 			sb.WriteString(turn.Role + ": " + turn.Content + "\n")
 		}
-		sb.WriteString("\n")
+		return sb.String()
 	}
-	return sb.String()
+
+	all := make([]sessionText, 0, len(item.HaystackSessions))
+	for i, session := range item.HaystackSessions {
+		sid := ""
+		if i < len(item.HaystackSessionIDs) {
+			sid = item.HaystackSessionIDs[i]
+		}
+		all = append(all, sessionText{sessionID: sid, text: format(session)})
+	}
+
+	if maxSessions <= 0 || len(all) <= maxSessions {
+		return all
+	}
+
+	answerIDs := make(map[string]bool, len(item.AnswerSessionIDs))
+	for _, id := range item.AnswerSessionIDs {
+		answerIDs[id] = true
+	}
+	picked := make([]sessionText, 0, maxSessions)
+	seen := make(map[string]bool)
+	// Always include answer sessions first.
+	for _, st := range all {
+		if answerIDs[st.sessionID] && !seen[st.sessionID] {
+			picked = append(picked, st)
+			seen[st.sessionID] = true
+		}
+	}
+	// Fill the rest deterministically from the front.
+	for _, st := range all {
+		if len(picked) >= maxSessions {
+			break
+		}
+		if !seen[st.sessionID] {
+			picked = append(picked, st)
+			seen[st.sessionID] = true
+		}
+	}
+	return picked
 }
 
 // makeRESTStoreFunc returns an atomStoreFunc that stores via POST /atoms.

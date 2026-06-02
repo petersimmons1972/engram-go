@@ -263,6 +263,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		abfs.IntVar(&ab.Retries, "retries", 1, "retry count for LLM/embed calls")
 		abfs.StringVar(&ab.DatabaseURL, "direct-db", envOr("DATABASE_URL", ""), "write atoms directly to Postgres DSN instead of via REST /atoms endpoint (use when /atoms not deployed)")
 		abfs.StringVar(&ab.AtomCacheDir, "atom-cache-dir", envOr("LME_ATOM_CACHE_DIR", ""), "also write per-project atom JSON files here for --atom-mode local fallback")
+		abfs.StringVar(&ab.Extractor, "extractor", envOr("LME_ATOM_EXTRACTOR", "olla"), "atom extraction model: olla (GenerateOAI) or sonnet (claude --print --model sonnet)")
+		abfs.IntVar(&ab.MaxSessions, "max-sessions", 0, "cap sessions extracted per question (0=all); answer sessions always included")
 		if exit := parseFlagSet(abfs, args[2:]); exit >= 0 {
 			return exit
 		}
