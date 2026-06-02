@@ -10,7 +10,6 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/claude"
-	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -33,7 +32,12 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 }
 
 func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
-	metrics.RecallDegradedTotal.WithLabelValues(reason).Inc()
+	// NOTE: RecallDegradedTotal is intentionally NOT incremented here.
+	// The engine layer (RecallWithOpts / RecallWithinMemory) is the single
+	// source of truth for this counter: it fires with the correct reason label
+	// derived from the actual embed error, and it covers all callers (MCP and
+	// non-MCP alike). Incrementing here would double-count every MCP recall
+	// that goes through the engine. (#973/#917 blocker fix)
 	slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
 		"embed_endpoint", endpoint,
 		"reason", reason)

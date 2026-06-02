@@ -146,6 +146,12 @@ type bestHit struct {
 // deadline is untouched. Configurable via ENGRAM_EMBED_RECALL_TIMEOUT_MS.
 const defaultEmbedRecallTimeoutMS = 500
 
+// noEmbedTimeout is a sentinel stored in embedRecallTimeout to indicate that
+// no per-embed deadline should be applied. The parent context's deadline (if
+// any) governs the embed call instead. Set by SetEmbedRecallTimeout(0) which
+// is the documented contract for "--embed-recall-timeout-ms=0 = no timeout".
+const noEmbedTimeout = time.Duration(-1)
+
 // SearchEngine is the core retrieval engine: it stores memories (chunked + embedded)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
@@ -203,13 +209,18 @@ func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 }
 
 // SetEmbedRecallTimeout overrides the embed call budget used during recall.
-// When ms > 0 the engine uses that value instead of the 500ms default; when ms
-// is 0 the default is preserved. Call this after New() to thread the value from
-// the --embed-recall-timeout-ms CLI flag (#932).
+// When ms > 0 the engine uses that value instead of the 500ms default.
+// When ms == 0, the embed timeout is disabled entirely: the parent context's
+// deadline governs the embed call (documented contract for --embed-recall-timeout-ms=0).
+// Call this after New() to thread the value from the --embed-recall-timeout-ms
+// CLI flag (#932, #973).
 func (e *SearchEngine) SetEmbedRecallTimeout(ms int) {
 	if ms > 0 {
 		e.embedRecallTimeout = time.Duration(ms) * time.Millisecond
+	} else if ms == 0 {
+		e.embedRecallTimeout = noEmbedTimeout
 	}
+	// ms < 0: no-op; leave the current value (env-var default or prior set).
 }
 
 // New constructs a SearchEngine and starts background workers (summarize, reembed,
@@ -259,7 +270,16 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
 		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
-		embedRecallTimeout:  time.Duration(envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)) * time.Millisecond,
+		// Apply the same 0 → noEmbedTimeout mapping as SetEmbedRecallTimeout so
+		// ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 disables the embed deadline at startup
+		// (0*ms == 0, which would cause context.WithTimeout(ctx, 0) = immediate cancel, #973).
+		embedRecallTimeout: func() time.Duration {
+			ms := envconf.Int("ENGRAM_EMBED_RECALL_TIMEOUT_MS", defaultEmbedRecallTimeoutMS)
+			if ms == 0 {
+				return noEmbedTimeout
+			}
+			return time.Duration(ms) * time.Millisecond
+		}(),
 	}
 }
 
@@ -571,20 +591,40 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// governs the rest of the operation (VectorSearch, FTS, etc.). This prevents a
 	// hanging embedder from cancelling the parent context and surfacing a
 	// "context canceled" error to callers.
-	embedTimeout := e.embedRecallTimeout
-	if embedTimeout <= 0 {
-		embedTimeout = defaultEmbedRecallTimeoutMS * time.Millisecond
+	//
+	// When embedRecallTimeout == noEmbedTimeout (set by SetEmbedRecallTimeout(0)),
+	// no per-embed deadline is applied and the parent context governs the call
+	// directly. This is the documented contract for --embed-recall-timeout-ms=0.
+	var embedCtx context.Context
+	var embedCancel context.CancelFunc
+	if e.embedRecallTimeout == noEmbedTimeout {
+		embedCtx, embedCancel = ctx, func() {}
+	} else {
+		embedCtx, embedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
 	}
-	embedCtx, embedCancel := context.WithTimeout(ctx, embedTimeout)
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	embedDegraded := false
 	if err != nil {
-		slog.Info("embed query failed, degrading to BM25+recency only",
-			"project", e.project, "timeout_ms", embedTimeout.Milliseconds(), "err", err)
+		// Distinguish a deadline-exceeded embed (backend saturated or slow) from a
+		// hard embed error (model crash, connection refused). Saturation is the
+		// primary driver of recall quality degradation under batch reembed load
+		// (#917); surfacing the reason at WARN lets operators act on it.
+		degradeReason := "embed_error"
+		if embedCtx.Err() != nil {
+			degradeReason = "embed_timeout"
+		}
+		timeoutField := slog.Int64("timeout_ms", e.embedRecallTimeout.Milliseconds())
+		if e.embedRecallTimeout == noEmbedTimeout {
+			timeoutField = slog.String("timeout_ms", "disabled")
+		}
+		slog.Warn("embed query failed, degrading to BM25+recency only",
+			"project", e.project, timeoutField,
+			"reason", degradeReason, "err", err)
 		queryVec = nil
 		embedDegraded = true
 		metrics.RecallEmbedTimeoutTotal.Inc()
+		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
 	}
 	// Populate the caller's embed degradation signal if they provided a pointer.
 	if opts.EmbedDegraded != nil {
@@ -996,11 +1036,15 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	// Embed call bounded by embedRecallTimeout, consistent with RecallWithOpts.
 	// On embed timeout or error, degrade to keyword-scored chunk search using
 	// GetChunksForMemory — mirrors the BM25+recency fallback in RecallWithOpts.
-	embedTimeout := e.embedRecallTimeout
-	if embedTimeout <= 0 {
-		embedTimeout = defaultEmbedRecallTimeoutMS * time.Millisecond
+	// When embedRecallTimeout == noEmbedTimeout, the parent context governs
+	// the embed call directly (--embed-recall-timeout-ms=0 contract, #973).
+	var embedCtx context.Context
+	var embedCancel context.CancelFunc
+	if e.embedRecallTimeout == noEmbedTimeout {
+		embedCtx, embedCancel = ctx, func() {}
+	} else {
+		embedCtx, embedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
 	}
-	embedCtx, embedCancel := context.WithTimeout(ctx, embedTimeout)
 	defer embedCancel()
 	queryVec, embedErr := e.getEmbedder().Embed(embedCtx, query)
 	if embedErr != nil {
@@ -1010,9 +1054,20 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
+		// Distinguish timeout (backend saturated) from hard error (#917).
+		degradeReason := "embed_error"
+		if embedCtx.Err() != nil {
+			degradeReason = "embed_timeout"
+		}
 		metrics.RecallEmbedTimeoutTotal.Inc()
-		slog.Info("RecallWithinMemory embed failed, degrading to keyword search",
-			"memory_id", memoryID, "timeout_ms", embedTimeout.Milliseconds(), "err", embedErr)
+		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
+		withinTimeoutField := slog.Int64("timeout_ms", e.embedRecallTimeout.Milliseconds())
+		if e.embedRecallTimeout == noEmbedTimeout {
+			withinTimeoutField = slog.String("timeout_ms", "disabled")
+		}
+		slog.Warn("RecallWithinMemory embed failed, degrading to keyword search",
+			"memory_id", memoryID, withinTimeoutField,
+			"reason", degradeReason, "err", embedErr)
 		return e.recallWithinMemoryKeywordFallback(ctx, query, memoryID, topK)
 	}
 	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)
