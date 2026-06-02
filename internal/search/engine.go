@@ -597,11 +597,21 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	embedDegraded := false
 	if err != nil {
-		slog.Info("embed query failed, degrading to BM25+recency only",
-			"project", e.project, "timeout_ms", e.embedRecallTimeout.Milliseconds(), "err", err)
+		// Distinguish a deadline-exceeded embed (backend saturated or slow) from a
+		// hard embed error (model crash, connection refused). Saturation is the
+		// primary driver of recall quality degradation under batch reembed load
+		// (#917); surfacing the reason at WARN lets operators act on it.
+		degradeReason := "embed_error"
+		if embedCtx.Err() != nil {
+			degradeReason = "embed_timeout"
+		}
+		slog.Warn("embed query failed, degrading to BM25+recency only",
+			"project", e.project, "timeout_ms", e.embedRecallTimeout.Milliseconds(),
+			"reason", degradeReason, "err", err)
 		queryVec = nil
 		embedDegraded = true
 		metrics.RecallEmbedTimeoutTotal.Inc()
+		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
 	}
 	// Populate the caller's embed degradation signal if they provided a pointer.
 	if opts.EmbedDegraded != nil {
@@ -1031,9 +1041,16 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
+		// Distinguish timeout (backend saturated) from hard error (#917).
+		degradeReason := "embed_error"
+		if embedCtx.Err() != nil {
+			degradeReason = "embed_timeout"
+		}
 		metrics.RecallEmbedTimeoutTotal.Inc()
-		slog.Info("RecallWithinMemory embed failed, degrading to keyword search",
-			"memory_id", memoryID, "timeout_ms", e.embedRecallTimeout.Milliseconds(), "err", embedErr)
+		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
+		slog.Warn("RecallWithinMemory embed failed, degrading to keyword search",
+			"memory_id", memoryID, "timeout_ms", e.embedRecallTimeout.Milliseconds(),
+			"reason", degradeReason, "err", embedErr)
 		return e.recallWithinMemoryKeywordFallback(ctx, query, memoryID, topK)
 	}
 	chunks, err := e.backend.SearchChunksWithinMemory(ctx, queryVec, memoryID, topK)

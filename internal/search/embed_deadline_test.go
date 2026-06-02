@@ -1,10 +1,13 @@
 package search_test
 
-// embed_deadline_test.go — E5 regression tests.
+// embed_deadline_test.go — E5 regression tests + #917 degradation signal tests.
 //
 // RecallWithOpts: embed failure must degrade to BM25+recency, never return an
 // error and never hang. RecallWithinMemory has no BM25 fallback (vector-only),
 // so it must return an error — but within 3s, not 15s.
+//
+// #917: degradation must be observable — EmbedDegraded flag set in RecallOpts
+// and the engram_recall_degraded_total metric incremented with reason label.
 
 import (
 	"context"
@@ -14,7 +17,9 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/search"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,4 +175,59 @@ func TestSetEmbedRecallTimeout_Positive_StillApplies(t *testing.T) {
 	require.Less(t, elapsed, 400*time.Millisecond,
 		"positive 200ms timeout must cut the embed short; got %s", elapsed)
 	require.NoError(t, parentCtx.Err(), "parent ctx must remain alive")
+}
+
+// ── #917: degradation must be observable (EmbedDegraded flag + metric) ────────
+
+// TestRecallDegradedSignal_TimeoutReason verifies that when the embed deadline
+// fires, RecallWithOpts sets opts.EmbedDegraded=true AND increments the
+// engram_recall_degraded_total metric with reason="embed_timeout". This is the
+// primary operator signal for detecting backend saturation (#917).
+func TestRecallDegradedSignal_TimeoutReason(t *testing.T) {
+	proj := uniqueProject("degraded-signal-timeout")
+	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Capture metric value before call.
+	before := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+
+	var degraded bool
+	opts := search.RecallOpts{EmbedDegraded: &degraded}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err, "timeout degradation must not return an error")
+	require.True(t, degraded, "EmbedDegraded must be set to true on embed timeout")
+
+	after := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_timeout"))
+	require.Equal(t, before+1, after,
+		"engram_recall_degraded_total{reason=embed_timeout} must increment by 1 on timeout")
+}
+
+// TestRecallDegradedSignal_ErrorReason verifies that when the embedder returns
+// a hard error (not a context cancellation), the reason label is "embed_error"
+// rather than "embed_timeout" — letting operators distinguish saturation from
+// model crashes (#917).
+func TestRecallDegradedSignal_ErrorReason(t *testing.T) {
+	proj := uniqueProject("degraded-signal-error")
+	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 1 * time.Millisecond})
+	// blockingClient with holdFor=1ms fires its own internal timer, not ctx.Done(),
+	// so embedCtx.Err() == nil and the reason must be "embed_error".
+
+	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	before := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+
+	var degraded bool
+	opts := search.RecallOpts{EmbedDegraded: &degraded}
+	_, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", opts)
+
+	require.NoError(t, err, "hard embed error must degrade gracefully, not return error")
+	require.True(t, degraded, "EmbedDegraded must be true on hard embed error")
+
+	after := promtest.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
+	require.Equal(t, before+1, after,
+		"engram_recall_degraded_total{reason=embed_error} must increment by 1 on hard error")
 }
