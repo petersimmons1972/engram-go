@@ -262,12 +262,42 @@ func (c *LiteLLMClient) Embed(ctx context.Context, text string) ([]float32, erro
 }
 
 func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
-	// Check circuit breaker before attempting request
+	// Check circuit breaker before attempting request.
+	//
+	// #1003: record-once guard — guarantees the probe slot granted by Allow()
+	// is released on EVERY return path (ctx-cancel, panic, normal exit).
+	// Mirrors the guarantee in runProbe.
+	//
+	// AbandonProbe (neutral release) is used for unresolved slots instead of
+	// RecordFailure: a cancelled client request is not evidence the backend is
+	// unhealthy. RecordFailure on cancel would spuriously inflate
+	// consecutiveOpens and extend backoff during load-shedding / drain events,
+	// potentially keeping the breaker stuck Open on a healthy upstream. (#1003)
+	cbSlotRecorded := false
+	recordCBOutcome := func(success bool) {
+		if c.cb == nil || cbSlotRecorded {
+			return
+		}
+		cbSlotRecorded = true
+		if success {
+			c.cb.RecordSuccess()
+		} else {
+			c.cb.RecordFailure()
+		}
+	}
 	if c.cb != nil {
 		if err := c.cb.Allow(); err != nil {
 			metrics.EmbedFailures.WithLabelValues("circuit_open").Inc()
 			return nil, "", err
 		}
+		// Slot granted. Deferred fallback: if neither RecordSuccess nor
+		// RecordFailure ran by the time the function returns (e.g. ctx was
+		// already cancelled), abandon the slot without penalty. (#1003)
+		defer func() {
+			if !cbSlotRecorded {
+				c.cb.AbandonProbe()
+			}
+		}()
 	}
 
 	text = TruncateToModelWindow(text, ModelMaxTokens(c.model))
@@ -323,9 +353,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			// Network error: check if retryable
 			if !isRetryableError(err, 0) {
 				metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-				if c.cb != nil {
-					c.cb.RecordFailure()
-				}
+				recordCBOutcome(false)
 				return nil, "", fmt.Errorf("litellm embed request: %w", err)
 			}
 			// Retryable error; log and retry
@@ -335,9 +363,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			}
 			// Last attempt failed
 			metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
-			if c.cb != nil {
-				c.cb.RecordFailure()
-			}
+			recordCBOutcome(false)
 			return nil, "", fmt.Errorf("litellm embed request (exhausted retries): %w", err)
 		}
 
@@ -350,9 +376,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 
 			if !isRetryableError(statusErr, resp.StatusCode) {
 				metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-				if c.cb != nil {
-					c.cb.RecordFailure()
-				}
+				recordCBOutcome(false)
 				return nil, "", fmt.Errorf("litellm embed: %w", statusErr)
 			}
 			// Retryable HTTP error; log and retry
@@ -362,9 +386,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			}
 			// Last attempt failed
 			metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
-			if c.cb != nil {
-				c.cb.RecordFailure()
-			}
+			recordCBOutcome(false)
 			return nil, "", fmt.Errorf("litellm embed: %w (exhausted retries)", statusErr)
 		}
 
@@ -379,9 +401,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			_ = resp.Body.Close() //nolint:errcheck
 			// Decode error is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-			if c.cb != nil {
-				c.cb.RecordFailure()
-			}
+			recordCBOutcome(false)
 			return nil, "", fmt.Errorf("litellm embed decode: %w", err)
 		}
 		if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
@@ -389,9 +409,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 			_ = resp.Body.Close() //nolint:errcheck
 			// Empty response is non-retryable
 			metrics.EmbedFailures.WithLabelValues("non_retryable").Inc()
-			if c.cb != nil {
-				c.cb.RecordFailure()
-			}
+			recordCBOutcome(false)
 			return nil, "", fmt.Errorf("litellm embed: empty response")
 		}
 
@@ -411,9 +429,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 		c.dims.CompareAndSwap(0, int32(len(vec)))
 
 		// Record success in circuit breaker and return
-		if c.cb != nil {
-			c.cb.RecordSuccess()
-		}
+		recordCBOutcome(true)
 
 		modelID := result.Model
 		if modelID == "" {
@@ -424,9 +440,7 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 
 	// Should not reach here, but as a fallback
 	metrics.EmbedFailures.WithLabelValues("exhausted").Inc()
-	if c.cb != nil {
-		c.cb.RecordFailure()
-	}
+	recordCBOutcome(false)
 	return nil, "", fmt.Errorf("litellm embed: exhausted %d attempts, last error: %w (status %d)", maxAttempts, lastErr, lastStatusCode)
 }
 

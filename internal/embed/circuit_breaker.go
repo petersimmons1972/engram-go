@@ -285,3 +285,37 @@ func (cb *CircuitBreaker) updateNextProbeTime() {
 
 	cb.nextProbeAt = now.Add(cooldown)
 }
+
+// AbandonProbe releases a probe slot that was granted by Allow() or AllowProbe()
+// but never resolved — because the caller's context was cancelled before any
+// network I/O was attempted. This is a NEUTRAL release: it clears probeInFlight
+// and returns the state from HalfOpen to Open WITHOUT incrementing
+// consecutiveOpens or advancing nextProbeAt.
+//
+// Rationale (ADV.1, #1003): a client-side context cancellation is not evidence
+// the backend is unhealthy. Calling RecordFailure on cancel would spuriously
+// inflate consecutiveOpens and extend the exponential backoff window — during
+// a load-shedding or graceful-drain event this could keep the breaker stuck
+// Open on a healthy upstream indefinitely. AbandonProbe returns the breaker to
+// exactly the Open state it was in before the probe slot was claimed, allowing
+// the background-probe goroutine (#1000) to conduct the next real health check
+// on its own schedule.
+//
+// No-op when circuit breaking is disabled (cfg.Enabled == false).
+func (cb *CircuitBreaker) AbandonProbe() {
+	if !cb.cfg.Enabled {
+		return
+	}
+
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	cb.probeInFlight = false
+	if cb.state == StateHalfOpen {
+		// Return to Open without modifying consecutiveOpens or nextProbeAt.
+		// transitionTo is intentionally NOT used here: we do not want the
+		// state-change log line ("HALF_OPEN → OPEN") for an abandoned probe —
+		// it would be misleading to operators (no backend decision was made).
+		cb.state = StateOpen
+	}
+}
