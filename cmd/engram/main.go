@@ -163,6 +163,9 @@ func run() error {
 	// Token bucket rate limiter (#611): per-project embed call budget to prevent GPU saturation.
 	embedRatePerSecond := fs.Float64("embed-rate-per-second", envFloat("ENGRAM_EMBED_RATE_PER_SECOND", 0), "Per-project embed call rate limit in calls/s (0 = disabled)")
 
+	// LEVER-8: session-DCG aggregation re-ranking.
+	sessionNDCGAgg := fs.Bool("session-ndcg-agg", envBool("ENGRAM_SESSION_NDCG_AGG", false), "LEVER-8: group recall results by sid: tag and re-rank sessions by DCG of chunk cosines (default false; targets multi-session and temporal question types)")
+
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -494,6 +497,7 @@ func run() error {
 		SessionRehydrateWindow: sessionRehydrateWindow,
 		EmbedRatePerSecond:     *embedRatePerSecond,
 		LogLevelVar:            logLevelVar,
+		SessionNDCGAgg:         *sessionNDCGAgg,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
