@@ -13,12 +13,20 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/envconf"
 	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 const globalBatchTimeout = 5 * time.Minute
 const globalEmbedTimeout = 15 * time.Second
-const globalConcurrency = 8
+
+// globalConcurrency caps the number of in-flight embed calls the global
+// reembedder issues. It is read once at package init from
+// ENGRAM_GLOBAL_REEMBED_CONCURRENCY (default 8) so operators can throttle the
+// W6800 reembed batch pipeline and keep embed-endpoint headroom for interactive
+// recalls, which otherwise hit the embed timeout and silently degrade to
+// BM25-only (#917).
+var globalConcurrency = envconf.Int("ENGRAM_GLOBAL_REEMBED_CONCURRENCY", 8)
 
 // consecutiveErrorThreshold is the number of consecutive batch errors after
 // which the worker calls pool.Reset() to drop stale connections and logs a
