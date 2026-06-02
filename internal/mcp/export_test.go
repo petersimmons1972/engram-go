@@ -282,9 +282,18 @@ func CallHandleMemoryRecallFederated(
 	if topK <= 0 {
 		topK = 10
 	}
+	// Convert []string to []any so toStringSlice's type assertion (v.([]any))
+	// succeeds inside handleMemoryRecall. Passing []string directly causes the
+	// assertion to fail silently, toStringSlice returns nil, and the handler
+	// falls through to the single-project path — completely bypassing the
+	// federated branch that the test is exercising.
+	projectsAny := make([]any, len(projects))
+	for i, p := range projects {
+		projectsAny[i] = p
+	}
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"projects":          projects,
+		"projects":          projectsAny,
 		"query":             query,
 		"top_k":             float64(topK),
 		"detail":            "full",
