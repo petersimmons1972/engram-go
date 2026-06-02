@@ -407,6 +407,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// LEVER-8: propagate server-level session-DCG aggregation flag.
 	opts.SessionNDCGAgg = cfg.SessionNDCGAgg
 
+	// H-NEW-2: propagate server-side PreferenceMMR flag into RecallOpts.
+	opts.PreferenceMMR = cfg.PreferenceMMR
+
 	// Capture embedder degradation signal and reason from RecallWithOpts (#989).
 	var embedDegraded bool
 	var embedDegradeReason string

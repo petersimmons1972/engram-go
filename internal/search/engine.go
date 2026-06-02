@@ -122,6 +122,16 @@ type RecallOpts struct {
 	// ablatable: when false the code path is entirely bypassed and results are
 	// identical to the baseline. Default false. (LEVER-8)
 	SessionNDCGAgg bool
+
+	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for preference
+	// queries. When true and the query is preference-shaped, the engine fetches
+	// best-chunk embeddings for top candidates, computes a centroid of the top-10
+	// results (the "dominant topic cluster"), and re-scores all candidates using
+	// MMR: score = λ·relevance - (1-λ)·sim(doc, centroid). This surfaces
+	// domain-specific preference sessions buried under the dominant topic.
+	// Default OFF (false). Ablatable: flag-off → baseline identical.
+	// Composable with DualPreferenceRecall (H15). Server-side only. (#H-NEW-2)
+	PreferenceMMR bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -1079,6 +1089,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// Strategy: split sorted results into preference-typed and general pools;
 	// take up to min(topK/2, 10) from the preference pool first, fill remaining
 	// slots from the general pool, deduplicate by ID, reassemble.
+	//
+	// topicPool captures the relevance-ranked general (non-preference) pool before
+	// the preference-front-load merge. Used by applyPreferenceMMR (H-NEW-2) as the
+	// dominant-topic centroid source so the centroid reflects the actual topic
+	// cluster rather than the preference-front-loaded order.
+	var topicPool []types.SearchResult
 	if prefQuery {
 		prefSlots := topK / 2
 		if prefSlots > 10 {
@@ -1095,6 +1111,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				generalResults = append(generalResults, r)
 			}
 		}
+		// Capture the general pool (relevance-ranked, no preference front-load) for
+		// use as the dominant-topic centroid source in the MMR pass (Bug 2 fix).
+		topicPool = generalResults
 		if len(prefResults) > 0 {
 			// Take up to prefSlots from preference pool.
 			taken := prefSlots
@@ -1145,6 +1164,22 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			}
 			results = merged
 		}
+	}
+
+	// H-NEW-2: Centroid-MMR diversity pass for preference queries.
+	// When PreferenceMMR is enabled and the query is preference-shaped, re-score
+	// all candidates by penalising similarity to the dominant-topic centroid.
+	// This surfaces domain-specific preference sessions buried under the dominant
+	// topic (e.g. books/reading flooding a generic preference query).
+	//
+	// The pass is entirely post-processing — no schema changes, no re-ingest.
+	// It runs AFTER the preference-first pool split (above) so both paths benefit.
+	// Flag-off (PreferenceMMR=false): this block is skipped → baseline identical.
+	//
+	// topicPool is passed so the centroid reflects the dominant topic (general pool)
+	// rather than the preference-front-loaded merged order (Bug 2 fix).
+	if opts.PreferenceMMR && prefQuery && len(results) > 1 {
+		results = e.applyPreferenceMMR(ctx, results, topicPool)
 	}
 
 	// Optional re-ranking: cap at topK candidates so the reranker only sees the
@@ -2100,6 +2135,178 @@ func (e *SearchEngine) Aggregate(ctx context.Context, by, filter string, limit i
 	default:
 		return nil, fmt.Errorf("aggregate: unsupported by %q (must be tag, type, or failure_class)", by)
 	}
+}
+
+// applyPreferenceMMR executes the H-NEW-2 centroid-MMR diversity pass on the
+// given result slice. It fetches best-chunk embeddings for candidate memories,
+// computes the dominant-topic centroid, re-scores all candidates via mmrReScore,
+// and returns the re-sorted slice with MMR scores written back into r.Score.
+//
+// topicPool is the relevance-ranked general (non-preference) pool captured before
+// the preference-first split. The centroid is computed from topicPool rather than
+// from the preference-front-loaded results slice, so the centroid represents the
+// dominant topic the query actually hits — not the preference memories that were
+// artificially promoted. If topicPool is empty, results is used as a fallback.
+// (Bug 2 fix: centroid must reflect dominant topic, not preference front-load.)
+//
+// r.Score is overwritten with the MMR score for each result. This ensures that
+// any downstream sortResults call (e.g. from the reranker block) preserves the
+// MMR ordering rather than reverting to the original composite score order.
+// (Bug 1 fix: MMR ordering must survive when a reranker is active.)
+//
+// On any DB error the original (unmodified) results are returned so the recall
+// path never fails due to the MMR pass. Best-effort: partial embedding coverage
+// is handled gracefully (candidates without embeddings receive a zero penalty).
+func (e *SearchEngine) applyPreferenceMMR(ctx context.Context, results []types.SearchResult, topicPool []types.SearchResult) []types.SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	// Collect all memory IDs we need embeddings for: the full result set plus the
+	// topic pool (for centroid computation). De-duplicate to minimise DB round-trips.
+	allIDs := make([]string, 0, len(results)+len(topicPool))
+	seen := make(map[string]struct{}, len(results)+len(topicPool))
+	for _, r := range results {
+		if r.Memory != nil {
+			if _, dup := seen[r.Memory.ID]; !dup {
+				allIDs = append(allIDs, r.Memory.ID)
+				seen[r.Memory.ID] = struct{}{}
+			}
+		}
+	}
+	for _, r := range topicPool {
+		if r.Memory != nil {
+			if _, dup := seen[r.Memory.ID]; !dup {
+				allIDs = append(allIDs, r.Memory.ID)
+				seen[r.Memory.ID] = struct{}{}
+			}
+		}
+	}
+	if len(allIDs) == 0 {
+		return results
+	}
+
+	// Batch-fetch best-chunk embeddings for all candidate memories.
+	chunks, err := e.backend.GetChunksForMemories(ctx, allIDs)
+	if err != nil {
+		slog.Warn("preference-mmr: GetChunksForMemories failed, skipping MMR pass",
+			"project", e.project, "err", err)
+		return results
+	}
+
+	// Build a map from memory_id → best-chunk embedding (highest-index chunk
+	// as a simple proxy for the most representative chunk). GetChunksForMemories
+	// returns chunks ordered by chunk_index so the last entry per memory_id is
+	// the last chunk; use the first (index 0) instead — it's most general.
+	embByMemID := make(map[string][]float32, len(allIDs))
+	for _, ch := range chunks {
+		if len(ch.Embedding) > 0 {
+			if _, exists := embByMemID[ch.MemoryID]; !exists {
+				embByMemID[ch.MemoryID] = ch.Embedding
+			}
+		}
+	}
+
+	// Build mmrCandidate slice preserving original score as relevance.
+	candidates := make([]mmrCandidate, 0, len(results))
+	for _, r := range results {
+		if r.Memory == nil {
+			continue
+		}
+		candidates = append(candidates, mmrCandidate{
+			memoryID:  r.Memory.ID,
+			relevance: r.Score,
+			embedding: embByMemID[r.Memory.ID], // nil when no embedding available
+		})
+	}
+
+	// Bug 2 fix: compute centroid from topicPool (general/non-preference pool,
+	// relevance-ranked before the preference-first split). This represents the
+	// dominant topic cluster the query is about — not the preference memories
+	// that were front-loaded. If topicPool is empty (no general results, or the
+	// preference split did not fire), fall back to the full candidate pool.
+	centroidSource := topicPool
+	if len(centroidSource) == 0 {
+		// Fallback: use results directly (preference split did not produce a general pool).
+		centroidSource = results
+	}
+	poolSize := mmrCentroidPoolSize
+	if poolSize > len(centroidSource) {
+		poolSize = len(centroidSource)
+	}
+	centroidVecs := make([][]float32, 0, poolSize)
+	for i := 0; i < poolSize; i++ {
+		r := centroidSource[i]
+		if r.Memory == nil {
+			continue
+		}
+		if emb := embByMemID[r.Memory.ID]; emb != nil {
+			centroidVecs = append(centroidVecs, emb)
+		}
+	}
+	centroid := computeCentroid(centroidVecs)
+	if centroid == nil {
+		// No embeddings available in topic pool — skip MMR (no centroid to penalise against).
+		slog.Debug("preference-mmr: no embeddings in topic pool, skipping MMR pass",
+			"project", e.project)
+		return results
+	}
+
+	// Re-score all candidates with MMR formula.
+	reScored := mmrReScore(candidates, centroid, mmrLambdaDefault)
+
+	// Build a score map from the MMR re-scoring so we can update r.Score.
+	// Bug 1 fix: write the MMR score back into r.Score so that any subsequent
+	// sortResults call (e.g. in the reranker block) preserves the MMR ordering
+	// rather than reverting to the original composite score.
+	mmrScoreByID := make(map[string]float64, len(reScored))
+	for i, c := range reScored {
+		// Use rank-derived score: highest-ranked gets the largest value.
+		// We use the mmrCandidate relevance field (which holds the per-candidate MMR
+		// score) but that is not directly accessible after mmrReScore returns the
+		// candidates in order without exposing the computed score. Instead, encode
+		// rank position as a descending float so sortResults keeps the MMR order:
+		// rank 0 → N, rank 1 → N-1, …, rank N-1 → 1. Integer offsets are sufficient
+		// since sortResults only requires a consistent total order.
+		mmrScoreByID[c.memoryID] = float64(len(reScored) - i)
+	}
+
+	// Re-map back to SearchResults in the MMR-determined order, updating Score.
+	resultByID := make(map[string]types.SearchResult, len(results))
+	for _, r := range results {
+		if r.Memory != nil {
+			resultByID[r.Memory.ID] = r
+		}
+	}
+	out := make([]types.SearchResult, 0, len(reScored))
+	for _, c := range reScored {
+		if r, ok := resultByID[c.memoryID]; ok {
+			r.Score = mmrScoreByID[c.memoryID] // write MMR rank score (Bug 1 fix)
+			out = append(out, r)
+		}
+	}
+	// Preserve any results that had no memory ID (shouldn't happen but be safe).
+	if len(out) < len(results) {
+		seenOut := make(map[string]struct{}, len(out))
+		for _, r := range out {
+			if r.Memory != nil {
+				seenOut[r.Memory.ID] = struct{}{}
+			}
+		}
+		for _, r := range results {
+			id := ""
+			if r.Memory != nil {
+				id = r.Memory.ID
+			}
+			if _, found := seenOut[id]; !found {
+				out = append(out, r)
+				if id != "" {
+					seenOut[id] = struct{}{}
+				}
+			}
+		}
+	}
+	return out
 }
 
 // SummarizeNow: handled directly by the MCP tool via summarize package (see tools.go).

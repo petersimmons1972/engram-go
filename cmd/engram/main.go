@@ -489,6 +489,7 @@ func run() error {
 			return "closed"
 		},
 		DegradedErrorMode:      envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
+		PreferenceMMR:          envOr("ENGRAM_PREFERENCE_MMR", "") == "1" || envOr("ENGRAM_PREFERENCE_MMR", "") == "true",
 		SessionDB:              retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:            ingestQ,
 		RateLimitRPS:           *rateLimitRPS,
