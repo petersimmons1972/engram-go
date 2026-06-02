@@ -165,15 +165,6 @@ func nullableString(s string) interface{} {
 	return s
 }
 
-// rowScanner is the minimal interface for scanning pgx rows, shared by Query
-// results (pgx.Rows) and the stub in tests. Avoids importing pgx in tests.
-type rowScanner interface {
-	Next() bool
-	Scan(dest ...interface{}) error
-	Err() error
-	Close()
-}
-
 func scanAtomRows(rows interface{ Close() }) ([]atom.Atom, error) {
 	// The parameter type is interface{Close()} rather than pgx.Rows to avoid
 	// forcing tests to stub pgx. We use a type assertion to get Next/Scan/Err.

@@ -21,8 +21,8 @@ const (
 // Scope prefixes for the scope column.
 const (
 	ScopeGlobal = "global"
-	// Session-scoped: "session:<id>"
-	// Entity-scoped:  "entity:<id>"
+	// Session-scoped: "session:<id>".
+	// Entity-scoped:  "entity:<id>".
 )
 
 // Atom is a single extracted, typed belief or preference.

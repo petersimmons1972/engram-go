@@ -12,14 +12,46 @@ import (
 
 // ── fetchAtomContextBlock unit tests ─────────────────────────────────────────
 
-// stubAtomFetcherFull implements atomFetcher, returning a set of preference atoms.
-type stubAtomFetcherFull struct {
+// stubAtomFetcher implements atomFetcher for unit testing fetchAtomContextBlock.
+type stubAtomFetcher struct {
 	atoms []atom.Atom
 	err   error
 }
 
-func (s *stubAtomFetcherFull) FetchAtoms(_ context.Context, _ string, _ string, _ int) ([]atom.Atom, error) {
+func (s *stubAtomFetcher) FetchAtoms(_ context.Context, _ string, _ string, _ int) ([]atom.Atom, error) {
 	return s.atoms, s.err
+}
+
+// TestFetchAtomContextBlock_ReturnsBlockWhenAtomsPresent verifies that
+// fetchAtomContextBlock returns a non-empty prompt block when the fetcher
+// returns atoms.
+func TestFetchAtomContextBlock_ReturnsBlockWhenAtomsPresent(t *testing.T) {
+	stub := &stubAtomFetcher{
+		atoms: []atom.Atom{
+			{
+				ID: "a1", Type: atom.TypePreference,
+				Subject: "the user", Predicate: "prefers", Value: "dark chocolate",
+				Statement: "The user prefers dark chocolate.", Scope: atom.ScopeGlobal, Confidence: 0.9,
+			},
+		},
+	}
+	block := fetchAtomContextBlock(context.Background(), stub, "proj", "q1", "")
+	if block == "" {
+		t.Error("expected non-empty block when atoms are available")
+	}
+	if !strings.Contains(block, "The user prefers dark chocolate.") {
+		t.Error("block should contain atom statement")
+	}
+}
+
+// TestFetchAtomContextBlock_ReturnsEmptyOnNoAtoms verifies empty block when
+// the fetcher returns no atoms and no cache dir is set.
+func TestFetchAtomContextBlock_ReturnsEmptyOnNoAtoms(t *testing.T) {
+	stub := &stubAtomFetcher{}
+	block := fetchAtomContextBlock(context.Background(), stub, "proj", "q1", "")
+	if block != "" {
+		t.Errorf("expected empty block with no atoms, got %q", block)
+	}
 }
 
 // ── run.go structural tests ──────────────────────────────────────────────────
@@ -38,16 +70,16 @@ func TestAtomMode_PromptContainsAtomBlock(t *testing.T) {
 
 	// Format atoms as the prompt injector would.
 	block := search.FormatAtomsAsContext(atoms)
-	assert_t_helper(t, strings.Contains(block, "[preference]"), "atom block should contain [preference] label")
-	assert_t_helper(t, strings.Contains(block, "The user prefers dark chocolate."), "atom block should contain the statement")
-	assert_t_helper(t, strings.Contains(block, "=== Extracted Preference Atoms ==="), "atom block should have header")
+	assertTHelper(t, strings.Contains(block, "[preference]"), "atom block should contain [preference] label")
+	assertTHelper(t, strings.Contains(block, "The user prefers dark chocolate."), "atom block should contain the statement")
+	assertTHelper(t, strings.Contains(block, "=== Extracted Preference Atoms ==="), "atom block should have header")
 }
 
 // TestAtomMode_EmptyAtoms_NoBlockAdded verifies that when no atoms are found,
 // no atom context block is prepended to the prompt.
 func TestAtomMode_EmptyAtoms_NoBlockAdded(t *testing.T) {
 	block := search.FormatAtomsAsContext(nil)
-	assert_t_helper(t, block == "", "empty atoms should produce empty block")
+	assertTHelper(t, block == "", "empty atoms should produce empty block")
 }
 
 // TestAtomMode_FlagRegistered verifies that the --atom-mode flag is registered
@@ -99,9 +131,9 @@ func TestAtomMode_AtomModeGo_WiresAtomType(t *testing.T) {
 	}
 }
 
-// assert_t_helper is a minimal boolean assertion helper (avoids importing testify
+// assertTHelper is a minimal boolean assertion helper (avoids importing testify
 // into tests that are purely structural checks on source files).
-func assert_t_helper(t *testing.T, ok bool, msg string) {
+func assertTHelper(t *testing.T, ok bool, msg string) {
 	t.Helper()
 	if !ok {
 		t.Error(msg)

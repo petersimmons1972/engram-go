@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 
 	"github.com/petersimmons1972/engram/internal/atom"
-	"github.com/petersimmons1972/engram/internal/longmemeval"
 	"github.com/petersimmons1972/engram/internal/search"
 )
 
@@ -39,7 +38,7 @@ type atomFetcher interface {
 //
 // atomCacheDir (if non-empty) is used as a fallback when the server returns no
 // atoms: reads <atomCacheDir>/<project>.json written by atom-build.
-func fetchAtomContextBlock(ctx context.Context, client *longmemeval.Client, project, questionID, atomCacheDir string) string {
+func fetchAtomContextBlock(ctx context.Context, client atomFetcher, project, questionID, atomCacheDir string) string {
 	const atomTopK = 50 // cap for Milestone 1 context budget
 
 	atoms, err := client.FetchAtoms(ctx, project, atom.TypePreference, atomTopK)

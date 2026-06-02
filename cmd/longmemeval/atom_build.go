@@ -486,7 +486,7 @@ func storeAtomREST(serverURL, apiKey, project string, a *atom.Atom, vec []float3
 	}
 
 	url := strings.TrimRight(serverURL, "/") + "/atoms"
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build atom store request: %w", err)
 	}
