@@ -50,10 +50,7 @@ func runHookDaemon(args []string) error {
 // newHookDaemon assembles the daemon with its production adapters.
 func newHookDaemon() (*hookdaemon.Daemon, error) {
 	home, _ := os.UserHomeDir()
-	base := fmt.Sprintf("http://127.0.0.1:%d", config.DefaultPort)
-	if p := os.Getenv("ENGRAM_TEST_PORT"); p != "" {
-		base = "http://127.0.0.1:" + p
-	}
+	base := hookBaseURL()
 	memDir := memoryDir(home)
 	return hookdaemon.New(hookdaemon.Config{
 		Engram:        hookdaemon.NewHTTPEngramClient(base),
@@ -62,6 +59,28 @@ func newHookDaemon() (*hookdaemon.Daemon, error) {
 		Fallback:      hookdaemon.NewFileFallbackStore(filepath.Join(memDir, "fallback.md")),
 		RecallProject: inferEngramProject(),
 	})
+}
+
+// hookBaseURL resolves the Engram API base URL the daemon should call. The
+// production shell scripts point at a remote endpoint (e.g.
+// https://engram.petersimmons.com), so the daemon must honour the same
+// override or it will silently call the wrong host. Precedence (highest first):
+//
+//	ENGRAM_TEST_PORT — test-only loopback override (kept for the test harness)
+//	ENGRAM_URL       — explicit base URL
+//	ENGRAM_BASE_URL  — the name the shell scripts already export
+//	http://127.0.0.1:<DefaultPort> — local default
+func hookBaseURL() string {
+	if p := os.Getenv("ENGRAM_TEST_PORT"); p != "" {
+		return "http://127.0.0.1:" + p
+	}
+	if u := os.Getenv("ENGRAM_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if u := os.Getenv("ENGRAM_BASE_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", config.DefaultPort)
 }
 
 // memoryDir returns the directory holding MEMORY.md / fallback.md for the
