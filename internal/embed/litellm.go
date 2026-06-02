@@ -470,6 +470,60 @@ func (c *LiteLLMClient) Probe(ctx context.Context) (ok bool, reason string) {
 	return false, fmt.Sprintf("embed_probe: model %q not advertised by /v1/models", c.model)
 }
 
+// StartBackgroundProbe launches a goroutine that periodically probes the
+// LiteLLM endpoint when the circuit breaker is Open and past its nextProbeAt
+// cooldown.  This decouples recovery from query load — the probe uses a
+// dedicated 5 s timeout instead of the 500 ms recall budget, so a warming
+// MI50 GPU can answer the lightweight GET /v1/models check even when it cannot
+// serve embeddings within the recall deadline.
+//
+// The goroutine exits when ctx is cancelled (wire to the server root context
+// so it stops on shutdown).  interval controls the ticker period; callers
+// should use a value on the order of the OpenDuration config (e.g., 10 s).
+//
+// No-op when the client has no circuit breaker configured.
+func (c *LiteLLMClient) StartBackgroundProbe(ctx context.Context, interval time.Duration) {
+	if c.cb == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		const probeTimeout = 5 * time.Second
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Only fire when Open. This prevents unnecessary probe calls during
+				// normal (Closed) operation and avoids perturbing the HalfOpen
+				// state from a previous demand-driven Allow() call.
+				if c.cb.State() != StateOpen {
+					continue
+				}
+				// Allow() handles the Open→HalfOpen transition, enforces
+				// nextProbeAt, and guards the one-probe-at-a-time invariant.
+				if err := c.cb.Allow(); err != nil {
+					// Not ready: probeInFlight or still within backoff window.
+					continue
+				}
+
+				// Run the cheap GET /v1/models probe with a dedicated timeout
+				// that is independent of the recall budget.
+				probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+				ok, _ := c.Probe(probeCtx)
+				cancel()
+
+				if ok {
+					c.cb.RecordSuccess()
+				} else {
+					c.cb.RecordFailure()
+				}
+			}
+		}
+	}()
+}
+
 // InfinityModelStats holds per-model GPU queue statistics from the Infinity
 // /v1/models response. These fields are Infinity-specific and absent from
 // standard OpenAI-compatible servers (zero value is safe: QueueAbsolute == 0
