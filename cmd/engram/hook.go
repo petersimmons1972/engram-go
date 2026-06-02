@@ -50,13 +50,36 @@ func newHookDaemon() (*hookdaemon.Daemon, error) {
 	if p := os.Getenv("ENGRAM_TEST_PORT"); p != "" {
 		base = "http://127.0.0.1:" + p
 	}
+	memDir := memoryDir(home)
 	return hookdaemon.New(hookdaemon.Config{
 		Engram:        hookdaemon.NewHTTPEngramClient(base),
 		Tokens:        hookdaemon.NewMCPTokenStore(filepath.Join(home, ".claude", "mcp_servers.json")),
-		Memory:        hookdaemon.NewFileMemoryWriter(filepath.Join(home, ".claude", "projects", "-home-psimmons", "memory", "MEMORY.md")),
-		Fallback:      hookdaemon.NewFileFallbackStore(filepath.Join(home, ".claude", "projects", "-home-psimmons", "memory", "fallback.md")),
+		Memory:        hookdaemon.NewFileMemoryWriter(filepath.Join(memDir, "MEMORY.md")),
+		Fallback:      hookdaemon.NewFileFallbackStore(filepath.Join(memDir, "fallback.md")),
 		RecallProject: inferEngramProject(),
 	})
+}
+
+// memoryDir returns the directory holding MEMORY.md / fallback.md for the
+// current home directory. Claude Code derives the per-project memory directory
+// as ~/.claude/projects/<slug>/memory, where <slug> is the home (or project)
+// path with every "/" replaced by "-" — e.g. /home/psimmons → -home-psimmons.
+// The slug is computed at runtime so the daemon writes the correct path on any
+// machine, not just the one it was built on (#396). ENGRAM_MEMORY_DIR overrides
+// the computed path entirely for non-standard layouts.
+func memoryDir(home string) string {
+	if override := os.Getenv("ENGRAM_MEMORY_DIR"); override != "" {
+		return override
+	}
+	return filepath.Join(home, ".claude", "projects", claudeProjectSlug(home), "memory")
+}
+
+// claudeProjectSlug converts a filesystem path into the slug Claude Code uses
+// for its per-project directory: every "/" becomes "-". An absolute path like
+// "/home/psimmons" yields "-home-psimmons" (the leading slash produces the
+// leading dash).
+func claudeProjectSlug(path string) string {
+	return strings.ReplaceAll(filepath.Clean(path), string(filepath.Separator), "-")
 }
 
 // detachHookDaemon re-execs this binary as a background hook-daemon, with stderr

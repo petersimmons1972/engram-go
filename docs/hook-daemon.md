@@ -91,6 +91,11 @@ export ENGRAM_HOOK_DAEMON=1
 and register `engram-hook-shim.sh <EventName>` for each hook event in
 `~/.claude/settings.json`.
 
+The memory directory (`MEMORY.md` / `fallback.md`) is derived at runtime from
+the home path using Claude Code's slug convention — every `/` becomes `-`, so
+`/home/psimmons` → `~/.claude/projects/-home-psimmons/memory`. Set
+`ENGRAM_MEMORY_DIR` to override the computed path for non-standard layouts.
+
 ## Code map
 
 - `internal/hookdaemon/` — the testable core (protocol, daemon state, handlers,

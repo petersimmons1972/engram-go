@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -129,7 +131,9 @@ func readAllLimited(r interface{ Read([]byte) (int, error) }, max int64) ([]byte
 			buf = append(buf, tmp[:n]...)
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			// io.EOF (and io.ErrUnexpectedEOF) are normal stream terminations;
+			// errors.Is unwraps both, unlike a string compare on err.Error().
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return buf, nil
 			}
 			return buf, nil // tolerate other read terminations; we have what we have

@@ -14,6 +14,35 @@ func TestHookSocketPath(t *testing.T) {
 	}
 }
 
+func TestClaudeProjectSlug(t *testing.T) {
+	cases := map[string]string{
+		"/home/psimmons":  "-home-psimmons",
+		"/home/alice":     "-home-alice",
+		"/Users/bob":      "-Users-bob",
+		"/home/psimmons/": "-home-psimmons", // trailing slash cleaned
+	}
+	for in, want := range cases {
+		if got := claudeProjectSlug(in); got != want {
+			t.Errorf("claudeProjectSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMemoryDir(t *testing.T) {
+	// Computed from home path — no hardcoded slug.
+	got := memoryDir("/home/alice")
+	want := filepath.Join("/home/alice", ".claude", "projects", "-home-alice", "memory")
+	if got != want {
+		t.Fatalf("memoryDir(/home/alice) = %q, want %q", got, want)
+	}
+
+	// ENGRAM_MEMORY_DIR overrides the computed path.
+	t.Setenv("ENGRAM_MEMORY_DIR", "/tmp/custom-mem")
+	if got := memoryDir("/home/alice"); got != "/tmp/custom-mem" {
+		t.Fatalf("ENGRAM_MEMORY_DIR override not honored: %q", got)
+	}
+}
+
 func TestInferEngramProject(t *testing.T) {
 	// In this repo (engram-go), the inferred project should be "engram".
 	if got := inferEngramProject(); got != "engram" && got != "" {
