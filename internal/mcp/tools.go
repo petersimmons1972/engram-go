@@ -133,6 +133,14 @@ type Config struct {
 	// fallback_used:true, and any BM25 results that were produced before the
 	// embedder gave up. Default "": transparent passthrough (original behaviour).
 	DegradedErrorMode string
+
+	// SessionNDCGAgg enables LEVER-8 session-DCG aggregation re-ranking on all
+	// recall calls. When true, RecallOpts.SessionNDCGAgg is set for every
+	// memory_recall invocation, grouping results by "sid:" tag and re-ranking
+	// sessions by the DCG of their constituent chunk cosines.
+	// Set via --session-ndcg-agg flag or ENGRAM_SESSION_NDCG_AGG=true env var.
+	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
+	SessionNDCGAgg bool
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.

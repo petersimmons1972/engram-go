@@ -109,6 +109,19 @@ type RecallOpts struct {
 	// ParaphraseUnion enables multi-pass paraphrased query union retrieval
 	// (LME experiment #2, issue #938 improvement #4). Default false (ablatable).
 	ParaphraseUnion bool
+
+	// SessionNDCGAgg enables LEVER-8 session-DCG aggregation re-ranking.
+	// When true, recalled memories are grouped by their "sid:<id>" tag, each
+	// group's chunk cosine scores are aggregated via DCG, and sessions are
+	// re-ranked by that aggregate. Within each session group, members are sorted
+	// by composite score descending (P1 policy). This surfaces sessions where
+	// multiple chunks each score mid-pack over sessions with a single high-scoring
+	// chunk — directly targeting multi-session and temporal question types.
+	//
+	// Applied after composite scoring and before the topK truncation. Cleanly
+	// ablatable: when false the code path is entirely bypassed and results are
+	// identical to the baseline. Default false. (LEVER-8)
+	SessionNDCGAgg bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -728,6 +741,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	uniqueIDs := make([]string, 0, len(vecHits))
 	seen := make(map[string]bool, len(vecHits))
 
+	// allChunkCosines tracks every chunk cosine per memory for LEVER-8 session-DCG
+	// aggregation. Only populated when SessionNDCGAgg is enabled to avoid allocating
+	// a second map on every recall call.
+	var allChunkCosines map[string][]float64
+	if opts.SessionNDCGAgg {
+		allChunkCosines = make(map[string][]float64, len(vecHits))
+	}
+
 	for _, h := range vecHits {
 		cosine := 1.0 - h.Distance
 		if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
@@ -738,6 +759,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				sectionHeading: h.SectionHeading,
 				chunkID:        h.ChunkID,
 			}
+		}
+		if opts.SessionNDCGAgg {
+			allChunkCosines[h.MemoryID] = append(allChunkCosines[h.MemoryID], cosine)
 		}
 		if !seen[h.MemoryID] {
 			seen[h.MemoryID] = true
@@ -1031,6 +1055,23 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	}
 
 	sortResults(results)
+
+	// LEVER-8: session-DCG aggregation re-ranking.
+	// When SessionNDCGAgg is enabled, group results by their "sid:" tag and
+	// re-rank sessions by the DCG of their constituent chunk cosines. Applied
+	// immediately after composite scoring so all other post-processing
+	// (preference-first, re-ranker, topK truncation) sees the session-packed order.
+	// When disabled this is a no-op (sessionNDCGRerank returns results unchanged).
+	//
+	// Bug 2 guard: session-NDCG is skipped when prefQuery is active.
+	// The preference-first split/reassemble (below) and session-DCG aggregation
+	// have conflicting ordering semantics: running session-NDCG first promotes a
+	// low-DCG session's preference memory above a high-DCG session's general
+	// memories, breaking the preference-first contract. Skipping session-NDCG for
+	// preference queries is correct because preference memories are typically
+	// singletons (no sid: tag) — session packing adds no value here — and the
+	// preference-first path already produces coherent ordering.
+	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg && !prefQuery)
 
 	// Preference-first recall path: when the query is preference-shaped, ensure
 	// preference-typed memories are represented in the top results even if their

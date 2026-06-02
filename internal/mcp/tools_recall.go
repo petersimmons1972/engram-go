@@ -404,6 +404,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.Fusion = v == "true" || v == "1" || getBool(args, "rrf_fusion", false)
 	}
 
+	// LEVER-8: propagate server-level session-DCG aggregation flag.
+	opts.SessionNDCGAgg = cfg.SessionNDCGAgg
+
 	// Capture embedder degradation signal and reason from RecallWithOpts (#989).
 	var embedDegraded bool
 	var embedDegradeReason string
