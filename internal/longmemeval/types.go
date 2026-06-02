@@ -30,11 +30,11 @@ type Item struct {
 	QuestionType       string     `json:"question_type"`
 	Question           string     `json:"question"`
 	Answer             flexString `json:"answer"`
-	QuestionDate       string   `json:"question_date"`
-	HaystackSessionIDs []string `json:"haystack_session_ids"`
-	HaystackDates      []string `json:"haystack_dates"`
-	HaystackSessions   [][]Turn `json:"haystack_sessions"`
-	AnswerSessionIDs   []string `json:"answer_session_ids"`
+	QuestionDate       string     `json:"question_date"`
+	HaystackSessionIDs []string   `json:"haystack_session_ids"`
+	HaystackDates      []string   `json:"haystack_dates"`
+	HaystackSessions   [][]Turn   `json:"haystack_sessions"`
+	AnswerSessionIDs   []string   `json:"answer_session_ids"`
 }
 
 // Turn is one exchange within a haystack session.

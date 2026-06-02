@@ -15,9 +15,9 @@ import (
 // their original rank (input-index) order.
 func TestContextBudget_KeepsHighestScoring(t *testing.T) {
 	results := []types.SearchResult{
-		{MatchedChunk: "aaaaaaaaaa", Score: 0.9},         // 10 chars = 2 tokens  (idx 0)
+		{MatchedChunk: "aaaaaaaaaa", Score: 0.9},           // 10 chars = 2 tokens  (idx 0)
 		{MatchedChunk: "bbbbbbbbbbbbbbbbbbbb", Score: 0.5}, // 20 chars = 5 tokens  (idx 1)
-		{MatchedChunk: "cccccccc", Score: 0.8},            // 8 chars  = 2 tokens  (idx 2)
+		{MatchedChunk: "cccccccc", Score: 0.8},             // 8 chars  = 2 tokens  (idx 2)
 	}
 	// Tokens: idx0=2, idx1=5, idx2=2. Budget=6: idx0+idx1=7>6, idx0+idx2=4<=6.
 	// Top 2 by score that fit: idx0(0.9) + idx2(0.8) = 4 tokens <= 6.
@@ -38,8 +38,8 @@ func TestContextBudget_OverflowDropsLowest(t *testing.T) {
 	// Budget = 3 tokens: only idx1 (2 tokens) fits individually.
 	results := []types.SearchResult{
 		{MatchedChunk: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Score: 0.3}, // 40 chars
-		{MatchedChunk: "bbbbbbbb", Score: 0.9},                                  // 8 chars
-		{MatchedChunk: "cccccccccccccccccccc", Score: 0.6},                      // 20 chars
+		{MatchedChunk: "bbbbbbbb", Score: 0.9},                                 // 8 chars
+		{MatchedChunk: "cccccccccccccccccccc", Score: 0.6},                     // 20 chars
 	}
 	b := rag.ContextBudget{MaxTokens: 3}
 	got := b.Trim(results)

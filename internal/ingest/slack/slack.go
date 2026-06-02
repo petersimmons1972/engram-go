@@ -61,10 +61,10 @@ type slackMessage struct {
 
 // parsedMessage is an intermediate form after timestamp parsing.
 type parsedMessage struct {
-	user     string // resolved display name (e.g. "@Jane Doe")
-	text     string // text with mentions resolved
-	ts       time.Time
-	isReply  bool // thread_ts present and != ts
+	user    string // resolved display name (e.g. "@Jane Doe")
+	text    string // text with mentions resolved
+	ts      time.Time
+	isReply bool // thread_ts present and != ts
 }
 
 // ---------------------------------------------------------------------------

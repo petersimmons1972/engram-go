@@ -43,11 +43,11 @@ func TestFetchPatternsDedupAcrossProjects(t *testing.T) {
 
 func TestFetchPatternsFiltersRequiredTags(t *testing.T) {
 	records := []engramMemory{
-		{ID: "a", Tags: []string{"instinct", "correction", "sig-a"}},           // both tags — KEEP
-		{ID: "b", Tags: []string{"correction", "sig-b"}},                       // no instinct tag — drop
-		{ID: "c", Tags: []string{"instinct", "correction"}},                    // no sig- tag — drop
-		{ID: "d", Tags: []string{"instinct", "workflow", "git", "sig-d"}},     // both tags — KEEP
-		{ID: "e", Tags: []string{}},                                            // empty — drop
+		{ID: "a", Tags: []string{"instinct", "correction", "sig-a"}},      // both tags — KEEP
+		{ID: "b", Tags: []string{"correction", "sig-b"}},                  // no instinct tag — drop
+		{ID: "c", Tags: []string{"instinct", "correction"}},               // no sig- tag — drop
+		{ID: "d", Tags: []string{"instinct", "workflow", "git", "sig-d"}}, // both tags — KEEP
+		{ID: "e", Tags: []string{}},                                       // empty — drop
 	}
 	srv := httptest.NewServer(makeQuickRecallHandler(records))
 	defer srv.Close()

@@ -117,4 +117,3 @@ func TestCloseStaleEpisodes_InterfaceConformance(t *testing.T) {
 	} = (*db.PostgresBackend)(nil)
 	// If this file compiles, the interface is satisfied.
 }
-

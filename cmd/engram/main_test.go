@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	"log/slog"
-	"os"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 

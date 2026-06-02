@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/google/uuid"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -291,38 +291,38 @@ func hiddenToolNames() map[string]bool {
 	return map[string]bool{
 		// Audit & weight tuning
 		"memory_audit_add_query":        true,
-		"memory_audit_list_queries":      true,
-		"memory_audit_deactivate_query":  true,
-		"memory_audit_run":               true,
-		"memory_audit_compare":           true,
-		"memory_weight_history":          true,
+		"memory_audit_list_queries":     true,
+		"memory_audit_deactivate_query": true,
+		"memory_audit_run":              true,
+		"memory_audit_compare":          true,
+		"memory_weight_history":         true,
 		// Embedder management
-		"memory_embedding_eval":          true,
-		"memory_models":                  true,
+		"memory_embedding_eval": true,
+		"memory_models":         true,
 		// Consolidation & maintenance
-		"memory_consolidate":             true,
-		"memory_sleep":                   true,
-		"memory_summarize":               true,
-		"memory_resummarize":             true,
+		"memory_consolidate": true,
+		"memory_sleep":       true,
+		"memory_summarize":   true,
+		"memory_resummarize": true,
 		// Episode management
-		"memory_episode_start":           true,
-		"memory_episode_end":             true,
-		"memory_episode_list":            true,
-		"memory_episode_recall":          true,
+		"memory_episode_start":  true,
+		"memory_episode_end":    true,
+		"memory_episode_list":   true,
+		"memory_episode_recall": true,
 		// Ingest & export
-		"memory_ingest":                  true,
-		"memory_import_claudemd":         true,
-		"memory_ingest_document_stream":  true,
-		"memory_ingest_export":           true,
-		"memory_ingest_status":           true,
-		"memory_export_all":              true,
+		"memory_ingest":                 true,
+		"memory_import_claudemd":        true,
+		"memory_ingest_document_stream": true,
+		"memory_ingest_export":          true,
+		"memory_ingest_status":          true,
+		"memory_export_all":             true,
 		// Operational / rarely needed
-		"memory_expand":                  true,
-		"memory_adopt":                   true,
-		"memory_aggregate":               true,
-		"memory_diagnose":                true,
-		"memory_verify":                  true,
-		"memory_delete_project":          true,
+		"memory_expand":         true,
+		"memory_adopt":          true,
+		"memory_aggregate":      true,
+		"memory_diagnose":       true,
+		"memory_verify":         true,
+		"memory_delete_project": true,
 	}
 }
 
@@ -1133,7 +1133,6 @@ func noConfig(h func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpg
 	}
 }
 
-
 // withWarnLog wraps a handler to emit slog.Warn when it returns an error.
 func withWarnLog(name string, h toolHandler) toolHandler {
 	return func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
@@ -1549,7 +1548,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"transport_hint": "http",
 	})
 }
-
 
 // handleQuickStore is a sessionless REST endpoint that stores a single memory
 // without requiring an active SSE session. Used by hook scripts (e.g. PreCompact)

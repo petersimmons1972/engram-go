@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/reporter"
 	"github.com/petersimmons1972/engram/internal/benchmark"
+	"github.com/petersimmons1972/engram/internal/reporter"
 )
 
 func TestRenderSVG_ContainsExpected(t *testing.T) {

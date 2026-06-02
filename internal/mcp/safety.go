@@ -3,8 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"sort"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,10 +33,10 @@ var (
 	// #709: word-boundary regex for main-branch detection. Matches
 	// "main" as a standalone word, "main branch", "origin/main", "master".
 	// Rejects "domain/main-cluster", "mainframe", "remains", etc.
-	mainBranchRe = regexp.MustCompile(`(?i)(?:^|\s)(main|master)\b|\bmain branch\b|\borigin/main\b`)
-	deleteHints     = []string{"delete from", "delete ", "truncate", "drop ", "destroy", "recreate"}
-	ddlHints        = []string{"create index", "alter table", "ddl", "schema", "migration", "index "}
-	forcePushHints  = []string{"git push --force", "push --force", "force push"}
+	mainBranchRe   = regexp.MustCompile(`(?i)(?:^|\s)(main|master)\b|\bmain branch\b|\borigin/main\b`)
+	deleteHints    = []string{"delete from", "delete ", "truncate", "drop ", "destroy", "recreate"}
+	ddlHints       = []string{"create index", "alter table", "ddl", "schema", "migration", "index "}
+	forcePushHints = []string{"git push --force", "push --force", "force push"}
 )
 
 // actionProfile describes the risk characteristics of a proposed action.
@@ -348,7 +348,6 @@ func isConstraintMemory(m *types.Memory) bool {
 	}
 	return false
 }
-
 
 // assessConstraintMatchWithRecallFlag scores the memory with an explicit recall
 // provenance flag. When viaRecall is true and the computed score would be 0,

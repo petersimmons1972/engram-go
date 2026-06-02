@@ -2,9 +2,9 @@ package mcp
 
 import (
 	"context"
-	"math"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 

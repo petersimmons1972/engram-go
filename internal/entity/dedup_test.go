@@ -3,8 +3,8 @@ package entity_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/petersimmons1972/engram/internal/entity"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDedup_ExactMatch(t *testing.T) {

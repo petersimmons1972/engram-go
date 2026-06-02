@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testDSN(t *testing.T) string       { return testutil.DSN(t) }
-func uniqueProject(base string) string  { return testutil.UniqueProject(base) }
+func testDSN(t *testing.T) string      { return testutil.DSN(t) }
+func uniqueProject(base string) string { return testutil.UniqueProject(base) }
 
 func newTestBackend(t *testing.T, project string) db.Backend {
 	t.Helper()

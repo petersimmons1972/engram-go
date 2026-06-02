@@ -62,13 +62,13 @@ func makeChunk(memoryID, project string, idx int) *types.Chunk {
 	text := fmt.Sprintf("chunk text index %d uuid %s", idx, uuid.New().String())
 	h := sha256.Sum256([]byte(text))
 	return &types.Chunk{
-		ID:        uuid.New().String(),
-		MemoryID:  memoryID,
-		Project:   project,
-		ChunkText: text,
+		ID:         uuid.New().String(),
+		MemoryID:   memoryID,
+		Project:    project,
+		ChunkText:  text,
 		ChunkIndex: idx,
-		ChunkHash: fmt.Sprintf("%x", h),
-		ChunkType: "paragraph",
+		ChunkHash:  fmt.Sprintf("%x", h),
+		ChunkType:  "paragraph",
 	}
 }
 

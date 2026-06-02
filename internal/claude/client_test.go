@@ -94,9 +94,9 @@ func TestClient_Complete_RequestBuildError(t *testing.T) {
 
 func TestClient_Complete_ClaudeToolTypeFromEnv(t *testing.T) {
 	tests := []struct {
-		name       string
-		envValue   string
-		wantType   string
+		name     string
+		envValue string
+		wantType string
 	}{
 		{"default_when_unset", "", "advisor_20260301"},
 		{"custom_from_env", "advisor_custom", "advisor_custom"},

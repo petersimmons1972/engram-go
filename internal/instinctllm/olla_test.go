@@ -16,10 +16,10 @@ import (
 
 // ollaModelList builds a minimal Olla /olla/models response.
 type ollaModelEntry struct {
-	id       string
-	family   string
-	caps     []string
-	states   []string // availability states
+	id     string
+	family string
+	caps   []string
+	states []string // availability states
 }
 
 func buildOllaModelsResponse(models []ollaModelEntry) string {

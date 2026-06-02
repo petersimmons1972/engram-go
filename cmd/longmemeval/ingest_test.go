@@ -101,7 +101,7 @@ func TestIngestOne_EmptySessionsSkipped(t *testing.T) {
 		QuestionID:         "q-empty",
 		HaystackSessionIDs: []string{"sid-1", "sid-2"},
 		HaystackSessions: [][]longmemeval.Turn{
-			{{Role: "user", Content: ""}},           // empty — should skip
+			{{Role: "user", Content: ""}},             // empty — should skip
 			{{Role: "user", Content: "real content"}}, // non-empty
 		},
 	}

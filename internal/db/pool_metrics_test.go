@@ -70,4 +70,3 @@ func TestSamplePoolMetrics_UpdatesGauges(t *testing.T) {
 		}
 	}
 }
-

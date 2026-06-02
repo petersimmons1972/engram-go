@@ -47,8 +47,8 @@ func TestCleanupPolicy_AlwaysDeletes(t *testing.T) {
 		CleanupPolicy: CleanupPolicyAlways,
 	}
 	cases := []string{
-		"lme-abc222-q001", // own project
-		"lme-abc111-q001", // external project
+		"lme-abc222-q001",   // own project
+		"lme-abc111-q001",   // external project
 		"my-custom-project", // non-lme project
 	}
 	for _, project := range cases {

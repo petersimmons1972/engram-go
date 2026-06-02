@@ -29,7 +29,7 @@ func TestSanitizeRecallResults_NonFiniteFloatsBecomeZero(t *testing.T) {
 			},
 			Connected: []types.ConnectedMemory{
 				{
-					Memory: &types.Memory{RetrievalIntervalHrs: math.Inf(1)},
+					Memory:   &types.Memory{RetrievalIntervalHrs: math.Inf(1)},
 					Strength: math.NaN(),
 				},
 			},

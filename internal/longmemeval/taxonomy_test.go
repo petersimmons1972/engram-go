@@ -16,8 +16,8 @@ import (
 // retrieved set, ClassifyFailure returns "aggregation_failure".
 func TestClassifyFailure_AggregationGoldSessionsRetrieved(t *testing.T) {
 	result := longmemeval.ClassifyFailure(longmemeval.TaxonomyInput{
-		GoldAnswer:       "4",
-		GoldSessionIDs:   []string{"sess-1", "sess-2", "sess-3"},
+		GoldAnswer:        "4",
+		GoldSessionIDs:    []string{"sess-1", "sess-2", "sess-3"},
 		RetrievedSessions: []string{"sess-1", "sess-2", "sess-3", "sess-4"},
 	})
 	if result.Class != "aggregation_failure" {

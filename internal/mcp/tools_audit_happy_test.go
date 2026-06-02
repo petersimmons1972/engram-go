@@ -76,13 +76,13 @@ type happyTestRows struct {
 
 func newHappyRows(rows [][]any) *happyTestRows { return &happyTestRows{rows: rows, pos: -1} }
 
-func (r *happyTestRows) Close() {}
-func (r *happyTestRows) Err() error { return nil }
-func (r *happyTestRows) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (r *happyTestRows) Close()                                       {}
+func (r *happyTestRows) Err() error                                   { return nil }
+func (r *happyTestRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (r *happyTestRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *happyTestRows) Conn() *pgx.Conn { return nil }
-func (r *happyTestRows) RawValues() [][]byte { return nil }
-func (r *happyTestRows) Values() ([]any, error) { return nil, nil }
+func (r *happyTestRows) Conn() *pgx.Conn                              { return nil }
+func (r *happyTestRows) RawValues() [][]byte                          { return nil }
+func (r *happyTestRows) Values() ([]any, error)                       { return nil, nil }
 func (r *happyTestRows) Next() bool {
 	r.pos++
 	return r.pos < len(r.rows)
@@ -165,8 +165,8 @@ func (q *happyTestQuerier) QueryRow(_ context.Context, sql string, args ...any) 
 // makeTestConfig creates a Config with an injected stub DB and nil PgPool.
 func makeTestConfig(db audit.AuditQuerier) Config {
 	return Config{
-		testHooks: &testHooks{auditDB: db},
-		PgPool:    nil,
+		testHooks:  &testHooks{auditDB: db},
+		PgPool:     nil,
 		EmbedModel: "test-model",
 	}
 }
