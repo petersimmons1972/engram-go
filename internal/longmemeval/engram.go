@@ -235,6 +235,12 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 }
 
 func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+	return c.RecallWithOpts(ctx, project, query, topK, since, before, false)
+}
+
+// RecallWithOpts calls memory_recall with additional server-side options.
+// topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
+func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
@@ -248,7 +254,7 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 				return nil, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, project, query, topK, since, before)
+		ids, err := c.recall(ctx, project, query, topK, since, before, topicAnchorBoost)
 		if err == nil {
 			return ids, nil
 		}
@@ -257,7 +263,7 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 	return nil, lastErr
 }
 
-func (c *Client) recall(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+func (c *Client) recall(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
 	args := map[string]any{
 		"query":   query,
 		"project": project,
@@ -276,6 +282,10 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int, si
 	}
 	if before != nil {
 		args["before"] = before.UTC().Format(time.RFC3339)
+	}
+	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
+	if topicAnchorBoost {
+		args["topic_anchor_boost"] = true
 	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{

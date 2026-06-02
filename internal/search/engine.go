@@ -81,6 +81,14 @@ type RecallOpts struct {
 	// Nil bounds leave that side unbounded.
 	DateSince  *time.Time
 	DateBefore *time.Time
+	// TopicAnchorBoost enables the H-TAB scoring boost (LME experiment #3).
+	// When true and the query is preference-shaped, topic-anchor tokens are
+	// extracted from the query; preference memories whose content contains at
+	// least one of those tokens receive an additional 1.25× score multiplier.
+	// This targets multi-preference-session distraction: identical generic
+	// preference language ("I like X") no longer causes majority-vote pull
+	// toward off-topic sessions. Default false — composable with DualPreferenceRecall.
+	TopicAnchorBoost bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -740,6 +748,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		baseWeights = KnowledgeUpdateWeights()
 	}
 
+	// H-TAB (LME exp #3): pre-compute topic-anchor tokens from the query when
+	// TopicAnchorBoost is set and the query is preference-shaped. Done once
+	// outside the scoring loop so every candidate can be checked in O(1) space.
+	var topicAnchorTokens []string
+	if opts.TopicAnchorBoost && prefQuery {
+		topicAnchorTokens = extractTopicAnchorTokens(query)
+	}
+
 	// For temporal queries, pre-collect the candidate slice once so
 	// CompositeScoreWithRankNorm can compute the date range across the full set.
 	// This avoids an O(n²) re-scan: candidateDateRange runs once via the slice.
@@ -784,6 +800,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			EpisodeMatch:       opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
 			MemoryType:         m.MemoryType,
 			IsPreferenceQuery:  prefQuery,
+			// H-TAB: set when TopicAnchorBoost is on and the memory content
+			// contains at least one domain token from the recall query.
+			TopicAnchorMatch: len(topicAnchorTokens) > 0 && contentContainsTopicAnchor(m.Content, topicAnchorTokens),
 		}
 		var score float64
 		if tempQuery {
