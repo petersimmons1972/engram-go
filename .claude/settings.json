@@ -5,7 +5,8 @@
     "CLAUDE_STATUS_PLAN": "pro",
     "CLAUDE_STATUS_INFO_MODE": "emoji",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
+    "ENGRAM_BASE_URL": "https://engram.petersimmons.com"
   },
   "permissions": {
     "allow": [
@@ -45,7 +46,9 @@
       "Bash(rm .claude/agents/rickover-validator.md)",
       "mcp__security-program__scan",
       "mcp__security-program__list_plugins",
-      "Bash(rm /home/psimmons/.git/index.lock)"
+      "Bash(rm /home/psimmons/.git/index.lock)",
+      "mcp__codex-tools__*",
+      "Write(/home/psimmons/.claude/plans/**)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -77,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-mcp-error-handler.sh",
+            "command": "~/bin/engram hook PostToolUse",
             "timeout": 5
           },
           {
@@ -97,8 +100,8 @@
           },
           {
             "type": "command",
-            "command": "pytest --lf -x 2>&1 | tail -20",
-            "timeout": 120
+            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '\\.py$' && pytest --lf -x 2>&1 | tail -20 || true",
+            "timeout": 30
           }
         ]
       },
@@ -133,13 +136,8 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-session-end.sh",
-            "timeout": 8
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/engram-stop-ping.sh",
-            "timeout": 6
+            "command": "~/bin/engram hook Stop",
+            "timeout": 15
           },
           {
             "type": "command",
@@ -154,7 +152,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-auth-check.sh",
+            "command": "~/bin/engram hook UserPromptSubmit",
             "timeout": 5,
             "statusMessage": "Checking Engram auth"
           },
@@ -172,14 +170,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-health-check.sh",
+            "command": "~/bin/engram hook PreToolUse",
             "timeout": 8,
             "statusMessage": "Checking Engram connectivity"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/engram-precheck.sh",
-            "timeout": 25
           }
         ]
       },
@@ -204,7 +197,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/pre-compact-engram.sh",
+            "command": "~/bin/engram hook PreCompact",
             "timeout": 8,
             "statusMessage": "Storing session snapshot to engram before compaction"
           }
@@ -216,21 +209,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-token-refresh.sh",
+            "command": "~/bin/engram hook SessionStart",
             "timeout": 60,
-            "statusMessage": "Refreshing engram MCP token"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/engram-session-recall.sh",
-            "timeout": 15,
-            "statusMessage": "Injecting Engram session recall into context"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/engram-flush-fallback.sh",
-            "timeout": 30,
-            "statusMessage": "Flushing fallback.md entries to Engram"
+            "statusMessage": "Engram: auth + recall + flush"
           },
           {
             "type": "command",
@@ -265,6 +246,9 @@
       }
     ]
   },
+  "worktree": {
+    "baseRef": "head"
+  },
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline-command.sh"
@@ -275,7 +259,7 @@
     "gopls-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "effortLevel": "medium",
+  "effortLevel": "high",
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "verbose": false,
@@ -284,8 +268,5 @@
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "worktree": {
-    "baseRef": "head"
-  }
+  "skipAutoPermissionPrompt": true
 }
