@@ -374,9 +374,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.CurrentEpisodeID = id
 	}
 
-	// Capture embedder degradation signal from RecallWithOpts.
+	// Capture embedder degradation signal and reason from RecallWithOpts (#989).
 	var embedDegraded bool
+	var embedDegradeReason string
 	opts.EmbedDegraded = &embedDegraded
+	opts.EmbedDegradedReason = &embedDegradeReason
 
 	var results []types.SearchResult
 	var eventID string
@@ -421,10 +423,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"handles":    search.ToHandles(results),
 			"count":      len(results),
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
-			"degraded":   degradedMap(embedDegraded, "embed_timeout"),
+			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
 		}
 		if embedDegraded {
-			addRecallDegradedWarning(out, cfg.RouterURL, "embed_timeout")
+			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
 		}
 		return toolResult(out)
 	}
@@ -446,7 +448,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	out["degraded"] = degradedMap(isDegraded, reason)
 	if isDegraded {
 		if reason == "" && embedDegraded {
-			reason = "embed_timeout"
+			// Use the actual degradation reason surfaced by the engine (#989).
+			reason = embedDegradeReason
 		}
 		addRecallDegradedWarning(out, cfg.RouterURL, reason)
 	}

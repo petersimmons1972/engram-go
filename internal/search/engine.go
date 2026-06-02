@@ -71,6 +71,12 @@ type RecallOpts struct {
 	// non-nil pointer. It is set to true if the embed operation timed out or
 	// returned an error, causing fallback to BM25+recency. Nil = do not populate.
 	EmbedDegraded *bool
+	// EmbedDegradedReason receives the actual degradation cause when a non-nil
+	// pointer is provided. Populated alongside EmbedDegraded; values are
+	// "embed_timeout" (the embed deadline fired) or "embed_error" (hard failure
+	// such as model crash or connection refused). Empty string when not degraded.
+	// Nil = do not populate. (#989)
+	EmbedDegradedReason *string
 	// DateSince and DateBefore scope retrieval by memory valid_from timestamps.
 	// Nil bounds leave that side unbounded.
 	DateSince  *time.Time
@@ -605,6 +611,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
 	embedDegraded := false
+	embedDegradeReason := ""
 	if err != nil {
 		// Distinguish a deadline-exceeded embed (backend saturated or slow) from a
 		// hard embed error (model crash, connection refused). Saturation is the
@@ -623,12 +630,17 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			"reason", degradeReason, "err", err)
 		queryVec = nil
 		embedDegraded = true
+		embedDegradeReason = degradeReason
 		metrics.RecallEmbedTimeoutTotal.Inc()
 		metrics.RecallDegradedTotal.WithLabelValues(degradeReason).Inc()
 	}
 	// Populate the caller's embed degradation signal if they provided a pointer.
 	if opts.EmbedDegraded != nil {
 		*opts.EmbedDegraded = embedDegraded
+	}
+	// Populate the caller's degradation reason if they provided a pointer (#989).
+	if opts.EmbedDegradedReason != nil {
+		*opts.EmbedDegradedReason = embedDegradeReason
 	}
 
 	// ANN vector search via pgvector HNSW index — skipped when embed degraded.
