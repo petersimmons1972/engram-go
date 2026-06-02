@@ -12,7 +12,6 @@
 package search
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/db"
@@ -259,15 +258,3 @@ func TestRecallOpts_FusionDefaultOff(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-func sortedKeys(m map[string]*types.Memory) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}

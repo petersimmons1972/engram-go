@@ -9,7 +9,6 @@ package search
 
 import (
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -384,24 +383,3 @@ func TestStripAuxiliaryPrefix_Is(t *testing.T) {
 // Helpers (used only by tests in this file)
 // ---------------------------------------------------------------------------
 
-// stringsContains checks if slice contains s.
-func stringsContainsStr(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// sortedEqual returns true if a and b have the same elements (order-independent).
-func sortedEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	ac := append([]string{}, a...)
-	bc := append([]string{}, b...)
-	sort.Strings(ac)
-	sort.Strings(bc)
-	return reflect.DeepEqual(ac, bc)
-}
