@@ -172,3 +172,62 @@ func isKnowledgeUpdateQuery(query string) bool {
 
 // IsKnowledgeUpdateQuery is the exported form of isKnowledgeUpdateQuery.
 func IsKnowledgeUpdateQuery(query string) bool { return isKnowledgeUpdateQuery(query) }
+
+// ---------------------------------------------------------------------------
+// H-TAB — Topic-anchor boost helpers (LME experiment #3, issue #938 imp. #2)
+// ---------------------------------------------------------------------------
+
+// topicAnchorStripWords are words that carry no domain signal in preference
+// queries. They are stripped before anchor extraction so only content-bearing
+// tokens remain. Mirrors the stop-word set in longmemeval.preferenceStopWords
+// plus the preference-query boilerplate words injected by PreferenceRecallQuery.
+var topicAnchorStripWords = map[string]bool{
+	// function words
+	"a": true, "an": true, "the": true, "for": true, "on": true,
+	"in": true, "of": true, "to": true, "and": true, "or": true,
+	"i": true, "me": true, "my": true, "you": true, "your": true,
+	"do": true, "is": true, "are": true, "some": true, "any": true,
+	"can": true, "could": true, "would": true, "should": true,
+	"what": true, "which": true, "how": true, "when": true, "where": true,
+	// preference-query boilerplate injected by PreferenceRecallQuery / PreferenceSubjectAnchorQuery
+	"user": true, "preference": true, "like": true, "dislike": true,
+	"use": true, "avoid": true, "likes": true, "dislikes": true,
+	"uses": true, "avoids": true,
+}
+
+// extractTopicAnchorTokens extracts domain-specific noun tokens from a
+// preference recall query by stripping stop-words and preference-boilerplate
+// words. The remaining tokens are the domain anchor: if the gold preference
+// session mentions these tokens, it receives the TopicAnchorMatch boost.
+//
+// Input is typically the output of PreferenceSubjectAnchorQuery, e.g.:
+//
+//	"user preference coffee espresso like dislike use avoid"
+//	→ ["coffee", "espresso"]
+func extractTopicAnchorTokens(query string) []string {
+	tokens := strings.FieldsFunc(query, wordBoundary)
+	out := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		lower := strings.ToLower(tok)
+		if !topicAnchorStripWords[lower] {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// contentContainsTopicAnchor returns true when content contains at least one
+// of the anchor tokens (case-insensitive substring match). An empty token list
+// always returns false so the boost never fires unconditionally.
+func contentContainsTopicAnchor(content string, tokens []string) bool {
+	if len(tokens) == 0 || content == "" {
+		return false
+	}
+	lower := strings.ToLower(content)
+	for _, tok := range tokens {
+		if strings.Contains(lower, strings.ToLower(tok)) {
+			return true
+		}
+	}
+	return false
+}

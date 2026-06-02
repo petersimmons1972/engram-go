@@ -361,6 +361,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	var opts search.RecallOpts
 	opts.DateSince = since
 	opts.DateBefore = before
+	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
+	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
 	// Claude reranker is opt-in via rerank=true.
 	claudeRerankEnabled := cfg.ClaudeRerankEnabled
 	if cfg.RuntimeConfig != nil {

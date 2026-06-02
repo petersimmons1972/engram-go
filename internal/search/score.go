@@ -248,6 +248,7 @@ type ScoreInput struct {
 	EpisodeMatch       bool     // true when memory.episode_id == current session episode
 	MemoryType         string   // memory_type field; used to apply type-specific boosts
 	IsPreferenceQuery  bool     // true when the recall query is preference-shaped (#364)
+	TopicAnchorMatch   bool     // true when the memory content contains topic-anchor tokens from the query (H-TAB, LME exp #3)
 }
 
 // RecencyDecay returns exp(-rate * hours), optionally clamped by a floor.
@@ -332,6 +333,12 @@ func CompositeScoreRRF(in ScoreInput, w Weights, rrfBase float64) float64 {
 	}
 	if in.IsPreferenceQuery && in.MemoryType == "preference" {
 		raw *= 1.8
+	}
+	// H-TAB (LME exp #3): additional boost when the preference memory contains
+	// domain-specific topic tokens from the query. Fires only on top of the
+	// existing preference boost so it doesn't affect non-preference paths.
+	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
+		raw *= 1.25
 	}
 	return raw * boost
 }
@@ -451,6 +458,10 @@ func CompositeScoreWithRankNorm(in ScoreInput, w Weights, validFrom time.Time, c
 	if in.IsPreferenceQuery && in.MemoryType == "preference" {
 		raw *= 1.35
 	}
+	// H-TAB (LME exp #3): topic-anchor boost for on-topic preference memories.
+	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
+		raw *= 1.25
+	}
 	return raw * boost
 }
 
@@ -479,6 +490,15 @@ func CompositeScoreWithWeights(in ScoreInput, w Weights) float64 {
 	// type-aware boost compensates for the embedding space gap.
 	if in.IsPreferenceQuery && in.MemoryType == "preference" {
 		raw *= 1.35
+	}
+	// H-TAB (LME exp #3): topic-anchor boost for on-topic preference memories.
+	// When TopicAnchorMatch is true the memory contains domain-specific tokens
+	// from the query (e.g., "coffee" in a question about coffee preferences).
+	// This directly targets multi-preference-session distraction: off-topic
+	// preference sessions with high cosine (from generic "I like X" language)
+	// no longer crowd out the on-topic gold session. Default OFF (flag-gated).
+	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
+		raw *= 1.25
 	}
 	return raw * boost
 }
