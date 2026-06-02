@@ -141,19 +141,52 @@ func readAllLimited(r interface{ Read([]byte) (int, error) }, max int64) ([]byte
 	}
 }
 
-// mcpTokenStore reads/writes the Engram bearer token in mcp_servers.json.
+// mcpTokenStore reads/writes the Engram bearer token in mcp_servers.json. When
+// that file yields an empty token, Load falls back to a plain-text key file
+// (typically ~/.config/engram/api_key) — the source the shell scripts use, so
+// the daemon and scripts cannot silently diverge (#396).
 type mcpTokenStore struct {
-	path string
+	path    string
+	keyPath string // plain-text api_key fallback; "" disables the fallback
 }
 
 // NewMCPTokenStore returns a TokenStore backed by the given mcp_servers.json
-// path (typically ~/.claude/mcp_servers.json).
-func NewMCPTokenStore(path string) TokenStore { return &mcpTokenStore{path: path} }
+// path (typically ~/.claude/mcp_servers.json). It also falls back to the
+// plain-text key file at ~/.config/engram/api_key when mcp_servers.json yields
+// an empty token.
+func NewMCPTokenStore(path string) TokenStore {
+	keyPath := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		keyPath = filepath.Join(home, ".config", "engram", "api_key")
+	}
+	return &mcpTokenStore{path: path, keyPath: keyPath}
+}
+
+// newMCPTokenStore builds the store with both paths supplied explicitly. It
+// exists so tests can point the api_key fallback at a temp file instead of the
+// real ~/.config/engram/api_key.
+func newMCPTokenStore(path, keyPath string) *mcpTokenStore {
+	return &mcpTokenStore{path: path, keyPath: keyPath}
+}
 
 func (s *mcpTokenStore) Load() (string, error) {
+	token := s.loadFromMCP()
+	// If mcp_servers.json is absent, malformed, or carries no engram token, fall
+	// back to the plain-text api_key file the shell scripts read.
+	if token == "" && s.keyPath != "" {
+		if data, err := os.ReadFile(s.keyPath); err == nil {
+			token = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(data)), "Bearer "))
+		}
+	}
+	return token, nil
+}
+
+// loadFromMCP returns the engram bearer token from mcp_servers.json, or "" if
+// the file is missing, malformed, or has no engram authorization header.
+func (s *mcpTokenStore) loadFromMCP() string {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
-		return "", err
+		return ""
 	}
 	var cfg struct {
 		MCPServers map[string]struct {
@@ -163,10 +196,10 @@ func (s *mcpTokenStore) Load() (string, error) {
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return "", err
+		return ""
 	}
 	auth := cfg.MCPServers["engram"].Headers.Authorization
-	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")), nil
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 }
 
 // Store writes the token back into mcp_servers.json atomically, preserving all

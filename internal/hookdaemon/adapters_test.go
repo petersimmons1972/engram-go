@@ -50,6 +50,67 @@ func TestMCPTokenStore_LoadAndStore(t *testing.T) {
 	}
 }
 
+func TestMCPTokenStore_FallsBackToAPIKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	mcpPath := filepath.Join(dir, "mcp_servers.json")
+	keyPath := filepath.Join(dir, "api_key")
+
+	// mcp_servers.json has an engram entry but an empty Authorization header.
+	mcp := `{"mcpServers":{"engram":{"headers":{"Authorization":""}}}}`
+	if err := os.WriteFile(mcpPath, []byte(mcp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte("  file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newMCPTokenStore(mcpPath, keyPath)
+	tok, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tok != "file-token" {
+		t.Fatalf("expected api_key fallback to yield file-token, got %q", tok)
+	}
+}
+
+func TestMCPTokenStore_FallbackWhenMCPMissing(t *testing.T) {
+	dir := t.TempDir()
+	mcpPath := filepath.Join(dir, "does-not-exist.json")
+	keyPath := filepath.Join(dir, "api_key")
+	if err := os.WriteFile(keyPath, []byte("Bearer key-with-prefix\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newMCPTokenStore(mcpPath, keyPath)
+	tok, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tok != "key-with-prefix" {
+		t.Fatalf("expected key-with-prefix when mcp file absent, got %q", tok)
+	}
+}
+
+func TestMCPTokenStore_PrefersMCPToken(t *testing.T) {
+	dir := t.TempDir()
+	mcpPath := filepath.Join(dir, "mcp_servers.json")
+	keyPath := filepath.Join(dir, "api_key")
+	mcp := `{"mcpServers":{"engram":{"headers":{"Authorization":"Bearer mcp-token"}}}}`
+	if err := os.WriteFile(mcpPath, []byte(mcp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newMCPTokenStore(mcpPath, keyPath)
+	tok, _ := s.Load()
+	if tok != "mcp-token" {
+		t.Fatalf("expected mcp-token to win over api_key file, got %q", tok)
+	}
+}
+
 func TestFileMemoryWriter_ReplacesRecallSection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "MEMORY.md")
 	os.WriteFile(path, []byte("# Memory\n\nbody text\n\n## Engram Session Recall\n\nold stuff\n"), 0o600)

@@ -14,6 +14,34 @@ func TestHookSocketPath(t *testing.T) {
 	}
 }
 
+func TestHookBaseURL(t *testing.T) {
+	// Default: localhost on the configured port.
+	t.Setenv("ENGRAM_TEST_PORT", "")
+	t.Setenv("ENGRAM_URL", "")
+	t.Setenv("ENGRAM_BASE_URL", "")
+	if got := hookBaseURL(); !strings.HasPrefix(got, "http://127.0.0.1:") {
+		t.Fatalf("default base URL should be loopback, got %q", got)
+	}
+
+	// ENGRAM_BASE_URL is honoured (trailing slash trimmed).
+	t.Setenv("ENGRAM_BASE_URL", "https://engram.petersimmons.com/")
+	if got := hookBaseURL(); got != "https://engram.petersimmons.com" {
+		t.Fatalf("ENGRAM_BASE_URL not honoured, got %q", got)
+	}
+
+	// ENGRAM_URL takes precedence over ENGRAM_BASE_URL.
+	t.Setenv("ENGRAM_URL", "https://primary.example.com")
+	if got := hookBaseURL(); got != "https://primary.example.com" {
+		t.Fatalf("ENGRAM_URL should win over ENGRAM_BASE_URL, got %q", got)
+	}
+
+	// ENGRAM_TEST_PORT overrides everything (test harness escape hatch).
+	t.Setenv("ENGRAM_TEST_PORT", "9999")
+	if got := hookBaseURL(); got != "http://127.0.0.1:9999" {
+		t.Fatalf("ENGRAM_TEST_PORT should take top precedence, got %q", got)
+	}
+}
+
 func TestClaudeProjectSlug(t *testing.T) {
 	cases := map[string]string{
 		"/home/psimmons":  "-home-psimmons",
