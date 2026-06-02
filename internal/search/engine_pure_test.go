@@ -4,7 +4,9 @@
 package search
 
 import (
+	"context"
 	"math"
+	"sync/atomic"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/types"
@@ -250,4 +252,108 @@ func TestToConnectedMemories_MixedDirections(t *testing.T) {
 	if dirs["in-source"] != "incoming" {
 		t.Errorf("in-source direction = %q, want 'incoming'", dirs["in-source"])
 	}
+}
+
+
+// ---------------------------------------------------------------------------
+// maybeRerank
+// ---------------------------------------------------------------------------
+
+// countingReranker is a stub ResultReranker that records how many times
+// RerankResults has been invoked. It returns the input items unchanged (same IDs,
+// same scores) so callers can observe call count without altering result ordering.
+type countingReranker struct {
+	calls atomic.Int64
+}
+
+func (r *countingReranker) RerankResults(_ context.Context, _ string, items []RerankItem) ([]RerankResult, error) {
+	r.calls.Add(1)
+	out := make([]RerankResult, len(items))
+	for i, it := range items {
+		out[i] = RerankResult{ID: it.ID, Score: it.Score}
+	}
+	return out, nil
+}
+
+// TestMaybeRerank_NilRerankerIsNoop verifies that maybeRerank returns the
+// input slice unchanged when the reranker is nil.
+func TestMaybeRerank_NilRerankerIsNoop(t *testing.T) {
+	e := &SearchEngine{}
+	results := []types.SearchResult{
+		{Memory: &types.Memory{ID: "a"}, Score: 0.9},
+		{Memory: &types.Memory{ID: "b"}, Score: 0.5},
+	}
+	out := e.maybeRerank(context.Background(), "query", 10, results, nil)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(out))
+	}
+	if out[0].Memory.ID != "a" || out[1].Memory.ID != "b" {
+		t.Errorf("nil reranker must not reorder results; got %v %v", out[0].Memory.ID, out[1].Memory.ID)
+	}
+}
+
+// TestMaybeRerank_EmptyResultsIsNoop verifies that maybeRerank returns nil/empty
+// without calling the reranker when results is empty.
+func TestMaybeRerank_EmptyResultsIsNoop(t *testing.T) {
+	e := &SearchEngine{}
+	cr := &countingReranker{}
+	out := e.maybeRerank(context.Background(), "query", 10, nil, cr)
+	if out != nil {
+		t.Errorf("expected nil out for nil input, got %v", out)
+	}
+	if cr.calls.Load() != 0 {
+		t.Errorf("reranker called %d times on empty input, want 0", cr.calls.Load())
+	}
+}
+
+// TestMaybeRerank_InvokesRerankerExactlyOnce verifies that maybeRerank calls
+// the reranker exactly once and applies the returned scores.
+func TestMaybeRerank_InvokesRerankerExactlyOnce(t *testing.T) {
+	e := &SearchEngine{}
+	cr := &countingReranker{}
+	results := []types.SearchResult{
+		{Memory: &types.Memory{ID: "x"}, Score: 0.3},
+		{Memory: &types.Memory{ID: "y"}, Score: 0.7},
+	}
+	out := e.maybeRerank(context.Background(), "query", 10, results, cr)
+	if cr.calls.Load() != 1 {
+		t.Errorf("reranker called %d times, want exactly 1", cr.calls.Load())
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(out))
+	}
+}
+
+// TestMaybeRerank_TopKCapLimitsRerankCandidates verifies that when len(results)
+// exceeds topK the reranker only receives topK candidates (not the full slice).
+func TestMaybeRerank_TopKCapLimitsRerankCandidates(t *testing.T) {
+	e := &SearchEngine{}
+	var capturedItemCount int
+	spy := &spyReranker{onCall: func(items []RerankItem) {
+		capturedItemCount = len(items)
+	}}
+	results := make([]types.SearchResult, 5)
+	for i := range results {
+		results[i] = types.SearchResult{Memory: &types.Memory{ID: string(rune('a' + i))}, Score: float64(i) * 0.1}
+	}
+	e.maybeRerank(context.Background(), "q", 3, results, spy)
+	if capturedItemCount != 3 {
+		t.Errorf("reranker received %d items, want 3 (topK cap)", capturedItemCount)
+	}
+}
+
+// spyReranker invokes an onCall hook on each RerankResults call.
+type spyReranker struct {
+	onCall func(items []RerankItem)
+}
+
+func (s *spyReranker) RerankResults(_ context.Context, _ string, items []RerankItem) ([]RerankResult, error) {
+	if s.onCall != nil {
+		s.onCall(items)
+	}
+	out := make([]RerankResult, len(items))
+	for i, it := range items {
+		out[i] = RerankResult{ID: it.ID, Score: it.Score}
+	}
+	return out, nil
 }

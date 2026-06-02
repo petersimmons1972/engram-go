@@ -235,12 +235,47 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 }
 
 func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.RecallWithOpts(ctx, project, query, topK, since, before, false)
+	return c.recallWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+	})
+}
+
+// RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
+// recall: the server parses temporal anchors from questionText against questionDate
+// and unions a date-filtered pass with the unfiltered pass. questionText/questionDate
+// are advisory — the server falls back to baseline single-pass recall when no window
+// resolves (e.g. "how many X ago").
+func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]string, error) {
+	return c.recallWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK,
+		temporalWindow: true, questionText: questionText, questionDate: questionDate,
+	})
 }
 
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
 func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
+	return c.recallWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost,
+	})
+}
+
+// recallParams carries the optional knobs for a single memory_recall call.
+type recallParams struct {
+	project          string
+	query            string
+	topK             int
+	since            *time.Time
+	before           *time.Time
+	temporalWindow   bool
+	questionText     string
+	questionDate     string
+	exactFactBoost   bool
+	topicAnchorBoost bool
+}
+
+func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
@@ -254,7 +289,7 @@ func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK
 				return nil, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, project, query, topK, since, before, topicAnchorBoost)
+		ids, err := c.recall(ctx, p)
 		if err == nil {
 			return ids, nil
 		}
@@ -273,38 +308,17 @@ type RecallOpts struct {
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.
 // Convenience wrapper for the longmemeval run command.
 func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	var lastErr error
-	for attempt := 0; attempt <= c.retries; attempt++ {
-		if attempt > 0 {
-			if err := c.Connect(ctx); err != nil {
-				return nil, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
-			}
-			select {
-			case <-time.After(5 * time.Second):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		ids, err := c.recallWithBoostOpt(ctx, project, query, topK, since, before, true, false)
-		if err == nil {
-			return ids, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	return c.recallWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true,
+	})
 }
 
-// recall is the internal retry-wrapped recall helper. topicAnchorBoost enables
-// H-TAB server-side scoring (LME exp #3, flag-gated).
-func (c *Client) recall(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
-	return c.recallWithBoostOpt(ctx, project, query, topK, since, before, false, topicAnchorBoost)
-}
-
-func (c *Client) recallWithBoostOpt(ctx context.Context, project, query string, topK int, since, before *time.Time, exactFactBoost, topicAnchorBoost bool) ([]string, error) {
+func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	args := map[string]any{
-		"query":   query,
-		"project": project,
-		"top_k":   topK,
+		"query":   p.query,
+		"project": p.project,
+		"top_k":   p.topK,
 		"detail":  "summary",
 		// Benchmark retrieval must not mutate retrieval telemetry while
 		// measuring recall quality.
@@ -314,17 +328,22 @@ func (c *Client) recallWithBoostOpt(ctx context.Context, project, query string, 
 		// this avoids oversized tool payloads on dense queries.
 		"mode": "handle",
 	}
-	if exactFactBoost {
+	if p.exactFactBoost {
 		args["exact_fact_boost"] = true
 	}
-	if since != nil {
-		args["since"] = since.UTC().Format(time.RFC3339)
+	if p.since != nil {
+		args["since"] = p.since.UTC().Format(time.RFC3339)
 	}
-	if before != nil {
-		args["before"] = before.UTC().Format(time.RFC3339)
+	if p.before != nil {
+		args["before"] = p.before.UTC().Format(time.RFC3339)
+	}
+	if p.temporalWindow {
+		args["temporal_window_recall"] = true
+		args["question_text"] = p.questionText
+		args["question_date"] = p.questionDate
 	}
 	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
-	if topicAnchorBoost {
+	if p.topicAnchorBoost {
 		args["topic_anchor_boost"] = true
 	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
