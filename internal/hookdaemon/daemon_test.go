@@ -241,6 +241,20 @@ func TestHandleUserPromptSubmit_NoTokenIsSilent(t *testing.T) {
 	}
 }
 
+// L1 — handleUserPromptSubmit auth-fail branch: token present, CheckAuth returns
+// false → systemMessage surfaced, no exit code change.
+func TestHandleUserPromptSubmit_AuthFailSurfacesMessage(t *testing.T) {
+	d, eng, _, _, _, _ := newTestDaemon(t, Config{})
+	eng.authOK = false
+	resp := d.Handle(context.Background(), Request{Hook: HookUserPromptSubmit})
+	if !strings.Contains(resp.SystemMessage, "auth failed") {
+		t.Fatalf("expected auth-failed systemMessage, got %+v", resp)
+	}
+	if resp.ExitCode != 0 {
+		t.Fatalf("auth failure must not change exit code, got %d", resp.ExitCode)
+	}
+}
+
 // ---- PreToolUse -------------------------------------------------------------
 
 func TestHandlePreToolUse_HealthyIsSilent(t *testing.T) {
@@ -421,9 +435,14 @@ func TestExtractFallbackEntry(t *testing.T) {
 		payload string
 		want    bool
 	}{
-		{"engram failure is_error", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":true}}`, true},
+		{"engram failure is_error bool", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":true}}`, true},
+		{"engram failure is_error int 1 (M3)", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":1}}`, true},
+		{"engram failure is_error int 0 (M3)", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":0}}`, false},
+		{"engram failure is_error string true (M3)", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":"true"}}`, true},
+		{"engram failure is_error string false (M3)", `{"tool_name":"mcp__engram__x","tool_response":{"is_error":"false"}}`, false},
 		{"engram failure error string", `{"tool_name":"mcp__engram__x","tool_response":{"error":"boom"}}`, true},
 		{"engram success", `{"tool_name":"mcp__engram__x","tool_response":{"ok":1}}`, false},
+		{"array tool_response treated as success", `{"tool_name":"mcp__engram__x","tool_response":[{"type":"text"}]}`, false},
 		{"non-engram", `{"tool_name":"Read","tool_response":{"is_error":true}}`, false},
 		{"empty payload", ``, false},
 		{"bad json", `{not json`, false},

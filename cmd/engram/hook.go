@@ -86,8 +86,13 @@ func claudeProjectSlug(path string) string {
 	return strings.ReplaceAll(filepath.Clean(path), string(filepath.Separator), "-")
 }
 
-// detachHookDaemon re-execs this binary as a background hook-daemon, with stderr
-// redirected to the rotating log file, then returns immediately (#396).
+// detachHookDaemon re-execs this binary as a detached background hook-daemon.
+// It uses a single exec.Command with Setsid:true, which creates a new session
+// and detaches the child from the controlling terminal — sufficient to outlive
+// the parent process. (It is not a double-fork; a second fork is unnecessary
+// because Setsid alone prevents the child from receiving terminal signals.)
+// Stderr is redirected to the rotating log file and the call returns immediately
+// (#396).
 func detachHookDaemon() error {
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".claude", "logs")
@@ -103,12 +108,13 @@ func detachHookDaemon() error {
 	if err != nil {
 		return err
 	}
-	// The child is intentionally detached and outlives this process, so it is
-	// not bound to a cancellable context (Setsid reparents it to init).
+	// The child outlives this process: use a non-cancellable context so Go's
+	// exec.Cmd does not kill it when the parent exits. Setsid creates a new
+	// session, detaching the child from the parent's controlling terminal.
 	cmd := exec.CommandContext(context.Background(), exe, "hook-daemon")
 	cmd.Stdout = lf
 	cmd.Stderr = lf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from session
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // new session, detach from terminal
 	cmd.Env = os.Environ()
 	return cmd.Start()
 }

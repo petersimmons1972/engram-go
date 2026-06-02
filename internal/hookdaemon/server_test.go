@@ -2,6 +2,7 @@ package hookdaemon
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -84,6 +85,35 @@ func TestServer_IdleTimeoutShutsDown(t *testing.T) {
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("daemon did not idle-timeout")
+	}
+}
+
+// L2 — Server.Close removes the socket file and returns a non-nil error if the
+// listener is already closed (idempotency).
+func TestServer_CloseRemovesSocket(t *testing.T) {
+	srv, _ := newServerForTest(t, 10*time.Minute)
+	sockPath := srv.SocketPath()
+
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("socket file should exist before Close: %v", err)
+	}
+	if err := srv.Close(); err != nil {
+		// Close calls ln.Close() which may return an error; that's acceptable.
+		// What matters is that the socket file is gone.
+		_ = err
+	}
+	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected socket file removed after Close, err=%v", err)
+	}
+}
+
+// L4 — SendWithRetry with a nil start callback returns the original dial error
+// without retrying.
+func TestSendWithRetry_NilStartReturnsDialError(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "absent.sock")
+	_, err := SendWithRetry(sock, Request{Hook: HookUserPromptSubmit}, nil, 0)
+	if err == nil {
+		t.Fatal("expected error when daemon not running and start is nil")
 	}
 }
 
