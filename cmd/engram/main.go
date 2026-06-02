@@ -306,6 +306,31 @@ func run() error {
 		slog.Info("LiteLLM embedding verified at startup", "dims", len(probeVec), "model_id", probeModelID)
 	}
 
+	// Wire background probe goroutine so the circuit breaker can recover from
+	// an Open state independently of query load (#1000).  A just-restarted GPU
+	// answers GET /v1/models (used by Probe) well within 5 s even when
+	// embeddings take longer than the 500 ms recall budget, breaking the
+	// ping-pong loop that kept the breaker open for 18+ hours.
+	//
+	// The probe runs on the server root context (ctx) so it stops on SIGTERM.
+	// The interval is set to the circuit OpenDuration so at most one tick
+	// fires per backoff window — we do not probe faster than the breaker
+	// is configured to allow demand-driven probes.
+	if liteLLMClient, ok := embedClient.(*embed.LiteLLMClient); ok {
+		liteLLMClient.StartBackgroundProbe(ctx, *embedCircuitOpenDuration)
+		slog.Info("embed circuit breaker background probe started",
+			"interval", *embedCircuitOpenDuration)
+	} else {
+		// If the embed client is ever wrapped or swapped, the background probe
+		// silently would not start and circuit-breaker recovery would again
+		// depend entirely on demand traffic — the exact 18-hour stuck-open
+		// failure #1000 fixes. Log loudly so this regression is never silent.
+		slog.Warn("embed circuit breaker background probe NOT started: "+
+			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
+			"circuit will depend on demand-path traffic only (#1000)",
+			"embed_client_type", fmt.Sprintf("%T", embedClient))
+	}
+
 	dsn := *databaseURL
 	routerURLVal := *routerURL
 	sumModel := *summarizeModel

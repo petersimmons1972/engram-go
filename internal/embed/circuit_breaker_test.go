@@ -431,3 +431,92 @@ func TestCircuitBreakerHalfOpenOnlyAllowsOneProbe(t *testing.T) {
 		t.Errorf("expected Allow to succeed after probe complete, got %v", err)
 	}
 }
+
+// TestAllowProbe_ClosedReturnsError verifies the core difference between
+// AllowProbe and Allow: AllowProbe never grants a probe on a healthy (Closed)
+// circuit, so a background tick is a no-op when nothing is wrong (#1000).
+func TestAllowProbe_ClosedReturnsError(t *testing.T) {
+	cfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  5,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+	cb := NewCircuitBreaker(cfg)
+
+	if cb.State() != StateClosed {
+		t.Fatalf("expected Closed, got %v", cb.State())
+	}
+	if err := cb.AllowProbe(); err != errCircuitOpen {
+		t.Errorf("AllowProbe on Closed = %v, want errCircuitOpen", err)
+	}
+	// Allow, by contrast, grants on Closed.
+	if err := cb.Allow(); err != nil {
+		t.Errorf("Allow on Closed = %v, want nil", err)
+	}
+}
+
+// TestAllowProbe_OpenTransitionsHalfOpen verifies AllowProbe drives the same
+// Open->HalfOpen transition as Allow and enforces nextProbeAt + one-probe.
+func TestAllowProbe_OpenTransitionsHalfOpen(t *testing.T) {
+	now := time.Now()
+	cfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  1,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+	cb := NewCircuitBreaker(cfg)
+	cb.now = func() time.Time { return now }
+
+	// Force Open with nextProbeAt in the future: within backoff, AllowProbe denies.
+	cb.mu.Lock()
+	cb.state = StateOpen
+	cb.consecutiveOpens = 1
+	cb.nextProbeAt = now.Add(10 * time.Second)
+	cb.mu.Unlock()
+	if err := cb.AllowProbe(); err != errCircuitOpen {
+		t.Errorf("AllowProbe within backoff = %v, want errCircuitOpen", err)
+	}
+	if cb.State() != StateOpen {
+		t.Errorf("state changed during denied probe: %v", cb.State())
+	}
+
+	// Move past nextProbeAt: AllowProbe grants and transitions to HalfOpen.
+	cb.mu.Lock()
+	cb.nextProbeAt = now.Add(-1 * time.Second)
+	cb.mu.Unlock()
+	if err := cb.AllowProbe(); err != nil {
+		t.Fatalf("AllowProbe past nextProbeAt = %v, want nil", err)
+	}
+	if cb.State() != StateHalfOpen {
+		t.Errorf("expected HalfOpen after AllowProbe, got %v", cb.State())
+	}
+
+	// Second AllowProbe while a probe is in flight is denied.
+	if err := cb.AllowProbe(); err != errCircuitOpen {
+		t.Errorf("second AllowProbe in HalfOpen = %v, want errCircuitOpen", err)
+	}
+
+	// After RecordSuccess (slot released, breaker Closed), AllowProbe denies again.
+	cb.RecordSuccess()
+	if cb.State() != StateClosed {
+		t.Fatalf("expected Closed after RecordSuccess, got %v", cb.State())
+	}
+	if err := cb.AllowProbe(); err != errCircuitOpen {
+		t.Errorf("AllowProbe after recovery (Closed) = %v, want errCircuitOpen", err)
+	}
+}
+
+// TestAllowProbe_DisabledReturnsError verifies a disabled breaker never grants
+// a background probe (no point probing when circuit breaking is off).
+func TestAllowProbe_DisabledReturnsError(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitConfig{Enabled: false})
+	if err := cb.AllowProbe(); err != errProbeDisabled {
+		t.Errorf("AllowProbe when disabled = %v, want errProbeDisabled", err)
+	}
+}
