@@ -204,10 +204,12 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 
 // rejectDefaultPassword refuses to start if a well-known default password is detected (#124).
 // A warning is insufficient: operators who miss the log line leave the database exposed indefinitely.
+// The password value is intentionally omitted from the error message to prevent clear-text logging
+// of credentials (CWE-312).
 func rejectDefaultPassword(cfg *pgxpool.Config) error {
 	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
-		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default password (%q) — "+
-			"set a strong POSTGRES_PASSWORD in your environment before starting engram", cfg.ConnConfig.Password)
+		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default password — " +
+			"set a strong POSTGRES_PASSWORD in your environment before starting engram")
 	}
 	return nil
 }
