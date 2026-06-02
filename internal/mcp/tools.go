@@ -141,6 +141,13 @@ type Config struct {
 	// Set via --session-ndcg-agg flag or ENGRAM_SESSION_NDCG_AGG=true env var.
 	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
 	SessionNDCGAgg bool
+
+	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for
+	// preference-shaped recall queries. When true, RecallWithOpts applies an
+	// MMR re-scoring post-pass that surfaces domain-specific preference sessions
+	// buried under the user's dominant topic. Default false.
+	// Set via ENGRAM_PREFERENCE_MMR=1. (#H-NEW-2)
+	PreferenceMMR bool
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.
