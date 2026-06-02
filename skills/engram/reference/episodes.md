@@ -1,8 +1,4 @@
----
-description: Start, end, list, and recall named work session episodes in Engram memory
----
-
-# engram-episodes
+# Episode Operations
 
 Group memories into named episodes so you can recall everything that happened
 during a discrete work session. Episodes give Engram a timeline structure —
@@ -84,12 +80,12 @@ during a past session, brief a new agent, or produce a session summary report.
 
 ## Tools Available
 
-| Tool | Arguments | Effect |
-|------|-----------|--------|
-| `memory_episode_start` | `project` (string), `description` (string) | Open a new episode; returns `id` |
-| `memory_episode_end` | `id` (string), `project` (string), `summary` (string, optional) | Close the episode |
-| `memory_episode_list` | `project` (string), `limit` (int, default 10) | List recent episodes |
-| `memory_episode_recall` | `id` (string), `project` (string) | Retrieve all memories in the episode in order |
+| Tool                   | Arguments                                              | Effect |
+|------------------------|--------------------------------------------------------|--------|
+| `memory_episode_start` | `project` (string), `description` (string)            | Open a new episode; returns `id` |
+| `memory_episode_end`   | `id` (string), `project` (string), `summary` (string, optional) | Close the episode |
+| `memory_episode_list`  | `project` (string), `limit` (int, default 10)         | List recent episodes |
+| `memory_episode_recall`| `id` (string), `project` (string)                     | Retrieve all memories in the episode in order |
 
 ## Typical Full-Session Workflow
 
