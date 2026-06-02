@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -358,6 +359,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	rerank := getBool(args, "rerank", false)
+	exactFactBoost := getBool(args, "exact_fact_boost", false)
 	var opts search.RecallOpts
 	opts.DateSince = since
 	opts.DateBefore = before
@@ -385,6 +387,21 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// Inject current session episode for same-session score boosting (Phase 3).
 	if id, ok := episodeIDFromContext(ctx); ok {
 		opts.CurrentEpisodeID = id
+	}
+	// Exact-fact identifier boost (LME #938 improvement #3, default OFF).
+	opts.ExactFactBoost = exactFactBoost
+	// Paraphrase-union retrieval (LME experiment #2, default OFF).
+	// Enable server-wide via ENGRAM_PARAPHRASE_UNION=true env var,
+	// or per-call by passing paraphrase_union=true in the MCP args.
+	{
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_PARAPHRASE_UNION")))
+		opts.ParaphraseUnion = v == "true" || v == "1" || getBool(args, "paraphrase_union", false)
+	}
+	// RRF fusion (LME experiment #6, issue #938 improvement #1, default OFF).
+	// Enable server-wide via ENGRAM_RRF_FUSION=true|1 env var, or per-call via rrf_fusion=true.
+	{
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_RRF_FUSION")))
+		opts.Fusion = v == "true" || v == "1" || getBool(args, "rrf_fusion", false)
 	}
 
 	// Capture embedder degradation signal and reason from RecallWithOpts (#989).

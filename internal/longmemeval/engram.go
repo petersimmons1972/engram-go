@@ -263,7 +263,44 @@ func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK
 	return nil, lastErr
 }
 
+// RecallOpts holds optional parameters for the LongMemEval recall client.
+type RecallOpts struct {
+	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
+	// handler, enabling the entity-identifier scoring boost (LME #938 improvement #3).
+	ExactFactBoost bool
+}
+
+// RecallWithExactBoost calls recall with exact_fact_boost enabled.
+// Convenience wrapper for the longmemeval run command.
+func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.retries; attempt++ {
+		if attempt > 0 {
+			if err := c.Connect(ctx); err != nil {
+				return nil, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
+			}
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		ids, err := c.recallWithBoostOpt(ctx, project, query, topK, since, before, true, false)
+		if err == nil {
+			return ids, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// recall is the internal retry-wrapped recall helper. topicAnchorBoost enables
+// H-TAB server-side scoring (LME exp #3, flag-gated).
 func (c *Client) recall(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
+	return c.recallWithBoostOpt(ctx, project, query, topK, since, before, false, topicAnchorBoost)
+}
+
+func (c *Client) recallWithBoostOpt(ctx context.Context, project, query string, topK int, since, before *time.Time, exactFactBoost, topicAnchorBoost bool) ([]string, error) {
 	args := map[string]any{
 		"query":   query,
 		"project": project,
@@ -276,6 +313,9 @@ func (c *Client) recall(ctx context.Context, project, query string, topK int, si
 		// full SearchResult graph. LongMemEval only needs ranked IDs, and
 		// this avoids oversized tool payloads on dense queries.
 		"mode": "handle",
+	}
+	if exactFactBoost {
+		args["exact_fact_boost"] = true
 	}
 	if since != nil {
 		args["since"] = since.UTC().Format(time.RFC3339)

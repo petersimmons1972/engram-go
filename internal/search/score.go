@@ -245,10 +245,11 @@ type ScoreInput struct {
 	Importance         int      // [0,4]; 0=critical (never pruned), 4=trivial (auto-pruned)
 	DynamicImportance  *float64 // learned importance from spaced repetition; overrides Importance when non-nil
 	RetrievalPrecision *float64 // times_useful/times_retrieved; nil during cold start (<5 retrievals) → treated as 0.5
-	EpisodeMatch       bool     // true when memory.episode_id == current session episode
-	MemoryType         string   // memory_type field; used to apply type-specific boosts
-	IsPreferenceQuery  bool     // true when the recall query is preference-shaped (#364)
-	TopicAnchorMatch   bool     // true when the memory content contains topic-anchor tokens from the query (H-TAB, LME exp #3)
+	EpisodeMatch         bool     // true when memory.episode_id == current session episode
+	MemoryType           string   // memory_type field; used to apply type-specific boosts
+	IsPreferenceQuery    bool     // true when the recall query is preference-shaped (#364)
+	TopicAnchorMatch     bool     // true when the memory content contains topic-anchor tokens from the query (H-TAB, LME exp #3)
+	ExactIdentifierMatch bool     // true when memory content contains a verbatim entity identifier from the query (LME #938 improvement #3)
 }
 
 // RecencyDecay returns exp(-rate * hours), optionally clamped by a floor.
@@ -339,6 +340,11 @@ func CompositeScoreRRF(in ScoreInput, w Weights, rrfBase float64) float64 {
 	// existing preference boost so it doesn't affect non-preference paths.
 	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
 		raw *= 1.25
+	}
+	// Exact-fact identifier boost (LME #938 improvement #3, flag-gated via
+	// RecallOpts.ExactFactBoost; set into ScoreInput by the engine).
+	if in.ExactIdentifierMatch {
+		raw += exactIdentifierBoost()
 	}
 	return raw * boost
 }
@@ -462,6 +468,9 @@ func CompositeScoreWithRankNorm(in ScoreInput, w Weights, validFrom time.Time, c
 	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
 		raw *= 1.25
 	}
+	if in.ExactIdentifierMatch {
+		raw += exactIdentifierBoost()
+	}
 	return raw * boost
 }
 
@@ -499,6 +508,11 @@ func CompositeScoreWithWeights(in ScoreInput, w Weights) float64 {
 	// no longer crowd out the on-topic gold session. Default OFF (flag-gated).
 	if in.IsPreferenceQuery && in.TopicAnchorMatch && in.MemoryType == "preference" {
 		raw *= 1.25
+	}
+	// Exact-fact identifier boost (LME #938 improvement #3, flag-gated via
+	// RecallOpts.ExactFactBoost; set into ScoreInput by the engine).
+	if in.ExactIdentifierMatch {
+		raw += exactIdentifierBoost()
 	}
 	return raw * boost
 }

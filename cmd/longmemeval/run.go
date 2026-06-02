@@ -435,9 +435,15 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+		if cfg.ExactSignalBoost {
+			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
+		}
 		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
 	}
 	recallDefault := func(query string, topK int) ([]string, error) {
+		if cfg.ExactSignalBoost {
+			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
+		}
 		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
 	}
 	retrievedIDs, temporalFallbackIDs, err := recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)

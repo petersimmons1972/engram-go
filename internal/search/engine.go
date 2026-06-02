@@ -93,6 +93,22 @@ type RecallOpts struct {
 	// (ENGRAM_MEMPALACE_HIERARCHICAL_RECALL=true). 0 uses defaultTopClusters (3).
 	// Ignored when the flag is off. (LME experiment #9)
 	TopClusters int
+	// ExactFactBoost enables the exact-fact / entity-identifier scoring boost
+	// (LME experiment #4, issue #938 improvement #3). When true, memories whose
+	// content contains a verbatim identifier from the query (named entity, URL,
+	// phone number) receive an additive score boost calibrated to surface them
+	// above high-cosine near-misses. Default false (ablation-safe).
+	ExactFactBoost bool
+	// Fusion enables Reciprocal Rank Fusion (RRF) candidate merging before
+	// composite scoring (LME experiment #6, issue #938 improvement #1). When
+	// true, the engine pre-computes rank positions from the vector and BM25 legs
+	// and passes them to CompositeScoreRRF instead of CompositeScoreWithWeights.
+	// Targets the gold_missing failure class (~168/271 incorrect where gold is
+	// absent from top-10 entirely). Default false (ablatable).
+	Fusion bool
+	// ParaphraseUnion enables multi-pass paraphrased query union retrieval
+	// (LME experiment #2, issue #938 improvement #4). Default false (ablatable).
+	ParaphraseUnion bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -157,6 +173,7 @@ type bestHit struct {
 	chunkIndex     int
 	sectionHeading *string // borrowed; see struct comment
 	chunkID        string
+	rrfScore       float64 // populated by applyFusion when RecallOpts.Fusion=true; 0 otherwise
 }
 
 // defaultEmbedRecallTimeoutMS is the bounded timeout for the embed call during
@@ -188,6 +205,9 @@ type SearchEngine struct {
 	embedGateway        embedGateway        // non-nil when ENGRAM_EMBED_GW_ENABLED=true
 	PreferenceExtractor PreferenceExtractor // nil = extraction disabled; default PatternPreferenceExtractor{}
 	hydeIndexer         *HydeIndexer        // nil when ENGRAM_HYDE_ENABLED=false or backend lacks hydeBackend
+	// Paraphraser generates query variants for the ParaphraseUnion recall path.
+	// Defaults to RuleBasedParaphraser{} when nil. Override via SetParaphraser.
+	Paraphraser QueryParaphraser
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
@@ -755,10 +775,105 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		memories[r.Memory.ID] = r.Memory
 	}
 
+	// ParaphraseUnion path (LME experiment #2): run additional vector+FTS passes
+	// for each paraphrase variant and union candidate sets before scoring.
+	// Targets missing_recall failures where gold is an incidental mention.
+	// When opts.ParaphraseUnion is false this block is entirely skipped.
+	if opts.ParaphraseUnion {
+		parer := e.Paraphraser
+		if parer == nil {
+			parer = RuleBasedParaphraser{}
+		}
+		paraphrases := parer.Paraphrase(query, 3)
+		for _, pq := range paraphrases {
+			// Vector pass for this variant (best-effort; errors are logged, not fatal).
+			var pEmbedCtx context.Context
+			var pEmbedCancel context.CancelFunc
+			if e.embedRecallTimeout == noEmbedTimeout {
+				pEmbedCtx, pEmbedCancel = ctx, func() {}
+			} else {
+				pEmbedCtx, pEmbedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
+			}
+			pVec, pErr := e.getEmbedder().Embed(pEmbedCtx, pq)
+			pEmbedCancel()
+			if pErr == nil && pVec != nil {
+				pVecHits, pVErr := e.backend.VectorSearchWithDateRange(ctx, e.project, pVec, topK*3, opts.DateSince, opts.DateBefore)
+				if pVErr == nil {
+					for _, h := range pVecHits {
+						cosine := 1.0 - h.Distance
+						if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
+							bestHits[h.MemoryID] = bestHit{
+								cosine:         cosine,
+								chunkText:      h.ChunkText,
+								chunkIndex:     h.ChunkIndex,
+								sectionHeading: h.SectionHeading,
+								chunkID:        h.ChunkID,
+							}
+						}
+						if !seen[h.MemoryID] {
+							seen[h.MemoryID] = true
+							uniqueIDs = append(uniqueIDs, h.MemoryID)
+						}
+					}
+				} else {
+					slog.Debug("paraphrase union: vector pass failed", "paraphrase", pq, "err", pVErr)
+				}
+			} else if pErr != nil {
+				slog.Debug("paraphrase union: embed failed", "paraphrase", pq, "err", pErr)
+			}
+			// FTS pass for this variant.
+			pFTSResults, pFErr := e.backend.FTSSearch(ctx, e.project, pq, topK*3, opts.DateSince, opts.DateBefore)
+			if pFErr == nil {
+				for _, r := range pFTSResults {
+					// Prefer higher BM25 score across passes.
+					if r.Score > ftsScores[r.Memory.ID] {
+						ftsScores[r.Memory.ID] = r.Score
+						if r.Score > maxBM25 {
+							maxBM25 = r.Score
+						}
+					}
+					if _, exists := memories[r.Memory.ID]; !exists {
+						memories[r.Memory.ID] = r.Memory
+					}
+				}
+			} else {
+				slog.Debug("paraphrase union: FTS pass failed", "paraphrase", pq, "err", pFErr)
+			}
+		}
+		// Batch-fetch any new vector-only candidates surfaced by paraphrase passes.
+		if len(uniqueIDs) > 0 {
+			newIDs := make([]string, 0, 8)
+			for _, id := range uniqueIDs {
+				if _, exists := memories[id]; !exists {
+					newIDs = append(newIDs, id)
+				}
+			}
+			if len(newIDs) > 0 {
+				newMems, fetchErr := e.backend.GetMemoriesByIDs(ctx, e.project, newIDs)
+				if fetchErr == nil {
+					for _, m := range newMems {
+						memories[m.ID] = m
+					}
+				} else {
+					slog.Debug("paraphrase union: batch fetch failed", "err", fetchErr)
+				}
+			}
+		}
+	}
+
 	// Detect query type once before the scoring loop.
 	prefQuery := isPreferenceQuery(query)
 	tempQuery := isTemporalQuery(query)
 	kuQuery := isKnowledgeUpdateQuery(query)
+	// Identifier query detection for exact-fact boost (LME #938 improvement #3).
+	// Only active when the caller enables the flag; detection is cheap (regex).
+	exactBoostEnabled := opts.ExactFactBoost && isIdentifierQuery(query)
+
+	// RRF setup (LME experiment #6, issue #938 improvement #1): pre-compute
+	// per-leg rank positions. applyFusion is a strict no-op when Fusion=false.
+	vecRanks := rankVectorHits(vecHits)
+	ftsRanks := rankFTSResults(ftsRes.results)
+	applyFusion(opts, memories, bestHits, vecRanks, ftsRanks)
 
 	// Resolve base weights: per-project cache when available, otherwise defaults.
 	// Type-specific profiles override the cache — recency dominance is correct
@@ -816,22 +931,27 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			bm25 = ftsScores[id] / maxBM25
 		}
 		hit := bestHits[id]
+		exactMatch := exactBoostEnabled && ExactIdentifierHit(m.Content, query)
 		input := ScoreInput{
-			Cosine:             hit.cosine,
-			BM25:               bm25,
-			HoursSince:         temporalAnchorHours(*m),
-			Importance:         m.Importance,
-			DynamicImportance:  m.DynamicImportance,
-			RetrievalPrecision: m.RetrievalPrecision,
-			EpisodeMatch:       opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
-			MemoryType:         m.MemoryType,
-			IsPreferenceQuery:  prefQuery,
+			Cosine:               hit.cosine,
+			BM25:                 bm25,
+			HoursSince:           temporalAnchorHours(*m),
+			Importance:           m.Importance,
+			DynamicImportance:    m.DynamicImportance,
+			RetrievalPrecision:   m.RetrievalPrecision,
+			EpisodeMatch:         opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
+			MemoryType:           m.MemoryType,
+			IsPreferenceQuery:    prefQuery,
 			// H-TAB: set when TopicAnchorBoost is on and the memory content
 			// contains at least one domain token from the recall query.
-			TopicAnchorMatch: len(topicAnchorTokens) > 0 && contentContainsTopicAnchor(m.Content, topicAnchorTokens),
+			TopicAnchorMatch:     len(topicAnchorTokens) > 0 && contentContainsTopicAnchor(m.Content, topicAnchorTokens),
+			ExactIdentifierMatch: exactMatch,
 		}
 		var score float64
-		if tempQuery {
+		if opts.Fusion {
+			// RRF path: use pre-computed rank fusion score in place of raw cosine/BM25.
+			score = CompositeScoreRRF(input, baseWeights, hit.rrfScore)
+		} else if tempQuery {
 			var validFrom time.Time
 			if m.ValidFrom != nil {
 				validFrom = *m.ValidFrom
@@ -881,6 +1001,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 				}
 				if m.RetrievalPrecision != nil {
 					bd["retrieval_precision"] = *m.RetrievalPrecision
+				}
+				if input.ExactIdentifierMatch {
+					bd["exact_identifier_boost"] = exactIdentifierBoost()
 				}
 				return bd
 			}(),
