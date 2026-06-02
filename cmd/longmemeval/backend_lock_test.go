@@ -489,16 +489,13 @@ func TestNewInvocationID(t *testing.T) {
 				break
 			}
 		}
-		// Must NOT look like a bare nanosecond timestamp (all decimal digits).
-		allDigits := true
-		for _, c := range id {
-			if c < '0' || c > '9' {
-				allDigits = false
-				break
-			}
-		}
-		if allDigits {
-			t.Errorf("newInvocationID() = %q looks like a decimal timestamp; want hex", id)
+		// Must NOT be the degraded-mode fallback ("ns-<nanoseconds>").
+		// The fallback always starts with "ns-"; a 16-char hex string that
+		// happens to use only the digits 0-9 is still valid and must not be
+		// rejected (hex chars a-f are absent ~1/5000 runs, causing a flaky
+		// false-positive if we test for all-decimal instead of the prefix).
+		if strings.HasPrefix(id, "ns-") {
+			t.Errorf("newInvocationID() = %q is the crypto/rand fallback path; want 16-char hex from rand.Read", id)
 		}
 	}
 
