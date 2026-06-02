@@ -841,16 +841,35 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			score = CompositeScoreWithWeights(input, baseWeights)
 		}
 
+		// LME Experiment #5: apply validity window boost when ENGRAM_VALIDITY_WINDOW_FILTER=true.
+		// Multiplies the composite score by a valid_from recency factor so that
+		// more-recently-dated memories rank above older ones for the same query.
+		// Flag OFF (default) → vwBoost = 1.0, score unchanged (baseline-safe).
+		//
+		// Guard: do NOT apply on temporal queries (tempQuery=true). CompositeScoreWithRankNorm
+		// already incorporates valid_from via RankNormalizedRecency; applying vwBoost there
+		// would double-count the recency signal. The experiment target is knowledge-update
+		// queries (kuQuery), which use CompositeScoreWithWeights and have no rank-norm path.
+		vwBoost := ValidFromBoost(m.ValidFrom)
+		if !tempQuery {
+			score *= vwBoost
+		} else {
+			// Record 1.0 in the breakdown so observability accurately reflects that
+			// no extra boost was applied on this path.
+			vwBoost = 1.0
+		}
+
 		result := types.SearchResult{
 			Memory:     m,
 			Score:      score,
 			ChunkScore: hit.cosine,
 			ScoreBreakdown: func() map[string]float64 {
 				bd := map[string]float64{
-					"cosine":        hit.cosine,
-					"bm25":          bm25,
-					"recency":       RecencyDecay(input.HoursSince),
-					"episode_boost": 1.0,
+					"cosine":           hit.cosine,
+					"bm25":             bm25,
+					"recency":          RecencyDecay(input.HoursSince),
+					"episode_boost":    1.0,
+					"valid_from_boost": vwBoost,
 				}
 				if input.EpisodeMatch {
 					bd["episode_boost"] = 1.15
