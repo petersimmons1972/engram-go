@@ -200,6 +200,11 @@ post_run_verify() {
     log "post-verify: codex exec pid=${codex_pid} completed for ${repo}#${issue_num}"
   fi
 
+  # Release the per-issue worker lockfile so the next poller tick can reclaim
+  # this issue if it was not completed (e.g. Codex stalled without pushing).
+  local short_name; short_name="$(repo_short_name "${repo}")"
+  rm -f "${STATE_DIR}/worker-${short_name}-${issue_num}.lock"
+
   # Check 1: does the branch exist on the remote? Use the GitHub API so this
   # works regardless of which local checkout is current.
   local remote_exists=0
@@ -401,10 +406,26 @@ Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the s
 
   local LOG_RUN
   LOG_RUN="${STATE_DIR}/${SHORT}-${ISSUE_NUM}-$(date -u +%Y%m%dT%H%M%S).log"
+  # Per-issue worker guard: refuse to launch if a prior worker for this exact
+  # issue is still alive. Guards against KillMode=process orphan stacking and
+  # shared-worktree races when a single issue takes longer than the poll interval.
+  local WORKER_LOCK="${STATE_DIR}/worker-${SHORT}-${ISSUE_NUM}.lock"
+  if [[ -f "${WORKER_LOCK}" ]]; then
+    local existing_pid
+    existing_pid="$(cat "${WORKER_LOCK}" 2>/dev/null || echo "")"
+    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+      log "fast: worker for ${REPO}#${ISSUE_NUM} already running (pid=${existing_pid}) — skipping"
+      return 0
+    fi
+    log "fast: stale lockfile for ${REPO}#${ISSUE_NUM} (pid=${existing_pid} gone) — cleaning up"
+    rm -f "${WORKER_LOCK}"
+  fi
+
   log "fast: launching codex exec --ephemeral --cd ${WT_DIR} -> ${LOG_RUN}"
   codex exec --ephemeral --cd "${WT_DIR}" "${PROMPT}" > "${LOG_RUN}" 2>&1 &
   local CODEX_PID=$!
-  log "fast: codex exec pid=${CODEX_PID} log=${LOG_RUN}"
+  printf '%s\n' "${CODEX_PID}" > "${WORKER_LOCK}"
+  log "fast: codex exec pid=${CODEX_PID} lock=${WORKER_LOCK} log=${LOG_RUN}"
 
   # Post-run verification runs in a background subshell so it does not block
   # the poller. It waits for Codex to finish, then checks for a remote branch
