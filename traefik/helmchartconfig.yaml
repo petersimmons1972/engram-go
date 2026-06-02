@@ -1,0 +1,23 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  # IMPORTANT: valuesContent is a FULL REPLACE of Helm values — all settings must be present.
+  # Live cluster (applied 2026-05-30) had ports.websecure.transport.respondingTimeouts
+  # readTimeout/idleTimeout:3600 for long AI streaming responses.
+  # PR originally only had access-log stanza, which would have DROPPED the 3600 timeouts.
+  # Both stanzas are preserved here. Verified via: kubectl get helmchartconfig traefik -n kube-system -o yaml
+  valuesContent: |-
+    logs:
+      access:
+        enabled: true
+        format: json
+        bufferingSize: 0
+    ports:
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: "3600"
+            idleTimeout: "3600"

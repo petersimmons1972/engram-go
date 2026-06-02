@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  # maxUnavailable:1 is drain-safe for a single-replica deployment.
+  # minAvailable:1 at replica count 1 hard-blocks ALL voluntary evictions and node drains — do NOT use it.
+  # TRUE HA requires: replicas ≥ 2 + pod anti-affinity + minAvailable:1 — that is a FOUNDER DECISION
+  # not implemented here. See PR #94 review comments.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik

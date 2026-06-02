@@ -25,6 +25,10 @@ type ModelSpec struct {
 	ReadinessTimeoutSec int      `json:"readinessTimeoutSec,omitempty"`
 	GpuDriver           string   `json:"gpuDriver,omitempty"`
 	RenderDevice        string   `json:"renderDevice,omitempty"`
+	// StopTimeoutSec is forwarded to the watcher as the Docker stop timeout (SIGTERM
+	// grace period before SIGKILL). 0 = Docker default (10s). Set to 30 for ROCm
+	// containers so HIP worker threads can release /dev/kfd before SIGKILL.
+	StopTimeoutSec      int      `json:"stopTimeoutSec,omitempty"`
 }
 
 type GPUHostSpec struct {
