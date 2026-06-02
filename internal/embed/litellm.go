@@ -309,6 +309,9 @@ func (c *LiteLLMClient) EmbedWithModel(ctx context.Context, text string) ([]floa
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
+		// Unreachable for the current reqBody (a map of two strings always
+		// marshals); if it ever changed, the deferred guard safely AbandonProbes
+		// the slot, so an explicit recordCBOutcome here is intentionally omitted.
 		return nil, "", fmt.Errorf("litellm embed: marshal: %w", err)
 	}
 

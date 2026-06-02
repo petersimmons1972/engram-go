@@ -26,8 +26,10 @@ package embed
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,6 +156,110 @@ func TestAbandonProbe_IsNoOpWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestAbandonProbe_NoSlotHeldIsNoOp verifies the probeInFlight guard: when no
+// probe slot is actually held, AbandonProbe must be a true no-op — it must NOT
+// kick HalfOpen->Open or perturb consecutiveOpens / nextProbeAt. Without the
+// guard, a stray call on HalfOpen-without-slot would silently corrupt state.
+func TestAbandonProbe_NoSlotHeldIsNoOp(t *testing.T) {
+	now := time.Now()
+	cfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  2,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+
+	// Case A: Closed breaker (no slot). AbandonProbe is a no-op.
+	t.Run("Closed", func(t *testing.T) {
+		cb := NewCircuitBreaker(cfg)
+		cb.now = func() time.Time { return now }
+		if cb.State() != StateClosed {
+			t.Fatalf("setup: state = %v, want Closed", cb.State())
+		}
+		cb.AbandonProbe()
+		if cb.State() != StateClosed {
+			t.Errorf("AbandonProbe on Closed changed state to %v, want Closed", cb.State())
+		}
+	})
+
+	// Case B: HalfOpen but probeInFlight=false (no slot held). AbandonProbe must
+	// NOT transition to Open — that would be silent state corruption.
+	t.Run("HalfOpenWithoutSlot", func(t *testing.T) {
+		cb := NewCircuitBreaker(cfg)
+		cb.now = func() time.Time { return now }
+		cb.mu.Lock()
+		cb.state = StateHalfOpen
+		cb.consecutiveOpens = 3
+		cb.nextProbeAt = now.Add(7 * time.Second)
+		cb.probeInFlight = false
+		prevCO := cb.consecutiveOpens
+		prevNPA := cb.nextProbeAt
+		cb.mu.Unlock()
+
+		cb.AbandonProbe()
+
+		cb.mu.Lock()
+		st := cb.state
+		pif := cb.probeInFlight
+		co := cb.consecutiveOpens
+		npa := cb.nextProbeAt
+		cb.mu.Unlock()
+
+		if st != StateHalfOpen {
+			t.Errorf("AbandonProbe on HalfOpen-without-slot changed state to %v, want HalfOpen (no slot to release)", st)
+		}
+		if pif {
+			t.Error("probeInFlight became true — should remain false")
+		}
+		if co != prevCO {
+			t.Errorf("consecutiveOpens changed %d -> %d on a no-op abandon", prevCO, co)
+		}
+		if npa != prevNPA {
+			t.Errorf("nextProbeAt changed %v -> %v on a no-op abandon", prevNPA, npa)
+		}
+	})
+
+	// Case C: HalfOpen WITH probeInFlight=true (slot held). AbandonProbe still
+	// releases: probeInFlight->false, state->Open, consecutiveOpens/nextProbeAt
+	// untouched. Proves the guard does not break the legitimate path.
+	t.Run("HalfOpenWithSlotStillReleases", func(t *testing.T) {
+		cb := NewCircuitBreaker(cfg)
+		cb.now = func() time.Time { return now }
+		cb.mu.Lock()
+		cb.state = StateHalfOpen
+		cb.consecutiveOpens = 3
+		cb.nextProbeAt = now.Add(7 * time.Second)
+		cb.probeInFlight = true
+		prevCO := cb.consecutiveOpens
+		prevNPA := cb.nextProbeAt
+		cb.mu.Unlock()
+
+		cb.AbandonProbe()
+
+		cb.mu.Lock()
+		st := cb.state
+		pif := cb.probeInFlight
+		co := cb.consecutiveOpens
+		npa := cb.nextProbeAt
+		cb.mu.Unlock()
+
+		if pif {
+			t.Error("probeInFlight should be false after releasing a held slot")
+		}
+		if st != StateOpen {
+			t.Errorf("state = %v, want Open after releasing a HalfOpen slot", st)
+		}
+		if co != prevCO {
+			t.Errorf("consecutiveOpens changed %d -> %d (must not inflate on abandon)", prevCO, co)
+		}
+		if npa != prevNPA {
+			t.Errorf("nextProbeAt changed %v -> %v (must not advance on abandon)", prevNPA, npa)
+		}
+	})
+}
+
 // ── Demand-path integration tests ────────────────────────────────────────────
 
 // TestDemandSlot_CancelledCtxReleasesSlot is THE wedge regression test (#1003).
@@ -228,16 +334,43 @@ func TestDemandSlot_CancelledCtxReleasesSlot(t *testing.T) {
 	}
 }
 
-// TestDemandSlot_CancelledDuringBackoffReleasesSlot tests the second unguarded
-// path: ctx expires DURING the backoff sleep (attempt > 0). Same wedge, different
-// code location (~line 299 before the fix).
-func TestDemandSlot_CancelledDuringBackoffReleasesSlot(t *testing.T) {
-	// Server always returns 503 to trigger the retry/backoff path.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
+// retryThenCancelRoundTripper returns a synthetic, retryable 503 with a complete
+// in-memory body on its FIRST call and cancels the request context as part of the
+// same return. Because the body is already buffered (no streaming read), the
+// cancellation cannot race a network read: EmbedWithModel reads the 503 body
+// synchronously, sees a retryable status, loops, and enters the backoff select
+// with ctx.Done() already closed. A 2nd RoundTrip call would mean the backoff arm
+// did NOT abort the retry — the test asserts that never happens (calls == 1).
+type retryThenCancelRoundTripper struct {
+	cancel context.CancelFunc
+	calls  int
+}
 
+func (rt *retryThenCancelRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.calls++
+	// Cancel the context now so the subsequent backoff select fires ctx.Done().
+	rt.cancel()
+	return &http.Response{
+		StatusCode: http.StatusServiceUnavailable, // retryable -> triggers backoff
+		Body:       io.NopCloser(strings.NewReader("service unavailable")),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+// TestDemandSlot_CancelledDuringBackoffReleasesSlot tests the second unguarded
+// path: ctx is cancelled and the backoff select's ctx.Done() arm fires on the
+// retry (attempt > 0). Same wedge, different code location (the backoff select).
+//
+// Deterministic by construction (no real timeout race, no network-read race): a
+// custom RoundTripper returns a buffered retryable 503 and cancels the context in
+// the same step. On the retry, EmbedWithModel enters the backoff select with
+// ctx.Done() already closed; Go's select picks the only ready case, so the
+// ctx.Done() arm — the path under test — fires every time regardless of load. The
+// time.After(backoff) arm (~75-125ms) is never selected. Asserting calls == 1
+// proves the retry aborted IN the backoff select rather than issuing a 2nd
+// request, i.e. the intended arm was exercised.
+func TestDemandSlot_CancelledDuringBackoffReleasesSlot(t *testing.T) {
 	now := time.Now()
 	cfg := CircuitConfig{
 		Enabled:           true,
@@ -247,8 +380,14 @@ func TestDemandSlot_CancelledDuringBackoffReleasesSlot(t *testing.T) {
 		BackoffMultiplier: 2.0,
 		BackoffCap:        5 * time.Minute,
 	}
-	client := NewLiteLLMClientNoProbeWithCircuitBreaker(server.URL, "test-model", "", 0, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &retryThenCancelRoundTripper{cancel: cancel}
+
+	client := NewLiteLLMClientNoProbeWithCircuitBreaker("http://127.0.0.1:1", "test-model", "", 0, cfg)
 	client.cb.now = func() time.Time { return now }
+	client.http = &http.Client{Transport: rt}
 
 	// Seed the breaker into HalfOpen with probeInFlight=false.
 	client.cb.mu.Lock()
@@ -258,21 +397,32 @@ func TestDemandSlot_CancelledDuringBackoffReleasesSlot(t *testing.T) {
 	client.cb.probeInFlight = false
 	client.cb.mu.Unlock()
 
-	// Context with a very tight deadline so it expires during the backoff select.
-	tightCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-
-	_, _, err := client.EmbedWithModel(tightCtx, "test text")
+	_, _, err := client.EmbedWithModel(ctx, "test text")
 	if err == nil {
-		t.Fatal("expected error from EmbedWithModel with tight ctx, got nil")
+		t.Fatal("expected error from EmbedWithModel after ctx cancel during backoff, got nil")
+	}
+	// Confirm we actually reached the backoff arm (not the network-error or
+	// pre-flight ctx.Err() path): the error must be the backoff-select message.
+	if !strings.Contains(err.Error(), "canceled during backoff") {
+		t.Fatalf("expected the backoff-select cancel path, got: %v", err)
+	}
+	// Exactly one RoundTrip: the first 503, then the retry aborted in the backoff
+	// select before issuing a second request.
+	if rt.calls != 1 {
+		t.Errorf("RoundTrip calls = %d, want 1 (retry must abort in the backoff select, not re-issue)", rt.calls)
 	}
 
 	client.cb.mu.Lock()
 	pif := client.cb.probeInFlight
+	co := client.cb.consecutiveOpens
 	client.cb.mu.Unlock()
 
 	if pif {
-		t.Error("#1003 WEDGE (backoff path): probeInFlight is still true after ctx expiry during backoff — breaker is wedged")
+		t.Error("#1003 WEDGE (backoff path): probeInFlight is still true after ctx cancel during backoff — breaker is wedged")
+	}
+	// Neutral release: cancel during backoff must not inflate consecutiveOpens.
+	if co != 1 {
+		t.Errorf("consecutiveOpens = %d after backoff-cancel, want 1 (neutral release)", co)
 	}
 }
 
@@ -379,5 +529,77 @@ func TestDemandSlot_FailureRecordsOnce(t *testing.T) {
 	// guard must not cause a second RecordFailure (which would increment it to 3).
 	if co != 2 {
 		t.Errorf("consecutiveOpens = %d after RecordFailure in HalfOpen, want 2 (must be incremented exactly once, not double-recorded)", co)
+	}
+}
+
+// panicRoundTripper panics on RoundTrip, simulating a mid-request panic that
+// lands on the stack AFTER Allow() granted the HalfOpen probe slot but BEFORE
+// any recordCBOutcome call in EmbedWithModel.
+type panicRoundTripper struct{ msg string }
+
+func (p panicRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	panic(p.msg)
+}
+
+// TestDemandSlot_PanicMidRequestReleasesSlot verifies that a panic between the
+// Allow() grant and any record call does NOT wedge the breaker: Go runs deferred
+// funcs during panic unwind, so the #1003 record-once guard fires AbandonProbe
+// and releases the slot. The test recovers the propagated panic and asserts the
+// breaker is recoverable (probeInFlight cleared, a subsequent Allow/AllowProbe is
+// admitted). This guards our reliance on defer-runs-during-panic.
+func TestDemandSlot_PanicMidRequestReleasesSlot(t *testing.T) {
+	now := time.Now()
+	cfg := CircuitConfig{
+		Enabled:           true,
+		FailureThreshold:  2,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
+		BackoffMultiplier: 2.0,
+		BackoffCap:        5 * time.Minute,
+	}
+	client := NewLiteLLMClientNoProbeWithCircuitBreaker("http://127.0.0.1:1", "test-model", "", 0, cfg)
+	client.cb.now = func() time.Time { return now }
+	// Inject a transport that panics inside c.http.Do(req) — i.e. after Allow()
+	// granted the slot and before any recordCBOutcome call.
+	client.http = &http.Client{Transport: panicRoundTripper{msg: "simulated mid-request panic"}}
+
+	// Seed HalfOpen with a free slot.
+	client.cb.mu.Lock()
+	client.cb.state = StateHalfOpen
+	client.cb.consecutiveOpens = 1
+	client.cb.nextProbeAt = now.Add(-1 * time.Second)
+	client.cb.probeInFlight = false
+	client.cb.mu.Unlock()
+
+	// Call EmbedWithModel inside a recover() so the propagated panic does not fail
+	// the test. The deferred AbandonProbe in EmbedWithModel runs during unwind
+	// BEFORE this recover sees the panic.
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected EmbedWithModel to propagate the panic, got none")
+			}
+		}()
+		_, _, _ = client.EmbedWithModel(context.Background(), "test text")
+	}()
+
+	// The slot must have been released by the deferred guard during unwind.
+	client.cb.mu.Lock()
+	pif := client.cb.probeInFlight
+	co := client.cb.consecutiveOpens
+	client.cb.mu.Unlock()
+
+	if pif {
+		t.Error("#1003 PANIC PATH: probeInFlight still true after panic — deferred guard did not release the slot")
+	}
+	// Neutral release: a panic mid-request abandons the slot without inflating
+	// consecutiveOpens (state returns to Open, ready for a real probe).
+	if co != 1 {
+		t.Errorf("consecutiveOpens = %d after panic, want 1 (neutral release, no inflation)", co)
+	}
+
+	// Breaker must be recoverable: AllowProbe admitted on the next tick.
+	if err := client.cb.AllowProbe(); err != nil {
+		t.Errorf("AllowProbe() after panic-released slot = %v, want nil (breaker must not be wedged)", err)
 	}
 }

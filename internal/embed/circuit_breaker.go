@@ -301,7 +301,12 @@ func (cb *CircuitBreaker) updateNextProbeTime() {
 // the background-probe goroutine (#1000) to conduct the next real health check
 // on its own schedule.
 //
-// No-op when circuit breaking is disabled (cfg.Enabled == false).
+// No-op when circuit breaking is disabled (cfg.Enabled == false) or when no
+// probe slot is actually held (probeInFlight == false). The latter guard makes
+// AbandonProbe safe to call unconditionally: without it, a stray call on a
+// HalfOpen breaker that holds no slot would silently kick HalfOpen->Open — a
+// state-corruption trap. The legitimate demand path always claims the slot via
+// Allow() (probeInFlight=true) before the request, so a real abandon still fires.
 func (cb *CircuitBreaker) AbandonProbe() {
 	if !cb.cfg.Enabled {
 		return
@@ -309,6 +314,12 @@ func (cb *CircuitBreaker) AbandonProbe() {
 
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	if !cb.probeInFlight {
+		// No slot held: nothing to release. Leaves state, consecutiveOpens, and
+		// nextProbeAt untouched on Closed, Open, and HalfOpen-without-slot.
+		return
+	}
 
 	cb.probeInFlight = false
 	if cb.state == StateHalfOpen {
