@@ -89,6 +89,10 @@ type RecallOpts struct {
 	// preference language ("I like X") no longer causes majority-vote pull
 	// toward off-topic sessions. Default false — composable with DualPreferenceRecall.
 	TopicAnchorBoost bool
+	// TopClusters controls the coarse-level fanout for MemPalace hierarchical recall
+	// (ENGRAM_MEMPALACE_HIERARCHICAL_RECALL=true). 0 uses defaultTopClusters (3).
+	// Ignored when the flag is off. (LME experiment #9)
+	TopClusters int
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -670,7 +674,13 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// ANN vector search via pgvector HNSW index — skipped when embed degraded.
 	var vecHits []db.VectorHit
 	if queryVec != nil {
-		vecHits, err = e.backend.VectorSearchWithDateRange(ctx, e.project, queryVec, topK*3, opts.DateSince, opts.DateBefore)
+		// MemPalace hierarchical recall (LME experiment #9): when the env flag is
+		// set, run coarse→fine cluster-filtered search; otherwise flat search.
+		if HierarchicalRecallEnabled() {
+			vecHits, err = hierarchicalVectorSearch(ctx, e.backend, e.project, queryVec, topK*3, opts.TopClusters, opts.DateSince, opts.DateBefore)
+		} else {
+			vecHits, err = e.backend.VectorSearchWithDateRange(ctx, e.project, queryVec, topK*3, opts.DateSince, opts.DateBefore)
+		}
 		if err != nil {
 			return nil, err
 		}

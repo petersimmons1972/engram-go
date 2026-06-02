@@ -424,6 +424,19 @@ func (s *stubBackend) ListExpiredProjects(_ context.Context, _ string, _ time.Ti
 	return nil, nil
 }
 
+func (s *stubBackend) StoreMemoryCluster(_ context.Context, _ *db.MemoryCluster) error {
+	return nil
+}
+func (s *stubBackend) SetMemoryClusterID(_ context.Context, _, _ string) error { return nil }
+func (s *stubBackend) FindNearestClusters(_ context.Context, _ string, _ []float32, _ int) ([]string, error) {
+	return nil, nil
+}
+func (s *stubBackend) VectorSearchWithClusters(_ context.Context, _ string, _ []float32, _ int, _ []string, _, _ *time.Time) ([]db.VectorHit, error) {
+	return nil, nil
+}
+func (s *stubBackend) TableExists(_ context.Context, _ string) (bool, error)     { return false, nil }
+func (s *stubBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+
 // compile-time check: stubBackend must satisfy db.Backend.
 var _ db.Backend = (*stubBackend)(nil)
 

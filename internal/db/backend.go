@@ -327,6 +327,32 @@ type Backend interface {
 	// CompleteExtractionJob marks an extraction job done (jobErr == nil) or failed.
 	CompleteExtractionJob(ctx context.Context, jobID string, err error) error
 
+	// ── MemPalace hierarchical clustering (LME experiment #9) ─────────────
+
+	// StoreMemoryCluster upserts a cluster centroid row for the project.
+	StoreMemoryCluster(ctx context.Context, c *MemoryCluster) error
+
+	// SetMemoryClusterID assigns cluster_id on a memory row. Pass "" to clear.
+	SetMemoryClusterID(ctx context.Context, memoryID, clusterID string) error
+
+	// FindNearestClusters returns the IDs of the top-K clusters whose centroids
+	// are closest to queryVec by cosine distance, scoped to project.
+	// Returns an empty slice (not an error) when no clusters exist for the project.
+	FindNearestClusters(ctx context.Context, project string, queryVec []float32, topK int) ([]string, error)
+
+	// VectorSearchWithClusters is like VectorSearchWithDateRange but restricts
+	// the candidate set to chunks whose parent memory has cluster_id IN clusterIDs.
+	// When clusterIDs is empty it falls back to the unconstrained search.
+	VectorSearchWithClusters(ctx context.Context, project string, queryVec []float32, limit int, clusterIDs []string, since, before *time.Time) ([]VectorHit, error)
+
+	// ── Diagnostics (used by tests and health endpoints) ─────────────────────
+
+	// TableExists returns true if the named table exists in the current schema.
+	TableExists(ctx context.Context, table string) (bool, error)
+
+	// ColumnExists returns true if the named column exists on the given table.
+	ColumnExists(ctx context.Context, table, column string) (bool, error)
+
 	// ── Transactions ────────────────────────────────────────────────────────
 
 	// Begin starts a new transaction.
@@ -385,3 +411,16 @@ type IntegrityStats struct {
 	Hashed  int
 	Corrupt int
 }
+
+// MemoryCluster is a topic-level centroid for hierarchical (MemPalace) recall.
+// Each cluster belongs to a project and has a representative centroid vector
+// computed from the mean of its member memory embeddings. Populated by the
+// MemPalace back-fill step (docs/mempalace-backfill.md).
+type MemoryCluster struct {
+	ID       string
+	Project  string
+	Centroid []float32
+	Label    string
+	Size     int
+}
+

@@ -233,6 +233,19 @@ func (noopBackend) ClaimExtractionJobs(_ context.Context, _ string, _ int) ([]db
 }
 func (noopBackend) CompleteExtractionJob(_ context.Context, _ string, _ error) error { return nil }
 
+func (noopBackend) StoreMemoryCluster(_ context.Context, _ *db.MemoryCluster) error {
+	return nil
+}
+func (noopBackend) SetMemoryClusterID(_ context.Context, _, _ string) error { return nil }
+func (noopBackend) FindNearestClusters(_ context.Context, _ string, _ []float32, _ int) ([]string, error) {
+	return nil, nil
+}
+func (noopBackend) VectorSearchWithClusters(_ context.Context, _ string, _ []float32, _ int, _ []string, _, _ *time.Time) ([]db.VectorHit, error) {
+	return nil, nil
+}
+func (noopBackend) TableExists(_ context.Context, _ string) (bool, error)     { return false, nil }
+func (noopBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+
 var _ db.Backend = noopBackend{}
 
 // ── fake embedder ─────────────────────────────────────────────────────────────
