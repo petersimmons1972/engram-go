@@ -42,11 +42,11 @@ const (
 
 // Tuning policy constants.
 const (
-	minEventsBeforeTuning = 20    // minimum failure events in window before firing (lowered from 50)
-	dominantThreshold     = 0.40  // ≥40% of relevant events
-	dominantMargin        = 0.10  // ≥10pp above runner-up
-	tuningCooldownDays    = 3     // max once per 3 days per project (lowered from 7)
-	lockKey               = 7332  // advisory lock key
+	minEventsBeforeTuning = 20   // minimum failure events in window before firing (lowered from 50)
+	dominantThreshold     = 0.40 // ≥40% of relevant events
+	dominantMargin        = 0.10 // ≥10pp above runner-up
+	tuningCooldownDays    = 3    // max once per 3 days per project (lowered from 7)
+	lockKey               = 7332 // advisory lock key
 )
 
 // Weights holds one complete set of scoring weights.
@@ -84,7 +84,6 @@ type tunerQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
-
 
 // TunerWorker periodically checks failure event distributions and applies
 // weight adjustments when a dominant failure class is detected.
@@ -349,11 +348,11 @@ func (w *TunerWorker) maybeAdjust(ctx context.Context, project string) error {
 
 	// Persist.
 	triggerJSON, _ := json.Marshal(map[string]any{
-		"dominant_class":   dominant.class,
-		"dominant_frac":    domFrac,
-		"runner_up_frac":   runnerUpFrac,
-		"total_events":     total,
-		"window_days":      30,
+		"dominant_class": dominant.class,
+		"dominant_frac":  domFrac,
+		"runner_up_frac": runnerUpFrac,
+		"total_events":   total,
+		"window_days":    30,
 	})
 	notes := fmt.Sprintf("auto-tuned: %s dominant at %.0f%% of %d events",
 		dominant.class, domFrac*100, total)

@@ -169,15 +169,15 @@ func (r *restEngram) quickRecall(ctx context.Context, project, query string, tag
 // hybridEngram routes bulk writes and reads to REST endpoints, keeping
 // per-episode lifecycle operations on the MCP SSE path.
 //
-//   REST (sessionless, high-volume):
-//     ingest  → POST /quick-store
-//     store   → POST /quick-store
-//     recall  → POST /quick-recall
+//	REST (sessionless, high-volume):
+//	  ingest  → POST /quick-store
+//	  store   → POST /quick-store
+//	  recall  → POST /quick-recall
 //
-//   MCP SSE (low-volume, no REST equivalent):
-//     episodeStart → memory_episode_start
-//     episodeEnd   → memory_episode_end
-//     correct      → memory_correct
+//	MCP SSE (low-volume, no REST equivalent):
+//	  episodeStart → memory_episode_start
+//	  episodeEnd   → memory_episode_end
+//	  correct      → memory_correct
 type hybridEngram struct {
 	sse  *sseEngram
 	rest *restEngram

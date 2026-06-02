@@ -21,15 +21,15 @@ const (
 
 // Worker re-embeds chunks with NULL embedding for a project.
 type Worker struct {
-	backend    db.Backend
-	embedder   embed.Client
-	project    string
-	active     bool
-	cancel     context.CancelFunc
-	done       chan struct{}
-	notify     chan struct{} // wakes the poll loop early; buffered size 1
-	startOnce  sync.Once    // ensures the goroutine starts exactly once
-	parentCtx  context.Context
+	backend   db.Backend
+	embedder  embed.Client
+	project   string
+	active    bool
+	cancel    context.CancelFunc
+	done      chan struct{}
+	notify    chan struct{} // wakes the poll loop early; buffered size 1
+	startOnce sync.Once     // ensures the goroutine starts exactly once
+	parentCtx context.Context
 }
 
 // NewWorker creates a Worker. If active=false, the goroutine starts only when

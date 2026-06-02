@@ -21,8 +21,8 @@ func TestValidateProjectName_AcceptsNormal(t *testing.T) {
 		"my-project-123",
 		"project with spaces",
 		"日本語プロジェクト",
-		"café",        // NFC normalizable
-		"a",           // minimum length
+		"café", // NFC normalizable
+		"a",    // minimum length
 		"project_v2",
 	}
 	for _, c := range cases {
@@ -55,7 +55,7 @@ func TestValidateProjectName_RejectsTooLong(t *testing.T) {
 
 func TestValidateProjectName_RejectsBidiControlChars(t *testing.T) {
 	bidiCases := []struct {
-		name    string
+		name      string
 		codepoint rune
 	}{
 		{"zero-width space U+200B", 0x200B},

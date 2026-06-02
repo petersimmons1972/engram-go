@@ -80,7 +80,7 @@ func TestRetrievalTracking_RecallCreatesEvent(t *testing.T) {
 	ctx := context.Background()
 
 	m := &types.Memory{
-		Content: "Event tracking: recall must produce a retrieval event",
+		Content:    "Event tracking: recall must produce a retrieval event",
 		MemoryType: types.MemoryTypeContext, Project: engine.Project(),
 		Importance: 2, StorageMode: "focused",
 	}
@@ -146,7 +146,7 @@ func TestRetrievalTracking_PrecisionUpdated(t *testing.T) {
 	ctx := context.Background()
 
 	m := &types.Memory{
-		Content: "Precision tracking: this memory is always useful",
+		Content:    "Precision tracking: this memory is always useful",
 		MemoryType: types.MemoryTypeDecision, Project: engine.Project(),
 		Importance: 1, StorageMode: "focused",
 	}

@@ -164,13 +164,13 @@ type tunerStubRows struct {
 
 func newTunerRows(rows [][]any) *tunerStubRows { return &tunerStubRows{rows: rows, pos: -1} }
 
-func (r *tunerStubRows) Close() {}
-func (r *tunerStubRows) Err() error { return nil }
-func (r *tunerStubRows) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (r *tunerStubRows) Close()                                       {}
+func (r *tunerStubRows) Err() error                                   { return nil }
+func (r *tunerStubRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (r *tunerStubRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *tunerStubRows) Conn() *pgx.Conn { return nil }
-func (r *tunerStubRows) RawValues() [][]byte { return nil }
-func (r *tunerStubRows) Values() ([]any, error) { return nil, nil }
+func (r *tunerStubRows) Conn() *pgx.Conn                              { return nil }
+func (r *tunerStubRows) RawValues() [][]byte                          { return nil }
+func (r *tunerStubRows) Values() ([]any, error)                       { return nil, nil }
 func (r *tunerStubRows) Next() bool {
 	r.pos++
 	return r.pos < len(r.rows)
@@ -508,10 +508,10 @@ func TestNormalizeWeights_SumEqualsOne_Property(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	for i := 0; i < 100; i++ {
 		w := Weights{
-			Vector:    minVector + rng.Float64()*(maxVector-minVector+0.2)-0.1,
-			BM25:      minBM25 + rng.Float64()*(maxBM25-minBM25+0.2)-0.1,
-			Recency:   minRecency + rng.Float64()*(maxRecency-minRecency+0.1)-0.05,
-			Precision: minPrecision + rng.Float64()*(maxPrecision-minPrecision+0.1)-0.05,
+			Vector:    minVector + rng.Float64()*(maxVector-minVector+0.2) - 0.1,
+			BM25:      minBM25 + rng.Float64()*(maxBM25-minBM25+0.2) - 0.1,
+			Recency:   minRecency + rng.Float64()*(maxRecency-minRecency+0.1) - 0.05,
+			Precision: minPrecision + rng.Float64()*(maxPrecision-minPrecision+0.1) - 0.05,
 		}
 		got, ok := normalizeWeights(w)
 		if !ok {

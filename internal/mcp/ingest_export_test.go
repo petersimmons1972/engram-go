@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
+	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 )
 
 func buildMinimalSlackZip(t *testing.T) string {
@@ -118,7 +118,7 @@ func TestHandleMemoryIngestExport_SlackEntryTooLarge(t *testing.T) {
 	pool := internalmcp.NewTestStorePool(t)
 	cfg := internalmcp.Config{DataDir: dir, ImportMaxBytes: 1024, ImportExpandedMaxBytes: 200}
 	_, err := internalmcp.CallHandleMemoryIngestExport(context.Background(), t, pool, "default", cfg, path)
-	if err == nil || ( !strings.Contains(err.Error(), "entry") && !strings.Contains(err.Error(), "archive exceeds")) {
+	if err == nil || (!strings.Contains(err.Error(), "entry") && !strings.Contains(err.Error(), "archive exceeds")) {
 		t.Fatalf("expected oversize entry rejection, got %v", err)
 	}
 }

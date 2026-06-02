@@ -37,7 +37,7 @@ type TaxonomyInput struct {
 // TaxonomyResult is the output of ClassifyFailure.
 type TaxonomyResult struct {
 	// Class is one of: "aggregation_failure", "missing_recall", "generation_failure".
-	Class    string
+	Class string
 	// Evidence is a human-readable explanation of the classification decision.
 	Evidence string
 }

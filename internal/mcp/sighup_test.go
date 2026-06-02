@@ -112,8 +112,8 @@ func TestReloadRuntimeConfigUpdatesServerLogLevelVar(t *testing.T) {
 func TestSIGHUPPartialReload(t *testing.T) {
 	// Create a RuntimeConfig with initial state
 	cfg := &RuntimeConfig{}
-	cfg.ClaudeSummarize.Store(true)  // Pre-set one flag
-	cfg.ClaudeRerank.Store(true)     // Pre-set another flag
+	cfg.ClaudeSummarize.Store(true) // Pre-set one flag
+	cfg.ClaudeRerank.Store(true)    // Pre-set another flag
 
 	ctx, cancel := context.WithCancel(context.Background())
 	reloaded := make(chan struct{})

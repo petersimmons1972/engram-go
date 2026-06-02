@@ -20,9 +20,9 @@ import (
 
 // canonical tool counts derived from code.
 type toolCounts struct {
-	unconditional       int // entries in the registry slice in registerTools()
+	unconditional         int // entries in the registry slice in registerTools()
 	conditionalAIEnhanced int // tools added only when ClaudeEnabled
-	hidden              int // entries in hiddenToolNames()
+	hidden                int // entries in hiddenToolNames()
 }
 
 // computeToolCounts derives the canonical numbers by reading the source file.
@@ -101,13 +101,13 @@ func TestToolCountsMatchDocs(t *testing.T) {
 		visibleDefault, visibleWithAI, totalCallableDefault, totalCallableWithAI)
 
 	expected := map[string]int{
-		"unconditional":           c.unconditional,
-		"hidden":                  c.hidden,
-		"ai-enhanced":             c.conditionalAIEnhanced,
-		"visible-default":         visibleDefault,
-		"visible-with-ai":         visibleWithAI,
-		"total-callable-default":  totalCallableDefault,
-		"total-callable-with-ai":  totalCallableWithAI,
+		"unconditional":          c.unconditional,
+		"hidden":                 c.hidden,
+		"ai-enhanced":            c.conditionalAIEnhanced,
+		"visible-default":        visibleDefault,
+		"visible-with-ai":        visibleWithAI,
+		"total-callable-default": totalCallableDefault,
+		"total-callable-with-ai": totalCallableWithAI,
 	}
 
 	for _, doc := range []string{

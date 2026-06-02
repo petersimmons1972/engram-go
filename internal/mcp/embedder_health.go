@@ -23,10 +23,10 @@ type EmbedderHealth struct {
 // The check function is called once per TTL interval to determine embedder health.
 func NewEmbedderHealth(check func(ctx context.Context) (bool, string), ttl time.Duration) *EmbedderHealth {
 	return &EmbedderHealth{
-		check:   check,
-		ttl:     ttl,
+		check:    check,
+		ttl:      ttl,
 		cachedOK: true, // optimistic: assume healthy until proven otherwise
-		now:     time.Now,
+		now:      time.Now,
 	}
 }
 

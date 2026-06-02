@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/ollama"
-	"github.com/petersimmons1972/engram/internal/benchmark"
 )
 
 const SystemPrompt = `You are a pattern detection system analyzing Claude Code tool call sequences.

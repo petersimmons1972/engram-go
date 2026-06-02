@@ -11,12 +11,12 @@ import (
 // within the window transitions the breaker from Closed to Open.
 func TestCircuitBreakerOpensAfterThresholdFailures(t *testing.T) {
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 5,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     30 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  5,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 
@@ -50,12 +50,12 @@ func TestCircuitBreakerOpensAfterThresholdFailures(t *testing.T) {
 // keeps the breaker Closed.
 func TestCircuitBreakerStaysClosedBelowThreshold(t *testing.T) {
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 5,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     30 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  5,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 
@@ -82,12 +82,12 @@ func TestCircuitBreakerSlidingWindow(t *testing.T) {
 	timeFunc := func() time.Time { return now }
 
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 3,
-		FailureWindow:    10 * time.Second,
-		OpenDuration:     30 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  3,
+		FailureWindow:     10 * time.Second,
+		OpenDuration:      30 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 	cb.now = timeFunc
@@ -129,12 +129,12 @@ func TestCircuitBreakerHalfOpenProbeRecoversOnSuccess(t *testing.T) {
 	timeFunc := func() time.Time { return now }
 
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 2,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     10 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  2,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 	cb.now = timeFunc
@@ -183,12 +183,12 @@ func TestCircuitBreakerHalfOpenProbeFailsBackOff(t *testing.T) {
 	timeFunc := func() time.Time { return now }
 
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 2,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     10 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  2,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 	cb.now = timeFunc
@@ -227,12 +227,12 @@ func TestCircuitBreakerBackoffCapped(t *testing.T) {
 	timeFunc := func() time.Time { return now }
 
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 1,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     10 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  1,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       60 * time.Second,
+		BackoffCap:        60 * time.Second,
 	}
 	cb := NewCircuitBreaker(cfg)
 	cb.now = timeFunc
@@ -265,12 +265,12 @@ func TestCircuitBreakerBackoffCapped(t *testing.T) {
 // TestCircuitBreakerDisabled verifies that when Enabled=false, Allow always succeeds.
 func TestCircuitBreakerDisabled(t *testing.T) {
 	cfg := CircuitConfig{
-		Enabled:          false,
-		FailureThreshold: 1,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     30 * time.Second,
+		Enabled:           false,
+		FailureThreshold:  1,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 
@@ -292,12 +292,12 @@ func TestCircuitBreakerDisabled(t *testing.T) {
 // are safe under the race detector.
 func TestCircuitBreakerConcurrentSafe(t *testing.T) {
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 5,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     30 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  5,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      30 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 
@@ -398,12 +398,12 @@ func TestCircuitBreakerHalfOpenOnlyAllowsOneProbe(t *testing.T) {
 	timeFunc := func() time.Time { return now }
 
 	cfg := CircuitConfig{
-		Enabled:          true,
-		FailureThreshold: 2,
-		FailureWindow:    30 * time.Second,
-		OpenDuration:     10 * time.Second,
+		Enabled:           true,
+		FailureThreshold:  2,
+		FailureWindow:     30 * time.Second,
+		OpenDuration:      10 * time.Second,
 		BackoffMultiplier: 2.0,
-		BackoffCap:       5 * time.Minute,
+		BackoffCap:        5 * time.Minute,
 	}
 	cb := NewCircuitBreaker(cfg)
 	cb.now = timeFunc

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/runner"
 	"github.com/petersimmons1972/engram/internal/benchmark"
+	"github.com/petersimmons1972/engram/internal/runner"
 )
 
 var tagSlugRe = regexp.MustCompile(`^[a-z0-9-]{3,64}$`)

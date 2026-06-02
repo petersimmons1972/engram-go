@@ -219,12 +219,12 @@ func TestAdaptiveImportance_UsedInRecall(t *testing.T) {
 
 	// Both memories have the same static importance.
 	mHigh := &types.Memory{
-		Content: "gRPC is the preferred RPC framework for microservices",
+		Content:    "gRPC is the preferred RPC framework for microservices",
 		MemoryType: types.MemoryTypeDecision, Project: engine.Project(),
 		Importance: 2, StorageMode: "focused",
 	}
 	mLow := &types.Memory{
-		Content: "gRPC may also be suitable for some use cases",
+		Content:    "gRPC may also be suitable for some use cases",
 		MemoryType: types.MemoryTypeDecision, Project: engine.Project(),
 		Importance: 2, StorageMode: "focused",
 	}

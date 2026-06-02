@@ -69,12 +69,12 @@ func newStubRows(rows [][]any) *stubRows {
 	return &stubRows{rows: rows, pos: -1}
 }
 
-func (r *stubRows) Close() {}
-func (r *stubRows) Err() error { return r.err }
-func (r *stubRows) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (r *stubRows) Close()                                       {}
+func (r *stubRows) Err() error                                   { return r.err }
+func (r *stubRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (r *stubRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *stubRows) Conn() *pgx.Conn { return nil }
-func (r *stubRows) RawValues() [][]byte { return nil }
+func (r *stubRows) Conn() *pgx.Conn                              { return nil }
+func (r *stubRows) RawValues() [][]byte                          { return nil }
 func (r *stubRows) Values() ([]any, error) {
 	if r.pos < 0 || r.pos >= len(r.rows) {
 		return nil, nil

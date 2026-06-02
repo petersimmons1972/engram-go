@@ -11,8 +11,8 @@ import (
 )
 
 type entry struct {
-	CacheKey string            `json:"cache_key"`
-	StoredAt time.Time         `json:"stored_at"`
+	CacheKey string                `json:"cache_key"`
+	StoredAt time.Time             `json:"stored_at"`
 	Result   benchmark.ModelResult `json:"result"`
 }
 

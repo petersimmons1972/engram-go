@@ -45,11 +45,11 @@ func (m *mockSessionDB) ListActiveSessions(ctx context.Context, within time.Dura
 func TestTouchSessionCoalesces(t *testing.T) {
 	mockDB := &mockSessionDB{}
 	server := &Server{
-		pool:              nil,
-		cfg:               Config{SessionDB: mockDB},
-		uploads:           make(map[string]*uploadSession),
-		embedDegraded:     &atomic.Bool{},
-		sessionTouchTimes: make(map[string]time.Time),
+		pool:                nil,
+		cfg:                 Config{SessionDB: mockDB},
+		uploads:             make(map[string]*uploadSession),
+		embedDegraded:       &atomic.Bool{},
+		sessionTouchTimes:   make(map[string]time.Time),
 		sessionFingerprints: sync.Map{},
 	}
 
@@ -99,11 +99,11 @@ func TestTouchSessionCoalesces(t *testing.T) {
 func TestTouchSessionBreaksCoalesceAfter30s(t *testing.T) {
 	mockDB := &mockSessionDB{}
 	server := &Server{
-		pool:              nil,
-		cfg:               Config{SessionDB: mockDB},
-		uploads:           make(map[string]*uploadSession),
-		embedDegraded:     &atomic.Bool{},
-		sessionTouchTimes: make(map[string]time.Time),
+		pool:                nil,
+		cfg:                 Config{SessionDB: mockDB},
+		uploads:             make(map[string]*uploadSession),
+		embedDegraded:       &atomic.Bool{},
+		sessionTouchTimes:   make(map[string]time.Time),
 		sessionFingerprints: sync.Map{},
 	}
 

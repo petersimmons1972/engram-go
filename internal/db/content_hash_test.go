@@ -80,4 +80,3 @@ func stdHex(s string) string {
 	b := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(b[:])
 }
-

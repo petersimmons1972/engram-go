@@ -171,4 +171,3 @@ func TestMemoryReason_DeadlinePropagated(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
-

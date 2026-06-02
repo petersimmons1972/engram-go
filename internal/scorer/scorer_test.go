@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/scorer"
 	"github.com/petersimmons1972/engram/internal/benchmark"
+	"github.com/petersimmons1972/engram/internal/scorer"
 )
 
 func attempt(content string, thinking string, dur time.Duration, timedOut bool) benchmark.RunAttempt {

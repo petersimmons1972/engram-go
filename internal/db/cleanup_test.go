@@ -28,11 +28,11 @@ func TestEfSearchForLimitBoundaries(t *testing.T) {
 		want  int
 	}{
 		{limit: 1, want: 2},
-		{limit: 64, want: 128},  // at the HNSW default threshold
-		{limit: 100, want: 200}, // above threshold, below cap
-		{limit: 499, want: 998}, // just below the cap boundary (499*2=998 ≤ 1000)
-		{limit: 500, want: 1000}, // exactly at the cap boundary (500*2=1000)
-		{limit: 501, want: 1000}, // one above — cap kicks in (501*2=1002 → 1000)
+		{limit: 64, want: 128},     // at the HNSW default threshold
+		{limit: 100, want: 200},    // above threshold, below cap
+		{limit: 499, want: 998},    // just below the cap boundary (499*2=998 ≤ 1000)
+		{limit: 500, want: 1000},   // exactly at the cap boundary (500*2=1000)
+		{limit: 501, want: 1000},   // one above — cap kicks in (501*2=1002 → 1000)
 		{limit: 10000, want: 1000}, // pathological large limit
 	}
 	for _, tc := range cases {

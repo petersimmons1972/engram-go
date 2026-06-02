@@ -12,13 +12,13 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/cache"
 	"github.com/petersimmons1972/engram/internal/manifest"
 	"github.com/petersimmons1972/engram/internal/ollama"
 	"github.com/petersimmons1972/engram/internal/reporter"
 	"github.com/petersimmons1972/engram/internal/runner"
 	"github.com/petersimmons1972/engram/internal/scorer"
-	"github.com/petersimmons1972/engram/internal/benchmark"
 	"github.com/petersimmons1972/engram/internal/vram"
 )
 

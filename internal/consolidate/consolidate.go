@@ -25,15 +25,15 @@ var domainStopwords = map[string]bool{
 	"pattern": true, "patterns": true,
 	"session": true, "sessions": true,
 	"memory": true, "memories": true,
-	"engram": true,
+	"engram":  true,
 	"project": true, "projects": true,
 	"system": true, "systems": true,
 	"context": true, "contexts": true,
-	"feedback": true,
+	"feedback":  true,
 	"completed": true, "complete": true,
 	"clearwatch": true,
-	"using": true, "used": true,
-	"based": true,
+	"using":      true, "used": true,
+	"based":   true,
 	"current": true, "currently": true,
 	"should": true,
 	"always": true, "never": true,
@@ -213,8 +213,8 @@ type RunOptions struct {
 
 // Runner executes consolidation strategies against a single project.
 type Runner struct {
-	backend db.Backend
-	project string
+	backend  db.Backend
+	project  string
 	embedder embed.Client
 }
 

@@ -85,4 +85,3 @@ func TestRunReturnsOneOnBadConfig(t *testing.T) {
 		t.Error("expected non-zero exit when config is missing, got 0")
 	}
 }
-
