@@ -132,3 +132,40 @@ func TestHTTPEngramClient_HealthDown(t *testing.T) {
 		t.Fatal("expected health error when server down")
 	}
 }
+
+// L3 — atomicWrite error paths.
+
+// atomicWrite should succeed on a writable directory.
+func TestAtomicWrite_HappyPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.md")
+	if err := atomicWrite(path, []byte("hello\n")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != "hello\n" {
+		t.Fatalf("unexpected content: %q %v", b, err)
+	}
+}
+
+// atomicWrite should fail when the directory does not exist (temp-create error).
+func TestAtomicWrite_NoSuchDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nonexistent", "out.md")
+	if err := atomicWrite(path, []byte("x")); err == nil {
+		t.Fatal("expected error for missing parent directory")
+	}
+}
+
+// atomicWrite should overwrite an existing file atomically.
+func TestAtomicWrite_OverwritesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.md")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(path, []byte("new\n")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, _ := os.ReadFile(path)
+	if string(b) != "new\n" {
+		t.Fatalf("expected new content, got %q", b)
+	}
+}

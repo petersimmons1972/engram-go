@@ -56,9 +56,6 @@ type Daemon struct {
 	// are unix seconds. idleDeadline is recomputed on every event.
 	lastEventAt  int64
 	idleDeadline int64
-
-	// drainRequested is set by handleStop so Run can shorten the idle window.
-	drainRequested bool
 }
 
 // New constructs a Daemon. It loads the cached token through the TokenStore so
@@ -220,7 +217,6 @@ func (d *Daemon) idleDeadlineUnix() int64 {
 // requestDrain shortens the idle window (Option C). Called by handleStop.
 func (d *Daemon) requestDrain() {
 	d.mu.Lock()
-	d.drainRequested = true
 	now := d.cfg.Clock.Now()
 	// Reset the idle deadline to the drain window, but never extend it past the
 	// existing deadline — Stop should only ever bring shutdown closer.

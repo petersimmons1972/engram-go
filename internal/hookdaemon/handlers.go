@@ -282,17 +282,33 @@ func extractFallbackEntry(payload json.RawMessage, nowUnix int64) string {
 
 // toolResponseFailed reports whether a tool_response JSON value signals an error.
 // Claude Code marks failures with an "is_error":true field or an "error" string.
+// Some tool responses encode the flag as a number ("is_error": 1) — accept any
+// non-zero numeric value as well as a non-empty truthy string. A JSON-array
+// tool_response fails the map unmarshal and is correctly treated as success.
 func toolResponseFailed(resp json.RawMessage) bool {
 	if len(resp) == 0 {
 		return false
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(resp, &obj); err != nil {
-		// Non-object responses (e.g. a bare string) are treated as success.
+		// Non-object responses (e.g. bare string, array) are treated as success.
 		return false
 	}
-	if v, ok := obj["is_error"].(bool); ok && v {
-		return true
+	if v, ok := obj["is_error"]; ok {
+		switch val := v.(type) {
+		case bool:
+			if val {
+				return true
+			}
+		case float64: // JSON numbers unmarshal as float64
+			if val != 0 {
+				return true
+			}
+		case string:
+			if val != "" && val != "0" && val != "false" {
+				return true
+			}
+		}
 	}
 	if v, ok := obj["error"]; ok {
 		if s, isStr := v.(string); isStr {
