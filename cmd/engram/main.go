@@ -36,6 +36,25 @@ import (
 var Version = "dev"
 
 func main() {
+	// Subcommand dispatch for the hook daemon and its shim client (#396).
+	// Kept thin: each branch is a single call into cmd/engram/hook.go.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "hook-daemon":
+			if err := runHookDaemon(os.Args[2:]); err != nil {
+				slog.Error("hook-daemon", "err", err)
+				os.Exit(1)
+			}
+			return
+		case "hook":
+			if err := runHookShim(os.Args[2:]); err != nil {
+				slog.Error("hook", "err", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
 	startTime := time.Now()
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
