@@ -371,6 +371,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if claudeRerankEnabled && rerank && cfg.claudeClient != nil {
 		opts.Reranker = &claudeRerankAdapter{client: cfg.claudeClient}
 	}
+	// Answerability reranker (LME experiment #7): flag-gated via ENGRAM_ANSWERABILITY_RERANKER=true.
+	// Reorders candidates by predicted answerability (lexical coverage of query terms).
+	if arReranker := search.NewAnswerabilityRerankerFromEnv(); arReranker != nil {
+		opts.Reranker = arReranker
+	}
 	// Cross-encoder reranker (LEVER-2): flag-gated via ENGRAM_CROSS_ENCODER_RERANK=true.
 	// When enabled, replaces any other reranker — cross-encoder is the stronger signal.
 	// ENGRAM_CROSS_ENCODER_URL must be set to the TEI /rerank endpoint.
