@@ -31,6 +31,12 @@ func (s CircuitState) String() string {
 
 var errCircuitOpen = errors.New("circuit breaker is open")
 
+// errProbeDisabled is returned by AllowProbe when circuit breaking is
+// disabled (cfg.Enabled == false). It is distinct from errCircuitOpen so the
+// "feature off" case is not conflated with "circuit currently open". The
+// background-probe loop discards the specific error; this is for clarity.
+var errProbeDisabled = errors.New("circuit breaker probing disabled")
+
 // CircuitConfig holds configuration for the circuit breaker.
 type CircuitConfig struct {
 	Enabled           bool
@@ -122,7 +128,7 @@ func (cb *CircuitBreaker) Allow() error {
 // interleave and trigger a second concurrent probe.
 func (cb *CircuitBreaker) AllowProbe() error {
 	if !cb.cfg.Enabled {
-		return errCircuitOpen
+		return errProbeDisabled
 	}
 
 	cb.mu.Lock()

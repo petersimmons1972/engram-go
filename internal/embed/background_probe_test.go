@@ -274,43 +274,98 @@ func TestBackgroundProbe_OnlyOneProbeInFlight(t *testing.T) {
 	cancel()
 }
 
-// TestBackgroundProbe_NeverProbesClosedUnderRace is the regression guard for the
-// TOCTOU BLOCKER (#1000 review finding #1). The original loop used a two-step
-// gate — `State() == Open` then `Allow()` — across two separate lock
-// acquisitions. Between them a concurrent path could drive the breaker to
-// Closed, after which the second-step Allow() returns nil on Closed and the
-// loop fires a SPURIOUS probe against a healthy upstream (verified: a buggy
-// two-step gate grants on Closed dozens of times under this hammering).
+// TestAllowProbe_NeverGrantsOnClosed is the DETERMINISTIC contract guard for the
+// TOCTOU BLOCKER (#1000 review finding #1): AllowProbe() must never return nil
+// when the breaker is Closed at the instant of the call. Because AllowProbe
+// decides atomically under a single lock, we can prove this single-threaded —
+// no concurrent post-read (which would itself be racy) is needed.
 //
-// AllowProbe() decides atomically under a single lock and returns errCircuitOpen
-// for Closed, so it must NEVER grant a probe on a Closed breaker — no matter how
-// a demand-path Allow() interleaves. We drive the breaker Open<->Closed rapidly
-// while many goroutines call AllowProbe() (background) and Allow() (demand)
-// concurrently, and assert AllowProbe never granted a slot while Closed.
-func TestBackgroundProbe_NeverProbesClosedUnderRace(t *testing.T) {
+// We also demonstrate, in the same deterministic frame, that the ORIGINAL buggy
+// two-step gate (State()==Open then Allow()) WOULD grant a probe on a Closed
+// breaker when the two steps straddle a transition — so this guard is not
+// vacuous: it distinguishes the correct atomic path from the bug it replaced.
+func TestAllowProbe_NeverGrantsOnClosed(t *testing.T) {
 	fixedNow := time.Now()
 	cfg := defaultCfg()
 	cb := NewCircuitBreaker(cfg)
 	cb.now = func() time.Time { return fixedNow }
 
-	var probeGrants atomic.Int64        // AllowProbe() returned nil
-	var probeGrantsOnClosed atomic.Int64 // ...and breaker was Closed at grant time (the bug)
+	// 1) Closed breaker: AllowProbe denies, atomically, every time.
+	if cb.State() != StateClosed {
+		t.Fatalf("expected Closed, got %v", cb.State())
+	}
+	for i := 0; i < 100; i++ {
+		if err := cb.AllowProbe(); err != errCircuitOpen {
+			t.Fatalf("AllowProbe on Closed = %v, want errCircuitOpen (iter %d)", err, i)
+		}
+		if cb.State() != StateClosed {
+			t.Fatalf("AllowProbe perturbed Closed state -> %v (iter %d)", cb.State(), i)
+		}
+	}
+
+	// 2) Non-vacuity: the bug AllowProbe replaced is the two-step gate. Reproduce
+	//    the exact straddle deterministically — read Open, transition to Closed,
+	//    then the buggy second step (Allow on Closed) returns nil = spurious grant.
+	cb.mu.Lock()
+	cb.state = StateOpen
+	cb.consecutiveOpens = 1
+	cb.nextProbeAt = fixedNow.Add(-1 * time.Second)
+	cb.mu.Unlock()
+
+	buggyStateRead := cb.State() // reads Open (step 1 of the buggy gate)
+	if buggyStateRead != StateOpen {
+		t.Fatalf("setup: expected Open, got %v", buggyStateRead)
+	}
+	// A concurrent path drives the breaker Closed between the two steps.
+	cb.mu.Lock()
+	cb.state = StateClosed
+	cb.probeInFlight = false
+	cb.mu.Unlock()
+	// Buggy step 2: Allow() on the now-Closed breaker returns nil — a SPURIOUS
+	// probe grant against a healthy upstream. This is exactly what the old loop
+	// did and what AllowProbe fixes.
+	if err := cb.Allow(); err != nil {
+		t.Fatalf("buggy two-step proof broken: Allow on Closed = %v, want nil", err)
+	}
+	// And AllowProbe, given the identical Closed state, would NOT have granted:
+	cb.mu.Lock()
+	cb.state = StateClosed
+	cb.probeInFlight = false
+	cb.mu.Unlock()
+	if err := cb.AllowProbe(); err != errCircuitOpen {
+		t.Fatalf("AllowProbe on Closed = %v, want errCircuitOpen — bug present", err)
+	}
+}
+
+// TestAllowProbe_ConcurrentNoRaceStillGrants is the concurrency guard. It runs
+// AllowProbe() (background) and Allow() (demand) against the breaker from many
+// goroutines while a driver flips it Open<->Closed, and asserts only two things:
+//   - the run is data-race clean (the value of this test is under `-race`), and
+//   - legitimate Open-state probes are still granted (probeGrants > 0), so the
+//     concurrent path is exercised, not starved.
+//
+// Crucially it does NOT attempt a "was the breaker Closed at grant time"
+// post-read: that determination cannot be made atomically with the grant from
+// outside the breaker, so a separate-lock read after AllowProbe returns is
+// inherently racy and produces false positives. The Closed-grant contract is
+// proven deterministically in TestAllowProbe_NeverGrantsOnClosed instead.
+func TestAllowProbe_ConcurrentNoRaceStillGrants(t *testing.T) {
+	fixedNow := time.Now()
+	cfg := defaultCfg()
+	cb := NewCircuitBreaker(cfg)
+	cb.now = func() time.Time { return fixedNow }
+
+	var probeGrants atomic.Int64
 
 	runProbeGate := func() {
 		if err := cb.AllowProbe(); err != nil {
 			return
 		}
 		probeGrants.Add(1)
-		cb.mu.Lock()
-		spurious := cb.state == StateClosed
-		cb.mu.Unlock()
-		if spurious {
-			probeGrantsOnClosed.Add(1)
-		}
-		cb.RecordSuccess() // closes HalfOpen, releases the slot
+		// Release the slot the real way. No post-read of state here — that would
+		// be racy (see doc comment).
+		cb.RecordSuccess()
 	}
-	// Demand path: Allow() granting on Closed is a normal embed, not a probe, so
-	// it is fine. We run it purely to create the interleaving pressure.
 	runDemandGate := func() {
 		if err := cb.Allow(); err != nil {
 			return
@@ -321,9 +376,8 @@ func TestBackgroundProbe_NeverProbesClosedUnderRace(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 
-	// Driver flips the breaker Open<->Closed to maximize the TOCTOU window. It
-	// only mutates while no probe slot is held, so it never stomps an in-flight
-	// probe.
+	// Driver flips Open<->Closed only while no probe slot is held, so it never
+	// stomps an in-flight probe.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -380,13 +434,8 @@ func TestBackgroundProbe_NeverProbesClosedUnderRace(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	if n := probeGrantsOnClosed.Load(); n != 0 {
-		t.Fatalf("AllowProbe granted a probe on a Closed breaker %d times — TOCTOU spurious-probe race is OPEN", n)
-	}
-	// Vacuity guard: the test must have actually granted probes, otherwise the
-	// assertion above could never fail.
 	if probeGrants.Load() == 0 {
-		t.Fatal("no probe was ever granted — test is vacuous")
+		t.Fatal("no probe was ever granted under concurrency — path starved/vacuous")
 	}
 }
 

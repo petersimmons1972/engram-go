@@ -516,7 +516,7 @@ func TestAllowProbe_OpenTransitionsHalfOpen(t *testing.T) {
 // a background probe (no point probing when circuit breaking is off).
 func TestAllowProbe_DisabledReturnsError(t *testing.T) {
 	cb := NewCircuitBreaker(CircuitConfig{Enabled: false})
-	if err := cb.AllowProbe(); err != errCircuitOpen {
-		t.Errorf("AllowProbe when disabled = %v, want errCircuitOpen", err)
+	if err := cb.AllowProbe(); err != errProbeDisabled {
+		t.Errorf("AllowProbe when disabled = %v, want errProbeDisabled", err)
 	}
 }

@@ -564,8 +564,10 @@ func (c *LiteLLMClient) runProbe(ctx context.Context, probeTimeout time.Duration
 		probe = c.Probe
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	// Deferred so the timeout context is released even if record() panics; the
+	// recover() defer above still runs (defers are LIFO, both fire). #1000 review.
+	defer cancel()
 	ok, _ := probe(probeCtx)
-	cancel()
 	record(ok)
 }
 
