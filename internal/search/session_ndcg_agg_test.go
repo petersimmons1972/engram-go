@@ -289,3 +289,103 @@ func TestSessionNDCGRerank_NilMemory(t *testing.T) {
 		t.Fatalf("nil-memory: len=%d, want 2", len(got))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Bug 1: embed-degraded no-op guard
+// ---------------------------------------------------------------------------
+
+// TestSessionNDCGRerank_EmbedDegraded_NoOp — when allChunkCosines is empty
+// (embed degraded: no vector signal), sessionNDCGRerank must preserve the
+// pre-rerank composite-score ordering and NOT reorder on all-zero DCG.
+//
+// Without the guard every group receives DCG=0 → ties → sort produces
+// non-deterministic order that diverges from the flag-off baseline.
+func TestSessionNDCGRerank_EmbedDegraded_NoOp(t *testing.T) {
+	// Pre-rerank order: m1 (0.9), m2 (0.7), m3 (0.5) — already sorted by
+	// composite score descending, simulating the output of sortResults().
+	results := []types.SearchResult{
+		makeResult("m1", []string{"sid:sA"}, 0.9),
+		makeResult("m2", []string{"sid:sB"}, 0.7),
+		makeResult("m3", []string{"sid:sA"}, 0.5),
+	}
+	wantOrder := []string{"m1", "m2", "m3"}
+
+	// Case 1: allChunkCosines is nil (embed timeout fired, vecHits never populated).
+	got := sessionNDCGRerank(results, nil, true)
+	if len(got) != 3 {
+		t.Fatalf("embed-degraded nil: len=%d, want 3", len(got))
+	}
+	for i, want := range wantOrder {
+		if got[i].Memory.ID != want {
+			t.Errorf("embed-degraded nil: results[%d].ID = %q, want %q (must preserve pre-rerank order)", i, got[i].Memory.ID, want)
+		}
+	}
+
+	// Case 2: allChunkCosines is non-nil but empty map (flag enabled but no hits).
+	got2 := sessionNDCGRerank(results, map[string][]float64{}, true)
+	if len(got2) != 3 {
+		t.Fatalf("embed-degraded empty map: len=%d, want 3", len(got2))
+	}
+	for i, want := range wantOrder {
+		if got2[i].Memory.ID != want {
+			t.Errorf("embed-degraded empty map: results[%d].ID = %q, want %q (must preserve pre-rerank order)", i, got2[i].Memory.ID, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Bug 2: prefQuery + SessionNDCGAgg coherent ordering
+// ---------------------------------------------------------------------------
+
+// TestSessionNDCGRerank_PrefQuerySkip — when a preference query is active,
+// sessionNDCGRerank must be a no-op so the preference-first split/reassemble
+// downstream can produce coherent ordering.
+//
+// This test simulates the engine's call-site contract: pass
+// opts.SessionNDCGAgg && !prefQuery as the enabled flag. A preference query
+// (prefQuery=true) must always pass enabled=false, regardless of the flag.
+//
+// Setup: sB has a higher session DCG than sA, but m-pref (from session sA)
+// is a preference-typed memory that must bubble to the top via the
+// preference-first path. If sessionNDCGRerank ran first (enabled=true) it
+// would pack sB's memories to the front and break the preference guarantee.
+// With the fix (enabled=false for prefQuery), the input order is preserved
+// for the downstream preference-first logic to handle.
+func TestSessionNDCGRerank_PrefQuerySkip(t *testing.T) {
+	// sB has 3 strong chunk cosines → higher DCG than sA's single chunk.
+	// m-pref is from sA and is a preference-typed memory (score 0.55).
+	results := []types.SearchResult{
+		makeResult("sB-1", []string{"sid:sB"}, 0.80),
+		makeResult("sB-2", []string{"sid:sB"}, 0.70),
+		makeResult("sB-3", []string{"sid:sB"}, 0.65),
+		makeResult("m-pref", []string{"sid:sA"}, 0.55),
+	}
+	allChunkCosines := map[string][]float64{
+		"sB-1":   {0.90},
+		"sB-2":   {0.85},
+		"sB-3":   {0.80},
+		"m-pref": {0.50},
+	}
+
+	// When prefQuery is active, the engine passes enabled=false (the fix).
+	got := sessionNDCGRerank(results, allChunkCosines, false /* prefQuery active: disabled */)
+
+	// Must be a no-op: input order preserved.
+	wantOrder := []string{"sB-1", "sB-2", "sB-3", "m-pref"}
+	if len(got) != 4 {
+		t.Fatalf("prefQuery skip: len=%d, want 4", len(got))
+	}
+	for i, want := range wantOrder {
+		if got[i].Memory.ID != want {
+			t.Errorf("prefQuery skip: results[%d].ID = %q, want %q (must preserve order for downstream pref-first)", i, got[i].Memory.ID, want)
+		}
+	}
+
+	// Confirm that WITHOUT the fix (enabled=true), sB sessions would take
+	// over the top 3 slots — this demonstrates why the fix is necessary.
+	reordered := sessionNDCGRerank(results, allChunkCosines, true /* hypothetical: no fix */)
+	// sB has higher DCG → its 3 members occupy positions 0-2.
+	if reordered[3].Memory.ID != "m-pref" {
+		t.Errorf("prefQuery skip (baseline confirm): expected m-pref last when session-NDCG runs; got %q", reordered[3].Memory.ID)
+	}
+}

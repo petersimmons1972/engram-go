@@ -77,18 +77,30 @@ type sessionGroup struct {
 //
 // When enabled is false, results are returned unchanged (baseline identity).
 // When enabled is true:
-//  1. Group results by their sid: tag (untagged memories form singleton groups).
-//  2. Compute each group's DCG from allChunkCosines (map[memoryID][]float64).
+//  1. Guard: if allChunkCosines is empty (embed degraded / no vector signal),
+//     return results unchanged — do NOT reorder on all-zero DCG, which would
+//     produce undefined/non-deterministic order (Bug 1: embed-degraded no-op).
+//  2. Group results by their sid: tag (untagged memories form singleton groups).
+//  3. Compute each group's DCG from allChunkCosines (map[memoryID][]float64).
 //     Memories absent from allChunkCosines are treated as having dcg=0.
-//  3. Sort groups by DCG descending; break DCG ties by the group's best
+//  4. Sort groups by DCG descending; break DCG ties by the group's best
 //     individual composite score (deterministic).
-//  4. Within each group, sort members by composite score descending (P1 policy).
-//  5. Emit the final flat list: group 1's members, then group 2's, etc.
+//  5. Within each group, sort members by composite score descending (P1 policy).
+//  6. Emit the final flat list: group 1's members, then group 2's, etc.
 //
 // The returned slice has the same length as results and contains no duplicates.
 // allChunkCosines may be nil when enabled is false.
 func sessionNDCGRerank(results []types.SearchResult, allChunkCosines map[string][]float64, enabled bool) []types.SearchResult {
 	if !enabled || len(results) == 0 {
+		return results
+	}
+
+	// Bug 1 guard: embed-degraded / no vector signal.
+	// When allChunkCosines is nil or empty, every group would receive DCG=0 and
+	// the sort would produce an undefined (non-deterministic) ordering that
+	// diverges from the pre-rerank composite-score order. Return unchanged so
+	// the caller's sort order is preserved.
+	if len(allChunkCosines) == 0 {
 		return results
 	}
 

@@ -1062,7 +1062,16 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// immediately after composite scoring so all other post-processing
 	// (preference-first, re-ranker, topK truncation) sees the session-packed order.
 	// When disabled this is a no-op (sessionNDCGRerank returns results unchanged).
-	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg)
+	//
+	// Bug 2 guard: session-NDCG is skipped when prefQuery is active.
+	// The preference-first split/reassemble (below) and session-DCG aggregation
+	// have conflicting ordering semantics: running session-NDCG first promotes a
+	// low-DCG session's preference memory above a high-DCG session's general
+	// memories, breaking the preference-first contract. Skipping session-NDCG for
+	// preference queries is correct because preference memories are typically
+	// singletons (no sid: tag) — session packing adds no value here — and the
+	// preference-first path already produces coherent ordering.
+	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg && !prefQuery)
 
 	// Preference-first recall path: when the query is preference-shaped, ensure
 	// preference-typed memories are represented in the top results even if their
