@@ -1191,14 +1191,14 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 			result, err := h(ctx, pool, req, cfg)
 			if err != nil && ctx.Err() == context.DeadlineExceeded {
 				slog.Warn("mcp tool timed out — returning degraded success to prevent false 'user denied' synthesis",
-					"tool", toolName, "timeout", toolTimeout)
+					"tool", toolName, "timeout", toolTimeout, "reason", "tool_timeout")
 				metrics.ToolRequests.WithLabelValues(toolName, "timeout").Inc()
 				degradedJSON, _ := json.Marshal(map[string]any{
 					"_engram_degraded":        true,
-					"_engram_degraded_reason": "embed_timeout",
+					"_engram_degraded_reason": "tool_timeout",
 					"_engram_tool":            toolName,
 					"status":                  "degraded",
-					"message": toolName + " ran in degraded mode (GPU saturated or backend slow) — " +
+					"message": toolName + " ran in degraded mode (tool deadline exceeded) — " +
 						"results use BM25 text search only. Memory tools remain accessible. " +
 						"Recovery is automatic when GPU pressure eases.",
 				})

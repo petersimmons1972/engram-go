@@ -50,10 +50,10 @@ func simulateFixedTimeoutPath(_ context.Context, _ *EnginePool, _ Config) (*mcpg
 	const toolName = "test_slow_tool"
 	degradedJSON, _ := json.Marshal(map[string]any{
 		"_engram_degraded":        true,
-		"_engram_degraded_reason": "embed_timeout",
+		"_engram_degraded_reason": "tool_timeout",
 		"_engram_tool":            toolName,
 		"status":                  "degraded",
-		"message": toolName + " ran in degraded mode (GPU saturated) — " +
+		"message": toolName + " ran in degraded mode (tool deadline exceeded) — " +
 			"results use BM25 text search only. Memory tools remain accessible. " +
 			"Recovery is automatic when GPU pressure eases.",
 	})
@@ -135,7 +135,7 @@ func TestToolTimeout_MetricsLabel_IsTimeout(t *testing.T) {
 }
 
 // TestToolTimeout_DegradedReason_IsEmbedTimeout verifies the _engram_degraded_reason
-// field is "embed_timeout" in the fixed response.
+// field is "tool_timeout" in the fixed response.
 //
 // Currently FAILS: response is not JSON.
 func TestToolTimeout_DegradedReason_IsEmbedTimeout(t *testing.T) {
@@ -151,6 +151,6 @@ func TestToolTimeout_DegradedReason_IsEmbedTimeout(t *testing.T) {
 	require.True(t, ok)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &body))
-	require.Equal(t, "embed_timeout", body["_engram_degraded_reason"],
-		"_engram_degraded_reason must be 'embed_timeout'")
+	require.Equal(t, "tool_timeout", body["_engram_degraded_reason"],
+		"_engram_degraded_reason must be 'tool_timeout'")
 }
