@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -22,6 +23,49 @@ type Client struct {
 	retries   int
 	serverURL string
 	apiKey    string
+	streaming bool
+}
+
+func baseServerURL(serverURL string) string {
+	u := strings.TrimRight(serverURL, "/")
+	u = strings.TrimSuffix(u, "/sse")
+	u = strings.TrimSuffix(u, "/mcp")
+	return u
+}
+
+func connectMCP(ctx context.Context, serverURL, apiKey string, streaming bool) (*client.Client, bool, error) {
+	baseURL := baseServerURL(serverURL)
+	headers := map[string]string{}
+	if apiKey != "" {
+		headers["Authorization"] = "Bearer " + apiKey
+	}
+
+	var c *client.Client
+	var err error
+	if streaming {
+		c, err = client.NewStreamableHttpClient(baseURL+"/mcp", transport.WithHTTPHeaders(headers))
+	} else {
+		c, err = client.NewSSEMCPClient(baseURL+"/sse", transport.WithHeaders(headers))
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if err := c.Start(ctx); err != nil {
+		_ = c.Close()
+		return nil, false, err
+	}
+
+	_, err = c.Initialize(ctx, mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo:      mcp.Implementation{Name: "longmemeval", Version: "1.0.0"},
+		},
+	})
+	if err != nil {
+		_ = c.Close()
+		return nil, false, fmt.Errorf("initialize MCP: %w", err)
+	}
+	return c, streaming, nil
 }
 
 func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
@@ -33,54 +77,46 @@ func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
 	return fmt.Errorf("%s tool error", toolName)
 }
 
-// Connect creates an authenticated Streamable HTTP MCP client connected to serverURL.
+// Connect creates an authenticated MCP client connected to serverURL.
+// It prefers Streamable HTTP (/mcp) and falls back to legacy SSE (/sse)
+// when the server responds with legacy-SSE initialize responses.
 func Connect(ctx context.Context, serverURL, apiKey string) (*Client, error) {
-	mcpURL := strings.TrimRight(serverURL, "/") + "/mcp"
-	headers := map[string]string{}
-	if apiKey != "" {
-		headers["Authorization"] = "Bearer " + apiKey
-	}
-	c, err := client.NewStreamableHttpClient(mcpURL, transport.WithHTTPHeaders(headers))
+	c, streaming, err := connectMCP(ctx, serverURL, apiKey, true)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, transport.ErrLegacySSEServer) {
+			return nil, err
+		}
+		c, streaming, err = connectMCP(ctx, serverURL, apiKey, false)
+		if err != nil {
+			return nil, err
+		}
 	}
-	_, err = c.Initialize(ctx, mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo:      mcp.Implementation{Name: "longmemeval", Version: "1.0.0"},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize MCP: %w", err)
-	}
-	return &Client{mcp: c, retries: 1, serverURL: serverURL, apiKey: apiKey}, nil
+	return &Client{
+		mcp:       c,
+		retries:   1,
+		serverURL: serverURL,
+		apiKey:    apiKey,
+		streaming: streaming,
+	}, nil
 }
 
-// Connect re-establishes the Streamable HTTP MCP connection using the stored server URL and
+// Connect re-establishes the MCP connection using the stored server URL and
 // API key. Called by Recall before each retry attempt because a failed connection
 // may need to be re-initialized — reconnect is required to recover from transient errors.
 func (c *Client) Connect(ctx context.Context) error {
-	mcpURL := strings.TrimRight(c.serverURL, "/") + "/mcp"
-	headers := map[string]string{}
-	if c.apiKey != "" {
-		headers["Authorization"] = "Bearer " + c.apiKey
+	streaming := c.streaming
+	newMCP, _, err := connectMCP(ctx, c.serverURL, c.apiKey, streaming)
+	if err != nil && errors.Is(err, transport.ErrLegacySSEServer) && streaming {
+		streaming = false
+		newMCP, _, err = connectMCP(ctx, c.serverURL, c.apiKey, false)
 	}
-	newMCP, err := client.NewStreamableHttpClient(mcpURL, transport.WithHTTPHeaders(headers))
-	if err != nil {
-		return err
-	}
-	_, err = newMCP.Initialize(ctx, mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo:      mcp.Implementation{Name: "longmemeval", Version: "1.0.0"},
-		},
-	})
 	if err != nil {
 		return fmt.Errorf("initialize MCP: %w", err)
 	}
 	// Close the old connection before replacing it to avoid leaking goroutines.
 	_ = c.mcp.Close()
 	c.mcp = newMCP
+	c.streaming = streaming
 	return nil
 }
 

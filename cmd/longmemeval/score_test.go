@@ -214,8 +214,20 @@ func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
 		"judged_at":         fixed,
 		"scorer_url":        "https://api.openai.com/v1",
 	} {
-		if report[key] != want {
-			t.Fatalf("%s = %v, want %v", key, report[key], want)
+		got := report[key]
+		switch expect := want.(type) {
+		case int:
+			num, ok := got.(float64)
+			if !ok {
+				t.Fatalf("%s type=%T, want float64 (%v)", key, got, expect)
+			}
+			if int(num) != expect {
+				t.Fatalf("%s = %v, want %v", key, got, expect)
+			}
+		default:
+			if got != want {
+				t.Fatalf("%s = %v, want %v", key, got, want)
+			}
 		}
 	}
 }
