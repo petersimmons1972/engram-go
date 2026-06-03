@@ -29,7 +29,7 @@ func newTestMCPServer(t *testing.T, handlers map[string]func(req mcp.CallToolReq
 		})
 	}
 
-	ts := server.NewTestServer(mcpServer)
+	ts := server.NewTestStreamableHTTPServer(mcpServer)
 	t.Cleanup(ts.Close)
 	return ts.URL
 }

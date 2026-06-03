@@ -40,7 +40,7 @@ func newTestMCPServerWithInitCount(t *testing.T, initCalls *atomic.Int32, handle
 		})
 	}
 
-	ts := server.NewTestServer(mcpServer)
+	ts := server.NewTestStreamableHTTPServer(mcpServer)
 	t.Cleanup(ts.Close)
 	return ts.URL
 }

@@ -26,7 +26,7 @@ func newTestEngram(t *testing.T, handlers map[string]func(mcp.CallToolRequest) (
 			return handler(req)
 		})
 	}
-	ts := server.NewTestServer(mcpServer)
+	ts := server.NewTestStreamableHTTPServer(mcpServer)
 	t.Cleanup(ts.Close)
 	return ts.URL
 }
