@@ -1,1 +1,0 @@
-/home/psimmons/projects/homelab-intelligence/skills/homelab-monthly-review/SKILL.md
