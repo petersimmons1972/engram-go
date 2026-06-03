@@ -1157,7 +1157,7 @@ func withWarnLog(name string, h toolHandler) toolHandler {
 // headroom for transient slowness without ever approaching the 90s HTTP timeout.
 // Tools that trigger background work (migrate_embedder, consolidate) also return
 // quickly — the heavy lifting happens in background goroutines, not the handler.
-const defaultToolTimeout = 15 * time.Second
+const defaultToolTimeout = 60 * time.Second
 
 // registerToolWithTimeout adds a tool to the MCP server with a per-call deadline
 // and Prometheus instrumentation. timeout=0 uses defaultToolTimeout. readOnly
