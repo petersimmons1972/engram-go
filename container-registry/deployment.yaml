@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-registry
+  namespace: container-registry
+  labels:
+    app: docker-registry
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: docker-registry
+
+  # HA change (#70): was Recreate, which takes the registry fully offline during
+  # upgrades. RollingUpdate with maxUnavailable=0 keeps the old pod alive until
+  # the new one passes readiness, eliminating downtime windows for image pushes
+  # and pulls in CI pipelines.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  template:
+    metadata:
+      labels:
+        app: docker-registry
+    spec:
+
+      # HA change (#70): prefer the primary k3s control-plane node (worker131)
+      # to reduce migration churn. preferred (not required) so the scheduler
+      # can still place the pod elsewhere if worker131 is cordoned or evicted.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - worker131
+
+      containers:
+        - name: registry
+          image: registry:2
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          ports:
+            - name: registry
+              containerPort: 5000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          resources:
+            # HA change (#70): memory was running at ~60% of 2Gi (~1.2 Gi).
+            # Raised limit to 4Gi to give headroom for push bursts and layer GC
+            # without OOMKill risk. Request raised to 512Mi to match observed
+            # idle footprint (was 256Mi, observed at ~400-600Mi idle).
+            requests:
+              cpu: 25m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 4Gi
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: registry-data-pvc-nfs
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: docker-registry
+  namespace: container-registry
+  # HA change (#70): ensures at least one registry replica is available during
+  # voluntary disruptions (node drains, cluster upgrades). Without a PDB,
+  # draining the node hosting the single registry pod would take it offline
+  # immediately. With minAvailable: 1, the drain blocks until the replacement
+  # pod is ready.
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: docker-registry
