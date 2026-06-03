@@ -233,21 +233,27 @@ post_run_verify() {
       log "post-verify: ${repo}#${issue_num} PR missing ## PR Packaging — applying stalled label"
       gh issue edit "${issue_num}" --repo "${repo}" \
         --add-label "agent/codex/stalled" \
+        2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label apply failed for ${repo}#${issue_num}"
+      gh issue edit "${issue_num}" --repo "${repo}" \
         --remove-label "agent/codex/in-progress" \
-        2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label transition failed for ${repo}#${issue_num}"
+        2>>"${LOG_FILE}" || true  # ignore: label may already be absent
       return 0
     fi
     log "post-verify: ${repo}#${issue_num} remote branch, open PR, and ## PR Packaging confirmed — applying done label"
     gh issue edit "${issue_num}" --repo "${repo}" \
       --add-label "agent/codex/done" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING done label apply failed for ${repo}#${issue_num}"
+    gh issue edit "${issue_num}" --repo "${repo}" \
       --remove-label "agent/codex/in-progress" \
-      2>>"${LOG_FILE}" || log "post-verify: WARNING done label transition failed for ${repo}#${issue_num}"
+      2>>"${LOG_FILE}" || true  # ignore: label may already be absent
   else
     log "ERROR: Codex reported done but no remote branch/PR found for issue ${issue_num} (remote_exists=${remote_exists}, pr_count=${pr_count})"
     gh issue edit "${issue_num}" --repo "${repo}" \
       --add-label "agent/codex/stalled" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label apply failed for ${repo}#${issue_num}"
+    gh issue edit "${issue_num}" --repo "${repo}" \
       --remove-label "agent/codex/in-progress" \
-      2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label transition failed for ${repo}#${issue_num}"
+      2>>"${LOG_FILE}" || true  # ignore: label may already be absent
     gh issue comment "${issue_num}" --repo "${repo}" \
       --body "**codex-poll post-run verification failed.**
 
