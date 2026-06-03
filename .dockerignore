@@ -1,0 +1,47 @@
+# Build context hygiene — the Dockerfile only needs Go sources (go.mod/go.sum + cmd/ + internal/).
+# Without this file `docker build .` ships the entire 26GB working tree (11GB results/, .git, caches)
+# to the daemon. See issue: missing .dockerignore.
+
+# VCS + local tooling
+.git/
+.claude/
+.serena/
+.mcp.json
+
+# Benchmark outputs and backups (multi-GB, never needed in image)
+results/
+backups/
+bench/results/
+*.jsonl
+
+# Local module / build caches and compiled artifacts
+go/
+reembed-rs/target/
+/engram
+/engram-*
+/starter
+/instinct
+/instinct-benchmark
+/longmemeval
+/audit
+/bin/
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+infisical/infisical-bin
+
+# Python / misc
+__pycache__/
+*.pyc
+*.pyo
+cover.out
+cov.out
+*.backup
+*.pre-migration-backup
+
+# Large test corpora and non-Go subprojects (not needed to build Go binaries)
+testdata/
+reembed-rs/
+.worktrees/
