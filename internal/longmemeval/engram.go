@@ -16,7 +16,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/atom"
 )
 
-// Client wraps the MCP SSE client with retry logic for eval use.
+// Client wraps the MCP Streamable HTTP client with retry logic for eval use.
 type Client struct {
 	mcp       *client.Client
 	retries   int
@@ -33,18 +33,15 @@ func toolErrorMsg(result *mcp.CallToolResult, toolName string) error {
 	return fmt.Errorf("%s tool error", toolName)
 }
 
-// Connect creates an authenticated MCP SSE client connected to serverURL.
+// Connect creates an authenticated Streamable HTTP MCP client connected to serverURL.
 func Connect(ctx context.Context, serverURL, apiKey string) (*Client, error) {
-	sseURL := strings.TrimRight(serverURL, "/") + "/sse"
+	mcpURL := strings.TrimRight(serverURL, "/") + "/mcp"
 	headers := map[string]string{}
 	if apiKey != "" {
 		headers["Authorization"] = "Bearer " + apiKey
 	}
-	c, err := client.NewSSEMCPClient(sseURL, transport.WithHeaders(headers))
+	c, err := client.NewStreamableHttpClient(mcpURL, transport.WithHTTPHeaders(headers))
 	if err != nil {
-		return nil, err
-	}
-	if err := c.Start(ctx); err != nil {
 		return nil, err
 	}
 	_, err = c.Initialize(ctx, mcp.InitializeRequest{
@@ -59,21 +56,17 @@ func Connect(ctx context.Context, serverURL, apiKey string) (*Client, error) {
 	return &Client{mcp: c, retries: 1, serverURL: serverURL, apiKey: apiKey}, nil
 }
 
-// Connect re-establishes the MCP SSE connection using the stored server URL and
-// API key. Called by Recall before each retry attempt because a dead SSE
-// connection fails identically to a live one — reconnect is required to recover
-// from the mcp-go SSE drop race (issue #861).
+// Connect re-establishes the Streamable HTTP MCP connection using the stored server URL and
+// API key. Called by Recall before each retry attempt because a failed connection
+// may need to be re-initialized — reconnect is required to recover from transient errors.
 func (c *Client) Connect(ctx context.Context) error {
-	sseURL := strings.TrimRight(c.serverURL, "/") + "/sse"
+	mcpURL := strings.TrimRight(c.serverURL, "/") + "/mcp"
 	headers := map[string]string{}
 	if c.apiKey != "" {
 		headers["Authorization"] = "Bearer " + c.apiKey
 	}
-	newMCP, err := client.NewSSEMCPClient(sseURL, transport.WithHeaders(headers))
+	newMCP, err := client.NewStreamableHttpClient(mcpURL, transport.WithHTTPHeaders(headers))
 	if err != nil {
-		return err
-	}
-	if err := newMCP.Start(ctx); err != nil {
 		return err
 	}
 	_, err = newMCP.Initialize(ctx, mcp.InitializeRequest{

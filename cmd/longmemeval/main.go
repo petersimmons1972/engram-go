@@ -32,6 +32,7 @@ type Config struct {
 	OutDir         string
 	LLMBaseURL     string // OpenAI-compatible base URL; bypasses claude CLI when set
 	LLMModel       string // model name for LLMBaseURL endpoint
+	LLMApiKey      string // API key for LLMBaseURL endpoint (env: LLM_API_KEY)
 	EnableThinking bool   // enable chain-of-thought for models that support it (Qwen3)
 	LLMMaxTokens   int    // output token budget; 0 → default (2048 thinking-off, 8192 thinking-on)
 	ScoreOutput    string // score stdout mode: text, json, or quiet
@@ -141,6 +142,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  --api-key <key>         Engram API key                                    (env: ENGRAM_API_KEY)")
 	_, _ = fmt.Fprintln(w, "  --llm-url <url>         OpenAI-compatible LLM base URL                    (env: LME_LLM_URL)")
 	_, _ = fmt.Fprintln(w, "  --llm-model <name>      Model name for --llm-url                          (env: LME_LLM_MODEL)")
+	_, _ = fmt.Fprintln(w, "  --llm-api-key <key>     API key for --llm-url (leave empty for local)     (env: LLM_API_KEY)")
 	_, _ = fmt.Fprintln(w, "  --workers <n>           Parallel worker count (default 4)")
 	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
 	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
@@ -202,6 +204,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.OutDir, "out", ".", "Output directory for checkpoint and result files")
 	fs.StringVar(&cfg.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OpenAI-compatible base URL (e.g. http://oblivion:8000/v1); bypasses claude CLI when set")
 	fs.StringVar(&cfg.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "Model name for --llm-url endpoint")
+	fs.StringVar(&cfg.LLMApiKey, "llm-api-key", envOr("LLM_API_KEY", ""), "API key for --llm-url endpoint (env: LLM_API_KEY); leave empty for unauthenticated local endpoints")
 	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
 	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 	fs.StringVar(&cfg.ScoreOutput, "score-output", envOr("LME_SCORE_OUTPUT", "text"), "score summary stdout mode: text, json, or quiet")
