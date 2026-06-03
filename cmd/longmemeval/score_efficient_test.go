@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -136,5 +138,85 @@ func TestRunScoreEfficient_FailsClosedWhenScorerUnavailable(t *testing.T) {
 	}
 	if exit := runScoreEfficient(cfg); exit == 0 {
 		t.Fatal("runScoreEfficient exit = 0, want non-zero when scorer is unavailable")
+	}
+}
+
+func TestScoreErrorRetriedThenCounted(t *testing.T) {
+	dir := t.TempDir()
+	items := []longmemeval.Item{
+		{
+			QuestionID:       "q001",
+			QuestionType:     "single-session-user",
+			Question:         "Who won?",
+			Answer:           "Alice",
+			AnswerSessionIDs: []string{"sid-a"},
+		},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{
+			QuestionID: "q001",
+			Status:     "done",
+			MemoryMap:  map[string]string{"m1": "sid-a"},
+		},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{
+			QuestionID:   "q001",
+			Hypothesis:   "Alice",
+			Status:       "done",
+			RetrievedIDs: []string{"m1"},
+		},
+	})
+
+	var calls atomic.Int32
+	scorer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+			return
+		}
+		calls.Add(1)
+		http.Error(w, "judge down", http.StatusBadGateway)
+	}))
+	defer scorer.Close()
+
+	cfg := &Config{
+		DataFile:        dataPath,
+		OutDir:          dir,
+		Workers:         1,
+		Retries:         2,
+		RunID:           "testrun",
+		ScorerURL:       scorer.URL,
+		ScorerModel:     "test-model",
+		ScorerMaxTokens: longmemeval.DefaultScorerMaxTokens,
+		PreserveCorrect: true,
+		Now:             func() time.Time { return time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC) },
+	}
+	if exit := runScoreEfficient(cfg); exit != 0 {
+		t.Fatalf("runScoreEfficient exit = %d, want 0", exit)
+	}
+	if calls.Load() != int32(cfg.Retries+1) {
+		t.Fatalf("expected %d score requests, got %d", cfg.Retries+1, calls.Load())
+	}
+
+	reportPath := filepath.Join(dir, "score_report.json")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+	scoreErrorTotal, ok := report["score_error_total"].(float64)
+	if !ok {
+		t.Fatalf("score_error_total missing or not numeric: %v", report["score_error_total"])
+	}
+	if int(scoreErrorTotal) != 1 {
+		t.Errorf("score_error_total = %v, want 1", scoreErrorTotal)
 	}
 }

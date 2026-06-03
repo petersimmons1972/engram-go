@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -173,7 +174,11 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
 	writeHypotheses(cfg, scores)
 	writeRetrievalLog(cfg, itemMap, ingestMap, runMap, scores)
-	writeScoreReportWithCompleteness(cfg, scores, scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores))
+	writeScoreReportWithCompleteness(
+		cfg,
+		scores,
+		scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores),
+	)
 }
 
 type scoreReportCounts struct {
@@ -276,6 +281,17 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		}
 	}
 
+	judgedAt := cfg.Now
+	if judgedAt == nil {
+		judgedAt = func() time.Time { return time.Now().UTC() }
+	}
+
+	scorerURL := redactURL(cfg.ScorerURL)
+	scorerMaxTokens := cfg.ScorerMaxTokens
+	if scorerMaxTokens <= 0 {
+		scorerMaxTokens = longmemeval.DefaultScorerMaxTokens
+	}
+
 	report := map[string]any{
 		"overall":               overall,
 		"by_type":               byQType,
@@ -288,6 +304,11 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		"run_error_total":       completeness.RunErrorTotal,
 		"score_error_total":     completeness.ScoreErrorTotal,
 		"complete":              completeness.Complete,
+		"scorer_model":          cfg.ScorerModel,
+		"scorer_url":            scorerURL,
+		"scorer_thinking":       cfg.ScorerThinking,
+		"scorer_max_tokens":     scorerMaxTokens,
+		"judged_at":             judgedAt().Format(time.RFC3339),
 	}
 
 	data, err := json.MarshalIndent(report, "", "  ")

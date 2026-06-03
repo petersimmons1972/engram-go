@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -179,6 +180,43 @@ func TestWriteScoreReport_Basic(t *testing.T) {
 	}
 	if int(overall["total"].(float64)) != 3 {
 		t.Errorf("overall.total = %v, want 3 (errors excluded)", overall["total"])
+	}
+}
+
+func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
+	const fixed = "2026-06-03T10:00:00Z"
+	cfg := &Config{
+		OutDir:          t.TempDir(),
+		RunID:           "judge-metadata-test",
+		ScorerURL:       "https://api.openai.com/v1",
+		ScorerModel:     "gpt-4o-2024-11-20",
+		ScorerThinking:  false,
+		ScorerMaxTokens: 4096,
+		Now:             func() time.Time { return time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC) },
+	}
+
+	writeScoreReport(cfg, []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	data, err := os.ReadFile(filepath.Join(cfg.OutDir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse report: %v", err)
+	}
+	for key, want := range map[string]any{
+		"scorer_model":      cfg.ScorerModel,
+		"scorer_thinking":   cfg.ScorerThinking,
+		"scorer_max_tokens": cfg.ScorerMaxTokens,
+		"judged_at":         fixed,
+		"scorer_url":        "https://api.openai.com/v1",
+	} {
+		if report[key] != want {
+			t.Fatalf("%s = %v, want %v", key, report[key], want)
+		}
 	}
 }
 

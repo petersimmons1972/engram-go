@@ -183,7 +183,7 @@ func TestScoreOAI_HTTPError_ReturnsScoreError(t *testing.T) {
 }
 
 func TestBuildScoringRequestBody(t *testing.T) {
-	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens)
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens, longmemeval.ScoringOptions{EnableThinking: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestBuildScoringRequestBody(t *testing.T) {
 }
 
 func TestBuildScoringRequestBody_CustomMaxTokens(t *testing.T) {
-	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", 512)
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", 512, longmemeval.ScoringOptions{EnableThinking: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +219,101 @@ func TestBuildScoringRequestBody_CustomMaxTokens(t *testing.T) {
 	}
 	if req.MaxTokens != 512 {
 		t.Errorf("want max_tokens=512 got %d", req.MaxTokens)
+	}
+}
+
+func TestScorerSendsBearerWhenKeySet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Fatalf("want Authorization: Bearer test-key, got %q", r.Header.Get("Authorization"))
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"CORRECT\nok"}}]}`)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	result, err := longmemeval.ScoreOAIEfficient(
+		ctx,
+		"Q",
+		"A",
+		"A",
+		srv.URL,
+		"qwen-test",
+		0,
+		longmemeval.DefaultScorerMaxTokens,
+		longmemeval.ScoringOptions{
+			APIKey:         "test-key",
+			EnableThinking: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ScoreOAIEfficient: %v", err)
+	}
+	if result.Label != "CORRECT" {
+		t.Fatalf("result.Label = %q, want CORRECT", result.Label)
+	}
+}
+
+func TestScorerNoAuthHeaderWhenKeyEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("expected no Authorization header, got %q", got)
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"CORRECT\nok"}}]}`)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	result, err := longmemeval.ScoreOAIEfficient(
+		ctx,
+		"Q",
+		"A",
+		"A",
+		srv.URL,
+		"qwen-test",
+		0,
+		longmemeval.DefaultScorerMaxTokens,
+		longmemeval.ScoringOptions{EnableThinking: true},
+	)
+	if err != nil {
+		t.Fatalf("ScoreOAIEfficient: %v", err)
+	}
+	if result.Label != "CORRECT" {
+		t.Fatalf("result.Label = %q, want CORRECT", result.Label)
+	}
+}
+
+func TestScorerThinkingFlagControlsBody(t *testing.T) {
+	body, err := longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens, longmemeval.ScoringOptions{EnableThinking: true})
+	if err != nil {
+		t.Fatalf("BuildScoringRequestBody: %v", err)
+	}
+	var enabled map[string]any
+	if err := json.Unmarshal(body, &enabled); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if _, ok := enabled["chat_template_kwargs"]; ok {
+		t.Fatal("enable-think=true should not set chat_template_kwargs")
+	}
+
+	body, err = longmemeval.BuildScoringRequestBody("mymodel", "Q?", "A", "A", longmemeval.DefaultScorerMaxTokens, longmemeval.ScoringOptions{EnableThinking: false})
+	if err != nil {
+		t.Fatalf("BuildScoringRequestBody: %v", err)
+	}
+	var disabled map[string]any
+	if err := json.Unmarshal(body, &disabled); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	chatTemplate, ok := disabled["chat_template_kwargs"]
+	if !ok {
+		t.Fatal("enable-think=false should set chat_template_kwargs")
+	}
+	raw, ok := chatTemplate.(map[string]any)
+	if !ok {
+		t.Fatalf("chat_template_kwargs has type %T", chatTemplate)
+	}
+	if raw["enable_thinking"] != false {
+		t.Fatalf("chat_template_kwargs.enable_thinking=%v, want false", raw["enable_thinking"])
 	}
 }
 

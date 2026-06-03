@@ -41,9 +41,11 @@ type Config struct {
 	// score-efficient flags
 	ScorerURL       string // OAI endpoint for score-efficient (env: LME_SCORER_URL)
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
+	ScorerAPIKey    string // API key for score-efficient endpoint (env: LME_SCORER_API_KEY)
 	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
+	ScorerThinking  bool   // enable scorer chain-of-thought (default true)
 
 	// score-batch flags
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
@@ -111,6 +113,8 @@ type Config struct {
 	// JSON files here; run reads them when FetchAtoms returns no results.
 	// Format: <AtomCacheDir>/<project>.json  each file is []atom.Atom JSON.
 	AtomCacheDir string
+
+	Now func() time.Time
 }
 
 func main() {
@@ -294,11 +298,18 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
 		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
+		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
+		sefs.BoolVar(&cfg.ScorerThinking, "scorer-thinking", true, "enable chain-of-thought for scorers that support it (default true)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
+		}
+		if cfg.Now == nil {
+			cfg.Now = func() time.Time {
+				return time.Now().UTC()
+			}
 		}
 		if cfg.DataFile == "" {
 			_, _ = fmt.Fprintln(stderr, "--data is required")
@@ -486,6 +497,11 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	if cfg.RunID == "" {
 		cfg.RunID = newRunID()
+	}
+	if cfg.Now == nil {
+		cfg.Now = func() time.Time {
+			return time.Now().UTC()
+		}
 	}
 
 	switch subcommand {
