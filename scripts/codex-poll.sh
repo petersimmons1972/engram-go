@@ -213,11 +213,31 @@ post_run_verify() {
   fi
 
   # Check 2: is there an open PR from this branch?
-  local pr_count
-  pr_count="$(gh pr list -R "${repo}" --head "${branch_name}" --state open --json number --jq 'length' 2>/dev/null || echo "0")"
+  local pr_list_json pr_count pr_number
+  pr_list_json="$(gh pr list -R "${repo}" --head "${branch_name}" --state open --json number 2>/dev/null || echo "[]")"
+  pr_count="$(printf '%s' "${pr_list_json}" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "0")"
+  pr_number="$(printf '%s' "${pr_list_json}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["number"] if d else "")' 2>/dev/null || echo "")"
 
   if [[ "${remote_exists}" -eq 1 && "${pr_count}" -gt 0 ]]; then
-    log "post-verify: ${repo}#${issue_num} remote branch and open PR confirmed — applying done label"
+    # Check 3 (Protocol 19): does the PR body include the required ## PR Packaging section?
+    local pr_body
+    pr_body="$(gh pr view "${pr_number}" --repo "${repo}" --json body --jq '.body' 2>/dev/null || echo "")"
+    if ! printf '%s' "${pr_body}" | grep -q "## PR Packaging"; then
+      log "post-verify: PR body missing ## PR Packaging section — applying needs-fix/pr-packaging label"
+      gh pr edit "${pr_number}" --repo "${repo}" \
+        --add-label "needs-fix/pr-packaging" \
+        2>>"${LOG_FILE}" || log "post-verify: WARNING needs-fix/pr-packaging label failed for PR ${pr_number}"
+      gh issue comment "${issue_num}" --repo "${repo}" \
+        --body "This PR is missing the required \`## PR Packaging\` section (Protocol 19). Please add it before merge." \
+        2>>"${LOG_FILE}" || true
+      log "post-verify: ${repo}#${issue_num} PR missing ## PR Packaging — applying stalled label"
+      gh issue edit "${issue_num}" --repo "${repo}" \
+        --add-label "agent/codex/stalled" \
+        --remove-label "agent/codex/in-progress" \
+        2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label transition failed for ${repo}#${issue_num}"
+      return 0
+    fi
+    log "post-verify: ${repo}#${issue_num} remote branch, open PR, and ## PR Packaging confirmed — applying done label"
     gh issue edit "${issue_num}" --repo "${repo}" \
       --add-label "agent/codex/done" \
       --remove-label "agent/codex/in-progress" \
@@ -402,7 +422,15 @@ CONTEXT (codex-handoff):
 ${HANDOFF_CONTEXT}
 
 Follow the 8-step loop in AGENTS.md (petersimmons1972/claude-codex). Post a CODEX REPORT block when done.
-Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the shared checkout at ${REPO_PATH}."
+Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the shared checkout at ${REPO_PATH}.
+
+REQUIRED: Your PR must include a '## PR Packaging' section with these fields:
+scope_class: hotfix|feature-slice|refactor|ops
+merge_order: 1
+depends_on: none
+conflict_surface: [files touched]
+risk: low|med|high
+rollback: <one line>"
 
   local LOG_RUN
   LOG_RUN="${STATE_DIR}/${SHORT}-${ISSUE_NUM}-$(date -u +%Y%m%dT%H%M%S).log"
