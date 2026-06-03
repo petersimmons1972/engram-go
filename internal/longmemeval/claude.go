@@ -160,6 +160,11 @@ type OAIOptions struct {
 	// MaxTokens caps the output token budget. Default 2048 is fine for
 	// enable_thinking=false; use ≥8192 when thinking is enabled.
 	MaxTokens int
+	// APIKey is the Bearer token for the generation endpoint. When non-empty,
+	// the Authorization header is set on the OAI request. When empty the
+	// request is sent without auth (local/oblivion endpoints). Populated from
+	// --llm-api-key flag or LLM_API_KEY env var.
+	APIKey string
 }
 
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
@@ -221,6 +226,9 @@ func callOAI(ctx context.Context, prompt, baseURL, model string, opts OAIOptions
 		return "", fmt.Errorf("create OAI request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if opts.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.APIKey)
+	}
 	if debugOAIRequests {
 		log.Printf("DEBUG callOAI: url=%s request_body_bytes=%d", url, len(reqBody))
 	}
