@@ -87,7 +87,7 @@ func parseDocCounts(t *testing.T, path string) map[string]int {
 }
 
 // TestToolCountsMatchDocs verifies that every count marker in docs/tools.md
-// and README.md matches the canonical value from code.
+// and the onboarding docs matches the canonical value from code.
 func TestToolCountsMatchDocs(t *testing.T) {
 	c := computeToolCounts(t)
 	visibleDefault := c.unconditional - c.hidden
@@ -113,6 +113,8 @@ func TestToolCountsMatchDocs(t *testing.T) {
 	for _, doc := range []string{
 		filepath.Join("..", "..", "docs", "tools.md"),
 		filepath.Join("..", "..", "README.md"),
+		filepath.Join("..", "..", "docs", "getting-started.md"),
+		filepath.Join("..", "..", "docs", "connecting.md"),
 	} {
 		got := parseDocCounts(t, doc)
 		if len(got) == 0 {
@@ -127,6 +129,36 @@ func TestToolCountsMatchDocs(t *testing.T) {
 			}
 			if n != want {
 				t.Errorf("%s: count:%s = %d, code says %d", doc, name, n, want)
+			}
+		}
+	}
+
+	required := []string{
+		"visible-default",
+		"visible-with-ai",
+		"hidden",
+		"ai-enhanced",
+		"total-callable-default",
+		"total-callable-with-ai",
+	}
+
+	for _, doc := range []string{
+		filepath.Join("..", "..", "docs", "getting-started.md"),
+		filepath.Join("..", "..", "docs", "connecting.md"),
+	} {
+		got := parseDocCounts(t, doc)
+		for _, name := range required {
+			want, ok := expected[name]
+			if !ok {
+				continue
+			}
+			gotName, ok := got[name]
+			if !ok {
+				t.Errorf("%s missing required marker count:%s", doc, name)
+				continue
+			}
+			if gotName != want {
+				t.Errorf("%s: required marker count:%s = %d, code says %d", doc, name, gotName, want)
 			}
 		}
 	}
