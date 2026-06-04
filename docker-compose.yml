@@ -10,16 +10,18 @@
 # One reembed container per GPU endpoint. Tune each independently via .env:
 #   REEMBED_<GPU>_URL, REEMBED_<GPU>_CONCURRENCY_MAX, REEMBED_<GPU>_TOKIO_THREADS
 #
-# This profile assumes you have an olla load balancer running externally (or LiteLLM proxy).
-# The LiteLLM proxy container was retired 2026-05-05; olla now handles all embed routing.
+# Hybrid profile starts from this file and assumes you have an external
+# OpenAI-compatible embed/LLM router at ENGRAM_ROUTER_URL (or legacy
+# LITELLM_URL fallback).
+# The LiteLLM proxy container was retired 2026-05-05; olla now owns embedding and
+# summarization routing.
 # For local-only (Ollama-in-Docker), use: docker compose -f docker-compose.local.yml up -d
 #
 # Firewall design: engram-go uses the embed router only for query embedding (2s timeout +
 # BM25 fallback). Reembed workers run in isolated containers with their own
 # concurrency budgets so bulk re-embedding never starves MCP recall.
 #
-# Router endpoint: LITELLM_URL in .env (legacy name; points to olla, not LiteLLM).
-# Rename to ENGRAM_ROUTER_URL tracked in issue #634.
+# Router endpoint: ENGRAM_ROUTER_URL in .env (legacy LITELLM_URL fallback).
 # The Docker bridge IP (172.17.0.x) is whitelisted for /setup-token automatically.
 #
 # WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
