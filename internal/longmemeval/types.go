@@ -72,6 +72,14 @@ type ScoreEntry struct {
 	Explanation  string `json:"explanation"`
 	Status       string `json:"status"`
 	Error        string `json:"error,omitempty"`
+	ScorerModel  string `json:"scorer_model,omitempty"`
+	ScorerURL    string `json:"scorer_url,omitempty"`
+	// ScorerThinking reports whether judge requests enabled chain-of-thought.
+	ScorerThinking bool `json:"scorer_thinking"`
+	// ScorerMaxTokens is the max_tokens value sent to the scoring request.
+	ScorerMaxTokens int `json:"scorer_max_tokens"`
+	// JudgedAt is the timestamp when this row was produced (ISO-8601).
+	JudgedAt string `json:"judged_at,omitempty"`
 }
 
 // HypothesisLine is one line in the LongMemEval-compatible hypotheses.jsonl output.

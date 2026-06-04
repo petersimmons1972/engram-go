@@ -118,7 +118,7 @@ func runScoreEfficient(cfg *Config) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			scoreEfficientWorker(cfg, itemMap, work, ckptCh, useOAI)
+			scoreEfficientWorker(cfg, itemMap, work, ckptCh)
 		}()
 	}
 	wg.Wait()
@@ -139,13 +139,34 @@ func runScoreEfficient(cfg *Config) int {
 	return 0
 }
 
+func scoreEntryJudgedAt(cfg *Config) string {
+	if cfg == nil || cfg.Now == nil {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	return cfg.Now().Format(time.RFC3339)
+}
+
 func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
-	work <-chan longmemeval.RunEntry, out chan<- longmemeval.ScoreEntry, useOAI bool) {
+	work <-chan longmemeval.RunEntry, out chan<- longmemeval.ScoreEntry) {
 	ctx := context.Background()
+	options := longmemeval.ScoringOptions{
+		EnableThinking: cfg.ScorerThinking,
+		APIKey:         cfg.ScorerAPIKey,
+	}
+	judgedAt := scoreEntryJudgedAt(cfg)
+	scorerMaxTokens := cfg.ScorerMaxTokens
+	if scorerMaxTokens <= 0 {
+		scorerMaxTokens = longmemeval.DefaultScorerMaxTokens
+	}
 	for r := range work {
 		item, ok := itemMap[r.QuestionID]
 		if !ok {
-			out <- longmemeval.ScoreEntry{QuestionID: r.QuestionID, Status: "error", Error: "item not in data file"}
+			out <- longmemeval.ScoreEntry{
+				QuestionID: r.QuestionID,
+				Status:     "error",
+				Error:      "item not in data file",
+				JudgedAt:   judgedAt,
+			}
 			continue
 		}
 		var result longmemeval.ScoreResult
@@ -158,26 +179,34 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 			cfg.ScorerURL,
 			cfg.ScorerModel,
 			cfg.Retries,
-			cfg.ScorerMaxTokens,
+			scorerMaxTokens,
+			options,
 		)
+		status := "done"
+		errText := ""
 		if err != nil {
-			out <- longmemeval.ScoreEntry{
-				QuestionID:   r.QuestionID,
-				QuestionType: item.QuestionType,
-				Hypothesis:   r.Hypothesis,
-				Status:       "error",
-				Error:        err.Error(),
-			}
-			log.Printf("score-efficient [%s] error: %v", r.QuestionID, err)
-			continue
+			status = "error"
+			errText = err.Error()
+		} else if result.Label == "SCORE_ERROR" {
+			status = "error"
+			errText = result.Explanation
+		}
+		if status == "error" && errText == "" {
+			errText = "judge returned no error text"
 		}
 		out <- longmemeval.ScoreEntry{
-			QuestionID:   r.QuestionID,
-			QuestionType: item.QuestionType,
-			Hypothesis:   r.Hypothesis,
-			ScoreLabel:   result.Label,
-			Explanation:  result.Explanation,
-			Status:       "done",
+			QuestionID:      r.QuestionID,
+			QuestionType:    item.QuestionType,
+			Hypothesis:      r.Hypothesis,
+			ScoreLabel:      result.Label,
+			Explanation:     result.Explanation,
+			Status:          status,
+			Error:           errText,
+			ScorerModel:     cfg.ScorerModel,
+			ScorerURL:       cfg.ScorerURL,
+			ScorerThinking:  cfg.ScorerThinking,
+			ScorerMaxTokens: scorerMaxTokens,
+			JudgedAt:        judgedAt,
 		}
 		log.Printf("score-efficient [%s] label=%s", r.QuestionID, result.Label)
 	}

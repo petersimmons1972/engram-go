@@ -290,6 +290,13 @@ func sanitizeOAIDebugBody(body []byte) string {
 	return fmt.Sprintf("[redacted bytes=%d]", len(bytes.TrimSpace(body)))
 }
 
+// ScoringOptions controls OpenAI-style judge calls for scoring.
+// EnableThinking controls whether judge prompts may include chain-of-thought.
+type ScoringOptions struct {
+	EnableThinking bool
+	APIKey         string
+}
+
 // DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
 // 2048 gives the model room to produce its label and a full explanation even
 // after reasoning tokens, preventing truncation from stripping the label.
@@ -298,47 +305,57 @@ const DefaultScorerMaxTokens = 2048
 // BuildScoringRequestBody returns an OAI request body for label classification.
 // maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
 // unless you have a specific reason to reduce it.
+// options.ApplyThinking=false disables OAI chain-of-thought features for judges
+// that are slow or unsupported.
 // Exported so the test package can inspect the marshalled fields.
-func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
-	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
+func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int, options ScoringOptions) ([]byte, error) {
+	return buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens, options)
 }
 
 // buildScoringRequestBody is the unexported implementation used internally.
-func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int) ([]byte, error) {
+func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int, options ScoringOptions) ([]byte, error) {
 	if maxTokens <= 0 {
 		maxTokens = DefaultScorerMaxTokens
 	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
-	body := struct {
-		Model       string       `json:"model"`
-		Messages    []oaiMessage `json:"messages"`
-		MaxTokens   int          `json:"max_tokens"`
-		Temperature float64      `json:"temperature"`
+	request := struct {
+		Model              string                 `json:"model"`
+		Messages           []oaiMessage           `json:"messages"`
+		MaxTokens          int                    `json:"max_tokens"`
+		Temperature        float64                `json:"temperature"`
+		ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 	}{
-		Model: model,
+		Model:       model,
+		MaxTokens:   maxTokens,
+		Temperature: 0,
 		Messages: []oaiMessage{
 			{Role: "system", Content: "You are a precise answer-correctness judge. Output your judgment on the FIRST LINE as one of: CORRECT, PARTIALLY_CORRECT, INCORRECT. Then explain your reasoning on the next line."},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   maxTokens,
-		Temperature: 0,
 	}
-	return json.Marshal(body)
+	if !options.EnableThinking {
+		request.ChatTemplateKwargs = map[string]interface{}{"enable_thinking": false}
+	}
+	return json.Marshal(request)
 }
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
 // (maxTokens, temperature=0) for efficient local-model scoring.
 // maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
-func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int) (ScoreResult, error) {
+func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int, options ScoringOptions) (ScoreResult, error) {
 	var lastErr error
-	backoffs := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
+	backoffs := []time.Duration{250 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
 	for attempt := 0; attempt <= retries; attempt++ {
-		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model, maxTokens)
+		out, err := callOAIScoring(ctx, question, referenceAnswer, hypothesis, baseURL, model, maxTokens, options)
 		if err == nil {
 			label, explanation := ParseScoreLabel(out)
-			return ScoreResult{Label: label, Explanation: explanation}, nil
+			if label != "SCORE_ERROR" {
+				return ScoreResult{Label: label, Explanation: explanation}, nil
+			}
+			lastErr = fmt.Errorf("judge response: %s", explanation)
+		} else {
+			lastErr = err
 		}
-		lastErr = err
 		if attempt >= retries {
 			break
 		}
@@ -349,13 +366,13 @@ func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesi
 		case <-time.After(wait):
 		}
 	}
-	return ScoreResult{Label: "SCORE_ERROR"}, lastErr
+	return ScoreResult{Label: "SCORE_ERROR", Explanation: explanationFromError(lastErr)}, lastErr
 }
 
-func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, maxTokens int) (string, error) {
+func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, maxTokens int, options ScoringOptions) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, generateTimeout)
 	defer cancel()
-	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens)
+	reqBody, err := buildScoringRequestBody(model, question, referenceAnswer, hypothesis, maxTokens, options)
 	if err != nil {
 		return "", fmt.Errorf("marshal scoring request: %w", err)
 	}
@@ -365,6 +382,9 @@ func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, 
 		return "", fmt.Errorf("create scoring request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if options.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+options.APIKey)
+	}
 	resp, err := oaiHTTPClient.Do(req)
 	if err != nil {
 		if tctx.Err() != nil {
@@ -394,6 +414,13 @@ func callOAIScoring(ctx context.Context, question, referenceAnswer, hypothesis, 
 		return "", fmt.Errorf("scoring response: empty content")
 	}
 	return content, nil
+}
+
+func explanationFromError(err error) string {
+	if err == nil {
+		return "judge returned no explanation"
+	}
+	return err.Error()
 }
 
 // ScoreOAI is like Score but uses the OpenAI-compatible endpoint.
