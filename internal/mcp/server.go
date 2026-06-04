@@ -1159,6 +1159,28 @@ func withWarnLog(name string, h toolHandler) toolHandler {
 // quickly — the heavy lifting happens in background goroutines, not the handler.
 const defaultToolTimeout = 60 * time.Second
 
+func degradedToolMessage(toolName, reason string) string {
+	base := toolName + " ran in degraded mode"
+	suffix := "results use BM25 text search only. Memory tools remain accessible."
+	switch reason {
+	case "tool_timeout":
+		return base + " (tool deadline exceeded) — " + suffix +
+			" Recovery is automatic when recall latency improves."
+	case "embed_unavailable", "embed_timeout":
+		return base + " (embedding backend unavailable) — " + suffix +
+			" Recovery is automatic when embedding service health returns."
+	case "embed_error":
+		return base + " (embedding backend error) — " + suffix +
+			" Recovery is automatic when embedding service health returns."
+	case "circuit_open":
+		return base + " (embed circuit breaker open) — " + suffix +
+			" Recovery is automatic when the embed circuit closes."
+	default:
+		return base + " (" + reason + ") — " + suffix +
+			" Recovery is automatic when the degraded dependency recovers."
+	}
+}
+
 // registerToolWithTimeout adds a tool to the MCP server with a per-call deadline
 // and Prometheus instrumentation. timeout=0 uses defaultToolTimeout. readOnly
 // sets the MCP ReadOnlyHint annotation: clients (notably Claude Code's plan
@@ -1203,9 +1225,7 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 					"_engram_degraded_reason": "tool_timeout",
 					"_engram_tool":            toolName,
 					"status":                  "degraded",
-					"message": toolName + " ran in degraded mode (tool deadline exceeded) — " +
-						"results use BM25 text search only. Memory tools remain accessible. " +
-						"Recovery is automatic when GPU pressure eases.",
+					"message":                 degradedToolMessage(toolName, "tool_timeout"),
 				})
 				return mcpgo.NewToolResultText(string(degradedJSON)), nil
 			}

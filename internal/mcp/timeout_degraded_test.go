@@ -53,9 +53,7 @@ func simulateFixedTimeoutPath(_ context.Context, _ *EnginePool, _ Config) (*mcpg
 		"_engram_degraded_reason": "tool_timeout",
 		"_engram_tool":            toolName,
 		"status":                  "degraded",
-		"message": toolName + " ran in degraded mode (tool deadline exceeded) — " +
-			"results use BM25 text search only. Memory tools remain accessible. " +
-			"Recovery is automatic when GPU pressure eases.",
+		"message":                 degradedToolMessage(toolName, "tool_timeout"),
 	})
 	return mcpgo.NewToolResultText(string(degradedJSON)), nil
 }
@@ -153,4 +151,25 @@ func TestToolTimeout_DegradedReason_IsEmbedTimeout(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &body))
 	require.Equal(t, "tool_timeout", body["_engram_degraded_reason"],
 		"_engram_degraded_reason must be 'tool_timeout'")
+}
+
+func TestDegradedToolMessage_UsesReasonSpecificText(t *testing.T) {
+	t.Run("tool_timeout", func(t *testing.T) {
+		msg := degradedToolMessage("memory_recall", "tool_timeout")
+		require.Contains(t, msg, "tool deadline exceeded")
+		require.Contains(t, msg, "recall latency improves")
+		require.NotContains(t, strings.ToLower(msg), "gpu")
+	})
+
+	t.Run("embed_error", func(t *testing.T) {
+		msg := degradedToolMessage("memory_recall", "embed_error")
+		require.Contains(t, msg, "embedding backend error")
+		require.Contains(t, msg, "embedding service health returns")
+	})
+
+	t.Run("circuit_open", func(t *testing.T) {
+		msg := degradedToolMessage("memory_recall", "circuit_open")
+		require.Contains(t, msg, "embed circuit breaker open")
+		require.Contains(t, msg, "embed circuit closes")
+	})
 }
