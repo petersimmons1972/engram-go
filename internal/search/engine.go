@@ -1301,7 +1301,6 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		for i := range results {
 			results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
 		}
-
 	}
 
 	// Preserve access heat for pruning/retention logic even when handle mode
