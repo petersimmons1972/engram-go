@@ -5,7 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-KillMode=mixed
+# KillMode=process (was: mixed): the poller is a oneshot that backgrounds a
+# long-running `codex exec`; mixed SIGKILLs that child the instant ExecStart
+# exits (cgroup cleanup), so dispatched work died immediately. process kills
+# only the main script and lets codex + post-run verifier outlive the tick.
+KillMode=process
 Environment=PATH=%h/.local/bin:%h/bin:%h/.nvm/versions/node/v24.11.0/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/scripts/codex-poll.sh
 

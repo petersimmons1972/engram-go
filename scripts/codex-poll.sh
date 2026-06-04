@@ -191,14 +191,16 @@ post_run_verify() {
   local branch_name="$4"
   local log_run="$5"
 
-  # Wait for the Codex process to finish
-  if ! wait "${codex_pid}" 2>/dev/null; then
-    log "post-verify: codex exec pid=${codex_pid} exited non-zero for ${repo}#${issue_num}"
-    # Non-zero exit is noted but we still run remote verification below,
-    # because Codex may have pushed its branch before failing the final step.
-  else
-    log "post-verify: codex exec pid=${codex_pid} completed for ${repo}#${issue_num}"
-  fi
+  # Wait for the Codex process to finish. We CANNOT use `wait` here: this
+  # function runs in a backgrounded subshell, so ${codex_pid} is a child of the
+  # PARENT shell, not of this subshell — `wait` returns immediately (pid is not
+  # our child) and we would verify before Codex has done anything, prematurely
+  # marking the issue stalled. Poll liveness with kill -0, which works across
+  # the parent/child boundary.
+  while kill -0 "${codex_pid}" 2>/dev/null; do
+    sleep 15
+  done
+  log "post-verify: codex exec pid=${codex_pid} finished for ${repo}#${issue_num}"
 
   # Release the per-issue worker lockfile so the next poller tick can reclaim
   # this issue if it was not completed (e.g. Codex stalled without pushing).
@@ -213,21 +215,47 @@ post_run_verify() {
   fi
 
   # Check 2: is there an open PR from this branch?
-  local pr_count
-  pr_count="$(gh pr list -R "${repo}" --head "${branch_name}" --state open --json number --jq 'length' 2>/dev/null || echo "0")"
+  local pr_list_json pr_count pr_number
+  pr_list_json="$(gh pr list -R "${repo}" --head "${branch_name}" --state open --json number 2>/dev/null || echo "[]")"
+  pr_count="$(printf '%s' "${pr_list_json}" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "0")"
+  pr_number="$(printf '%s' "${pr_list_json}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["number"] if d else "")' 2>/dev/null || echo "")"
 
   if [[ "${remote_exists}" -eq 1 && "${pr_count}" -gt 0 ]]; then
-    log "post-verify: ${repo}#${issue_num} remote branch and open PR confirmed — applying done label"
+    # Check 3 (Protocol 19): does the PR body include the required ## PR Packaging section?
+    local pr_body
+    pr_body="$(gh pr view "${pr_number}" --repo "${repo}" --json body --jq '.body' 2>/dev/null || echo "")"
+    if ! printf '%s' "${pr_body}" | grep -q "## PR Packaging"; then
+      log "post-verify: PR body missing ## PR Packaging section — applying needs-fix/pr-packaging label"
+      gh pr edit "${pr_number}" --repo "${repo}" \
+        --add-label "needs-fix/pr-packaging" \
+        2>>"${LOG_FILE}" || log "post-verify: WARNING needs-fix/pr-packaging label failed for PR ${pr_number}"
+      gh issue comment "${issue_num}" --repo "${repo}" \
+        --body "This PR is missing the required \`## PR Packaging\` section (Protocol 19). Please add it before merge." \
+        2>>"${LOG_FILE}" || true
+      log "post-verify: ${repo}#${issue_num} PR missing ## PR Packaging — applying stalled label"
+      gh issue edit "${issue_num}" --repo "${repo}" \
+        --add-label "agent/codex/stalled" \
+        2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label apply failed for ${repo}#${issue_num}"
+      gh issue edit "${issue_num}" --repo "${repo}" \
+        --remove-label "agent/codex/in-progress" \
+        2>>"${LOG_FILE}" || true  # ignore: label may already be absent
+      return 0
+    fi
+    log "post-verify: ${repo}#${issue_num} remote branch, open PR, and ## PR Packaging confirmed — applying done label"
     gh issue edit "${issue_num}" --repo "${repo}" \
       --add-label "agent/codex/done" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING done label apply failed for ${repo}#${issue_num}"
+    gh issue edit "${issue_num}" --repo "${repo}" \
       --remove-label "agent/codex/in-progress" \
-      2>>"${LOG_FILE}" || log "post-verify: WARNING done label transition failed for ${repo}#${issue_num}"
+      2>>"${LOG_FILE}" || true  # ignore: label may already be absent
   else
     log "ERROR: Codex reported done but no remote branch/PR found for issue ${issue_num} (remote_exists=${remote_exists}, pr_count=${pr_count})"
     gh issue edit "${issue_num}" --repo "${repo}" \
       --add-label "agent/codex/stalled" \
+      2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label apply failed for ${repo}#${issue_num}"
+    gh issue edit "${issue_num}" --repo "${repo}" \
       --remove-label "agent/codex/in-progress" \
-      2>>"${LOG_FILE}" || log "post-verify: WARNING stalled label transition failed for ${repo}#${issue_num}"
+      2>>"${LOG_FILE}" || true  # ignore: label may already be absent
     gh issue comment "${issue_num}" --repo "${repo}" \
       --body "**codex-poll post-run verification failed.**
 
@@ -267,130 +295,126 @@ fast_path() {
     return 0
   fi
 
-  # Iterate candidates in priority order; pick the first one whose repo has a
-  # local checkout and a clean working tree. Skip-and-continue on no-checkout
-  # or dirty-tree so those repos never permanently starve the queue.
+  # Iterate candidates in priority order. For EACH candidate, attempt the full
+  # claim -> reclaim-stale -> worktree -> launch. On ANY per-issue problem we
+  # log and `continue` to the next candidate, so one stuck issue can never
+  # wedge the whole queue (claude-codex#19). A successful launch returns 0;
+  # exhausting the list without a launch also returns 0 — a poll tick is never
+  # itself a service failure.
   local PRANK CREATED REPO ISSUE_NUM SHORT REPO_PATH
-  local skipped_no_checkout=() skipped_dirty=() found=0
   while IFS=$'\t' read -r PRANK CREATED REPO ISSUE_NUM; do
+    [[ -z "${REPO}" || -z "${ISSUE_NUM}" ]] && continue
     SHORT="$(repo_short_name "${REPO}")"
     REPO_PATH="$(repo_checkout_path "${REPO}")"
 
+    # Eligibility: local checkout present and clean working tree.
     if [[ ! -d "${REPO_PATH}/.git" ]]; then
-      skipped_no_checkout+=("${REPO}#${ISSUE_NUM}")
-      log "fast: ${REPO}#${ISSUE_NUM} — no local checkout at ${REPO_PATH}, skipping (continuing to next)"
+      log "fast: ${REPO}#${ISSUE_NUM} — no local checkout at ${REPO_PATH}, skipping"
       continue
     fi
-
     if ! git -C "${REPO_PATH}" diff --quiet HEAD 2>/dev/null; then
-      skipped_dirty+=("${REPO}#${ISSUE_NUM}")
-      log "fast: ${REPO}#${ISSUE_NUM} — working tree dirty at ${REPO_PATH}, skipping (continuing to next)"
+      log "fast: ${REPO}#${ISSUE_NUM} — working tree dirty at ${REPO_PATH}, skipping"
       continue
     fi
 
-    found=1
-    break
-  done <<< "${candidates}"
+    # Per-issue worker guard BEFORE claiming: if a live worker already owns this
+    # exact issue, skip without churning labels. Clean up a stale lockfile.
+    local WORKER_LOCK="${STATE_DIR}/worker-${SHORT}-${ISSUE_NUM}.lock"
+    if [[ -f "${WORKER_LOCK}" ]]; then
+      local existing_pid
+      existing_pid="$(cat "${WORKER_LOCK}" 2>/dev/null || echo "")"
+      if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+        log "fast: worker for ${REPO}#${ISSUE_NUM} already running (pid=${existing_pid}) — skipping"
+        continue
+      fi
+      log "fast: stale lockfile for ${REPO}#${ISSUE_NUM} (pid=${existing_pid:-none} gone) — cleaning up"
+      rm -f "${WORKER_LOCK}"
+    fi
 
-  if [[ ${#skipped_no_checkout[@]} -gt 0 ]]; then
-    log "fast: skipped (no checkout): ${skipped_no_checkout[*]}"
-  fi
-  if [[ ${#skipped_dirty[@]} -gt 0 ]]; then
-    log "fast: skipped (dirty tree): ${skipped_dirty[*]}"
-  fi
+    # TOCTOU re-check: fetch labels fresh right before claiming, in case a
+    # manual session claimed this issue between our search and our claim.
+    local CURRENT_LABELS
+    CURRENT_LABELS="$(gh issue view "${ISSUE_NUM}" --repo "${REPO}" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")"
+    if [[ "${CURRENT_LABELS}" == *"agent/codex/in-progress"* ]] || [[ "${CURRENT_LABELS}" != *"agent/codex/queued"* ]]; then
+      log "fast: ${REPO}#${ISSUE_NUM} already claimed or no longer queued — skipping"
+      continue
+    fi
 
-  if [[ "${found}" -eq 0 ]]; then
-    log "fast: no eligible queued item (all skipped) — no Codex invocation"
-    return 0
-  fi
+    log "fast: selected ${REPO}#${ISSUE_NUM} (priority ${PRANK}, created ${CREATED})"
 
-  log "fast: selected ${REPO}#${ISSUE_NUM} (priority ${PRANK}, created ${CREATED})"
+    # Claim: queued -> in-progress BEFORE running (mutex).
+    log "fast: claiming ${REPO}#${ISSUE_NUM}: queued -> in-progress"
+    if ! gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
+        --add-label "agent/codex/in-progress" \
+        --remove-label "agent/codex/queued" \
+        >>"${LOG_FILE}" 2>&1; then
+      log "fast: WARNING label transition failed for ${REPO}#${ISSUE_NUM} — skipping to next"
+      continue
+    fi
 
-  # TOCTOU re-check: fetch labels fresh right before claiming, in case a manual
-  # session claimed this issue in the window between our search and our claim.
-  local CURRENT_LABELS
-  CURRENT_LABELS="$(gh issue view "${ISSUE_NUM}" --repo "${REPO}" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")"
-  if [[ "${CURRENT_LABELS}" == *"agent/codex/in-progress"* ]] || [[ "${CURRENT_LABELS}" != *"agent/codex/queued"* ]]; then
-    log "fast: ${REPO}#${ISSUE_NUM} already claimed by another worker — skipping"
-    return 0
-  fi
+    # Isolated worktree off origin/main.
+    local WT_DIR BRANCH_NAME
+    WT_DIR="${WORKTREES_ROOT}/${SHORT}-issue-${ISSUE_NUM}-$$"
+    BRANCH_NAME="agent/codex/issue-${ISSUE_NUM}-poll"
+    log "fast: creating worktree ${WT_DIR} (branch ${BRANCH_NAME} off origin/main)"
+    git -C "${REPO_PATH}" fetch origin main >>"${LOG_FILE}" 2>&1 || log "fast: WARNING fetch failed, using local HEAD"
 
-  # Claim: queued -> in-progress BEFORE running (mutex)
-  log "fast: claiming ${REPO}#${ISSUE_NUM}: queued -> in-progress"
-  gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
-    --add-label "agent/codex/in-progress" \
-    --remove-label "agent/codex/queued" \
-    2>>"${LOG_FILE}" || {
-    log "fast: WARNING label transition failed — aborting to avoid double-run"
-    return 1
-  }
-
-  # Isolated worktree off origin/main
-  local WT_DIR BRANCH_NAME
-  WT_DIR="${WORKTREES_ROOT}/${SHORT}-issue-${ISSUE_NUM}-$$"
-  BRANCH_NAME="agent/codex/issue-${ISSUE_NUM}-poll"
-  log "fast: creating worktree ${WT_DIR} (branch ${BRANCH_NAME} off origin/main)"
-  git -C "${REPO_PATH}" fetch origin main >>"${LOG_FILE}" 2>&1 || log "fast: WARNING fetch failed, using local HEAD"
-
-  # Branch collision detection: if the branch already exists, check whether an
-  # active worktree is using it before deciding how to proceed.
-  if git -C "${REPO_PATH}" rev-parse --verify "${BRANCH_NAME}" >/dev/null 2>&1; then
-    # Parse porcelain worktree list to find any worktree using this branch.
-    # Format: blocks separated by blank lines; each block has "worktree <path>",
-    # "HEAD <sha>", "branch refs/heads/<name>" lines.
-    local active_wt
-    active_wt="$(git -C "${REPO_PATH}" worktree list --porcelain 2>/dev/null \
-      | awk -v br="refs/heads/${BRANCH_NAME}" '
-          /^worktree / { wt=$2 }
-          /^branch /   { if ($2 == br) { print wt; exit } }
-        ' || true)"
-    if [[ -n "${active_wt}" ]]; then
-      log "ERROR: branch ${BRANCH_NAME} has an active worktree (${active_wt}) — skipping issue ${ISSUE_NUM}"
-      # Revert label so the issue is retried next cycle
-      gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
-        --add-label "agent/codex/queued" \
-        --remove-label "agent/codex/in-progress" \
-        2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
-      return 1
-    else
-      log "fast: stale branch ${BRANCH_NAME} exists with no active worktree — deleting and proceeding"
-      git -C "${REPO_PATH}" branch -D "${BRANCH_NAME}" >>"${LOG_FILE}" 2>&1 || {
-        log "ERROR: failed to delete stale branch ${BRANCH_NAME} for issue ${ISSUE_NUM} — aborting"
+    # Reclaim stale poll branches. A registered worktree blocks reclaim ONLY if
+    # its directory still exists (a live owner); a registration whose directory
+    # is gone is a prunable ghost (claude-codex#19) — prune it and reclaim the
+    # branch instead of poison-pilling the queue.
+    if git -C "${REPO_PATH}" rev-parse --verify "${BRANCH_NAME}" >/dev/null 2>&1; then
+      local active_wt
+      active_wt="$(git -C "${REPO_PATH}" worktree list --porcelain 2>/dev/null \
+        | awk -v br="refs/heads/${BRANCH_NAME}" '
+            /^worktree / { wt=$2 }
+            /^branch /   { if ($2 == br) { print wt; exit } }
+          ' || true)"
+      # The per-issue worker-lock check above already proved no LIVE codex owns
+      # this issue, so any worktree still registered on this poll-branch is
+      # stale (a crashed/killed prior run). Reclaim it rather than treating a
+      # surviving directory as "live" — keying liveness to dir existence starved
+      # issues whose stale worktree dir happened to remain (claude-codex#19).
+      if [[ -n "${active_wt}" ]]; then
+        log "fast: reclaiming stale worktree (${active_wt}) for ${BRANCH_NAME}"
+        git -C "${REPO_PATH}" worktree remove --force "${active_wt}" >>"${LOG_FILE}" 2>&1 || true
+      fi
+      git -C "${REPO_PATH}" worktree prune >>"${LOG_FILE}" 2>&1 || true
+      if ! git -C "${REPO_PATH}" branch -D "${BRANCH_NAME}" >>"${LOG_FILE}" 2>&1; then
+        log "fast: WARNING could not delete stale branch ${BRANCH_NAME} — reverting & skipping ${REPO}#${ISSUE_NUM}"
         gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
           --add-label "agent/codex/queued" \
           --remove-label "agent/codex/in-progress" \
-          2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
-        return 1
-      }
+          >>"${LOG_FILE}" 2>&1 || log "fast: WARNING label revert failed"
+        continue
+      fi
+      log "fast: reclaimed stale branch ${BRANCH_NAME} — proceeding"
     fi
-  fi
 
-  # Non-zero exit on worktree creation failure: capture stderr, log, and skip issue.
-  local WT_STDERR WT_EXIT
-  WT_STDERR="$(git -C "${REPO_PATH}" worktree add "${WT_DIR}" -b "${BRANCH_NAME}" origin/main 2>&1)"
-  WT_EXIT=$?
-  printf '%s\n' "${WT_STDERR}" >> "${LOG_FILE}"
-  if [[ "${WT_EXIT}" -ne 0 ]]; then
-    log "ERROR: worktree creation failed for issue ${ISSUE_NUM}: ${WT_STDERR}"
-    # Revert label so the issue is retried next cycle
-    gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
-      --add-label "agent/codex/queued" \
-      --remove-label "agent/codex/in-progress" \
-      2>>"${LOG_FILE}" || log "fast: WARNING label revert failed"
-    return 1
-  fi
+    # Create the worktree. `if !` keeps set -e from aborting before our handler.
+    local WT_STDERR
+    if ! WT_STDERR="$(git -C "${REPO_PATH}" worktree add "${WT_DIR}" -b "${BRANCH_NAME}" origin/main 2>&1)"; then
+      printf '%s\n' "${WT_STDERR}" >> "${LOG_FILE}"
+      log "fast: WARNING worktree creation failed for ${REPO}#${ISSUE_NUM} — reverting & skipping"
+      gh issue edit "${ISSUE_NUM}" --repo "${REPO}" \
+        --add-label "agent/codex/queued" \
+        --remove-label "agent/codex/in-progress" \
+        >>"${LOG_FILE}" 2>&1 || log "fast: WARNING label revert failed"
+      continue
+    fi
+    printf '%s\n' "${WT_STDERR}" >> "${LOG_FILE}"
 
-  # Compact context seed via codex-handoff
-  local HANDOFF_CONTEXT=""
-  if [[ -x "${HANDOFF_BIN}" ]]; then
-    HANDOFF_CONTEXT="$(${HANDOFF_BIN} --repo "${WT_DIR}" --root "${PROJECTS_ROOT}" --json 2>/dev/null || true)"
-  fi
+    # Compact context seed via codex-handoff.
+    local HANDOFF_CONTEXT=""
+    if [[ -x "${HANDOFF_BIN}" ]]; then
+      HANDOFF_CONTEXT="$(${HANDOFF_BIN} --repo "${WT_DIR}" --root "${PROJECTS_ROOT}" --json 2>/dev/null || true)"
+    fi
 
-  local ISSUE_BODY
-  ISSUE_BODY="$(gh issue view "${ISSUE_NUM}" --repo "${REPO}" --json body --jq '.body' 2>/dev/null || echo "")"
+    local ISSUE_BODY
+    ISSUE_BODY="$(gh issue view "${ISSUE_NUM}" --repo "${REPO}" --json body --jq '.body' 2>/dev/null || echo "")"
 
-  local PROMPT
-  PROMPT="You are Codex. Pick up this GitHub issue and execute it end-to-end.
+    local PROMPT
+    PROMPT="You are Codex. Pick up this GitHub issue and execute it end-to-end.
 
 ISSUE: ${REPO}#${ISSUE_NUM}
 WORKING DIR: ${WT_DIR}
@@ -402,36 +426,37 @@ CONTEXT (codex-handoff):
 ${HANDOFF_CONTEXT}
 
 Follow the 8-step loop in AGENTS.md (petersimmons1972/claude-codex). Post a CODEX REPORT block when done.
-Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the shared checkout at ${REPO_PATH}."
+Worktree: ${WT_DIR} (branch: ${BRANCH_NAME} off origin/main). Do NOT touch the shared checkout at ${REPO_PATH}.
 
-  local LOG_RUN
-  LOG_RUN="${STATE_DIR}/${SHORT}-${ISSUE_NUM}-$(date -u +%Y%m%dT%H%M%S).log"
-  # Per-issue worker guard: refuse to launch if a prior worker for this exact
-  # issue is still alive. Guards against KillMode=process orphan stacking and
-  # shared-worktree races when a single issue takes longer than the poll interval.
-  local WORKER_LOCK="${STATE_DIR}/worker-${SHORT}-${ISSUE_NUM}.lock"
-  if [[ -f "${WORKER_LOCK}" ]]; then
-    local existing_pid
-    existing_pid="$(cat "${WORKER_LOCK}" 2>/dev/null || echo "")"
-    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
-      log "fast: worker for ${REPO}#${ISSUE_NUM} already running (pid=${existing_pid}) — skipping"
-      return 0
-    fi
-    log "fast: stale lockfile for ${REPO}#${ISSUE_NUM} (pid=${existing_pid} gone) — cleaning up"
-    rm -f "${WORKER_LOCK}"
-  fi
+REQUIRED: Your PR must include a '## PR Packaging' section with these fields:
+scope_class: hotfix|feature-slice|refactor|ops
+merge_order: 1
+depends_on: none
+conflict_surface: [files touched]
+risk: low|med|high
+rollback: <one line>"
 
-  log "fast: launching codex exec --ephemeral --cd ${WT_DIR} -> ${LOG_RUN}"
-  codex exec --ephemeral --cd "${WT_DIR}" "${PROMPT}" > "${LOG_RUN}" 2>&1 &
-  local CODEX_PID=$!
-  printf '%s\n' "${CODEX_PID}" > "${WORKER_LOCK}"
-  log "fast: codex exec pid=${CODEX_PID} lock=${WORKER_LOCK} log=${LOG_RUN}"
+    local LOG_RUN
+    LOG_RUN="${STATE_DIR}/${SHORT}-${ISSUE_NUM}-$(date -u +%Y%m%dT%H%M%S).log"
 
-  # Post-run verification runs in a background subshell so it does not block
-  # the poller. It waits for Codex to finish, then checks for a remote branch
-  # and open PR before applying the done or stalled label.
-  post_run_verify "${CODEX_PID}" "${REPO}" "${ISSUE_NUM}" "${BRANCH_NAME}" "${LOG_RUN}" &
-  log "fast: post-run verifier spawned (pid=$!) — Codex running in background, worktree owned by Codex"
+    log "fast: launching codex exec --ephemeral --cd ${WT_DIR} -> ${LOG_RUN}"
+    codex exec --ephemeral --cd "${WT_DIR}" "${PROMPT}" > "${LOG_RUN}" 2>&1 &
+    local CODEX_PID=$!
+    printf '%s\n' "${CODEX_PID}" > "${WORKER_LOCK}"
+    log "fast: codex exec pid=${CODEX_PID} lock=${WORKER_LOCK} log=${LOG_RUN}"
+
+    # Post-run verification runs in a background subshell so it does not block
+    # the poller. It waits for Codex, then checks remote branch + open PR before
+    # applying the done or stalled label.
+    post_run_verify "${CODEX_PID}" "${REPO}" "${ISSUE_NUM}" "${BRANCH_NAME}" "${LOG_RUN}" &
+    log "fast: post-run verifier spawned (pid=$!) — Codex running in background, worktree owned by Codex"
+
+    # One launch per wake.
+    return 0
+  done <<< "${candidates}"
+
+  log "fast: no eligible queued item dispatched this tick"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -473,7 +498,10 @@ main() {
     slow_path
   fi
 
-  fast_path
+  # A poll tick must never mark the service failed. fast_path returns 0 for
+  # all per-issue skip paths (claude-codex#19); this guard is defense-in-depth
+  # against any future non-zero path under set -e.
+  fast_path || log "fast: path returned non-zero — handled, service stays healthy"
 }
 
 main "$@"
