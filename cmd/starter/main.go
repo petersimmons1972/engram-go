@@ -202,28 +202,52 @@ func runHealth() {
 	os.Exit(0)
 }
 
-// execEngram validates subcommand arguments and exec-replaces the current
-// process with /engram using the supplied environment.
-// Subcommands (server, migrate, setup) are passed through to /engram with their options.
-// The /engram binary handles per-subcommand --help internally.
-func execEngram(args []string, cleanEnv []string) {
-	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
+var execCommand = func(path string, argv []string, env []string) error {
+	return syscall.Exec(path, argv, env)
+}
 
-	// Check if first positional argument is a valid subcommand
-	// Allow flags and --help/-h to pass through to /engram
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			if !allowed[arg] && arg != "" {
-				fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
-			}
-			break
-		}
+// execEngram resolves the subcommand (server, migrate, setup), then exec-replaces
+// the current process with /engram using the supplied environment.
+//
+// For server, the subcommand is consumed (omitted from argv) so /engram receives
+// only server flags. For migrate/setup the subcommand is preserved so engram can
+// route those operations by name.
+func execEngram(args []string, cleanEnv []string) {
+	path, argv, err := starterExecPlan(args)
+	if err != nil {
+		fatalf("%v", err)
 	}
 
-	// Pass all args through to /engram — it handles per-subcommand --help internally
-	argv := append([]string{"/engram"}, args...)
-	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
+	if err := execCommand(path, argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)
+	}
+}
+
+func starterExecPlan(args []string) (string, []string, error) {
+	subcommand, passthrough, err := resolveStarterSubcommand(args)
+	if err != nil {
+		return "", nil, err
+	}
+	argv := []string{"/engram"}
+	if subcommand != "server" {
+		argv = append(argv, subcommand)
+	}
+	argv = append(argv, passthrough...)
+	return "/engram", argv, nil
+}
+
+// resolveStarterSubcommand handles explicit subcommands and flag-prefixed args.
+// `server` is the default when args are empty or begin with '-'.
+func resolveStarterSubcommand(args []string) (subcommand string, passthrough []string, err error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "server", args, nil
+	}
+
+	switch args[0] {
+	case "server", "migrate", "setup":
+		return args[0], args[1:], nil
+	default:
+		return "", nil, fmt.Errorf("unknown subcommand %q — allowed: server, migrate, setup", args[0])
 	}
 }
 

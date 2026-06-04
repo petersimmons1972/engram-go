@@ -413,3 +413,141 @@ func TestSubcommandHelp(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveStarterSubcommand(t *testing.T) {
+	cases := []struct {
+		name            string
+		args            []string
+		wantSubcommand  string
+		wantPassthrough []string
+		wantErrContains string
+	}{
+		{
+			name:            "default to server when empty",
+			args:            nil,
+			wantSubcommand:  "server",
+			wantPassthrough: nil,
+		},
+		{
+			name:            "default to server when first arg is flag",
+			args:            []string{"--healthcheck"},
+			wantSubcommand:  "server",
+			wantPassthrough: []string{"--healthcheck"},
+		},
+		{
+			name:            "explicit server subcommand",
+			args:            []string{"server", "--help"},
+			wantSubcommand:  "server",
+			wantPassthrough: []string{"--help"},
+		},
+		{
+			name:            "migrate subcommand",
+			args:            []string{"migrate"},
+			wantSubcommand:  "migrate",
+			wantPassthrough: []string{},
+		},
+		{
+			name:            "setup subcommand",
+			args:            []string{"setup", "--dry-run"},
+			wantSubcommand:  "setup",
+			wantPassthrough: []string{"--dry-run"},
+		},
+		{
+			name:            "unknown subcommand",
+			args:            []string{"bad-op"},
+			wantErrContains: "unknown subcommand",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subcommand, passthrough, err := resolveStarterSubcommand(tc.args)
+			if tc.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("resolveStarterSubcommand(%v) error = %v, want contain %q", tc.args, err, tc.wantErrContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveStarterSubcommand(%v) unexpected error: %v", tc.args, err)
+			}
+			if subcommand != tc.wantSubcommand {
+				t.Fatalf("resolveStarterSubcommand(%v) subcommand = %q, want %q", tc.args, subcommand, tc.wantSubcommand)
+			}
+			if len(passthrough) != len(tc.wantPassthrough) {
+				t.Fatalf("resolveStarterSubcommand(%v) passthrough len = %d, want %d", tc.args, len(passthrough), len(tc.wantPassthrough))
+			}
+			for i := range tc.wantPassthrough {
+				if passthrough[i] != tc.wantPassthrough[i] {
+					t.Fatalf("resolveStarterSubcommand(%v) passthrough[%d] = %q, want %q", tc.args, i, passthrough[i], tc.wantPassthrough[i])
+				}
+			}
+		})
+	}
+}
+
+func TestStarterExecPlan(t *testing.T) {
+	cases := []struct {
+		name            string
+		args            []string
+		wantPath        string
+		wantArgv        []string
+		wantErrContains string
+	}{
+		{
+			name:     "default server path",
+			args:     nil,
+			wantPath: "/engram",
+			wantArgv: []string{"/engram"},
+		},
+		{
+			name:     "server help",
+			args:     []string{"server", "--help"},
+			wantPath: "/engram",
+			wantArgv: []string{"/engram", "--help"},
+		},
+		{
+			name:     "migrate path",
+			args:     []string{"migrate", "--help"},
+			wantPath: "/engram",
+			wantArgv: []string{"/engram", "migrate", "--help"},
+		},
+		{
+			name:     "setup path",
+			args:     []string{"setup", "--dry-run"},
+			wantPath: "/engram",
+			wantArgv: []string{"/engram", "setup", "--dry-run"},
+		},
+		{
+			name:            "unknown subcommand",
+			args:            []string{"bogus", "--help"},
+			wantErrContains: "unknown subcommand",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, argv, err := starterExecPlan(tc.args)
+			if tc.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("exec plan for %v should error with %q, got %v", tc.args, tc.wantErrContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("exec plan for %v unexpected error: %v", tc.args, err)
+			}
+			if path != tc.wantPath {
+				t.Fatalf("path = %q, want %q", path, tc.wantPath)
+			}
+			if len(argv) != len(tc.wantArgv) {
+				t.Fatalf("argv len = %d, want %d", len(argv), len(tc.wantArgv))
+			}
+			for i := range tc.wantArgv {
+				if argv[i] != tc.wantArgv[i] {
+					t.Fatalf("argv[%d] = %q, want %q", i, argv[i], tc.wantArgv[i])
+				}
+			}
+		})
+	}
+}

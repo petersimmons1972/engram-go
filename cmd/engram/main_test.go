@@ -215,6 +215,59 @@ func TestRateLimitPrecedence(t *testing.T) {
 	t.Log("rate-limit-rps precedence is enforced during server startup")
 }
 
+func TestRunMigrate_HelpAndArgs(t *testing.T) {
+	t.Run("help prints usage and exits cleanly", func(t *testing.T) {
+		if err := runMigrate([]string{"--help"}); err != nil {
+			t.Fatalf("runMigrate --help returned error: %v", err)
+		}
+	})
+
+	t.Run("rejects positional arguments", func(t *testing.T) {
+		err := runMigrate([]string{"--foo"})
+		if err == nil || !strings.Contains(err.Error(), "does not accept positional arguments") {
+			t.Fatalf("runMigrate([]string{\"--foo\"}) error = %v, want positional-args message", err)
+		}
+	})
+}
+
+func TestRunMigrate_RequiresDatabaseURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	err := runMigrate(nil)
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL required") {
+		t.Fatalf("runMigrate with missing DATABASE_URL error = %v, want DATABASE_URL required", err)
+	}
+}
+
+func TestRunSetup_DelegatesToEngramSetup(t *testing.T) {
+	originalExec := execCommand
+	defer func() { execCommand = originalExec }()
+
+	var gotPath string
+	var gotArgv []string
+	execCommand = func(path string, argv []string, _ []string) error {
+		gotPath = path
+		gotArgv = append([]string(nil), argv...)
+		return nil
+	}
+
+	if err := runSetup([]string{"--dry-run"}); err != nil {
+		t.Fatalf("runSetup returned error: %v", err)
+	}
+
+	if gotPath != "/engram-setup" {
+		t.Fatalf("runSetup path = %q, want %q", gotPath, "/engram-setup")
+	}
+	wantArgv := []string{"/engram-setup", "--dry-run"}
+	if len(gotArgv) != len(wantArgv) {
+		t.Fatalf("runSetup argv len = %d, want %d", len(gotArgv), len(wantArgv))
+	}
+	for i := range wantArgv {
+		if gotArgv[i] != wantArgv[i] {
+			t.Fatalf("runSetup argv[%d] = %q, want %q", i, gotArgv[i], wantArgv[i])
+		}
+	}
+}
+
 // TestCheckBindInterlock verifies the A-3 #666 startup interlock:
 // non-loopback host + rate-limit-disable must refuse to start.
 func TestCheckBindInterlock(t *testing.T) {
