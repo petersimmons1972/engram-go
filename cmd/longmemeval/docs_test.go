@@ -54,6 +54,55 @@ func TestLMEPruneCronJobUsesSafeExecuteFlags(t *testing.T) {
 	}
 }
 
+func TestLMEPruneCronJobPinsReviewedImage(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/lme-prune-cronjob.yaml")
+	if err != nil {
+		t.Fatalf("read deploy/lme-prune-cronjob.yaml: %v", err)
+	}
+	manifest := string(data)
+	const reviewedImage = "ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0"
+
+	if strings.Contains(manifest, "ghcr.io/petersimmons1972/engram-go/longmemeval:latest") {
+		t.Fatalf("prune CronJob must not use mutable :latest image:\n%s", manifest)
+	}
+	for _, current := range []string{
+		"#   - Image: " + reviewedImage,
+		"image: " + reviewedImage,
+		"Never use :latest for this CronJob.",
+		"update both this comment and the image reference in the same reviewed change",
+		"imagePullPolicy: Always",
+	} {
+		if !strings.Contains(manifest, current) {
+			t.Fatalf("prune CronJob missing reviewed image pin guidance %q:\n%s", current, manifest)
+		}
+	}
+}
+
+func TestLMEBenchmarkLearningsDocumentsPruneImageUpdateProcedure(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-benchmark-learnings.md: %v", err)
+	}
+	doc := string(data)
+	section := between(t, doc, "### Updating the prune image", "### Backfilling existing runs")
+
+	for _, current := range []string{
+		"v3.2.0",
+		"replace it with the reviewed release tag or immutable digest",
+		"Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change",
+		"kubectl apply -f deploy/lme-prune-cronjob.yaml",
+		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":true}}'",
+		"JOB=lme-prune-manual-$(date +%s)",
+		"kubectl create job --from=cronjob/lme-prune -n engram \"$JOB\"",
+		"kubectl logs -n engram job/\"$JOB\"",
+		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":false}}'",
+	} {
+		if !strings.Contains(section, current) {
+			t.Fatalf("prune image update procedure missing %q:\n%s", current, section)
+		}
+	}
+}
+
 func TestCommandCatalogDocumentsLongMemEval(t *testing.T) {
 	data, err := os.ReadFile("../../cmd/README.md")
 	if err != nil {
@@ -87,6 +136,27 @@ func TestLMEBenchmarkLearningsQuickStartUsesCurrentFlags(t *testing.T) {
 		if !strings.Contains(section, current) {
 			t.Fatalf("quick start missing current text %q:\n%s", current, section)
 		}
+	}
+}
+
+func TestLMEBenchmarkLearningsSummaryUsesCurrentQuestionTypesAndPortableReference(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-benchmark-learnings.md: %v", err)
+	}
+	doc := string(data)
+
+	for _, current := range []string{
+		"LongMemEval-M (500 questions, 6 types)",
+		"500 questions across six types: knowledge-update, multi-session, single-session-assistant, single-session-user, single-session-preference, and temporal-reasoning.",
+		"`docs/architecture.md`",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("benchmark learnings missing current summary/reference text %q", current)
+		}
+	}
+	if strings.Contains(doc, "/home/psimmons/projects/engram-go/docs/architecture.md") {
+		t.Fatalf("benchmark learnings still contains checkout-specific architecture path")
 	}
 }
 

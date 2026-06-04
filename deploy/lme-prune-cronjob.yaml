@@ -4,7 +4,12 @@
 # Requires:
 #   - Secret "engram-lme" with keys: database-url, engram-url, engram-api-key
 #   - RBAC: no cluster permissions needed (contacts Postgres + Engram HTTP only)
-#   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval:latest (or pin to a SHA)
+#   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0
+#
+# Never use :latest for this CronJob. This job runs a destructive `prune --execute`
+# path on a schedule, so image changes must be explicit and reviewable. To update it,
+# replace the pinned tag with the reviewed release tag or immutable digest, then
+# update both this comment and the image reference in the same reviewed change.
 #
 # Tune --limit on first run to verify blast radius before allowing unlimited.
 # Deletion is explicit: --execute, --confirm-prefix, and --use-default-token are
@@ -39,8 +44,8 @@ spec:
             fsGroup: 65532
           containers:
             - name: lme-prune
-              image: ghcr.io/petersimmons1972/engram-go/longmemeval:latest
-              imagePullPolicy: IfNotPresent
+              image: ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0
+              imagePullPolicy: Always
               args:
                 - prune
                 - --prefix=lme-
