@@ -6,20 +6,25 @@ description: Use when the user has 2+ independent tasks to run in parallel, disp
 <!--
 TEMPORARY LOCAL OVERRIDE — not a fork.
 
-Forked from: superpowers v5.0.7 (commit 1f20bef)
-Upstream: ~/.claude/plugins/cache/superpowers-marketplace/superpowers/latest/skills/dispatching-parallel-agents/SKILL.md
+Forked from: superpowers v5.1.0 (commit 6fd4507, claude-plugins-official)
+Upstream: ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/dispatching-parallel-agents/SKILL.md
 Reason: Opus 4.7 literal-interpretation adjustment. Tightened the definition of
   "independent failures" so that Phase 1 investigation output is the gate for
   parallel dispatch, rather than thematic judgment on the phrase "might fix others."
 
+Re-verified 2026-06-04 against 5.1.0: upstream STILL ships the loose wording in both
+  "Don't use when" and "Exploratory debugging" — the tightening is NOT yet upstream,
+  so this override remains a real divergence. Removal-condition (a) is unmet.
+  (No stable `latest` symlink in claude-plugins-official; bump 5.1.0 above on auto-update.)
+
 Remove this override when:
   (a) upstream superpowers ships an equivalent change, OR
-  (b) real-world use on 4.7 shows the upstream wording is not causing over-refusal
+  (b) real-world use shows the upstream wording is not causing over-refusal
       of parallel dispatch.
 
 Diff against upstream:
   diff .claude/skills/dispatching-parallel-agents/SKILL.md \
-       ~/.claude/plugins/cache/superpowers-marketplace/superpowers/latest/skills/dispatching-parallel-agents/SKILL.md
+       ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/dispatching-parallel-agents/SKILL.md
 -->
 
 # Dispatching Parallel Agents

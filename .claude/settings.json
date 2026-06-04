@@ -254,10 +254,10 @@
     "command": "~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
     "frontend-design@claude-code-plugins": false,
     "gopls-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
   },
   "effortLevel": "high",
   "autoMemoryEnabled": true,
