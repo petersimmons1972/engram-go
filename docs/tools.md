@@ -18,8 +18,8 @@ The three canonical numbers used throughout this doc:
 
 | Term | Default | With `ANTHROPIC_API_KEY` |
 |------|---------|---------------------------|
-| **Visible in `tools/list`** | 17 | 21 |
-| **Hidden (callable via `tools/call`)** | 29 | 29 |
+| **Visible in `tools/list`** | 18 | 22 |
+| **Hidden (callable via `tools/call`)** | 28 | 28 |
 | **Total callable** | <!-- count:total-callable-default -->46<!-- /count --> | <!-- count:total-callable-with-ai -->50<!-- /count --> |
 
 The unconditional registry has <!-- count:unconditional -->46<!-- /count --> entries; subtracting the hidden set yields the visible default.
@@ -161,11 +161,11 @@ Storing is cheap. The value is in retrieval. These tools cover the range from pr
 The main search tool. Runs four signals simultaneously — BM25 keyword, vector semantic, recency decay, and knowledge graph enrichment — and combines their scores into a single ranked list. See [How It Works](how-it-works.md) for the mechanics.
 
 ```python
-# Default: top 5 results as summaries
+# Default: handle-mode references (ENGRAM_RECALL_DEFAULT_MODE defaults to handle)
 memory_recall("authentication JWT", project="my-app")
 
-# Full content, more results
-memory_recall("authentication JWT", project="my-app", detail="full", limit=10)
+# Full result objects, deeper payloads, more results
+memory_recall("authentication JWT", project="my-app", mode="full", detail="full", limit=10)
 
 # Claude re-ranking after retrieval (requires ENGRAM_CLAUDE_RERANK=true)
 memory_recall("auth", project="my-app", rerank=True)
@@ -174,17 +174,26 @@ memory_recall("auth", project="my-app", rerank=True)
 memory_recall("authentication JWT", project="my-app", record_event=True)
 ```
 
-**detail** controls how much text comes back per result:
+By default, `memory_recall` returns lightweight `handles` plus `count` and
+`fetch_hint`. To get full result objects, pass `mode="full"` or set
+`ENGRAM_RECALL_DEFAULT_MODE=full`.
+
+**detail** controls how much text comes back when full results are returned or
+when you later expand a handle with `memory_fetch`:
 
 | Value | What you get | Typical size | When to use |
 | ----- | ------------ | ------------ | ----------- |
-| `"summary"` (default) | Generated 1–2 sentence summary | ~150 chars | AI agents — preserves context window |
+| `"summary"` | Generated 1–2 sentence summary | ~150 chars | AI agents — preserves context window |
 | `"chunk"` | The matched excerpt | ~200 chars | When the specific passage matters |
 | `"full"` | Original content | 200–50,000 chars | Export, debugging, full fidelity |
 
 At scale, summary mode uses roughly 13× less context than full mode. For an agent recalling 10 memories per session, that is the difference between 5% of a context window and 65%.
 
-By default, `memory_recall` is read-only and does not create a retrieval event or increment retrieval counters. Pass `record_event=True` only when you need the returned `event_id` for `memory_feedback`.
+By default, `memory_recall` does not create a retrieval event or increment retrieval counters. Pass `record_event=True` only when you need the returned `event_id` for `memory_feedback`. Handle mode also skips graph-enrichment payloads; full-result modes still refresh access heat (`last_accessed`, `access_count`) and matched-chunk timestamps.
+
+Single-project handle mode returns `event_id` and `feedback_hint` when
+`record_event=True`. Federated recall (`projects=[...]`) rejects
+`record_event=True` because retrieval events are scoped to a single project.
 
 You can filter by memory type. This is a hard filter — it excludes everything else regardless of relevance:
 

@@ -249,8 +249,6 @@ type Server struct {
 // and the startup banner (to print a recommended permissions.allow snippet).
 func readOnlyToolNames() map[string]bool {
 	return map[string]bool{
-		"memory_recall":             true,
-		"memory_query":              true,
 		"memory_fetch":              true,
 		"memory_list":               true,
 		"memory_history":            true,
@@ -1153,8 +1151,9 @@ func withWarnLog(name string, h toolHandler) toolHandler {
 // Prevents silent hangs up to the HTTP server WriteTimeout (90s) when a handler
 // blocks on Ollama, a slow DB query, or an unguarded third-party call. (#379)
 //
-// All synchronous handlers return well under 10s in normal operation; 15s gives
-// headroom for transient slowness without ever approaching the 90s HTTP timeout.
+// All synchronous handlers should return well under 10s in normal operation; 60s
+// preserves room for large-project recall while still failing well before the
+// 90s HTTP timeout if a handler wedges.
 // Tools that trigger background work (migrate_embedder, consolidate) also return
 // quickly — the heavy lifting happens in background goroutines, not the handler.
 const defaultToolTimeout = 60 * time.Second
@@ -1271,7 +1270,7 @@ func (s *Server) registerTools() {
 		{"memory_store_batch", "Store multiple memories in one call. Each item supports the same optional fields as memory_store, including pattern_confidence (float 0.0–1.0) for per-item caller-provided confidence. If any item fails validation the entire batch is rejected." + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
-		{"memory_recall", "Recall memories by semantic + full-text query" + embedSuffix,
+		{"memory_recall", "Recall memories by semantic + full-text query. Accepts top_k or limit; mode=handle returns lightweight handles." + embedSuffix,
 			withWarnLog("memory_recall", handleMemoryRecall)},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
 			handleMemoryFetch},

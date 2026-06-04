@@ -101,7 +101,9 @@ At scale, summary mode reduces context consumption by roughly 13× compared to f
 
 Summary mode reduces the size of each result. Handle mode goes further — it does not return content at all. It returns lightweight references instead, leaving the agent in charge of which memories actually deserve context space.
 
-When an agent calls `memory_recall`, the default response contains full memory objects (content, scores, metadata). For high-volume sessions, this inflates context. Handle mode returns lightweight references instead:
+When an agent calls `memory_recall`, the default response is handle mode:
+lightweight references instead of full memory objects. For high-volume
+sessions, this keeps context expansion under caller control:
 
 ```json
 {
@@ -110,11 +112,14 @@ When an agent calls `memory_recall`, the default response contains full memory o
     {"id": "mem-def456", "summary": "Postgres connection pool timeout", "score": 0.87, "memory_type": "error"}
   ],
   "count": 2,
-  "fetch_hint": "call memory_fetch with id and detail=summary|chunk|full"
+  "fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
+  "event_id": "optional-when-record_event-true"
 }
 ```
 
-Handle mode is the **default**. To get full content, pass `detail="full"` explicitly or set `ENGRAM_RECALL_DEFAULT_MODE=full`.
+Handle mode is the **default**. To get full result objects, pass
+`mode="full"`; then use `detail="summary"|"chunk"|"full"` to choose how much
+content each result carries. You can also set `ENGRAM_RECALL_DEFAULT_MODE=full`.
 
 To expand a specific handle into full content, call `memory_fetch` with the ID and the desired detail level:
 
@@ -125,6 +130,11 @@ To expand a specific handle into full content, call `memory_fetch` with the ID a
 | `"full"` | Complete original content |
 
 Handle mode trades recall immediacy for context efficiency: an agent can scan 20 handles for ~1 KB, then fetch only the 2–3 memories it actually needs.
+
+When `record_event=true`, single-project handle mode also returns `event_id`
+and `feedback_hint` so the caller can later use `memory_feedback`. Federated
+recall rejects `record_event=true` because retrieval events are scoped to one
+project.
 
 ### Memory Explore: Iterative Synthesis
 
@@ -155,7 +165,7 @@ The result is a single synthesis response:
 | You know what you're looking for | `memory_recall` — single fast lookup |
 | Open-ended question, uncertain what's stored | `memory_explore` — iterative synthesis |
 | You need a synthesized answer, not a list of memories | `memory_explore` |
-| You want raw memory objects to reason over yourself | `memory_recall` with `detail="full"` |
+| You want raw memory objects to reason over yourself | `memory_recall` with `mode="full"` |
 
 Configuration env vars: `ENGRAM_EXPLORE_MAX_ITERS` (default 5), `ENGRAM_EXPLORE_MAX_WORKERS` (default 8), `ENGRAM_EXPLORE_TOKEN_BUDGET` (default 20000).
 

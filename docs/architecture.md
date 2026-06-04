@@ -62,17 +62,17 @@ POST /quick-recall (or MCP tool memory_recall)
   ↓
 handleQuickRecall (server.go) — validate input, extract fields
   ↓
-handleMemoryRecall (tools_recall.go) — parse project/tags/limit
+handleMemoryRecall (tools_recall.go) — parse project/projects, top_k|limit, mode, and telemetry flags
   ↓
-engine.Recall (search.go) — semantic + BM25 hybrid ranking
+engine.RecallWithOpts / RecallAcrossEnginesWithEventsAndOpts — semantic + BM25 hybrid ranking
   ↓
 embed.NewClient.Embed(query) — embed the query string
   ↓
 db.Tx.SearchSemanticBM25 — PostgreSQL vector + full-text search
   ↓
-sort by hybrid score, apply importance decay
+sort by hybrid score, apply importance decay, optionally enrich connected memories
   ↓
-return SearchResult array
+return either lightweight handles or SearchResult objects depending on recall mode
 ```
 
 ## Key Entry Points
@@ -85,7 +85,7 @@ return SearchResult array
 | `POST /quick-recall` | handleQuickRecall | N/A | Sessionless memory recall (for Python/CLI callers) |
 | `GET /health` | handleHealth | N/A | Dependency health probes (PostgreSQL, LiteLLM) |
 | `GET /metrics` | promhttp.Handler | N/A | Prometheus metrics (requires Bearer auth) |
-| `GET /setup-token` | handleSetupToken | N/A | Return current bearer token + SSE endpoint (requires Bearer auth) |
+| `GET /setup-token` | handleSetupToken | N/A | Return current bearer token + SSE endpoint (one-time localhost bootstrap, then Bearer auth) |
 
 ## Concurrency Model
 
@@ -109,8 +109,8 @@ Key variables read at startup (see `cmd/engram/main.go`):
 | `ENGRAM_API_KEY` | (required) | Bearer token for authentication |
 | `ENGRAM_EMBED_MODEL` | (required) | Embedding model name (e.g., `snowflake-arctic-embed2`) |
 | `ENGRAM_CLAUDE_TOOL_TYPE` | `advisor_20260301` | Claude advisor tool type (see issue #485) |
-| `LITELLM_URL` | `http://litellm:4000` | LiteLLM generation endpoint |
-| `ENGRAM_EMBED_URL` | (from LITELLM_URL) | LiteLLM embedding endpoint override |
+| `LITELLM_URL` | `http://olla:40114/olla/openai` | OpenAI-compatible generation endpoint (hybrid default) |
+| `ENGRAM_EMBED_URL` | (from LITELLM_URL) | Embedding endpoint override |
 | `ENGRAM_LOG_FORMAT` | (auto-detect) | `json` or text |
 | `ENGRAM_LOG_LEVEL` | `info` | Structured logging level |
 | `ENGRAM_PORT` | `8788` | SSE bind port |
@@ -139,7 +139,7 @@ Validation failures return HTTP 400 with structured error message.
 - **MCP Tool Errors:** Returned via `CallToolResult.IsError=true` with text content
 - **HTTP Errors:** JSON body with `{"error":"...", "hint":"..."}`
 - **Permanent Embedder Mismatch:** Fast-fail as MCP error (not Go error) via `embed.PermanentError`
-- **Timeout:** 15-second per-tool deadline; logged as warning
+- **Timeout:** 60-second per-tool deadline; logged as warning
 - **Rate Limit:** HTTP 429 with `Retry-After` header
 
 ## Testing Strategy
