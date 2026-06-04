@@ -107,3 +107,18 @@ func TestFederatedRecall_SingleEngine(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 }
+
+func TestFederatedRecall_AllEnginesFailReturnsError(t *testing.T) {
+	engA := newTestEngine(t, uniqueProject("fed-fail-a"))
+	t.Cleanup(func() { engA.Close() })
+	engB := newTestEngine(t, uniqueProject("fed-fail-b"))
+	t.Cleanup(func() { engB.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	results, err := search.RecallAcrossEngines(ctx, []*search.SearchEngine{engA, engB}, "distributed consensus", 10, "normal")
+	require.Error(t, err)
+	assert.Nil(t, results)
+	assert.Contains(t, err.Error(), "federated recall failed across")
+}

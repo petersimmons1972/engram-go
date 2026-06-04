@@ -55,6 +55,8 @@ func TestReadOnlyToolAnnotations(t *testing.T) {
 	// the test stays useful even if new mutating tools are added without updating
 	// the read-only set.
 	mutators := []string{
+		"memory_recall",
+		"memory_query",
 		"memory_store",
 		"memory_correct",
 		"memory_forget",

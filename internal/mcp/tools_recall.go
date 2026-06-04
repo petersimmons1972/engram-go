@@ -267,11 +267,18 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if query == "" {
 		return mcpgo.NewToolResultError("query: required"), nil
 	}
+	if limit, ok := args["limit"]; ok {
+		if _, hasTopK := args["top_k"]; !hasTopK {
+			args["top_k"] = limit
+		}
+	}
 	topK := clampTopK(getInt(args, "top_k", defaultTopK), recallMaxTopK())
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
 	recordEvent := getBool(args, "record_event", false)
 	mode := getString(args, "mode", cfg.RecallDefaultMode)
+	var opts search.RecallOpts
+	opts.Mode = mode
 	since, before, err := parseRecallDateBounds(args)
 	if err != nil {
 		return nil, err
@@ -292,6 +299,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if len(projectNames) > 0 {
 		if since != nil || before != nil {
 			return mcpgo.NewToolResultError("since/before date filters are only supported for single-project recall"), nil
+		}
+		if recordEvent {
+			return mcpgo.NewToolResultError("record_event is not supported for federated recall"), nil
 		}
 		// Expand wildcard "*" to all known projects.
 		if len(projectNames) == 1 && projectNames[0] == "*" {
@@ -322,7 +332,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			}
 			engines = append(engines, h.Engine)
 		}
-		results, err := search.RecallAcrossEnginesWithEvents(ctx, engines, query, topK, detail, recordEvent)
+		if len(engines) == 0 {
+			return nil, fmt.Errorf("memory_recall: failed to initialize any requested federated project")
+		}
+		results, err := search.RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, opts, recordEvent)
 		if err != nil {
 			return nil, err
 		}
@@ -367,7 +380,6 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	rerank := getBool(args, "rerank", false)
 	exactFactBoost := getBool(args, "exact_fact_boost", false)
-	var opts search.RecallOpts
 	opts.DateSince = since
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
@@ -473,6 +485,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		if embedDegraded {
 			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
+		}
+		if eventID != "" {
+			out["event_id"] = eventID
+			out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
 		}
 		return toolResult(out)
 	}

@@ -39,10 +39,16 @@ Both setups share the same PostgreSQL backend, API contract, and tool set. Swap 
 # stack; if you don't have one, the empty networks created by this command
 # are harmless. (Fixes #660.)
 make init && make up && make setup
-# Done. Memory server at localhost:8788 (default: hybrid; routes to external olla via LITELLM_URL).
+# Hybrid path: memory server at localhost:8788 (routes to your external backend via LITELLM_URL).
 ```
 
-For local-only, use: `docker compose -f docker-compose.local.yml up -d`
+For a first run without external dependencies, prefer local-only:
+
+```bash
+make init
+docker compose -f docker-compose.local.yml up -d
+make setup
+```
 
 ---
 
@@ -72,7 +78,7 @@ For local-only, use: `docker compose -f docker-compose.local.yml up -d`
 ```bash
 git clone https://github.com/petersimmons1972/engram-go.git && cd engram-go
 make init     # generates POSTGRES_PASSWORD, ENGRAM_API_KEY, creates volumes
-make up       # starts postgres + engram-go (the embed/LLM backend at LITELLM_URL is external — start it separately)
+make up       # starts the hybrid profile: postgres + engram-go, using the external backend at LITELLM_URL
 make setup    # writes bearer token to ~/.claude/mcp_servers.json
 ```
 
@@ -136,7 +142,7 @@ Without this, `/setup-token` only accepts loopback (127.0.0.1 / ::1). See [Opera
 
 ## Read-Only Tool Permissions (Claude Code)
 
-Engram's read-side tools (`memory_recall`, `memory_fetch`, `memory_query`, `memory_list`, `memory_status`, `memory_history`, `memory_timeline`, `memory_projects`, audit/episode listings, constraint checks, `memory_diagnose`) carry the MCP `ReadOnlyHint: true` annotation. Claude Code's plan mode treats them as safe to invoke without a permission prompt.
+Engram's strictly read-only tools (`memory_fetch`, `memory_list`, `memory_status`, `memory_history`, `memory_timeline`, `memory_projects`, audit/episode listings, constraint checks, `memory_diagnose`) carry the MCP `ReadOnlyHint: true` annotation. `memory_recall` and `memory_query` are excluded because callers can opt into `record_event=true`, which stores retrieval telemetry. Claude Code's plan mode uses that annotation for permission gating.
 
 Mutating tools (`memory_store`, `memory_correct`, `memory_forget`, `memory_consolidate`, `memory_delete_project`, etc.) intentionally prompt for permission on first use. To allow all engram tools without further prompts, add to `~/.claude/settings.json`:
 

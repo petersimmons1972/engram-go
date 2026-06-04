@@ -14,6 +14,11 @@
 // After implementing optimizations, compare with benchstat:
 //
 //	benchstat bench_before.txt bench_after.txt
+//
+// Perf budget for benchmark-facing recall changes:
+//
+//   - warmed handle-mode recall should avoid graph-enrichment/writeback overhead
+//   - warmed summary/full recall should stay within the existing topK scaling envelope
 package search_test
 
 import (
@@ -590,6 +595,25 @@ func BenchmarkRecallWithOpts_10_withRelationships(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		results, err := engine.Recall(ctx, "test query for benchmark", 10, "full")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = results
+	}
+}
+
+// BenchmarkRecallWithOpts_10_handleMode exercises the lightweight handle path.
+// This should stay materially cheaper than the full/relationship path because
+// handle mode is not supposed to build connected-memory payloads or do writeback.
+func BenchmarkRecallWithOpts_10_handleMode(b *testing.B) {
+	engine := newBenchEngine(b, 10, 3)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		results, err := engine.RecallWithOpts(ctx, "test query for benchmark", 10, "summary", search.RecallOpts{Mode: "handle"})
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -1,22 +1,27 @@
 # Getting Started
 
-When you finish this page, you will have a running memory server, a working IDE connection, and 17 tools visible to every AI assistant you use (21 with `ANTHROPIC_API_KEY` set). A handful of commands get you there (see below; previously this page claimed 'three' but the actual sequence is 4-6 depending on which profile you pick — #697). The whole thing takes about five minutes — slightly longer on first run while your configured embedding model downloads.
+When you finish this page, you will have a running memory server, a working IDE connection, and 18 tools visible to every AI assistant you use (22 with `ANTHROPIC_API_KEY` set). A handful of commands get you there (see below; previously this page claimed 'three' but the actual sequence is 4-6 depending on which profile you pick — #697). The whole thing takes about five minutes.
 
 ---
 
-<p align="center"><img src="assets/svg/quick-start-flow.svg" alt="Quick start: three steps" width="900"></p>
+<p align="center"><img src="assets/svg/quick-start-flow.svg" alt="Quick start flow" width="900"></p>
 
 ---
 
 ## Prerequisites
 
-Engram runs as three Docker containers. Before you start, confirm you have what those containers need:
+Engram supports two local startup profiles:
+
+- Hybrid default: `postgres + engram-go`, with the embed/LLM backend running outside this compose stack and reachable via `LITELLM_URL`
+- Local-only: `postgres + ollama + engram-go` via `docker-compose.local.yml`
+
+Before you start, confirm you have what those profiles need:
 
 - **Docker Engine 20.10 or newer** — check with `docker --version`
 - **Docker Compose 2.0 or newer** — check with `docker compose version` (note: the subcommand, not `docker-compose`)
 - **Go 1.26.3 or newer** (matches `go.mod` — kept in sync via CI doc-lint) — check with `go version`; download from [https://go.dev/dl/](https://go.dev/dl/)
-- **4 GB RAM free** — Ollama loads the embedding model into memory and keeps it there
-- **2 GB disk** — PostgreSQL data volume plus the Ollama model download
+- **4 GB RAM free** — local-only mode keeps the embedding model resident in Ollama
+- **2 GB disk** — PostgreSQL volume plus the optional Ollama model download
 
 Optional: an NVIDIA or AMD GPU. If you have one, embedding inference runs roughly 3× faster. Worth configuring if you plan to store large numbers of memories. Instructions are in the GPU section below.
 
@@ -43,13 +48,13 @@ Generating credentials first rather than shipping defaults means your memory sto
 
 ## Step 2: Create Docker Volumes
 
-Engram uses two external Docker volumes. External volumes survive `docker compose down` — your memories and model weights are never destroyed when containers are recreated.
+Engram always uses one external PostgreSQL volume. The local-only profile also uses an Ollama model volume. External volumes survive `docker compose down` — your memories and model weights are never destroyed when containers are recreated.
 
 ```bash
 docker volume create engram_pgdata
 ```
 
-The Ollama model volume (`ollama_ollama_storage`) is expected to already exist from a standalone Ollama installation. If you do not have Ollama installed separately, create it now:
+If you plan to use the local-only profile, create the Ollama model volume too:
 
 ```bash
 docker volume create ollama_ollama_storage
@@ -77,19 +82,34 @@ You only need to run this on a fresh clone. `make up` will do it automatically i
 make up
 ```
 
-This starts three containers:
+For a predictable first run, use the local-only profile unless you already run
+an external embed/LLM backend and know its `LITELLM_URL`. The default `make up`
+hybrid profile assumes that external dependency already exists.
+
+If your external backend is already configured, `make up` starts the hybrid profile:
 
 - `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
-- `engram-ollama` — Ollama serving the configured embedding model
-- `engram-go-app` — The MCP server, listening on port 8788
+- `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `LITELLM_URL`
 
-**First start takes 2–3 minutes.** Ollama downloads the configured embedding model before it reports healthy. The `engram-go-app` container will wait for it. Watch progress with:
+For a 100% local stack, start the local-only profile instead:
 
 ```bash
-docker compose logs ollama -f
+docker compose -f docker-compose.local.yml up -d
 ```
 
-Subsequent starts are fast — the model is cached in the Ollama volume.
+That profile starts:
+
+- `engram-postgres`
+- `engram-ollama`
+- `engram-go-app`
+
+**First local-only start takes 2–3 minutes.** Ollama downloads the configured embedding model before it reports healthy. Watch progress with:
+
+```bash
+docker compose -f docker-compose.local.yml logs ollama -f
+```
+
+Subsequent local-only starts are fast — the model is cached in the Ollama volume.
 
 ---
 
@@ -101,7 +121,7 @@ For Claude Code, run `make setup` once the containers are healthy:
 make setup
 ```
 
-This calls the `/setup-token` endpoint on the running server, retrieves the bearer token, and writes it to `~/.claude/mcp_servers.json`. Run `/mcp` in Claude Code afterward to activate the connection.
+This calls the `/setup-token` endpoint on the running server, retrieves the bearer token, and writes it to `~/.claude/mcp_servers.json`. The bootstrap path is one-time localhost setup; after that, the endpoint requires normal bearer-authenticated access. Run `/mcp` in Claude Code afterward to activate the connection.
 
 Re-run `make setup` any time the server restarts (if `ENGRAM_API_KEY` rotates) or after a fresh install.
 
@@ -113,13 +133,16 @@ For Cursor, VS Code, Windsurf, or Claude Desktop, see [Connecting Your IDE](conn
 
 This is the moment it clicks. Run these checks and watch the pieces confirm each other.
 
-Check that all three containers are running and healthy:
+Check that the containers for your chosen profile are running and healthy:
 
 ```bash
 docker compose ps
 ```
 
-All three should show `Up (healthy)`. If any shows `Up (health: starting)`, wait 30 seconds and check again — the health checks run on a short interval.
+In hybrid mode, `engram-postgres` and `engram-go-app` should show `Up (healthy)`.
+In local-only mode, `engram-ollama` should also be present and healthy. If any
+service shows `Up (health: starting)`, wait 30 seconds and check again — the
+health checks run on a short interval.
 
 Confirm the MCP endpoint is reachable:
 
@@ -136,9 +159,9 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 17 tools (21 if `ANTHROPIC_API_KEY` is set — four optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup. See [MCP Tool Reference](tools.md) for the full callable surface (46 default / 50 with API key, including hidden maintenance tools).
+You should see `engram` listed with 18 tools (22 if `ANTHROPIC_API_KEY` is set — four optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup. See [MCP Tool Reference](tools.md) for the full callable surface (46 default / 50 with API key, including hidden maintenance tools).
 
-When you see 17 tools (or 21 with `ANTHROPIC_API_KEY`), you are done. The server is running, the embedding model is loaded, and your IDE has a persistent connection to your memory store.
+When you see 18 tools (or 22 with `ANTHROPIC_API_KEY`), you are done. The server is running, and your IDE has a persistent connection to your memory store. In local-only mode that also implies the embedding model is loaded in Ollama.
 
 ---
 

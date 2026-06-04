@@ -999,15 +999,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		hit := bestHits[id]
 		exactMatch := exactBoostEnabled && ExactIdentifierHit(m.Content, query)
 		input := ScoreInput{
-			Cosine:               hit.cosine,
-			BM25:                 bm25,
-			HoursSince:           temporalAnchorHours(*m),
-			Importance:           m.Importance,
-			DynamicImportance:    m.DynamicImportance,
-			RetrievalPrecision:   m.RetrievalPrecision,
-			EpisodeMatch:         opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
-			MemoryType:           m.MemoryType,
-			IsPreferenceQuery:    prefQuery,
+			Cosine:             hit.cosine,
+			BM25:               bm25,
+			HoursSince:         temporalAnchorHours(*m),
+			Importance:         m.Importance,
+			DynamicImportance:  m.DynamicImportance,
+			RetrievalPrecision: m.RetrievalPrecision,
+			EpisodeMatch:       opts.CurrentEpisodeID != "" && m.EpisodeID == opts.CurrentEpisodeID,
+			MemoryType:         m.MemoryType,
+			IsPreferenceQuery:  prefQuery,
 			// H-TAB: set when TopicAnchorBoost is on and the memory content
 			// contains at least one domain token from the recall query.
 			TopicAnchorMatch:     len(topicAnchorTokens) > 0 && contentContainsTopicAnchor(m.Content, topicAnchorTokens),
@@ -1258,50 +1258,54 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		results = results[:topK]
 	}
 
-	// Fetch relationships for the final topK results in a single batch query,
-	// replacing the prior N+1 loop (one GetRelationships call per result).
-	topKIDs := make([]string, len(results))
-	for i, r := range results {
-		topKIDs[i] = r.Memory.ID
-	}
-	relsMap, err := e.backend.GetRelationshipsBatch(ctx, e.project, topKIDs)
-	if err != nil {
-		// best-effort: proceed with empty relationship sets rather than failing recall
-		slog.Warn("GetRelationshipsBatch failed, proceeding without relationships", "err", err)
-		relsMap = make(map[string][]types.Relationship)
-	}
+	if opts.Mode != "handle" {
+		// Fetch relationships for the final topK results in a single batch query,
+		// replacing the prior N+1 loop (one GetRelationships call per result).
+		topKIDs := make([]string, len(results))
+		for i, r := range results {
+			topKIDs[i] = r.Memory.ID
+		}
+		relsMap, err := e.backend.GetRelationshipsBatch(ctx, e.project, topKIDs)
+		if err != nil {
+			// best-effort: proceed with empty relationship sets rather than failing recall
+			slog.Warn("GetRelationshipsBatch failed, proceeding without relationships", "err", err)
+			relsMap = make(map[string][]types.Relationship)
+		}
 
-	var allRels [][]types.Relationship
-	var neighborIDs []string
-	neighborSet := make(map[string]struct{})
-	for i := range results {
-		rels := relsMap[results[i].Memory.ID]
-		allRels = append(allRels, rels)
-		for _, r := range rels {
-			neighborID := r.TargetID
-			if r.TargetID == results[i].Memory.ID {
-				neighborID = r.SourceID
-			}
-			if _, seen := neighborSet[neighborID]; !seen {
-				neighborSet[neighborID] = struct{}{}
-				neighborIDs = append(neighborIDs, neighborID)
+		var allRels [][]types.Relationship
+		var neighborIDs []string
+		neighborSet := make(map[string]struct{})
+		for i := range results {
+			rels := relsMap[results[i].Memory.ID]
+			allRels = append(allRels, rels)
+			for _, r := range rels {
+				neighborID := r.TargetID
+				if r.TargetID == results[i].Memory.ID {
+					neighborID = r.SourceID
+				}
+				if _, seen := neighborSet[neighborID]; !seen {
+					neighborSet[neighborID] = struct{}{}
+					neighborIDs = append(neighborIDs, neighborID)
+				}
 			}
 		}
-	}
-	neighborMap := make(map[string]*types.Memory, len(neighborIDs))
-	if len(neighborIDs) > 0 {
-		fetched, err := e.backend.GetMemoriesByIDs(ctx, e.project, neighborIDs)
-		if err == nil {
-			for _, m := range fetched {
-				neighborMap[m.ID] = m
+		neighborMap := make(map[string]*types.Memory, len(neighborIDs))
+		if len(neighborIDs) > 0 {
+			fetched, err := e.backend.GetMemoriesByIDs(ctx, e.project, neighborIDs)
+			if err == nil {
+				for _, m := range fetched {
+					neighborMap[m.ID] = m
+				}
 			}
 		}
-	}
-	for i := range results {
-		results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
+		for i := range results {
+			results[i].Connected = toConnectedMemories(allRels[i], results[i].Memory.ID, neighborMap)
+		}
+
 	}
 
-	// Batch-update access timestamps (#117 — replaces N+1 TouchMemory calls).
+	// Preserve access heat for pruning/retention logic even when handle mode
+	// skips the heavier graph-enrichment path.
 	touchIDs := make([]string, len(results))
 	for i, r := range results {
 		touchIDs[i] = r.Memory.ID
@@ -2214,7 +2218,13 @@ func bigramJaccard(a, b string) float64 {
 // RecallWithEvent is like Recall but also stores a retrieval_event row and returns
 // the event ID. Pass the event ID to FeedbackWithEvent to record which results were useful.
 func (e *SearchEngine) RecallWithEvent(ctx context.Context, query string, topK int, detail string) ([]types.SearchResult, string, error) {
-	results, err := e.RecallWithOpts(ctx, query, topK, detail, RecallOpts{})
+	return e.RecallWithEventAndOpts(ctx, query, topK, detail, RecallOpts{})
+}
+
+// RecallWithEventAndOpts is like RecallWithEvent but preserves RecallOpts such
+// as handle mode while still emitting retrieval telemetry.
+func (e *SearchEngine) RecallWithEventAndOpts(ctx context.Context, query string, topK int, detail string, opts RecallOpts) ([]types.SearchResult, string, error) {
+	results, err := e.RecallWithOpts(ctx, query, topK, detail, opts)
 	if err != nil {
 		return nil, "", err
 	}

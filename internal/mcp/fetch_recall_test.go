@@ -80,6 +80,75 @@ func newRecallTrackingPool(t *testing.T, backend *recallTrackingBackend) *Engine
 	return NewEnginePool(factory)
 }
 
+type recallLimitBackend struct {
+	noopBackend
+}
+
+func (b *recallLimitBackend) FTSSearch(_ context.Context, project, _ string, limit int, _, _ *time.Time) ([]db.FTSResult, error) {
+	results := make([]db.FTSResult, 0, limit)
+	now := time.Now().UTC()
+	for i := 0; i < limit; i++ {
+		results = append(results, db.FTSResult{
+			Memory: &types.Memory{
+				ID:        "mem-limit-" + string(rune('a'+i)),
+				Project:   project,
+				Content:   "limit alias regression memory",
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			Score: float64(limit - i),
+		})
+	}
+	return results, nil
+}
+
+type handleFastPathBackend struct {
+	noopBackend
+	relationshipBatchCalls atomic.Int64
+	touchCalls             atomic.Int64
+	updateChunkCalls       atomic.Int64
+}
+
+func (b *handleFastPathBackend) FTSSearch(_ context.Context, project, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
+	now := time.Now().UTC()
+	return []db.FTSResult{{
+		Memory: &types.Memory{
+			ID:        "mem-handle-fast-path",
+			Project:   project,
+			Content:   "handle mode should stay lightweight",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Score: 1,
+	}}, nil
+}
+
+func (b *handleFastPathBackend) GetRelationshipsBatch(_ context.Context, _ string, _ []string) (map[string][]types.Relationship, error) {
+	b.relationshipBatchCalls.Add(1)
+	return map[string][]types.Relationship{}, nil
+}
+
+func (b *handleFastPathBackend) TouchMemories(_ context.Context, _ []string) error {
+	b.touchCalls.Add(1)
+	return nil
+}
+
+func (b *handleFastPathBackend) UpdateChunkLastMatched(_ context.Context, _ string) error {
+	b.updateChunkCalls.Add(1)
+	return nil
+}
+
+func newHandleFastPathPool(t *testing.T, backend *handleFastPathBackend) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
+}
+
 // ── execFetch boundary cases not in fetch_exec_test.go ───────────────────────
 
 // TestExecFetch_GetMemoryError: GetMemoryByID returns a non-nil error → error is
@@ -258,6 +327,88 @@ func TestHandleMemoryRecall_RecordEventOptInRecordsRetrievalEvent(t *testing.T) 
 	require.Equal(t, int64(1), backend.increments.Load())
 }
 
+func TestHandleMemoryRecall_HandleModeRecordEventReturnsFeedbackEvent(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "record recall telemetry",
+		"record_event": true,
+	}
+
+	cfg := Config{RecallDefaultMode: "handle"}
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"])
+	require.NotEmpty(t, out["event_id"], "handle mode record_event=true should return a feedback event")
+	require.Equal(t, int64(1), backend.storedEvents.Load())
+	require.Equal(t, int64(1), backend.increments.Load())
+}
+
+func TestHandleMemoryRecall_LimitAliasMapsToTopK(t *testing.T) {
+	backend := &recallLimitBackend{}
+	limitPool := NewEnginePool(func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	})
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "limit alias",
+		"limit":   3,
+	}
+
+	res, err := handleMemoryRecall(context.Background(), limitPool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+	require.Equal(t, float64(3), out["count"], "memory_recall limit alias must map to top_k")
+}
+
+func TestHandleMemoryRecall_HandleModeSkipsEnrichmentAndWriteback(t *testing.T) {
+	backend := &handleFastPathBackend{}
+	pool := newHandleFastPathPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "lightweight handle mode",
+	}
+	cfg := Config{RecallDefaultMode: "handle"}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+	require.Equal(t, float64(1), out["count"])
+	require.Zero(t, backend.relationshipBatchCalls.Load(), "handle mode must not fetch connected graph payloads")
+	require.Equal(t, int64(1), backend.touchCalls.Load(), "handle mode must still refresh access timestamps for retention/prune safety")
+	require.Zero(t, backend.updateChunkCalls.Load(), "FTS-only handle results must not write chunk match timestamps without a matched chunk id")
+}
+
+func TestHandleMemoryRecall_FederatedHandleModeSkipsEnrichmentAndWriteback(t *testing.T) {
+	backend := &handleFastPathBackend{}
+	pool := newHandleFastPathPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects": []any{"test-a", "test-b"},
+		"query":    "lightweight handle mode",
+	}
+	cfg := testConfig()
+	cfg.RecallDefaultMode = "handle"
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+	require.Equal(t, float64(1), out["count"])
+	require.Zero(t, backend.relationshipBatchCalls.Load(), "federated handle mode must not fetch connected graph payloads")
+	require.Equal(t, int64(2), backend.touchCalls.Load(), "federated handle mode must still refresh access timestamps for retention/prune safety")
+	require.Zero(t, backend.updateChunkCalls.Load(), "FTS-only federated handle results must not write chunk match timestamps without a matched chunk id")
+}
+
 func TestHandleMemoryRecall_FederatedDefaultDoesNotRecordRetrievalEvent(t *testing.T) {
 	backend := &recallTrackingBackend{}
 	pool := newRecallTrackingPool(t, backend)
@@ -274,6 +425,40 @@ func TestHandleMemoryRecall_FederatedDefaultDoesNotRecordRetrievalEvent(t *testi
 	require.Equal(t, float64(1), out["count"])
 	require.Zero(t, backend.storedEvents.Load(), "federated read-only recall must not store retrieval events by default")
 	require.Zero(t, backend.increments.Load(), "federated read-only recall must not increment retrieval counters by default")
+}
+
+func TestHandleMemoryRecall_FederatedRecordEventRejected(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects":     []any{"test-a", "test-b"},
+		"query":        "federated recall telemetry",
+		"record_event": true,
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "federated record_event must return an MCP tool error")
+	require.Zero(t, backend.storedEvents.Load(), "rejected federated record_event must not store retrieval events")
+	require.Zero(t, backend.increments.Load(), "rejected federated record_event must not increment retrieval counters")
+}
+
+func TestHandleMemoryRecall_FederatedInitFailuresReturnError(t *testing.T) {
+	pool := NewEnginePool(func(ctx context.Context, project string) (*EngineHandle, error) {
+		return nil, errors.New("boom")
+	})
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects": []any{"test-a", "test-b"},
+		"query":    "federated failure",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.Error(t, err)
+	require.Nil(t, res)
+	require.Contains(t, err.Error(), "failed to initialize any requested federated project")
 }
 
 // TestHandleMemoryRecall_EpisodeContextInjected verifies that
