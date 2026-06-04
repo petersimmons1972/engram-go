@@ -1,1 +1,0 @@
-/home/psimmons/projects/homelab-intelligence/skills/homelab-check-anti-patterns/SKILL.md

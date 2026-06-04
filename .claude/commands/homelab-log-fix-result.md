@@ -1,1 +1,0 @@
-/home/psimmons/projects/homelab-intelligence/skills/homelab-log-fix-result/SKILL.md
