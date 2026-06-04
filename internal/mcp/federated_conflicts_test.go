@@ -12,13 +12,35 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func federatedProjectID(prefix string) string {
+	return fmt.Sprintf("%s-%s", prefix, types.NewMemoryID())
+}
+
+func registerFederatedProjects(
+	t *testing.T,
+	ctx context.Context,
+	pool *internalmcp.EnginePool,
+	projects ...string,
+) map[string]*internalmcp.EngineHandle {
+	t.Helper()
+
+	handles := make(map[string]*internalmcp.EngineHandle, len(projects))
+	for _, project := range projects {
+		h, err := pool.Get(ctx, project)
+		require.NoError(t, err)
+		require.NotNil(t, h)
+		require.NotNil(t, h.Engine)
+		handles[project] = h
+	}
+	return handles
+}
 
 // TestFederatedRecall_IncludeConflicts_NotSilentlyDropped verifies that when
 // memory_recall is called with a "projects" list (federated path) and
@@ -56,22 +78,14 @@ func TestFederatedRecall_IncludeConflicts_NotSilentlyDropped(t *testing.T) {
 	dsn := testRecallDSN(t) // defined in conflicts_test.go; skips without TEST_DATABASE_URL
 	ctx := context.Background()
 
-	proj1 := fmt.Sprintf("fed-conflicts-p1-%d", time.Now().UnixNano())
-	proj2 := fmt.Sprintf("fed-conflicts-p2-%d", time.Now().UnixNano())
+	proj1 := federatedProjectID("fed-conflicts-p1")
+	proj2 := federatedProjectID("fed-conflicts-p2")
 
 	pool := internalmcp.NewTestPoolWithDSN(t, ctx, dsn, proj1)
+	handles := registerFederatedProjects(t, ctx, pool, proj1, proj2)
+	h1, h2 := handles[proj1], handles[proj2]
 
-	// Ensure proj2 is also in the pool and cleaned up.
-	h2, err := pool.Get(ctx, proj2)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if h2 != nil && h2.Engine != nil {
-			h2.Engine.Close()
-		}
-	})
-
-	h1, err := pool.Get(ctx, proj1)
-	require.NoError(t, err)
+	t.Cleanup(pool.Close)
 
 	// memA lives in proj1, memB in proj2. They contradict each other.
 	memA := &types.Memory{
@@ -173,21 +187,14 @@ func TestFederatedRecall_IncludeConflicts_FalseNoConflicts(t *testing.T) {
 	dsn := testRecallDSN(t)
 	ctx := context.Background()
 
-	proj1 := fmt.Sprintf("fed-noconflicts-p1-%d", time.Now().UnixNano())
-	proj2 := fmt.Sprintf("fed-noconflicts-p2-%d", time.Now().UnixNano())
+	proj1 := federatedProjectID("fed-noconflicts-p1")
+	proj2 := federatedProjectID("fed-noconflicts-p2")
 
 	pool := internalmcp.NewTestPoolWithDSN(t, ctx, dsn, proj1)
 
-	h2, err := pool.Get(ctx, proj2)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if h2 != nil && h2.Engine != nil {
-			h2.Engine.Close()
-		}
-	})
-
-	h1, err := pool.Get(ctx, proj1)
-	require.NoError(t, err)
+	handles := registerFederatedProjects(t, ctx, pool, proj1, proj2)
+	h1 := handles[proj1]
+	t.Cleanup(pool.Close)
 
 	memA := &types.Memory{
 		ID:          types.NewMemoryID(),
