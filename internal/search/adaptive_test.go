@@ -217,14 +217,15 @@ func TestAdaptiveImportance_UsedInRecall(t *testing.T) {
 	t.Cleanup(func() { engine.Close() })
 	ctx := context.Background()
 
-	// Both memories have the same static importance.
+	// Both memories have the same content and static importance so recall order
+	// is driven by dynamic_importance rather than semantic differences.
 	mHigh := &types.Memory{
-		Content:    "gRPC is the preferred RPC framework for microservices",
+		Content:    "gRPC microservices architecture notes",
 		MemoryType: types.MemoryTypeDecision, Project: engine.Project(),
 		Importance: 2, StorageMode: "focused",
 	}
 	mLow := &types.Memory{
-		Content:    "gRPC may also be suitable for some use cases",
+		Content:    "gRPC microservices architecture notes",
 		MemoryType: types.MemoryTypeDecision, Project: engine.Project(),
 		Importance: 2, StorageMode: "focused",
 	}
