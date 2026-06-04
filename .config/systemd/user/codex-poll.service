@@ -1,17 +1,7 @@
 [Unit]
-Description=Codex tiered work-loop poller (fast=5min queued, slow=30min stale-report, daily=cache pull)
-After=network-online.target
-Wants=network-online.target
+Description=Codex work-loop poller
 
 [Service]
 Type=oneshot
-# KillMode=process (was: mixed): the poller is a oneshot that backgrounds a
-# long-running `codex exec`; mixed SIGKILLs that child the instant ExecStart
-# exits (cgroup cleanup), so dispatched work died immediately. process kills
-# only the main script and lets codex + post-run verifier outlive the tick.
+ExecStart=%h/bin/codex-poll
 KillMode=process
-Environment=PATH=%h/.local/bin:%h/bin:%h/.nvm/versions/node/v24.11.0/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/scripts/codex-poll.sh
-
-[Install]
-WantedBy=default.target
