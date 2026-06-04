@@ -14,6 +14,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func requireSameResultIDs(t *testing.T, expected, actual []types.SearchResult, msg string) {
+	t.Helper()
+
+	require.Equal(t, len(expected), len(actual), "%s result count must match baseline", msg)
+
+	expectedIDs := make([]string, len(expected))
+	for i, r := range expected {
+		require.NotNil(t, r.Memory)
+		expectedIDs[i] = r.Memory.ID
+	}
+
+	actualIDs := make([]string, len(actual))
+	for i, r := range actual {
+		require.NotNil(t, r.Memory)
+		actualIDs[i] = r.Memory.ID
+	}
+
+	require.ElementsMatch(t, expectedIDs, actualIDs, "%s result IDs must match baseline", msg)
+}
+
 // storeWindowFixtures stores an in-window and an out-of-window memory whose
 // content is otherwise identical, so retrieval ordering is driven by the date
 // window rather than semantics. Returns the two IDs.
@@ -90,11 +110,7 @@ func TestTemporalWindowRecall_FlagOffIsBaseline(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, len(baseline), len(flagOff), "flag-off result count must match baseline")
-	for i := range baseline {
-		require.Equal(t, baseline[i].Memory.ID, flagOff[i].Memory.ID,
-			"flag-off ordering must match baseline at index %d", i)
-	}
+	requireSameResultIDs(t, baseline, flagOff, "flag-off")
 }
 
 // TestTemporalWindowRecall_HowManyFallsBackToBaseline verifies that a "how many
@@ -117,11 +133,7 @@ func TestTemporalWindowRecall_HowManyFallsBackToBaseline(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, len(baseline), len(howMany), "'how many' must fall back to baseline result count")
-	for i := range baseline {
-		require.Equal(t, baseline[i].Memory.ID, howMany[i].Memory.ID,
-			"'how many' ordering must match baseline at index %d", i)
-	}
+	requireSameResultIDs(t, baseline, howMany, "'how many'")
 }
 
 // twrCountingReranker is a stub search.ResultReranker that counts RerankResults

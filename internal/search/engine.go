@@ -1782,9 +1782,26 @@ func toConnectedMemories(rels []types.Relationship, memID string, neighborMap ma
 	return out
 }
 
-// sortResults sorts descending by composite score.
+// sortResults sorts descending by composite score, breaking score ties by
+// memory ID so the ordering is fully deterministic. Without the tiebreak,
+// equally-scored results (e.g. two memories with identical content) sorted
+// under the non-stable sort.Slice come back in arbitrary order, which made
+// TestTemporalWindowRecall_* flaky in CI (#1034).
 func sortResults(r []types.SearchResult) {
-	sort.Slice(r, func(i, j int) bool { return r[i].Score > r[j].Score })
+	sort.Slice(r, func(i, j int) bool {
+		if r[i].Score != r[j].Score {
+			return r[i].Score > r[j].Score
+		}
+		return resultID(r[i]) < resultID(r[j])
+	})
+}
+
+// resultID returns the memory ID for tiebreaking, or "" when the memory is nil.
+func resultID(r types.SearchResult) string {
+	if r.Memory == nil {
+		return ""
+	}
+	return r.Memory.ID
 }
 
 // List returns memories for the project matching optional filters.
