@@ -12,8 +12,11 @@ When you finish this page, you will have a running memory server, a working IDE 
 
 Engram supports two local startup profiles:
 
-- Hybrid default: `postgres + engram-go`, with the embed/LLM backend running outside this compose stack and reachable via `LITELLM_URL`
+- Hybrid (default `make up` profile): `postgres + engram-go`, with the embed/LLM backend running outside this compose stack and reachable via `ENGRAM_ROUTER_URL` (`LITELLM_URL` fallback)
 - Local-only: `postgres + ollama + engram-go` via `docker-compose.local.yml`
+
+For a fresh clone, use **local-only first** unless you already run an external
+router.
 
 Before you start, confirm you have what those profiles need:
 
@@ -79,29 +82,29 @@ You only need to run this on a fresh clone. `make up` will do it automatically i
 ## Step 4: Start
 
 ```bash
-make up
-```
-
-For a predictable first run, use the local-only profile unless you already run
-an external embed/LLM backend and know its `LITELLM_URL`. The default `make up`
-hybrid profile assumes that external dependency already exists.
-
-If your external backend is already configured, `make up` starts the hybrid profile:
-
-- `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
-- `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `LITELLM_URL`
-
-For a 100% local stack, start the local-only profile instead:
-
-```bash
 docker compose -f docker-compose.local.yml up -d
 ```
 
-That profile starts:
+For a predictable fresh-clone first run, use the local-only profile above.
+`make up` is the hybrid profile and assumes an external embed/LLM backend
+already exists at `ENGRAM_ROUTER_URL` (or legacy `LITELLM_URL`).
+
+This local-only profile starts:
 
 - `engram-postgres`
 - `engram-ollama`
 - `engram-go-app`
+
+If your external backend is already configured, this starts the hybrid profile:
+
+```bash
+make up
+```
+
+That hybrid profile starts:
+
+- `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
+- `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `ENGRAM_ROUTER_URL`
 
 **First local-only start takes 2–3 minutes.** Ollama downloads the configured embedding model before it reports healthy. Watch progress with:
 

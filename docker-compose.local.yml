@@ -14,8 +14,9 @@
 #
 # First time setup:
 #   docker volume create engram_pgdata
-#   docker volume create ollama_storage
+#   docker volume create ollama_ollama_storage
 #   make init
+#   make build-postgres
 #
 # WARNING: NEVER run 'docker compose down -v' — the -v flag destroys Docker
 # volumes and permanently deletes all memory data. Use 'make down-safe' or
