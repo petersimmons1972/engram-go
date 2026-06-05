@@ -1,7 +1,7 @@
 # LongMemEval Benchmark Learnings
 
 **Date**: May 2026  
-**Benchmark**: LongMemEval-M (500 questions, 4 types)  
+**Benchmark**: LongMemEval-M (500 questions, 6 types)  
 **Memory System**: Engram  
 **LLM Backend**: vLLM with Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4 (FP4 quantized, max_model_len=131072)
 
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-We ran the LongMemEval-M benchmark against Engram to evaluate long-context memory performance. The test dataset contains 500 questions across four types: knowledge-update, multi-session, single-session-assistant, and single-session-user. Initial configuration attempts failed due to vLLM/Nemotron incompatibilities and resource limits. After systematic debugging and optimization, we achieved **~8 completions/minute** (62-minute ETA for full 500-question run) with correct factual answers emerging from the model.
+We ran the LongMemEval-M benchmark against Engram to evaluate long-context memory performance. The test dataset contains 500 questions across six types: knowledge-update, multi-session, single-session-assistant, single-session-user, single-session-preference, and temporal-reasoning. Initial configuration attempts failed due to vLLM/Nemotron incompatibilities and resource limits. After systematic debugging and optimization, we achieved **~8 completions/minute** (62-minute ETA for full 500-question run) with correct factual answers emerging from the model.
 
 Key learnings document nine configuration issues (all resolvable), throughput optimization strategies, and model-specific constraints that future benchmarks should adopt from the start.
 
@@ -457,6 +457,42 @@ Use `--unlimited` only for a deliberately unbounded sweep. If you want prune to 
 
 The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`.
 
+### Updating the prune image
+
+The checked-in CronJob pin is currently `ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0`.
+Do not switch this job to `:latest`. For destructive scheduled deletes, replace it with the reviewed release tag or immutable digest you intend to ship, and keep that change visible in git review.
+
+Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change that approves the
+new prune binary. The CronJob uses `imagePullPolicy: Always` so each run resolves the
+currently reviewed reference instead of reusing a cached mutable tag.
+
+After merge, roll it out explicitly:
+
+```bash
+kubectl apply -f deploy/lme-prune-cronjob.yaml
+kubectl -n engram get cronjob lme-prune -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}'
+```
+
+Before the next scheduled destructive run, suspend the CronJob and verify the new image
+through a one-off Job:
+
+```bash
+kubectl patch cronjob lme-prune -n engram -p '{"spec":{"suspend":true}}'
+JOB=lme-prune-manual-$(date +%s)
+kubectl create job --from=cronjob/lme-prune -n engram "$JOB"
+kubectl wait -n engram --for=condition=complete job/"$JOB" --timeout=10m
+kubectl get pods -n engram -l job-name="$JOB" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].imageID}{"\n"}{end}'
+kubectl logs -n engram job/"$JOB"
+```
+
+If the manual run is wrong or inconclusive, reapply the previous reviewed image reference,
+leave the CronJob suspended, and inspect the manual Job/Pod events before allowing the
+schedule to resume. When the manual run looks correct, unsuspend the CronJob:
+
+```bash
+kubectl patch cronjob lme-prune -n engram -p '{"spec":{"suspend":false}}'
+```
+
 ### Backfilling existing runs
 
 Existing `lme-*` projects (created before migration 022) have `NULL expires_at`. To opt them into the sweep:
@@ -485,7 +521,7 @@ ON CONFLICT (project) DO NOTHING;
 - **vLLM Repository**: https://github.com/vllm-project/vllm (GH#39103 — Nemotron v3 reasoning parser)
 - **LongMemEval**: https://github.com/microsoft/LongMemEval (benchmark suite)
 - **Nemotron-3 Documentation**: Nvidia AI Enterprise documentation (max_model_len, chat_template_kwargs)
-- **Engram Memory System**: `/home/psimmons/projects/engram-go/docs/architecture.md`
+- **Engram Memory System**: `docs/architecture.md`
 
 ---
 

@@ -1,6 +1,6 @@
 # Getting Started
 
-When you finish this page, you will have a running memory server, a working IDE connection, and 18 tools visible to every AI assistant you use (22 with `ANTHROPIC_API_KEY` set). A handful of commands get you there (see below; previously this page claimed 'three' but the actual sequence is 4-6 depending on which profile you pick — #697). The whole thing takes about five minutes.
+When you finish this page, you will have a running memory server, a working IDE connection, and <!-- count:visible-default -->18<!-- /count --> tools visible to every AI assistant you use (<!-- count:visible-with-ai -->22<!-- /count --> with `ANTHROPIC_API_KEY` set). A handful of commands get you there (see below; previously this page claimed 'three' but the actual sequence is 4-6 depending on which profile you pick — #697). The whole thing takes about five minutes.
 
 ---
 
@@ -12,8 +12,11 @@ When you finish this page, you will have a running memory server, a working IDE 
 
 Engram supports two local startup profiles:
 
-- Hybrid default: `postgres + engram-go`, with the embed/LLM backend running outside this compose stack and reachable via `LITELLM_URL`
+- Hybrid (default `make up` profile): `postgres + engram-go`, with the embed/LLM backend running outside this compose stack and reachable via `ENGRAM_ROUTER_URL` (`LITELLM_URL` fallback)
 - Local-only: `postgres + ollama + engram-go` via `docker-compose.local.yml`
+
+For a fresh clone, use **local-only first** unless you already run an external
+router.
 
 Before you start, confirm you have what those profiles need:
 
@@ -79,29 +82,29 @@ You only need to run this on a fresh clone. `make up` will do it automatically i
 ## Step 4: Start
 
 ```bash
-make up
-```
-
-For a predictable first run, use the local-only profile unless you already run
-an external embed/LLM backend and know its `LITELLM_URL`. The default `make up`
-hybrid profile assumes that external dependency already exists.
-
-If your external backend is already configured, `make up` starts the hybrid profile:
-
-- `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
-- `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `LITELLM_URL`
-
-For a 100% local stack, start the local-only profile instead:
-
-```bash
 docker compose -f docker-compose.local.yml up -d
 ```
 
-That profile starts:
+For a predictable fresh-clone first run, use the local-only profile above.
+`make up` is the hybrid profile and assumes an external embed/LLM backend
+already exists at `ENGRAM_ROUTER_URL` (or legacy `LITELLM_URL`).
+
+This local-only profile starts:
 
 - `engram-postgres`
 - `engram-ollama`
 - `engram-go-app`
+
+If your external backend is already configured, this starts the hybrid profile:
+
+```bash
+make up
+```
+
+That hybrid profile starts:
+
+- `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
+- `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `ENGRAM_ROUTER_URL`
 
 **First local-only start takes 2–3 minutes.** Ollama downloads the configured embedding model before it reports healthy. Watch progress with:
 
@@ -159,9 +162,9 @@ In Claude Code, confirm the tools loaded:
 /mcp
 ```
 
-You should see `engram` listed with 18 tools (22 if `ANTHROPIC_API_KEY` is set — four optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup. See [MCP Tool Reference](tools.md) for the full callable surface (46 default / 50 with API key, including hidden maintenance tools).
+You should see `engram` listed with <!-- count:visible-default -->18<!-- /count --> tools (<!-- count:visible-with-ai -->22<!-- /count --> if `ANTHROPIC_API_KEY` is set — <!-- count:ai-enhanced -->4<!-- /count --> optional AI-enhanced tools activate). If it shows fewer, restart Claude Code — IDE MCP clients cache the tool list at startup. See [MCP Tool Reference](tools.md) for the full callable surface (<!-- count:total-callable-default -->46<!-- /count --> default with <!-- count:hidden -->28<!-- /count --> hidden maintenance tools / <!-- count:total-callable-with-ai -->50<!-- /count --> with API key, including hidden maintenance tools).
 
-When you see 18 tools (or 22 with `ANTHROPIC_API_KEY`), you are done. The server is running, and your IDE has a persistent connection to your memory store. In local-only mode that also implies the embedding model is loaded in Ollama.
+When you see <!-- count:visible-default -->18<!-- /count --> tools (or <!-- count:visible-with-ai -->22<!-- /count --> with `ANTHROPIC_API_KEY`), you are done. The server is running, and your IDE has a persistent connection to your memory store. In local-only mode that also implies the embedding model is loaded in Ollama.
 
 ---
 

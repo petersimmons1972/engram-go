@@ -10,13 +10,21 @@ That philosophy shapes every design decision. Keep it in mind when you propose c
 
 ### Go + PostgreSQL (MCP Server)
 
-Start the stack:
+Start the stack for your chosen profile:
 
 ```bash
-docker compose up -d
+make init        # generates POSTGRES_PASSWORD / ENGRAM_API_KEY and required volumes
+
+# Hybrid profile (default `make up` stack)
+make up
+
+# Local-only profile (no external LLM backend)
+make build-postgres
+docker compose -f docker-compose.local.yml up -d
 ```
 
-This starts PostgreSQL. The server reads `DATABASE_URL` from the environment — defaults are in `docker-compose.yml`.
+This reads container defaults from `docker-compose.yml` or `docker-compose.local.yml` depending on the path you started.
+Hybrid requires an external router endpoint in `.env` (`ENGRAM_ROUTER_URL`, or `LITELLM_URL` fallback).
 
 Run the test suite:
 
