@@ -339,8 +339,8 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if err != nil {
 			return nil, err
 		}
+		sanitizeRecallResults(results)
 		if mode == "handle" {
-			sanitizeRecallResults(results)
 			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 			out := map[string]any{
 				"handles":    search.ToHandles(results),
