@@ -1,53 +1,51 @@
 # Claude Assistant Instructions
 
-## Repository Scope
-- Active project: **Clearwatch only**. The SIB repo is DEPRECATED — never dispatch agents, fixes, or commits to it.
-- Confirm target repo is active before editing, even when bugs are found in other repos.
-- Confirm target repo and storage layer before starting multi-file operations.
-
 ## Core Principles [QC.2]
 
-- **Simplicity first.** Make every change as simple as possible. Impact minimal code. Three similar lines beat a premature abstraction.
-- **No laziness.** Find root causes. No temporary fixes. No hand-holding required — point at logs, errors, and failing tests, then resolve them.
-- **Minimal impact.** Changes should only touch what's necessary. If a fix feels hacky, find the clean solution — "Knowing everything I know now, implement the elegant solution."
+Before presenting non-trivial work, run this gate:
+1. **Simplest version?** Make every change as simple as possible; three similar lines beat a premature abstraction.
+2. **Root cause, minimal blast radius?** Find root causes — no temporary fixes, no hand-holding (point at logs/errors/failing tests, then resolve). Touch only what's necessary; if a fix feels hacky, find the clean solution ("knowing everything I know now, implement the elegant solution").
+3. **Staff-engineer bar:** would one approve this? If no, redo before showing. (Full quality floor → §Advisory Protocol.)
+
+## Decisions & Defaults
+- **Confidence ladder:** 100% → just do it · 80-99% → do + explain · 50-80% → propose first · <50% → ask.
+- **When blocked, ask one focused question** with your recommended default and what changes based on the answer.
+- **Planning clarifications:** in superpowers planning/brainstorming/design/spec skills, ask as many clarifying questions as needed — do not stop at a generic three-question limit; preserve one-question-at-a-time when practical.
+- Pre-approved (no need to ask): logs, kubectl get/describe, health-check, diagnostics.
 
 ## Behavioral Rules
 - Never tell the user to do something manually that you can do yourself — just do it.
 - **Markdown tables**: pad columns for alignment, use emoji swatches (🔵🟡🟢⚫⚪✅❌⚠️), never leave hex codes unformatted in a cell.
-- When asked for a 'summary' or 'report', cover ALL items — not just a filtered subset.
+- 'summary'/'report' → cover ALL items, not just a filtered subset.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state.
-- **Art direction:** See `~/projects/art-direction-research/ART-DIRECTION-RULE.md` and AGENTS.md §9. No generic AI design tools.
-- **Visual quality rules:** `visual-output-standards` skill is the canonical source for all charts, SVGs, and illustrations. Engram carries session context only — quality rules live in the skill. Every Cassandre dispatch must read the skill first. Run `bin/render-check.sh` before Ramsay review.
+- **Art direction:** Canonical rule → `~/projects/art-direction-research/ART-DIRECTION-RULE.md` (dispatch one of the 6 Designated Artist Commanders; no generic AI design tools — no Canva/stock/lorem-ipsum).
+- **Visual quality rules:** `visual-output-standards` skill is the canonical source for all charts, SVGs, and illustrations (Engram carries session context only — quality rules live in the skill). Every Cassandre dispatch reads the skill first; run `bin/render-check.sh` before Ramsay review.
 
 ## Parallel Agent Rules [AP.1, AP.11]
-- **Worktree isolation MANDATORY for parallel implementer agents.** When dispatching 2+ implementer agents against the same git repository, each MUST be spawned with `isolation: "worktree"` on the Agent tool. Without this, agents in the same checkout cross-contaminate branches and pick up each other's uncommitted changes. Single-agent dispatches and read-only Explore agents may omit isolation.
+- **Worktree isolation MANDATORY for parallel implementer agents.** 2+ implementer agents against the same git repo → each MUST be spawned with `isolation: "worktree"`, else they cross-contaminate branches and pick up each other's uncommitted changes. Single-agent dispatches and read-only Explore agents may omit it. (Hard-gate restatement: §Agent Dispatch Mandates M4.)
 - **Pre-validation:** ONE agent analyzes 2–3 samples first. Present findings. Only then dispatch remaining agents with the confirmed problem definition.
 - List which functions each agent will touch. Two agents on the same function → flag it, run full test suite after.
 - **Always include one zero-context reviewer** — receives only raw inputs, no prior findings.
 - **Pre-ship QA:** dispatch the 6-persona fault-finder sweep (`spawn-patterns.md` Pattern 6, or `/qa-personas <target>`) before claiming done on user-facing work. Two-round methodology: fix blockers, re-run.
-- **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct. The question is whether it's correct against the standard, not whether it differs from what's there now."
-- **Validator bash guard:** Before dispatching Spruance or Rickover-validator, run `touch ~/.claude/.validator-bash-guard`. After the validation session ends, run `rm ~/.claude/.validator-bash-guard`. This enables the read-only Bash enforcement hook.
-- **Model floor rule:** Always set `model:` explicitly on every agent dispatch. Default to the lowest tier that can do the job correctly — Haiku first, Sonnet only when the task requires judgment or multi-file synthesis, Opus only per the ADV.1–ADV.5 triggers below. Homogeneous Sonnet teams are a smell. If you cannot articulate why Haiku is insufficient for a given agent, use Haiku.
-- **Effort floor rule (Opus 4.8+):** The API default effort is now `high` on all surfaces. Always set `effort:` explicitly on agent dispatches. Use `low` for search, grep, classification, health checks, and single-file reads. Use `medium` for multi-file reads, summarisation, and mechanical transforms. Use `high` only for implementation, debugging, architecture, and multi-step reasoning. Homogeneous high-effort teams are a cost smell — same discipline as the model floor rule.
-- **Advisory mandate:** Every implementation agent brief must include: "Before proposing or selecting any implementation approach, invoke the `advisory-gate` skill if 2+ approaches exist with meaningfully different consequences (ADV.1–ADV.5 triggers)." [ADV.1-ADV.5]
-- **Engram context mandate:** When dispatching implementation agents, include relevant Engram recall results from the current session in the brief. Subagents receive no session hooks — coordinator is responsible for seeding their context. [QC.6]
-- **Publish boundary mandate:** Sub-agent briefs MAY include `git add` and `git commit` but MUST NOT include `git push`. The coordinator owns the publish boundary and pushes only after explicit per-push founder confirmation. Applies to any ref pushed to a shared remote (main, release branches, anything visible beyond the local machine). [AP.11]
+- **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct; the question is whether it's correct against the standard, not whether it differs from what's there now."
+- **Validator bash guard:** `touch ~/.claude/.validator-bash-guard` before dispatching Spruance or Rickover-validator; `rm` it after the validation session. Enables the read-only Bash enforcement hook.
+- **model / effort / advisory-gate / Engram-seed** apply to every agent dispatch — canonical statements in §Agent Dispatch Mandates (M1 model, M2 effort, M3 advisory-gate, M6 Engram-seed). [ADV.1-ADV.5, QC.6]
 
 ## Pre-Flight Protocol — MANDATORY
 
-Each step has an explicit trigger. Execute the step when its trigger fires. Do not execute a step outside its trigger.
+Execute each step only when its trigger fires; never outside it.
 
 | # | Step | Trigger | Action | Notes |
 |---|------|---------|--------|-------|
-| 1 | ENVIRONMENT CHECK | Before the first write operation of a session (any `git add`, `git commit`, `Edit`, `Write`, or `Bash` command that mutates state) | Run `git status`, `git branch`, `pwd`. Halt and report if any output is unexpected (wrong branch, uncommitted changes you didn't make, wrong directory). | Once per session unless branch or directory changes |
-| 2 | REQUEST VERIFICATION | Before starting any task that requires 3+ distinct tool calls or 2+ files touched | Write a one-paragraph restatement of what you understand the request to be. If any element is ambiguous, stop and ask one focused question before proceeding. | Skip: single-file reads, single-command answers, informational questions |
-| 3 | BUG ACCOUNTABILITY | Immediately upon discovering any bug, before continuing other work | Either (a) fix it now and file a closed GitHub Issue documenting the fix, or (b) file an open GitHub Issue and note the deferral. Never leave a bug undocumented. [AP.12] | Every bug |
-| 4 | BRANCH VERIFICATION | After `git push` or after any `git commit` where commit landing is load-bearing for the next step | Run `git log --oneline -3` on the target branch to confirm the commit is present. If not present, diagnose before proceeding. | After every qualifying event |
-| 5 | EXPENSIVE OPERATION CHECK | Before running any benchmark, full pipeline, or deployment | Quote estimated cost and duration. Wait for explicit confirmation — "go" or "yes". Never interpret a bare number ('1', '2', etc.) as confirmation. [AP.11] | Every qualifying event |
+| 1 | ENVIRONMENT CHECK | Before the session's first state-mutating op (`git add`/`commit`, `Edit`, `Write`, mutating `Bash`) | Run `git status`, `git branch`, `pwd`. Halt + report if anything is unexpected (wrong branch, foreign uncommitted changes, wrong dir). | Once/session unless branch or dir changes |
+| 2 | REQUEST VERIFICATION | Before any task needing 3+ distinct tool calls or 2+ files touched | Write a one-paragraph restatement of the request. If anything is ambiguous, stop and ask one focused question first. | Skip: single-file reads, single-command answers, informational Qs |
+| 3 | BUG ACCOUNTABILITY | On discovering any bug, before continuing other work | (a) fix now + file a closed GitHub Issue documenting the fix, or (b) file an open Issue + note the deferral. Never leave a bug undocumented. [AP.12] | Every bug |
+| 4 | BRANCH VERIFICATION | After `git push`, or any `git commit` whose landing is load-bearing for the next step | Run `git log --oneline -3` on the target branch to confirm the commit is present; if absent, diagnose before proceeding. | Every qualifying event |
+| 5 | EXPENSIVE OPERATION CHECK | Before any benchmark, full pipeline, or deployment | Quote estimated cost + duration. Wait for explicit confirmation — "go"/"yes". Never read a bare number ('1','2', etc.) as confirmation. [AP.11] | Every qualifying event |
 
 ## Advisory Protocol — Tiered Self-Escalation [ADV.1-ADV.5]
 
-**Quality floor:** Before presenting non-trivial work, ask "Is there a more elegant way?" Quality bar: **"Would a staff engineer approve this?"** If no, implement the clean solution. If execution hits an unpredicted wall, STOP and re-plan; capacity failures never escalate tiers.
+**Quality floor:** Before presenting non-trivial work, ask "Is there a more elegant way?" Bar: **"Would a staff engineer approve this?"** If no → implement the clean solution. Unpredicted wall → STOP and re-plan; capacity failures never escalate tiers.
 
 **Tier rule:** Lowest tier that decides correctly. Uneven teams preferred; homogeneous selection is a smell.
 
@@ -75,31 +73,13 @@ Endpoint: `http://localhost:8788/mcp` · Projects: `clearwatch`, `homelab`, `eng
 
 *R7 (Eisenhower only) — dispute tracking:* full protocol → `~/docs/engram-memory-rules.md`.
 
-## Test-After-Edit Protocol
-- After any code edit, run the relevant test suite before moving to the next task. [AP.8]
-- When updating code that has existing tests, check whether tests encode buggy behavior — update both in the same commit. [QC.2]
-- Watch for hardcoded counts/constants (e.g., chart counts) that break when adding/removing items.
-
 ## Workflow
-- **Test-first.** Failing test before implementation; run tests after every edit. [QC.2]
 - **Non-trivial tasks (3+ steps):** plan mode → worktree (`superpowers:using-git-worktrees`) → implement. Worktree step has no exceptions. Preserve error state — never push through unpredicted errors. [AP.1]
+- **Multi-agent default for non-trivial work.** Fan out agents for parallelism, independent review, adversarial critique, or context isolation. Do not orchestrate when coordination cost exceeds the benefit — tiny, clearly serial, or low-risk tasks run inline.
 - **Procedural work:** use skills — authoritative over summaries here.
 - **Before claiming done:** `superpowers:verification-before-completion`.
 - **Stay in scope.** >15 min tangent → file Issue, keep moving. <15 min → fix and note. [QC.2]
-- **Agent dispatch trouble:** if real progress was made, salvage partial output and hand off with context. If infrastructure broke before progress, dead-letter and retry from scratch — don't salvage broken state. For research dispatches >8 expected turns, brief: "stop at turn 8/10 and return PARTIAL: with what you have."
-
-## Decisions
-- 100% → Just do it | 80-99% → Do + explain | 50-80% → Propose first | <50% → Ask
-- Pre-approved: logs, kubectl get/describe, health-check, diagnostics
-- Always ask: delete resources, modify production, data loss risk
-- **When blocked, ask one focused question** with your recommended default and what changes based on the answer.
-
-## Bug & Defect Tracking — NON-NEGOTIABLE [AP.12]
-GitHub Issues ARE the work. Defect not in the system = does not exist.
-- Found a bug → file it before continuing. Fixed inline → file it as closed. Deferred → file it.
-- **Continuity test:** Could the next session pick up every open defect from GitHub Issues alone?
-- File issues FIRST, then report status. Use `gh issue create` with clear title, reproduction steps, and labels. Reference issue numbers in commit messages and PRs.
-- **Severity gating:** All findings are filed. Merge is only blocked by `severity/blocker` label. Non-blocking findings use `severity/nice-to-have` — applied, tracked, reviewed quarterly. Never treat variable naming suggestions and security holes at the same urgency level.
+- **Agent dispatch trouble:** real progress made → salvage partial output and hand off with context. Infra broke before progress → dead-letter and retry from scratch, don't salvage broken state. Research dispatches >8 expected turns → brief: "stop at turn 8/10 and return PARTIAL: with what you have."
 
 ## CLI Tool Preferences
 
@@ -107,20 +87,40 @@ Behavioral defaults (telemetry shows I default to the wrong tool without these):
 - HTTP requests → `xh` (not `curl`)
 - Multi-pod log tailing → `stern <name> -n <ns>` (not `kubectl logs`)
 - Security review first step → `semgrep scan --config auto <path>` [QC.1]
-- File search → `fd <pattern> [path]` (not `find . -name`) — already installed, respects .gitignore
-- Recursive code search → `rg <pattern> [path]` (not `grep -r`) — already installed, skips binaries and .git/
+- File search → `fd <pattern> [path]` (not `find . -name`) — respects .gitignore
+- Recursive code search → `rg <pattern> [path]` (not `grep -r`) — skips binaries and .git/
 - Structural diff → `difft <a> <b>` or `GIT_EXTERNAL_DIFF=difft git diff --staged` for Go/Python pre-commit review
 - HTML extraction → `curl -s <url> | pup 'selector text{}'` (not raw curl piped to head)
 - CSV/JSONL transforms → `mlr --jsonl filter/cut/stats/tail <file>` (not `cat | python3 -c`)
 
 Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckdb`, `tokei`, `jq`, `just`, full `kubectl`/`git` workflows → `~/TOOLS.md`.
 
-## Critical Rules [QC.1, AP.8]
-**NEVER:** commit secrets · `.env` with real credentials (use Infisical: `https://infisical.petersimmons.com`) · restart before checking logs · destructive ops without backup
-**ALWAYS:** `git diff --staged` before every commit · check logs before restarting · verify end-to-end output · see `~/AGENTS.md` for generals · GitHub = single source of truth · k8s network diagnosis: check NetworkPolicy in the source namespace FIRST (cluster uses default-deny egress with per-IP/port allows). See ~/docs/k8s-firewall.md if it exists, otherwise homelab Engram pattern.
+## Agent Dispatch Mandates — I CHECK ALL SEVEN BEFORE EVERY AGENT CALL [AP.1, AP.11, QC.6]
 
-## Container Image Standard — NON-NEGOTIABLE [QC.7]
-Default: Chainguard base images. Python-with-tools: `python:latest-dev` build stage → `wolfi-base` runtime; nonroot UID **65532**, tini at `/sbin/tini`. K8s: `fsGroup: 65532` MANDATORY or volume mounts crashloop; `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`. Full pattern → `~/docs/container-images.md`.
+Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that output as a hard gate.
+
+| # | Mandate | My commitment |
+|---|---------|---------------|
+| 1 | **model** | Set `model:` explicitly every dispatch. Haiku unless judgment/multi-file synthesis → Sonnet; Opus only per ADV.1-5. Can't articulate why Haiku is insufficient → use Haiku. Homogeneous Sonnet teams = a smell I will not produce. |
+| 2 | **effort** | Set `effort:` explicitly every dispatch. `low` search/grep/classify/health-check · `medium` multi-file read/summarize/transform · `high` only implement/debug/architect. Homogeneous `high` = cost smell. (API default is now `high`, all surfaces, Opus 4.8+.) |
+| 3 | **advisory-gate** | Include verbatim in every impl brief: *"Before proposing or selecting any implementation approach, invoke the advisory-gate skill if 2+ approaches exist with meaningfully different consequences (ADV.1-5 triggers)."* Do not paraphrase; do not skip because the answer seems obvious. |
+| 4 | **worktree** | Set `isolation: "worktree"` on every parallel implementer agent touching the same repo. Omitting it causes branch contamination. No exceptions. |
+| 5 | **no push** | Never include `git push` in an agent brief. `git add`/`git commit` are fine. Push is mine, after explicit per-push founder confirmation. |
+| 6 | **engram** | Seed every impl brief with relevant Engram recall from this session. Subagents have no session hooks — unseeded, they operate blind. |
+| 7 | **bounded** | Give every agent clear inputs, expected output, stop conditions, cost expectations. I own merge/dedup/conflict resolution — agent output is not authoritative. |
+
+---
+
+## Critical Rules — Security Non-Negotiables
+Full procedures → `~/docs/security-procedures.md`; k8s netpol diagnosis → `~/docs/k8s-firewall.md`. (The old AGENTS.md section pointer was dangling — target did not exist; content lives in docs/.)
+- **NEVER put a secret in a command line, code, CI log, or GitHub issue/PR.** Secrets live in Infisical (`https://infisical.petersimmons.com`); reference the key path, never the value.
+- **Retrieve secrets only via** `mcp__infisical-*__get-secret`; NEVER store or log a retrieved value (not in memory files, Engram, issues, or via `echo`/`cat`/`print`). Verify validity with a non-secret response (e.g. `whoami`), never by printing the token.
+- **No password in a connection string or CLI arg** — use `.pgpass` / env injection (libpq reads `.pgpass`; the password never reaches process args or shell history).
+- **`main` branch protection is mandatory** on every `petersimmons1972` repo: required up-to-date CI checks, no admin bypass, agent service accounts are not admins.
+- **Worktree isolation (AP.1)** is also a secret-leak control — shared checkouts let agents observe each other's uncommitted `.env`.
+
+## Container Image Standard
+Container image requirements → `~/docs/container-images.md` + `~/docs/container-hardening.md` (Chainguard, UID 65532, tini, fsGroup, securityContext). (Old AGENTS.md section pointer was dangling — content now lives in docs/.)
 
 ## Self-Learning & Autonomous Bug Fixing
 - **Fix without asking** when reversible and low-blast-radius (low-severity bugs, feedback integration). **Always ask** when irreversible, data-affecting, externally visible, or resource-intensive.
@@ -133,16 +133,13 @@ Priority stack: 1=clearwatch (revenue), 2=infrastructure (K8s/runbooks), 3=job-s
 
 ## Claude ↔ Codex Handoff
 
-Claude plans + coordinates; Codex implements. Work queue = GitHub Issues
-(via `~/bin/queue-agent`). Context injection = `codex-handoff` MCP tool.
+Claude plans + coordinates; Codex implements. Queue = GitHub Issues via `~/bin/queue-agent`; context injection = `codex-handoff` MCP tool.
 
-**When producing a plan for Codex, use the `write-codex-plan` skill** — it
-enforces the 6-section plan format and the 11 operational protocols.
-**Canonical protocol reference:** `petersimmons1972/claude-codex`.
+**Plan for Codex → use the `write-codex-plan` skill** (enforces the 6-section plan format + 11 operational protocols). **Canonical protocol reference:** `petersimmons1972/claude-codex`.
 
 ## Cost Guardrails & Wake-the-Founder Triggers [AP.11]
 - Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
-- STOP and notify founder if: **>$5 compute** · **production deployment** (kubectl/helm/terraform apply targeting prod namespaces or clusters) · **push to main/master** · **data loss risk** (any operation that deletes, truncates, or overwrites persistent data without a verified backup) · **agent stuck ≥45 min** · **same error 3+ times in this session**
+- STOP + notify founder: **>$5 compute** · **prod deployment** (kubectl/helm/terraform apply to prod namespaces/clusters) · **push to main/master** · **data-loss risk** (any op that deletes, truncates, or overwrites persistent data without a verified backup) · **agent stuck ≥45 min** · **same error 3+ times this session**
 
 ## Reference
 **Tools reference:** Full patterns, options, and decision rules for all CLI tools → `~/TOOLS.md` (git-tracked, never archived)
