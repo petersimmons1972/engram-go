@@ -29,17 +29,35 @@ Subcommands:
             Use 'starter server --help' for options
   migrate   Run database migrations only
             Use 'starter migrate --help' for options
-  setup     Configure the MCP client
-            Use 'starter setup --help' for options
   health    Check /health endpoint and exit 0 (ok) or 1 (error)
             Use 'starter health --help' for options
   help      Show this help message
 
 Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
 exec-replaces itself with /engram.
+For client MCP configuration, run engram-setup on the host machine.
 
 Options:
   -h, --help    Show this help message
+`
+
+const starterServerHelpText = `Usage: starter server [options]
+
+Fetch container secrets when configured, then exec /engram with server options.
+For the full server flag list, run engram server --help in a developer checkout
+or /engram server --help inside the container image.
+`
+
+const starterMigrateHelpText = `Usage: starter migrate [options]
+
+Fetch database credentials when Infisical is configured, then exec
+/engram migrate to run schema migrations and exit without starting the server.
+For local developer runs, use go run ./cmd/engram migrate --help.
+`
+
+const starterHealthHelpText = `Usage: starter health
+
+Probe the local /health endpoint and exit 0 when healthy or 1 on error.
 `
 
 func printUsage() {
@@ -105,6 +123,13 @@ func main() {
 		printUsage()
 		os.Exit(0)
 	}
+	if helpText, ok := starterSubcommandHelp(args); ok {
+		_, _ = fmt.Fprint(os.Stdout, helpText)
+		os.Exit(0)
+	}
+	if _, _, err := resolveStarterSubcommand(args); err != nil {
+		fatalf("%v", err)
+	}
 
 	// Health subcommand: probe the local /health endpoint and exit 0 (ok) or 1 (error).
 	// Runs before the Infisical flow — no secrets required.
@@ -118,7 +143,7 @@ func main() {
 	// If INFISICAL_CLIENT_ID is absent, skip the Infisical flow entirely.
 	// The environment must already contain ENGRAM_API_KEY in this case.
 	if clientID == "" {
-		if os.Getenv("ENGRAM_API_KEY") == "" {
+		if starterRequiresAPIKey(args) && os.Getenv("ENGRAM_API_KEY") == "" {
 			fatalf("no secret source configured: set INFISICAL_CLIENT_ID (+ INFISICAL_CLIENT_SECRET) to fetch secrets from Infisical, or set ENGRAM_API_KEY directly in the environment")
 		}
 		// ENGRAM_API_KEY is already set — exec directly without touching the env.
@@ -143,13 +168,15 @@ func main() {
 		fatalf("infisical auth: %v", err)
 	}
 
-	apiKey, err := getSecret(ctx, domain, token, projectID, env, secretPath, "ENGRAM_API_KEY")
-	if err != nil {
-		fatalf("fetch ENGRAM_API_KEY: %v", err)
-	}
+	if starterRequiresAPIKey(args) {
+		apiKey, err := getSecret(ctx, domain, token, projectID, env, secretPath, "ENGRAM_API_KEY")
+		if err != nil {
+			fatalf("fetch ENGRAM_API_KEY: %v", err)
+		}
 
-	if err := os.Setenv("ENGRAM_API_KEY", apiKey); err != nil {
-		fatalf("setenv ENGRAM_API_KEY: %v", err)
+		if err := os.Setenv("ENGRAM_API_KEY", apiKey); err != nil {
+			fatalf("setenv ENGRAM_API_KEY: %v", err)
+		}
 	}
 
 	// Fetch POSTGRES_PASSWORD and patch DATABASE_URL so the correct password is
@@ -170,6 +197,30 @@ func main() {
 	// has no need for these credentials — keeping them in /proc/PID/environ leaks
 	// them to any process that can read /proc (#138, #139).
 	execEngram(args, filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD"))
+}
+
+func starterSubcommandHelp(args []string) (string, bool) {
+	if len(args) < 2 || !isHelpArg(args[1]) {
+		return "", false
+	}
+	switch args[0] {
+	case "server":
+		return starterServerHelpText, true
+	case "migrate":
+		return starterMigrateHelpText, true
+	case "health":
+		return starterHealthHelpText, true
+	default:
+		return "", false
+	}
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "--help"
+}
+
+func starterRequiresAPIKey(args []string) bool {
+	return len(args) == 0 || args[0] != "migrate"
 }
 
 // runHealth probes the engram /health endpoint on localhost and exits 0 if the
@@ -202,28 +253,52 @@ func runHealth() {
 	os.Exit(0)
 }
 
-// execEngram validates subcommand arguments and exec-replaces the current
-// process with /engram using the supplied environment.
-// Subcommands (server, migrate, setup) are passed through to /engram with their options.
-// The /engram binary handles per-subcommand --help internally.
-func execEngram(args []string, cleanEnv []string) {
-	allowed := map[string]bool{"server": true, "migrate": true, "setup": true}
+var execCommand = func(path string, argv []string, env []string) error {
+	return syscall.Exec(path, argv, env)
+}
 
-	// Check if first positional argument is a valid subcommand
-	// Allow flags and --help/-h to pass through to /engram
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			if !allowed[arg] && arg != "" {
-				fatalf("unknown subcommand %q — allowed: server, migrate, setup", arg)
-			}
-			break
-		}
+// execEngram resolves the subcommand (server, migrate), then exec-replaces
+// the current process with /engram using the supplied environment.
+//
+// For server, the subcommand is consumed (omitted from argv) so /engram receives
+// only server flags. For migrate the subcommand is preserved so engram can route
+// the one-shot migration operation by name.
+func execEngram(args []string, cleanEnv []string) {
+	path, argv, err := starterExecPlan(args)
+	if err != nil {
+		fatalf("%v", err)
 	}
 
-	// Pass all args through to /engram — it handles per-subcommand --help internally
-	argv := append([]string{"/engram"}, args...)
-	if err := syscall.Exec("/engram", argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
+	if err := execCommand(path, argv, cleanEnv); err != nil { // nosemgrep: go.lang.security.audit.dangerous-syscall-exec.dangerous-syscall-exec -- argv validated against allowlist above
 		fatalf("exec /engram: %v", err)
+	}
+}
+
+func starterExecPlan(args []string) (string, []string, error) {
+	subcommand, passthrough, err := resolveStarterSubcommand(args)
+	if err != nil {
+		return "", nil, err
+	}
+	argv := []string{"/engram"}
+	if subcommand != "server" {
+		argv = append(argv, subcommand)
+	}
+	argv = append(argv, passthrough...)
+	return "/engram", argv, nil
+}
+
+// resolveStarterSubcommand handles explicit subcommands and flag-prefixed args.
+// `server` is the default when args are empty or begin with '-'.
+func resolveStarterSubcommand(args []string) (subcommand string, passthrough []string, err error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "server", args, nil
+	}
+
+	switch args[0] {
+	case "server", "migrate":
+		return args[0], args[1:], nil
+	default:
+		return "", nil, fmt.Errorf("unknown subcommand %q — allowed: server, migrate", args[0])
 	}
 }
 

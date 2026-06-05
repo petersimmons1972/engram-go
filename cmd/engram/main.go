@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -52,11 +53,34 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "server":
+			if err := runServer(os.Args[2:]); err != nil {
+				slog.Error("server", "err", err)
+				os.Exit(1)
+			}
+			return
+		case "migrate":
+			if err := runMigrate(os.Args[2:]); err != nil {
+				slog.Error("migrate", "err", err)
+				os.Exit(1)
+			}
+			return
+		default:
+			if strings.HasPrefix(os.Args[1], "-") {
+				// Positional flags are treated as server flags (legacy startup mode).
+				if err := runServer(os.Args[1:]); err != nil {
+					slog.Error("fatal", "err", err)
+					os.Exit(1)
+				}
+				return
+			}
+			slog.Error("unknown subcommand", "subcommand", os.Args[1], "help", "did you mean server, migrate, hook, or hook-daemon?")
+			os.Exit(1)
 		}
 	}
 
 	startTime := time.Now()
-	if err := run(); err != nil {
+	if err := runServer(os.Args[1:]); err != nil {
 		slog.Error("fatal", "err", err)
 		// Startup backoff: prevent crash-loop when bad config is detected early.
 		// If the process fails within 30 seconds of startup, sleep 5s before exiting.
@@ -70,7 +94,8 @@ func main() {
 	}
 }
 
-func run() error {
+// runServer starts the MCP server with server-specific flags.
+func runServer(args []string) error {
 	// Configure structured JSON logging when running in a container or when
 	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
 	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
@@ -100,7 +125,12 @@ func run() error {
 		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
 	}
 
-	fs := flag.NewFlagSet("engram", flag.ExitOnError)
+	// Keep server help explicit for wrapper-subcommand calls (`engram server --help`).
+	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	fs.Usage = func() {
+		_, _ = fmt.Fprintln(os.Stdout, "Usage: engram server [options]")
+		fs.PrintDefaults()
+	}
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
 	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
@@ -168,7 +198,7 @@ func run() error {
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
@@ -671,6 +701,63 @@ func run() error {
 	}
 
 	return err
+}
+
+// migrateUsageText documents `engram migrate --help`.
+const migrateUsageText = `Usage: engram migrate [options]
+
+Run database schema migrations and exit.
+
+Options:
+  -timeout duration    maximum migration duration (env: ENGRAM_MIGRATE_TIMEOUT; default: 30m; 0 disables timeout)
+  -h, --help          print this help text
+`
+
+func runMigrate(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stdout, migrateUsageText)
+	}
+	timeout := fs.Duration("timeout", envDuration("ENGRAM_MIGRATE_TIMEOUT", 30*time.Minute), "maximum migration duration")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("migrate does not accept positional arguments; use --help for usage")
+	}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return fmt.Errorf("DATABASE_URL required")
+	}
+	_ = os.Unsetenv("DATABASE_URL")
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	if err := runDatabaseMigrations(ctx, dbURL); err != nil {
+		return fmt.Errorf("connect + migrate: %w", err)
+	}
+	fmt.Println("migration complete")
+	return nil
+}
+
+var runDatabaseMigrations = func(ctx context.Context, dsn string) error {
+	pool, err := db.NewSharedPool(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	pool.Close()
+	return nil
 }
 
 // checkBindInterlock implements A-3 (#666): refuse to start when the server

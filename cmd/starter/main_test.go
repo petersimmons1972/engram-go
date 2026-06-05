@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -391,7 +392,7 @@ func TestEnvOr(t *testing.T) {
 func TestSubcommandHelp(t *testing.T) {
 	t.Run("usage text mentions per-subcommand help", func(t *testing.T) {
 		// The usageText constant should document that users can run:
-		// starter <subcommand> --help for per-subcommand help
+		// starter <subcommand> --help for real starter subcommands.
 
 		if !strings.Contains(usageText, "starter server --help") {
 			t.Error("usage text should document 'starter server --help'")
@@ -399,17 +400,286 @@ func TestSubcommandHelp(t *testing.T) {
 		if !strings.Contains(usageText, "starter migrate --help") {
 			t.Error("usage text should document 'starter migrate --help'")
 		}
-		if !strings.Contains(usageText, "starter setup --help") {
-			t.Error("usage text should document 'starter setup --help'")
+		if strings.Contains(usageText, "starter setup") {
+			t.Error("usage text must not advertise container setup; use engram-setup on the host")
+		}
+		if !strings.Contains(usageText, "engram-setup") {
+			t.Error("usage text should point client configuration users to engram-setup")
 		}
 	})
 
 	t.Run("usage text includes all allowed subcommands", func(t *testing.T) {
-		subcommands := []string{"server", "migrate", "setup", "health"}
+		subcommands := []string{"server", "migrate", "health"}
 		for _, sub := range subcommands {
 			if !strings.Contains(usageText, sub) {
 				t.Errorf("usage text missing subcommand: %s", sub)
 			}
 		}
 	})
+}
+
+func TestResolveStarterSubcommand(t *testing.T) {
+	cases := []struct {
+		name            string
+		args            []string
+		wantSubcommand  string
+		wantPassthrough []string
+		wantErrContains string
+	}{
+		{
+			name:            "default to server when empty",
+			args:            nil,
+			wantSubcommand:  "server",
+			wantPassthrough: nil,
+		},
+		{
+			name:            "default to server when first arg is flag",
+			args:            []string{"--healthcheck"},
+			wantSubcommand:  "server",
+			wantPassthrough: []string{"--healthcheck"},
+		},
+		{
+			name:            "explicit server subcommand",
+			args:            []string{"server", "--help"},
+			wantSubcommand:  "server",
+			wantPassthrough: []string{"--help"},
+		},
+		{
+			name:            "migrate subcommand",
+			args:            []string{"migrate"},
+			wantSubcommand:  "migrate",
+			wantPassthrough: []string{},
+		},
+		{
+			name:            "setup subcommand is rejected",
+			args:            []string{"setup", "--dry-run"},
+			wantErrContains: "unknown subcommand",
+		},
+		{
+			name:            "unknown subcommand",
+			args:            []string{"bad-op"},
+			wantErrContains: "unknown subcommand",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subcommand, passthrough, err := resolveStarterSubcommand(tc.args)
+			if tc.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("resolveStarterSubcommand(%v) error = %v, want contain %q", tc.args, err, tc.wantErrContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveStarterSubcommand(%v) unexpected error: %v", tc.args, err)
+			}
+			if subcommand != tc.wantSubcommand {
+				t.Fatalf("resolveStarterSubcommand(%v) subcommand = %q, want %q", tc.args, subcommand, tc.wantSubcommand)
+			}
+			if len(passthrough) != len(tc.wantPassthrough) {
+				t.Fatalf("resolveStarterSubcommand(%v) passthrough len = %d, want %d", tc.args, len(passthrough), len(tc.wantPassthrough))
+			}
+			for i := range tc.wantPassthrough {
+				if passthrough[i] != tc.wantPassthrough[i] {
+					t.Fatalf("resolveStarterSubcommand(%v) passthrough[%d] = %q, want %q", tc.args, i, passthrough[i], tc.wantPassthrough[i])
+				}
+			}
+		})
+	}
+}
+
+func TestStarterExecPlan(t *testing.T) {
+	cases := []struct {
+		name            string
+		args            []string
+		wantPath        string
+		wantArgv        []string
+		wantErrContains string
+	}{
+		{
+			name:     "default server path",
+			args:     nil,
+			wantPath: "/engram",
+			wantArgv: []string{"/engram"},
+		},
+		{
+			name:     "server help",
+			args:     []string{"server", "--help"},
+			wantPath: "/engram",
+			wantArgv: []string{"/engram", "--help"},
+		},
+		{
+			name:     "migrate path",
+			args:     []string{"migrate", "--help"},
+			wantPath: "/engram",
+			wantArgv: []string{"/engram", "migrate", "--help"},
+		},
+		{
+			name:            "setup is not a starter subcommand",
+			args:            []string{"setup", "--dry-run"},
+			wantErrContains: "unknown subcommand",
+		},
+		{
+			name:            "unknown subcommand",
+			args:            []string{"bogus", "--help"},
+			wantErrContains: "unknown subcommand",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, argv, err := starterExecPlan(tc.args)
+			if tc.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("exec plan for %v should error with %q, got %v", tc.args, tc.wantErrContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("exec plan for %v unexpected error: %v", tc.args, err)
+			}
+			if path != tc.wantPath {
+				t.Fatalf("path = %q, want %q", path, tc.wantPath)
+			}
+			if len(argv) != len(tc.wantArgv) {
+				t.Fatalf("argv len = %d, want %d", len(argv), len(tc.wantArgv))
+			}
+			for i := range tc.wantArgv {
+				if argv[i] != tc.wantArgv[i] {
+					t.Fatalf("argv[%d] = %q, want %q", i, argv[i], tc.wantArgv[i])
+				}
+			}
+		})
+	}
+}
+
+func TestStarterSubcommandHelp(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "server help",
+			args: []string{"server", "--help"},
+			want: "Usage: starter server [options]",
+		},
+		{
+			name: "migrate help",
+			args: []string{"migrate", "--help"},
+			want: "Usage: starter migrate [options]",
+		},
+		{
+			name: "health help",
+			args: []string{"health", "--help"},
+			want: "Usage: starter health",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := starterSubcommandHelp(tc.args)
+			if !ok {
+				t.Fatalf("starterSubcommandHelp(%v) ok = false, want true", tc.args)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("starterSubcommandHelp(%v) = %q, want contain %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStarterRequiresAPIKey(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "server requires api key", args: nil, want: true},
+		{name: "server subcommand requires api key", args: []string{"server"}, want: true},
+		{name: "server flag requires api key", args: []string{"--port", "8788"}, want: true},
+		{name: "migrate does not require api key", args: []string{"migrate"}, want: false},
+		{name: "migrate help does not require api key", args: []string{"migrate", "--help"}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := starterRequiresAPIKey(tc.args); got != tc.want {
+				t.Fatalf("starterRequiresAPIKey(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStarterMainDispatch(t *testing.T) {
+	t.Run("migrate help exits before secret validation", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "migrate", "--help")
+		if err != nil {
+			t.Fatalf("starter migrate --help error = %v, output:\n%s", err, out)
+		}
+		if !strings.Contains(out, "Usage: starter migrate [options]") {
+			t.Fatalf("starter migrate --help missing migrate usage; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter migrate --help hit secret validation; output:\n%s", out)
+		}
+	})
+
+	t.Run("server help exits before secret validation", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "server", "--help")
+		if err != nil {
+			t.Fatalf("starter server --help error = %v, output:\n%s", err, out)
+		}
+		if !strings.Contains(out, "Usage: starter server [options]") {
+			t.Fatalf("starter server --help missing server usage; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter server --help hit secret validation; output:\n%s", out)
+		}
+	})
+
+	t.Run("setup is rejected", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "setup", "--dry-run")
+		if err == nil {
+			t.Fatalf("starter setup unexpectedly succeeded; output:\n%s", out)
+		}
+		if !strings.Contains(out, "unknown subcommand") {
+			t.Fatalf("starter setup output missing unknown subcommand; output:\n%s", out)
+		}
+	})
+
+	t.Run("migrate without api key reaches exec boundary", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "migrate")
+		if err == nil {
+			t.Fatalf("starter migrate unexpectedly succeeded; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter migrate incorrectly required ENGRAM_API_KEY; output:\n%s", out)
+		}
+		if !strings.Contains(out, "exec /engram") {
+			t.Fatalf("starter migrate did not reach /engram exec boundary; output:\n%s", out)
+		}
+	})
+}
+
+func TestStarterMainHelper(t *testing.T) {
+	if os.Getenv("STARTER_TEST_MAIN_HELPER") != "1" {
+		return
+	}
+	os.Args = append([]string{"starter"}, os.Args[3:]...)
+	main()
+}
+
+func runStarterMainForTest(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], append([]string{"-test.run=TestStarterMainHelper", "--"}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"STARTER_TEST_MAIN_HELPER=1",
+		"INFISICAL_CLIENT_ID=",
+		"ENGRAM_API_KEY=",
+		"DATABASE_URL=postgres://user:pass@localhost/db",
+	)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
