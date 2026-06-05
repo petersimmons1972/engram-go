@@ -19,6 +19,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tokio-util = "0.7"
 
+[dev-dependencies]
+wiremock = "0.6"
+
 [profile.release]
 opt-level = 3
 lto = true
