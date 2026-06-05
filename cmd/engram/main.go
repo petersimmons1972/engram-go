@@ -722,7 +722,6 @@ func runMigrate(args []string) error {
 	timeout := fs.Duration("timeout", envDuration("ENGRAM_MIGRATE_TIMEOUT", 30*time.Minute), "maximum migration duration")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
-			fs.Usage()
 			return nil
 		}
 		return err

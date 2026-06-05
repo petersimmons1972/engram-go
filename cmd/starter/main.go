@@ -127,6 +127,9 @@ func main() {
 		_, _ = fmt.Fprint(os.Stdout, helpText)
 		os.Exit(0)
 	}
+	if _, _, err := resolveStarterSubcommand(args); err != nil {
+		fatalf("%v", err)
+	}
 
 	// Health subcommand: probe the local /health endpoint and exit 0 (ok) or 1 (error).
 	// Runs before the Infisical flow — no secrets required.

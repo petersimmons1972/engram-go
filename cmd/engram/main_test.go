@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -310,6 +311,9 @@ func TestRunMigrate(t *testing.T) {
 		if !strings.Contains(got, "Usage: engram migrate [options]") {
 			t.Fatalf("migrate help missing usage, got: %q", got)
 		}
+		if count := strings.Count(got, "Usage: engram migrate [options]"); count != 1 {
+			t.Fatalf("migrate help usage count = %d, want 1; got: %q", count, got)
+		}
 		if strings.Contains(got, "Start the engram MCP server") {
 			t.Fatalf("migrate help should not include server help, got: %q", got)
 		}
@@ -397,6 +401,60 @@ func TestRunMigrate(t *testing.T) {
 			t.Fatalf("runMigrate: %v", err)
 		}
 	})
+}
+
+func TestMainDispatchSubcommands(t *testing.T) {
+	t.Run("migrate help exits cleanly", func(t *testing.T) {
+		out, err := runEngramMainForTest(t, "migrate", "--help")
+		if err != nil {
+			t.Fatalf("engram migrate --help error = %v, output:\n%s", err, out)
+		}
+		if count := strings.Count(out, "Usage: engram migrate [options]"); count != 1 {
+			t.Fatalf("engram migrate --help usage count = %d, want 1; output:\n%s", count, out)
+		}
+	})
+
+	t.Run("migrate missing database url exits before server startup", func(t *testing.T) {
+		out, err := runEngramMainForTest(t, "migrate")
+		if err == nil {
+			t.Fatalf("engram migrate without DATABASE_URL unexpectedly succeeded; output:\n%s", out)
+		}
+		if !strings.Contains(out, "DATABASE_URL required") {
+			t.Fatalf("engram migrate output missing DATABASE_URL required; output:\n%s", out)
+		}
+		if strings.Contains(out, "engram ready") {
+			t.Fatalf("engram migrate appeared to start server; output:\n%s", out)
+		}
+	})
+
+	t.Run("setup is rejected", func(t *testing.T) {
+		out, err := runEngramMainForTest(t, "setup", "--dry-run")
+		if err == nil {
+			t.Fatalf("engram setup unexpectedly succeeded; output:\n%s", out)
+		}
+		if !strings.Contains(out, "unknown subcommand") {
+			t.Fatalf("engram setup output missing unknown subcommand; output:\n%s", out)
+		}
+	})
+}
+
+func TestEngramMainHelper(t *testing.T) {
+	if os.Getenv("ENGRAM_TEST_MAIN_HELPER") != "1" {
+		return
+	}
+	os.Args = append([]string{"engram"}, os.Args[3:]...)
+	main()
+}
+
+func runEngramMainForTest(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], append([]string{"-test.run=TestEngramMainHelper", "--"}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"ENGRAM_TEST_MAIN_HELPER=1",
+		"DATABASE_URL=",
+	)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func captureStdout(t *testing.T) (func() string, func()) {

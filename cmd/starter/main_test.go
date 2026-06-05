@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -609,4 +610,76 @@ func TestStarterRequiresAPIKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStarterMainDispatch(t *testing.T) {
+	t.Run("migrate help exits before secret validation", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "migrate", "--help")
+		if err != nil {
+			t.Fatalf("starter migrate --help error = %v, output:\n%s", err, out)
+		}
+		if !strings.Contains(out, "Usage: starter migrate [options]") {
+			t.Fatalf("starter migrate --help missing migrate usage; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter migrate --help hit secret validation; output:\n%s", out)
+		}
+	})
+
+	t.Run("server help exits before secret validation", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "server", "--help")
+		if err != nil {
+			t.Fatalf("starter server --help error = %v, output:\n%s", err, out)
+		}
+		if !strings.Contains(out, "Usage: starter server [options]") {
+			t.Fatalf("starter server --help missing server usage; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter server --help hit secret validation; output:\n%s", out)
+		}
+	})
+
+	t.Run("setup is rejected", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "setup", "--dry-run")
+		if err == nil {
+			t.Fatalf("starter setup unexpectedly succeeded; output:\n%s", out)
+		}
+		if !strings.Contains(out, "unknown subcommand") {
+			t.Fatalf("starter setup output missing unknown subcommand; output:\n%s", out)
+		}
+	})
+
+	t.Run("migrate without api key reaches exec boundary", func(t *testing.T) {
+		out, err := runStarterMainForTest(t, "migrate")
+		if err == nil {
+			t.Fatalf("starter migrate unexpectedly succeeded; output:\n%s", out)
+		}
+		if strings.Contains(out, "no secret source configured") {
+			t.Fatalf("starter migrate incorrectly required ENGRAM_API_KEY; output:\n%s", out)
+		}
+		if !strings.Contains(out, "exec /engram") {
+			t.Fatalf("starter migrate did not reach /engram exec boundary; output:\n%s", out)
+		}
+	})
+}
+
+func TestStarterMainHelper(t *testing.T) {
+	if os.Getenv("STARTER_TEST_MAIN_HELPER") != "1" {
+		return
+	}
+	os.Args = append([]string{"starter"}, os.Args[3:]...)
+	main()
+}
+
+func runStarterMainForTest(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], append([]string{"-test.run=TestStarterMainHelper", "--"}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"STARTER_TEST_MAIN_HELPER=1",
+		"INFISICAL_CLIENT_ID=",
+		"ENGRAM_API_KEY=",
+		"DATABASE_URL=postgres://user:pass@localhost/db",
+	)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
