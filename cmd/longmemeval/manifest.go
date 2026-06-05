@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,10 +25,20 @@ type scoreCompleteness struct {
 }
 
 type runStatusSnapshot struct {
-	Completeness   scoreCompleteness
-	IngestRowTotal int
-	RunRowTotal    int
-	ScoreRowTotal  int
+	Completeness        scoreCompleteness
+	IngestRowTotal      int
+	RunRowTotal         int
+	ScoreRowTotal       int
+	QuestionProjects    []questionProjectProvenance
+	ProjectWarningTotal int
+}
+
+type questionProjectProvenance struct {
+	QuestionID         string `json:"question_id"`
+	Project            string `json:"project"`
+	Source             string `json:"source"`
+	ExpectedRunProject string `json:"expected_run_project,omitempty"`
+	Warning            string `json:"warning,omitempty"`
 }
 
 func scoreCompletenessFromScores(scores []longmemeval.ScoreEntry) scoreCompleteness {
@@ -98,6 +109,7 @@ func writeRunManifest(
 	scores []longmemeval.ScoreEntry,
 ) {
 	completeness := scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores)
+	questionProjects, projectWarningTotal := questionProjectProvenanceFromIngestMap(cfg.RunID, ingestMap)
 	exe, _ := os.Executable()
 	manifest := map[string]any{
 		"run_id":                cfg.RunID,
@@ -110,6 +122,8 @@ func writeRunManifest(
 		"run_error_total":       completeness.RunErrorTotal,
 		"score_error_total":     completeness.ScoreErrorTotal,
 		"complete":              completeness.Complete,
+		"question_projects":     questionProjects,
+		"project_warning_total": projectWarningTotal,
 		"binary_path":           exe,
 		"command_line":          os.Args,
 		"git_sha":               bestEffortGit("rev-parse", "HEAD"),
@@ -156,6 +170,8 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		"ingest_row_total":      snapshot.IngestRowTotal,
 		"run_row_total":         snapshot.RunRowTotal,
 		"score_row_total":       snapshot.ScoreRowTotal,
+		"question_projects":     snapshot.QuestionProjects,
+		"project_warning_total": snapshot.ProjectWarningTotal,
 		"binary_path":           exe,
 		"command_line":          commandLine,
 		"git_sha":               bestEffortGit("rev-parse", "HEAD"),
@@ -218,12 +234,44 @@ func collectRunStatusSnapshot(cfg *Config) runStatusSnapshot {
 		}
 		runMap[entry.QuestionID] = entry
 	}
+	questionProjects, projectWarningTotal := questionProjectProvenanceFromIngestMap(cfg.RunID, ingestMap)
 	return runStatusSnapshot{
-		Completeness:   scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scoreEntries),
-		IngestRowTotal: len(ingestEntries),
-		RunRowTotal:    len(runEntries),
-		ScoreRowTotal:  len(scoreEntries),
+		Completeness:        scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scoreEntries),
+		IngestRowTotal:      len(ingestEntries),
+		RunRowTotal:         len(runEntries),
+		ScoreRowTotal:       len(scoreEntries),
+		QuestionProjects:    questionProjects,
+		ProjectWarningTotal: projectWarningTotal,
 	}
+}
+
+func questionProjectProvenanceFromIngestMap(runID string, ingestMap map[string]longmemeval.IngestEntry) ([]questionProjectProvenance, int) {
+	questionIDs := make([]string, 0, len(ingestMap))
+	for questionID, entry := range ingestMap {
+		if questionID == "" || entry.Project == "" {
+			continue
+		}
+		questionIDs = append(questionIDs, questionID)
+	}
+	sort.Strings(questionIDs)
+
+	projects := make([]questionProjectProvenance, 0, len(questionIDs))
+	warnings := 0
+	for _, questionID := range questionIDs {
+		project := ingestMap[questionID].Project
+		provenance := questionProjectProvenance{
+			QuestionID: questionID,
+			Project:    project,
+			Source:     "checkpoint-ingest",
+		}
+		if expected := projectName(runID, questionID); expected != project {
+			provenance.ExpectedRunProject = expected
+			provenance.Warning = "checkpoint-ingest project differs from run_id-derived project"
+			warnings++
+		}
+		projects = append(projects, provenance)
+	}
+	return projects, warnings
 }
 
 func loadItemMapForStatus(path string) map[string]longmemeval.Item {
