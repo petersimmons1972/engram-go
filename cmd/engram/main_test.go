@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -223,9 +225,16 @@ func TestRunMigrate_HelpAndArgs(t *testing.T) {
 	})
 
 	t.Run("rejects positional arguments", func(t *testing.T) {
-		err := runMigrate([]string{"--foo"})
+		err := runMigrate([]string{"unexpected"})
 		if err == nil || !strings.Contains(err.Error(), "does not accept positional arguments") {
-			t.Fatalf("runMigrate([]string{\"--foo\"}) error = %v, want positional-args message", err)
+			t.Fatalf("runMigrate([]string{\"unexpected\"}) error = %v, want positional-args message", err)
+		}
+	})
+
+	t.Run("rejects unknown flags", func(t *testing.T) {
+		err := runMigrate([]string{"--foo"})
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Fatalf("runMigrate([]string{\"--foo\"}) error = %v, want unknown-flag message", err)
 		}
 	})
 }
@@ -235,36 +244,6 @@ func TestRunMigrate_RequiresDatabaseURL(t *testing.T) {
 	err := runMigrate(nil)
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL required") {
 		t.Fatalf("runMigrate with missing DATABASE_URL error = %v, want DATABASE_URL required", err)
-	}
-}
-
-func TestRunSetup_DelegatesToEngramSetup(t *testing.T) {
-	originalExec := execCommand
-	defer func() { execCommand = originalExec }()
-
-	var gotPath string
-	var gotArgv []string
-	execCommand = func(path string, argv []string, _ []string) error {
-		gotPath = path
-		gotArgv = append([]string(nil), argv...)
-		return nil
-	}
-
-	if err := runSetup([]string{"--dry-run"}); err != nil {
-		t.Fatalf("runSetup returned error: %v", err)
-	}
-
-	if gotPath != "/engram-setup" {
-		t.Fatalf("runSetup path = %q, want %q", gotPath, "/engram-setup")
-	}
-	wantArgv := []string{"/engram-setup", "--dry-run"}
-	if len(gotArgv) != len(wantArgv) {
-		t.Fatalf("runSetup argv len = %d, want %d", len(gotArgv), len(wantArgv))
-	}
-	for i := range wantArgv {
-		if gotArgv[i] != wantArgv[i] {
-			t.Fatalf("runSetup argv[%d] = %q, want %q", i, gotArgv[i], wantArgv[i])
-		}
 	}
 }
 
@@ -316,6 +295,132 @@ func TestEngramReadyLog_IncludesVersion(t *testing.T) {
 	if !strings.Contains(string(src), want) {
 		t.Errorf("main.go missing version key in 'engram ready' slog.Info call (#674)")
 	}
+}
+
+func TestRunMigrate(t *testing.T) {
+	t.Run("help is command specific", func(t *testing.T) {
+		stdout, restore := captureStdout(t)
+		defer restore()
+
+		if err := runMigrate([]string{"--help"}); err != nil {
+			t.Fatalf("runMigrate(--help): %v", err)
+		}
+
+		got := stdout()
+		if !strings.Contains(got, "Usage: engram migrate [options]") {
+			t.Fatalf("migrate help missing usage, got: %q", got)
+		}
+		if strings.Contains(got, "Start the engram MCP server") {
+			t.Fatalf("migrate help should not include server help, got: %q", got)
+		}
+	})
+
+	t.Run("requires database url", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "")
+
+		err := runMigrate(nil)
+		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL required") {
+			t.Fatalf("runMigrate without DATABASE_URL error = %v, want DATABASE_URL required", err)
+		}
+	})
+
+	t.Run("runs migrations and exits without server startup", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:strong@localhost/db")
+		t.Setenv("ENGRAM_MIGRATE_TIMEOUT", "0")
+
+		called := false
+		oldRunMigrations := runDatabaseMigrations
+		runDatabaseMigrations = func(ctx context.Context, dsn string) error {
+			called = true
+			if dsn != "postgres://user:strong@localhost/db" {
+				t.Fatalf("dsn = %q, want env DATABASE_URL", dsn)
+			}
+			if got := os.Getenv("DATABASE_URL"); got != "" {
+				t.Fatalf("DATABASE_URL remained in process environment during migration: %q", got)
+			}
+			return nil
+		}
+		t.Cleanup(func() { runDatabaseMigrations = oldRunMigrations })
+
+		stdout, restore := captureStdout(t)
+		defer restore()
+
+		if err := runMigrate(nil); err != nil {
+			t.Fatalf("runMigrate: %v", err)
+		}
+		if !called {
+			t.Fatal("runMigrate did not run database migrations")
+		}
+		got := stdout()
+		if !strings.Contains(got, "migration complete") {
+			t.Fatalf("runMigrate stdout missing completion message, got %q", got)
+		}
+	})
+
+	t.Run("uses configurable timeout", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:strong@localhost/db")
+		t.Setenv("ENGRAM_MIGRATE_TIMEOUT", "250ms")
+
+		oldRunMigrations := runDatabaseMigrations
+		runDatabaseMigrations = func(ctx context.Context, _ string) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("migration context has no deadline")
+			}
+			remaining := time.Until(deadline)
+			if remaining <= 0 || remaining > time.Second {
+				t.Fatalf("migration deadline remaining = %v, want about 250ms", remaining)
+			}
+			return nil
+		}
+		t.Cleanup(func() { runDatabaseMigrations = oldRunMigrations })
+
+		if err := runMigrate(nil); err != nil {
+			t.Fatalf("runMigrate: %v", err)
+		}
+	})
+
+	t.Run("zero timeout disables deadline", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:strong@localhost/db")
+		t.Setenv("ENGRAM_MIGRATE_TIMEOUT", "0")
+
+		oldRunMigrations := runDatabaseMigrations
+		runDatabaseMigrations = func(ctx context.Context, _ string) error {
+			if _, ok := ctx.Deadline(); ok {
+				t.Fatal("migration context unexpectedly has a deadline")
+			}
+			return nil
+		}
+		t.Cleanup(func() { runDatabaseMigrations = oldRunMigrations })
+
+		if err := runMigrate(nil); err != nil {
+			t.Fatalf("runMigrate: %v", err)
+		}
+	})
+}
+
+func captureStdout(t *testing.T) (func() string, func()) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+
+	return func() string {
+			if err := w.Close(); err != nil {
+				t.Fatalf("close stdout writer: %v", err)
+			}
+			out, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("read stdout: %v", err)
+			}
+			return string(out)
+		}, func() {
+			os.Stdout = old
+			_ = r.Close()
+		}
 }
 
 // ---------------------------------------------------------------------------

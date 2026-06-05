@@ -22,7 +22,7 @@ starter health          # Health check probe (used by Docker healthcheck)
 
 **When to run manually:**
 - Rarely. Docker handles it automatically.
-- `starter migrate` is useful for debugging schema issues in a fresh database.
+- `starter migrate` is useful inside the built container image when debugging schema issues in a fresh database. In a developer checkout, use `go run ./cmd/engram migrate` or build `./engram` first; `starter` execs the absolute `/engram` path used by the image.
 
 **Key behavior:**
 - If `.env.machine-identity` contains Infisical credentials, `starter` fetches secrets from Infisical before starting the server.
@@ -37,21 +37,25 @@ starter health          # Health check probe (used by Docker healthcheck)
 
 **Who runs it:** Docker container, or developers running `go run ./cmd/engram`.
 
-**Purpose:** The MCP server itself. Exposes 43 tools over HTTP/SSE, manages the PostgreSQL backend, handles schema migrations, and runs background workers (reembedding, consolidation, decay audit, etc.).
+**Purpose:** The MCP server itself. Exposes the current MCP tool set over HTTP/SSE, manages the PostgreSQL backend, handles schema migrations, and runs background workers (reembedding, consolidation, decay audit, etc.).
 
 **Usage:**
 
 ```bash
 go run ./cmd/engram
+go run ./cmd/engram server --help
+go run ./cmd/engram migrate --help
+DATABASE_URL=postgres://... go run ./cmd/engram migrate
 # OR
 ./engram (after `make go-build`)
 ```
 
-**Configuration:** Reads environment variables and `.env` file. See `.env.example` for the full list.
+**Configuration:** Reads environment variables and `.env` file. See `.env.example` for the full list. The `migrate` subcommand requires `DATABASE_URL`, runs pending schema migrations, unsets `DATABASE_URL` from the process environment before applying them, and exits without binding the server port. Set `ENGRAM_MIGRATE_TIMEOUT` or `--timeout` to control the migration deadline; use `0` to disable the deadline.
 
 **Key responsibilities:**
 - MCP tool handlers (store, recall, consolidate, etc.)
 - HTTP endpoints (`/sse`, `/health`, `/setup-token`, `/metrics`)
+- `migrate` one-shot subcommand for schema migrations without binding the server port
 - Background workers (reembedding, consolidation, decay, weight tuning)
 - Authentication (bearer token verification)
 - Rate limiting
@@ -257,8 +261,10 @@ make go-build
 
 This produces:
 - `./engram` — MCP server
+- `./starter` — Container entrypoint wrapper
 - `./engram-setup` — Setup tool
 - `./engram-eval` — Eval harness
+- `./instinct` — Hook/consolidation tool
 - `./instinct-benchmark` — Benchmark binary (note: different name from `cmd/benchmark`)
 - `./longmemeval` — LongMemEval benchmark CLI
 

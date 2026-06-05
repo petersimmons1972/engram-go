@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -64,12 +65,6 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "setup":
-			if err := runSetup(os.Args[2:]); err != nil {
-				slog.Error("setup", "err", err)
-				os.Exit(1)
-			}
-			return
 		default:
 			if strings.HasPrefix(os.Args[1], "-") {
 				// Positional flags are treated as server flags (legacy startup mode).
@@ -79,7 +74,7 @@ func main() {
 				}
 				return
 			}
-			slog.Error("unknown subcommand", "subcommand", os.Args[1], "help", "did you mean server, migrate, setup, hook, or hook-daemon?")
+			slog.Error("unknown subcommand", "subcommand", os.Args[1], "help", "did you mean server, migrate, hook, or hook-daemon?")
 			os.Exit(1)
 		}
 	}
@@ -714,43 +709,56 @@ const migrateUsageText = `Usage: engram migrate [options]
 Run database schema migrations and exit.
 
 Options:
-  -h, --help    print this help text
+  -timeout duration    maximum migration duration (env: ENGRAM_MIGRATE_TIMEOUT; default: 30m; 0 disables timeout)
+  -h, --help          print this help text
 `
 
 func runMigrate(args []string) error {
-	if len(args) > 0 {
-		switch args[0] {
-		case "-h", "--help":
-			_, _ = fmt.Fprint(os.Stdout, migrateUsageText)
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stdout, migrateUsageText)
+	}
+	timeout := fs.Duration("timeout", envDuration("ENGRAM_MIGRATE_TIMEOUT", 30*time.Minute), "maximum migration duration")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			fs.Usage()
 			return nil
-		default:
-			return fmt.Errorf("migrate does not accept positional arguments; use --help for usage")
 		}
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("migrate does not accept positional arguments; use --help for usage")
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		return fmt.Errorf("DATABASE_URL required")
 	}
+	_ = os.Unsetenv("DATABASE_URL")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
 
-	pool, err := db.NewSharedPool(ctx, dbURL)
-	if err != nil {
+	if err := runDatabaseMigrations(ctx, dbURL); err != nil {
 		return fmt.Errorf("connect + migrate: %w", err)
 	}
-	pool.Close()
 	fmt.Println("migration complete")
 	return nil
 }
 
-var execCommand = func(path string, argv []string, env []string) error {
-	return syscall.Exec(path, argv, env)
-}
-
-func runSetup(args []string) error {
-	return execCommand("/engram-setup", append([]string{"/engram-setup"}, args...), os.Environ())
+var runDatabaseMigrations = func(ctx context.Context, dsn string) error {
+	pool, err := db.NewSharedPool(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	pool.Close()
+	return nil
 }
 
 // checkBindInterlock implements A-3 (#666): refuse to start when the server

@@ -29,17 +29,35 @@ Subcommands:
             Use 'starter server --help' for options
   migrate   Run database migrations only
             Use 'starter migrate --help' for options
-  setup     Configure the MCP client
-            Use 'starter setup --help' for options
   health    Check /health endpoint and exit 0 (ok) or 1 (error)
             Use 'starter health --help' for options
   help      Show this help message
 
 Starter fetches secrets from Infisical (or uses ENGRAM_API_KEY directly) and
 exec-replaces itself with /engram.
+For client MCP configuration, run engram-setup on the host machine.
 
 Options:
   -h, --help    Show this help message
+`
+
+const starterServerHelpText = `Usage: starter server [options]
+
+Fetch container secrets when configured, then exec /engram with server options.
+For the full server flag list, run engram server --help in a developer checkout
+or /engram server --help inside the container image.
+`
+
+const starterMigrateHelpText = `Usage: starter migrate [options]
+
+Fetch database credentials when Infisical is configured, then exec
+/engram migrate to run schema migrations and exit without starting the server.
+For local developer runs, use go run ./cmd/engram migrate --help.
+`
+
+const starterHealthHelpText = `Usage: starter health
+
+Probe the local /health endpoint and exit 0 when healthy or 1 on error.
 `
 
 func printUsage() {
@@ -105,6 +123,10 @@ func main() {
 		printUsage()
 		os.Exit(0)
 	}
+	if helpText, ok := starterSubcommandHelp(args); ok {
+		_, _ = fmt.Fprint(os.Stdout, helpText)
+		os.Exit(0)
+	}
 
 	// Health subcommand: probe the local /health endpoint and exit 0 (ok) or 1 (error).
 	// Runs before the Infisical flow — no secrets required.
@@ -118,7 +140,7 @@ func main() {
 	// If INFISICAL_CLIENT_ID is absent, skip the Infisical flow entirely.
 	// The environment must already contain ENGRAM_API_KEY in this case.
 	if clientID == "" {
-		if os.Getenv("ENGRAM_API_KEY") == "" {
+		if starterRequiresAPIKey(args) && os.Getenv("ENGRAM_API_KEY") == "" {
 			fatalf("no secret source configured: set INFISICAL_CLIENT_ID (+ INFISICAL_CLIENT_SECRET) to fetch secrets from Infisical, or set ENGRAM_API_KEY directly in the environment")
 		}
 		// ENGRAM_API_KEY is already set — exec directly without touching the env.
@@ -143,13 +165,15 @@ func main() {
 		fatalf("infisical auth: %v", err)
 	}
 
-	apiKey, err := getSecret(ctx, domain, token, projectID, env, secretPath, "ENGRAM_API_KEY")
-	if err != nil {
-		fatalf("fetch ENGRAM_API_KEY: %v", err)
-	}
+	if starterRequiresAPIKey(args) {
+		apiKey, err := getSecret(ctx, domain, token, projectID, env, secretPath, "ENGRAM_API_KEY")
+		if err != nil {
+			fatalf("fetch ENGRAM_API_KEY: %v", err)
+		}
 
-	if err := os.Setenv("ENGRAM_API_KEY", apiKey); err != nil {
-		fatalf("setenv ENGRAM_API_KEY: %v", err)
+		if err := os.Setenv("ENGRAM_API_KEY", apiKey); err != nil {
+			fatalf("setenv ENGRAM_API_KEY: %v", err)
+		}
 	}
 
 	// Fetch POSTGRES_PASSWORD and patch DATABASE_URL so the correct password is
@@ -170,6 +194,30 @@ func main() {
 	// has no need for these credentials — keeping them in /proc/PID/environ leaks
 	// them to any process that can read /proc (#138, #139).
 	execEngram(args, filteredEnv("INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "POSTGRES_PASSWORD"))
+}
+
+func starterSubcommandHelp(args []string) (string, bool) {
+	if len(args) < 2 || !isHelpArg(args[1]) {
+		return "", false
+	}
+	switch args[0] {
+	case "server":
+		return starterServerHelpText, true
+	case "migrate":
+		return starterMigrateHelpText, true
+	case "health":
+		return starterHealthHelpText, true
+	default:
+		return "", false
+	}
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "--help"
+}
+
+func starterRequiresAPIKey(args []string) bool {
+	return len(args) == 0 || args[0] != "migrate"
 }
 
 // runHealth probes the engram /health endpoint on localhost and exits 0 if the
@@ -206,12 +254,12 @@ var execCommand = func(path string, argv []string, env []string) error {
 	return syscall.Exec(path, argv, env)
 }
 
-// execEngram resolves the subcommand (server, migrate, setup), then exec-replaces
+// execEngram resolves the subcommand (server, migrate), then exec-replaces
 // the current process with /engram using the supplied environment.
 //
 // For server, the subcommand is consumed (omitted from argv) so /engram receives
-// only server flags. For migrate/setup the subcommand is preserved so engram can
-// route those operations by name.
+// only server flags. For migrate the subcommand is preserved so engram can route
+// the one-shot migration operation by name.
 func execEngram(args []string, cleanEnv []string) {
 	path, argv, err := starterExecPlan(args)
 	if err != nil {
@@ -244,10 +292,10 @@ func resolveStarterSubcommand(args []string) (subcommand string, passthrough []s
 	}
 
 	switch args[0] {
-	case "server", "migrate", "setup":
+	case "server", "migrate":
 		return args[0], args[1:], nil
 	default:
-		return "", nil, fmt.Errorf("unknown subcommand %q — allowed: server, migrate, setup", args[0])
+		return "", nil, fmt.Errorf("unknown subcommand %q — allowed: server, migrate", args[0])
 	}
 }
 

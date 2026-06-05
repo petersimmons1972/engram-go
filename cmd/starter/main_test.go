@@ -391,7 +391,7 @@ func TestEnvOr(t *testing.T) {
 func TestSubcommandHelp(t *testing.T) {
 	t.Run("usage text mentions per-subcommand help", func(t *testing.T) {
 		// The usageText constant should document that users can run:
-		// starter <subcommand> --help for per-subcommand help
+		// starter <subcommand> --help for real starter subcommands.
 
 		if !strings.Contains(usageText, "starter server --help") {
 			t.Error("usage text should document 'starter server --help'")
@@ -399,13 +399,16 @@ func TestSubcommandHelp(t *testing.T) {
 		if !strings.Contains(usageText, "starter migrate --help") {
 			t.Error("usage text should document 'starter migrate --help'")
 		}
-		if !strings.Contains(usageText, "starter setup --help") {
-			t.Error("usage text should document 'starter setup --help'")
+		if strings.Contains(usageText, "starter setup") {
+			t.Error("usage text must not advertise container setup; use engram-setup on the host")
+		}
+		if !strings.Contains(usageText, "engram-setup") {
+			t.Error("usage text should point client configuration users to engram-setup")
 		}
 	})
 
 	t.Run("usage text includes all allowed subcommands", func(t *testing.T) {
-		subcommands := []string{"server", "migrate", "setup", "health"}
+		subcommands := []string{"server", "migrate", "health"}
 		for _, sub := range subcommands {
 			if !strings.Contains(usageText, sub) {
 				t.Errorf("usage text missing subcommand: %s", sub)
@@ -447,10 +450,9 @@ func TestResolveStarterSubcommand(t *testing.T) {
 			wantPassthrough: []string{},
 		},
 		{
-			name:            "setup subcommand",
+			name:            "setup subcommand is rejected",
 			args:            []string{"setup", "--dry-run"},
-			wantSubcommand:  "setup",
-			wantPassthrough: []string{"--dry-run"},
+			wantErrContains: "unknown subcommand",
 		},
 		{
 			name:            "unknown subcommand",
@@ -513,10 +515,9 @@ func TestStarterExecPlan(t *testing.T) {
 			wantArgv: []string{"/engram", "migrate", "--help"},
 		},
 		{
-			name:     "setup path",
-			args:     []string{"setup", "--dry-run"},
-			wantPath: "/engram",
-			wantArgv: []string{"/engram", "setup", "--dry-run"},
+			name:            "setup is not a starter subcommand",
+			args:            []string{"setup", "--dry-run"},
+			wantErrContains: "unknown subcommand",
 		},
 		{
 			name:            "unknown subcommand",
@@ -547,6 +548,64 @@ func TestStarterExecPlan(t *testing.T) {
 				if argv[i] != tc.wantArgv[i] {
 					t.Fatalf("argv[%d] = %q, want %q", i, argv[i], tc.wantArgv[i])
 				}
+			}
+		})
+	}
+}
+
+func TestStarterSubcommandHelp(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "server help",
+			args: []string{"server", "--help"},
+			want: "Usage: starter server [options]",
+		},
+		{
+			name: "migrate help",
+			args: []string{"migrate", "--help"},
+			want: "Usage: starter migrate [options]",
+		},
+		{
+			name: "health help",
+			args: []string{"health", "--help"},
+			want: "Usage: starter health",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := starterSubcommandHelp(tc.args)
+			if !ok {
+				t.Fatalf("starterSubcommandHelp(%v) ok = false, want true", tc.args)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("starterSubcommandHelp(%v) = %q, want contain %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStarterRequiresAPIKey(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "server requires api key", args: nil, want: true},
+		{name: "server subcommand requires api key", args: []string{"server"}, want: true},
+		{name: "server flag requires api key", args: []string{"--port", "8788"}, want: true},
+		{name: "migrate does not require api key", args: []string{"migrate"}, want: false},
+		{name: "migrate help does not require api key", args: []string{"migrate", "--help"}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := starterRequiresAPIKey(tc.args); got != tc.want {
+				t.Fatalf("starterRequiresAPIKey(%v) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
 	}
