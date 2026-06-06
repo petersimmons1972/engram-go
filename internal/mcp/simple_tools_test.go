@@ -192,6 +192,21 @@ func TestMemoryQuery_MissingQuery(t *testing.T) {
 	require.True(t, res.IsError, "missing query must return an MCP tool error result")
 }
 
+func TestMemoryQuery_InvalidMode_ReturnsValidationError(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"query":   "topic",
+		"project": "test",
+		"mode":    "invalid",
+	}
+
+	res, err := handleMemoryQuery(context.Background(), pool, req, testConfig())
+	require.NoError(t, err, "invalid mode should be a tool error, not a Go error")
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "invalid mode must return an MCP tool error")
+}
+
 // TestMemoryQuery_DoesNotMutateOriginal: original args map must not be modified.
 func TestMemoryQuery_DoesNotMutateOriginal(t *testing.T) {
 	pool := newTestNoopPool(t)

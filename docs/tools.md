@@ -178,6 +178,19 @@ By default, `memory_recall` returns lightweight `handles` plus `count` and
 `fetch_hint`. To get full result objects, pass `mode="full"` or set
 `ENGRAM_RECALL_DEFAULT_MODE=full`.
 
+`mode` is validated at call time and must be one of:
+
+- `""` (inherit default mode)
+- `"handle"` (lightweight references)
+- `"full"` (full search result objects)
+
+Any other value returns a tool error with a message like `mode must be one of: handle, full`.
+
+For federated recall, partial failures no longer fail the entire call. `failed_projects`
+contains the list of projects that could not be initialized or completed, each with a
+`project` name and `error` message. If all requested projects fail, the tool returns
+`isError=true` and includes `failed_projects` in the error detail.
+
 **detail** controls how much text comes back when full results are returned or
 when you later expand a handle with `memory_fetch`:
 
@@ -201,6 +214,13 @@ You can filter by memory type. This is a hard filter — it excludes everything 
 memory_recall("database", project="my-app", memory_types=["error"])
 # Returns only error-type memories. Good before a debugging session.
 ```
+
+### memory_query
+
+Simplified front-door for `memory_recall` that aliases `limit` to `top_k` and fills the
+same defaults (`top_k=5`, `top_k` overrides `limit` when both are provided).
+`memory_query` inherits the same `mode` validation and federated behavior as
+`memory_recall`, including partial-failure `failed_projects` metadata.
 
 <p align="center"><img src="assets/svg/scoring.svg" alt="How memories are scored and ranked" width="900"></p>
 
