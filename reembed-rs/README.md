@@ -6,7 +6,7 @@ High-throughput re-embedding worker in Rust. Shares the same PostgreSQL backend 
 
 Polls `chunks` rows where `embedding IS NULL`, sends batches to an OpenAI-compatible embedding endpoint (Infinity / olla), and writes the resulting vectors back to Postgres. One container per GPU; the orchestrator decides which GPU handles which range.
 
-The worker is intentionally a thin DB → HTTP → DB pipeline. No state of its own; all coordination is through Postgres advisory locks and the `chunks` table.
+The worker is intentionally a thin DB → HTTP → DB pipeline. A fixed worker pool (`ENGRAM_REEMBED_CONCURRENCY_MAX`) claims small slices via `FOR UPDATE SKIP LOCKED`, calls the shared embed endpoint once per slice, persists vectors, and immediately loops. No worker tracks which GPU backend to use; throughput differences come from endpoint scheduling outside this process.
 
 ## Prerequisites
 
@@ -46,12 +46,12 @@ ENGRAM_EMBED_DIMENSIONS=1024 \
 | `LITELLM_API_KEY` | Bearer for `LITELLM_URL` (if endpoint requires) | No |
 | `ENGRAM_EMBED_MODEL` | Embedding model name | Yes |
 | `ENGRAM_EMBED_DIMENSIONS` | Output dimension (1024 for bge-m3) | Yes |
-| `ENGRAM_EMBED_SUB_BATCH` | Inner batch size for the HTTP call (default 100) | No |
-| `ENGRAM_REEMBED_BATCH_SIZE` | Chunks claimed per Postgres lease (default 2000) | No |
-| `ENGRAM_REEMBED_INTERVAL` | Sleep between poll cycles when queue is empty | No |
-| `ENGRAM_REEMBED_LEASE_SECS` | Advisory-lock TTL for a claimed batch | No |
-| `ENGRAM_REEMBED_CONCURRENCY_MIN/MAX` | Adaptive concurrency bounds | No |
-| `ENGRAM_REEMBED_LATENCY_HIGH_MS/LOW_MS` | Hysteresis for the concurrency controller | No |
+| `ENGRAM_EMBED_SUB_BATCH` | Preferred per-claim slice size for the worker-pool DB claim loop (default 8). Also mirrors `ENGRAM_REEMBED_BATCH_SIZE` for compatibility. | No |
+| `ENGRAM_REEMBED_BATCH_SIZE` | Legacy alias for claim slice size (default 8, mirrors `ENGRAM_EMBED_SUB_BATCH`) | No |
+| `ENGRAM_REEMBED_INTERVAL` | Base poll interval used when no rows are claimed (and seed for empty-queue backoff) | No |
+| `ENGRAM_REEMBED_CONCURRENCY_MAX` | Worker count in pool (capped by startup probe warmup success count) | No |
+| `ENGRAM_REEMBED_CONCURRENCY_MIN/MAX` | Adaptive concurrency fields kept for compatibility; runtime concurrency is fixed by `ENGRAM_REEMBED_CONCURRENCY_MAX` and startup warmup | No |
+| `ENGRAM_REEMBED_LATENCY_HIGH_MS/LOW_MS` | Reserved for compatibility; adaptive controller remains in code for historical reference and can be re-enabled in future releases | No |
 
 ## Tests
 
@@ -67,11 +67,8 @@ The compose-deployed container has a `pg_isready` HEALTHCHECK (see `Dockerfile.r
 
 ## Source layout
 
-- `src/main.rs` — entrypoint, env wiring, signal handling
-- `src/worker.rs` — claim → embed → write loop
-- `src/embed.rs` — HTTP client for the OpenAI-compatible endpoint
-- `src/db.rs` — Postgres claim/release helpers
-- `src/metrics.rs` — Prometheus exporter
+- `src/main.rs` — entrypoint, env wiring, startup probe, worker orchestration, and structured runtime logs
+- `src/claim.rs` — SKIP LOCKED claim + per-slice embed + update unit used by all worker loops
 
 ## Operations
 

@@ -1,51 +1,60 @@
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use pgvector::Vector;
 use reqwest::Client as HttpClient;
-use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{FromRow, PgPool};
+use sqlx::PgPool;
 use tokio::signal;
-use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio::time::{sleep, Instant};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+pub mod claim;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-struct Config {
-    database_url: String,
-    litellm_url: String,
-    litellm_api_key: String,
-    embed_model: String,
-    embed_dims: Option<u32>,
+#[derive(Clone)]
+pub struct Config {
+    pub database_url: String,
+    pub litellm_url: String,
+    pub litellm_api_key: String,
+    pub embed_model: String,
+    pub embed_dims: Option<u32>,
     /// Maximum characters to send per chunk. Prevents context-window overflow.
     /// Default 2048 chars (~512 tokens) — conservative for all supported models.
-    max_chunk_chars: usize,
-    batch_size: usize,
-    embed_sub_batch: usize,
-    interval: Duration,
-    embed_timeout: Duration,
-    startup_probe_max_attempts: usize,
-    startup_probe_initial_backoff: Duration,
-    startup_probe_max_backoff: Duration,
-    // Adaptive concurrency config
-    concurrency_min: usize,
-    concurrency_max: usize,
-    latency_high_ms: u64,
-    latency_low_ms: u64,
-    ramp_after: usize,
+    pub max_chunk_chars: usize,
+    /// Legacy alias retained: REEMBED_BATCH_SIZE now maps directly to the per-claim
+    /// slice size and therefore replaces the old batched fan-out chunk count.
+    pub batch_size: usize,
+    /// Per-claim slice size. In the worker-pool model this is the same as
+    /// batch_size and maps to the max number of rows claimed per DB transaction.
+    pub embed_sub_batch: usize,
+    pub interval: Duration,
+    pub embed_timeout: Duration,
+    pub startup_probe_max_attempts: usize,
+    pub startup_probe_initial_backoff: Duration,
+    pub startup_probe_max_backoff: Duration,
+    // Fixed worker-count model keeps concurrency in this range.
+    pub concurrency_min: usize,
+    pub concurrency_max: usize,
+    pub latency_high_ms: u64,
+    pub latency_low_ms: u64,
+    pub ramp_after: usize,
     /// Failure-rate threshold above which backpressure fires (halve + reset streak).
     /// Below this rate the controller holds position without ramp credit.
     /// Configurable via ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE (default 0.10).
-    failure_rate_backpressure: f64,
+    pub failure_rate_backpressure: f64,
 }
 
 impl Config {
     fn from_env() -> Self {
-        // ENGRAM_REEMBED_CONCURRENCY is the legacy fixed-concurrency knob.
-        // It now sets concurrency_max when ENGRAM_REEMBED_CONCURRENCY_MAX is absent.
         let legacy_concurrency = env_usize("ENGRAM_REEMBED_CONCURRENCY", 16);
+        let embed_sub_batch = env_usize("ENGRAM_EMBED_SUB_BATCH", 8);
+        let batch_size = env_usize("ENGRAM_REEMBED_BATCH_SIZE", embed_sub_batch);
+
         Self {
             database_url: env_require("DATABASE_URL"),
             litellm_url: env_or("LITELLM_URL", "http://litellm:4000"),
@@ -56,8 +65,8 @@ impl Config {
             ),
             embed_dims: env_opt_u32("ENGRAM_EMBED_DIMENSIONS"),
             max_chunk_chars: env_usize("ENGRAM_EMBED_MAX_CHARS", 2048),
-            batch_size: env_usize("ENGRAM_REEMBED_BATCH_SIZE", 100),
-            embed_sub_batch: env_usize("ENGRAM_EMBED_SUB_BATCH", 8),
+            batch_size,
+            embed_sub_batch: batch_size,
             interval: env_duration("ENGRAM_REEMBED_INTERVAL", Duration::from_secs(10)),
             embed_timeout: Duration::from_secs(120),
             startup_probe_max_attempts: env_usize("ENGRAM_REEMBED_STARTUP_PROBE_MAX_ATTEMPTS", 5),
@@ -79,247 +88,14 @@ impl Config {
     }
 }
 
-// ── LiteLLM embed client ──────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct EmbedResponse {
-    data: Vec<EmbedData>,
-}
-
-#[derive(Deserialize)]
-struct EmbedData {
-    #[serde(default)]
-    index: usize,
-    embedding: Vec<f32>,
-}
-
-async fn embed_batch(
-    http: &HttpClient,
-    litellm_url: &str,
-    api_key: &str,
-    model: &str,
-    dims: Option<u32>,
-    texts: &[String],
-) -> anyhow::Result<Vec<Vec<f32>>> {
-    let mut body = serde_json::json!({
-        "model": model,
-        "input": texts,
-    });
-    if let Some(d) = dims {
-        body["dimensions"] = serde_json::json!(d);
-    }
-
-    let url = format!("{}/v1/embeddings", litellm_url.trim_end_matches('/'));
-    let mut req = http.post(&url).json(&body);
-    if !api_key.is_empty() {
-        req = req.bearer_auth(api_key);
-    }
-
-    let resp = req.send().await.context("litellm request")?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        bail!("litellm embed HTTP {}: {}", status, body.trim());
-    }
-
-    let mut parsed: EmbedResponse = resp.json().await.context("litellm decode")?;
-    // Ollama returns results ordered by index; sort by index field if present.
-    parsed.data.sort_by_key(|d| d.index);
-    Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
-}
-
-// ── Pending chunk ─────────────────────────────────────────────────────────────
-
-#[derive(FromRow, Clone)]
-struct PendingChunk {
-    id: String,
-    chunk_text: String,
-}
-
-// ── Batch processing ──────────────────────────────────────────────────────────
-
-async fn run_batch(
-    pool: &PgPool,
-    http: &HttpClient,
-    cfg: &Config,
-    concurrency: usize,
-) -> anyhow::Result<(usize, usize, usize, Duration)> {
-    let start = std::time::Instant::now();
-
-    // Claim a batch inside a transaction and commit immediately so the
-    // connection is returned to the pool before the (slow) embed calls begin.
-    // FOR UPDATE SKIP LOCKED ensures concurrent replicas don't process the same chunks.
-    //
-    // ORDER BY id DESC: process newest (highest-id) chunks first so recently-written
-    // memories become vector-searchable with minimal delay (#914).
-    // Starvation note: if write rate ever meets embed throughput, oldest chunks may
-    // never drain. In this system write rate is well below embed throughput in steady
-    // state; monitor the pending-reembed gauge and switch to a hybrid if oldest-chunk
-    // age grows unboundedly.
-    let mut tx = pool.begin().await.context("begin tx")?;
-    let rows: Vec<PendingChunk> = sqlx::query_as(
-        r#"
-        SELECT id, chunk_text
-        FROM chunks
-        WHERE embedding IS NULL
-        ORDER BY id DESC
-        LIMIT $1
-        FOR UPDATE SKIP LOCKED
-        "#,
-    )
-    .bind(cfg.batch_size as i64)
-    .fetch_all(&mut *tx)
-    .await
-    .context("query pending chunks")?;
-    tx.commit().await.context("commit claim tx")?;
-
-    if rows.is_empty() {
-        return Ok((0, 0, 0, start.elapsed()));
-    }
-
-    let n = rows.len();
-    let total_sub_batches = rows.chunks(cfg.embed_sub_batch).count();
-    let t_select = start.elapsed();
-    tracing::debug!(count = n, concurrency, "processing batch");
-
-    let sem = Arc::new(Semaphore::new(concurrency));
-    let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut handles = Vec::new();
-
-    for (sub_batch_idx, sub_batch) in rows.chunks(cfg.embed_sub_batch).enumerate() {
-        let permit = sem.clone().acquire_owned().await?;
-        let pool = pool.clone();
-        let http = http.clone();
-        let litellm_url = cfg.litellm_url.clone();
-        let api_key = cfg.litellm_api_key.clone();
-        let model = cfg.embed_model.clone();
-        let dims = cfg.embed_dims;
-        let timeout = cfg.embed_timeout;
-        let max_chars = cfg.max_chunk_chars;
-        let chunks: Vec<PendingChunk> = sub_batch.to_vec();
-        let failed_count = failed_count.clone();
-
-        handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            let t0 = std::time::Instant::now();
-
-            // Truncate each text to the model context window.
-            let texts: Vec<String> = chunks
-                .iter()
-                .map(|c| {
-                    if c.chunk_text.len() > max_chars {
-                        let end = (0..=max_chars)
-                            .rev()
-                            .find(|&i| c.chunk_text.is_char_boundary(i))
-                            .unwrap_or(0);
-                        c.chunk_text[..end].to_string()
-                    } else {
-                        c.chunk_text.clone()
-                    }
-                })
-                .collect();
-
-            let embed_result = tokio::time::timeout(
-                timeout,
-                embed_batch(&http, &litellm_url, &api_key, &model, dims, &texts),
-            )
-            .await;
-
-            let t_embed = t0.elapsed();
-
-            let vecs = match embed_result {
-                Err(_) => {
-                    warn!(
-                        sub_batch_index = sub_batch_idx,
-                        count = chunks.len(),
-                        embed_ms = t_embed.as_millis(),
-                        "embed sub-batch timeout"
-                    );
-                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return;
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        sub_batch_index = sub_batch_idx,
-                        count = chunks.len(),
-                        embed_ms = t_embed.as_millis(),
-                        err = %e,
-                        "embed sub-batch failed"
-                    );
-                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return;
-                }
-                Ok(Ok(v)) => v,
-            };
-
-            for (chunk, vec) in chunks.iter().zip(vecs) {
-                if let Err(e) =
-                    sqlx::query("UPDATE chunks SET embedding = $1::vector WHERE id = $2")
-                        .bind(Vector::from(vec))
-                        .bind(&chunk.id)
-                        .execute(&pool)
-                        .await
-                {
-                    warn!(chunk_id = %chunk.id, err = %e, "update failed");
-                }
-            }
-
-            let t_write = t0.elapsed() - t_embed;
-            tracing::debug!(
-                count = chunks.len(),
-                embed_ms = t_embed.as_millis(),
-                write_ms = t_write.as_millis(),
-                "sub-batch done"
-            );
-        }));
-    }
-
-    for h in handles {
-        let _ = h.await;
-    }
-
-    let total = start.elapsed();
-    let n_failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
-    tracing::info!(
-        chunks = n,
-        failed_sub_batches = n_failed,
-        select_ms = t_select.as_millis(),
-        total_ms = total.as_millis(),
-        "batch complete"
-    );
-
-    Ok((n, n_failed, total_sub_batches, total))
-}
-
-// ── Main loop ─────────────────────────────────────────────────────────────────
-
-async fn run(cfg: Config) -> anyhow::Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(cfg.concurrency_max as u32 + 4)
-        .connect(&cfg.database_url)
-        .await
-        .context("connect to postgres")?;
-
-    let http = HttpClient::builder()
-        .timeout(cfg.embed_timeout + Duration::from_secs(5))
-        // Keep enough idle connections for all concurrent sub-batch tasks so
-        // every batch cycle reuses warm connections. Without this, reqwest may
-        // close excess connections between cycles, causing 19/20 tasks to pay
-        // TCP setup cost (~1ms each) and stagger their arrival at vLLM —
-        // preventing vLLM from batching all requests in a single forward pass.
-        .pool_max_idle_per_host(cfg.concurrency_max)
-        .build()
-        .context("build http client")?;
-
-    // Startup probe with bounded retry/backoff so transient backend outages
-    // (restart windows, brief network blips) do not trigger crash loops.
+async fn startup_probe(http: &HttpClient, cfg: &Config) -> anyhow::Result<()> {
     let attempts = cfg.startup_probe_max_attempts.max(1);
     let mut backoff = cfg.startup_probe_initial_backoff;
     let mut last_err: Option<anyhow::Error> = None;
-    let mut probe_ok = false;
+
     for attempt in 1..=attempts {
-        match embed_batch(
-            &http,
+        match claim::embed_batch(
+            http,
             &cfg.litellm_url,
             &cfg.litellm_api_key,
             &cfg.embed_model,
@@ -329,9 +105,13 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         .await
         {
             Ok(v) => {
-                info!(dims = v.first().map(|e| e.len()).unwrap_or(0), model = %cfg.embed_model, attempt, "litellm probe ok");
-                probe_ok = true;
-                break;
+                info!(
+                    dims = v.first().map(|e| e.len()).unwrap_or(0),
+                    model = %cfg.embed_model,
+                    attempt,
+                    "litellm probe ok"
+                );
+                return Ok(());
             }
             Err(e) => {
                 last_err = Some(e);
@@ -345,68 +125,202 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
                     url = %cfg.litellm_url,
                     "startup embed probe failed; retrying with backoff"
                 );
-                tokio::time::sleep(backoff).await;
+                sleep(backoff).await;
                 backoff = (backoff * 2).min(cfg.startup_probe_max_backoff);
             }
         }
     }
-    if !probe_ok {
-        if let Some(e) = last_err {
-            error!(
-                err = %e,
-                attempts,
-                url = %cfg.litellm_url,
-                "embed endpoint unreachable after startup probe retries — exiting"
-            );
-        } else {
-            error!(
-                attempts,
-                url = %cfg.litellm_url,
-                "embed endpoint unreachable after startup probe retries — exiting"
-            );
-        }
-        std::process::exit(1);
+
+    if let Some(e) = last_err {
+        bail!(
+            "embed endpoint unreachable after startup probe retries: {}",
+            e
+        );
+    }
+    bail!("embed endpoint unreachable after startup probe retries")
+}
+
+async fn warmup_embeddings(http: &HttpClient, cfg: &Config) -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let successes = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::with_capacity(cfg.concurrency_max);
+
+    for _ in 0..cfg.concurrency_max {
+        let h = http.clone();
+        let url = cfg.litellm_url.clone();
+        let key = cfg.litellm_api_key.clone();
+        let model = cfg.embed_model.clone();
+        let dims = cfg.embed_dims;
+        let successes = Arc::clone(&successes);
+
+        handles.push(tokio::spawn(async move {
+            if claim::embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")])
+                .await
+                .is_ok()
+            {
+                successes.fetch_add(1, Ordering::Relaxed);
+            }
+        }));
     }
 
-    // Pre-warm connection pool and measure actual endpoint concurrency.
-    // If the endpoint is single-threaded (e.g. Infinity ROCm), parallel warmup
-    // calls will timeout. Count successes and cap concurrency_max to what the
-    // endpoint can actually handle — preventing silent all-timeout hangs.
-    let effective_concurrency = {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let successes = Arc::new(AtomicUsize::new(0));
-        let mut warmup = tokio::task::JoinSet::new();
-        for _ in 0..cfg.concurrency_max {
-            let h = http.clone();
-            let url = cfg.litellm_url.clone();
-            let key = cfg.litellm_api_key.clone();
-            let model = cfg.embed_model.clone();
-            let dims = cfg.embed_dims;
-            let sc = Arc::clone(&successes);
-            warmup.spawn(async move {
-                if embed_batch(&h, &url, &key, &model, dims, &[String::from("warmup")])
-                    .await
-                    .is_ok()
-                {
-                    sc.fetch_add(1, Ordering::Relaxed);
-                }
-            });
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    successes.load(Ordering::Relaxed).max(1)
+}
+
+fn millis_as_u64(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn increase_backoff(current_ms: u64) -> u64 {
+    (current_ms * 2).min(millis_as_u64(Duration::from_secs(300)))
+}
+
+async fn run_worker(
+    worker_id: usize,
+    pool: PgPool,
+    http: HttpClient,
+    cfg: Config,
+    shutdown: CancellationToken,
+    in_flight: Arc<AtomicUsize>,
+    attempted: Arc<AtomicUsize>,
+    completed: Arc<AtomicUsize>,
+    failed: Arc<AtomicUsize>,
+    backoff_ms: Arc<AtomicU64>,
+) {
+    let max_backoff_ms = millis_as_u64(Duration::from_secs(300));
+    let mut worker_attempted = 0usize;
+    let mut worker_written = 0usize;
+    let mut worker_failed = 0usize;
+
+    loop {
+        if shutdown.is_cancelled() {
+            break;
         }
-        while warmup.join_next().await.is_some() {}
-        let n = successes.load(Ordering::Relaxed).max(1); // always at least 1
-        if n < cfg.concurrency_max {
+
+        in_flight.fetch_add(1, Ordering::AcqRel);
+        let started = Instant::now();
+        let result = claim::process_slice(&pool, &http, &cfg).await;
+        in_flight.fetch_sub(1, Ordering::AcqRel);
+
+        match result {
+            Ok(outcome) => {
+                let elapsed = started.elapsed();
+                if outcome.attempted == 0 {
+                    let wait_ms = backoff_ms.load(Ordering::Acquire);
+                    let next_ms = increase_backoff(wait_ms);
+                    let _ = backoff_ms.compare_exchange(
+                        wait_ms,
+                        next_ms.min(max_backoff_ms),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+
+                    warn!(worker_id, wait_ms, "no claim-eligible chunks; backing off");
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(wait_ms)) => {}
+                        _ = shutdown.cancelled() => {}
+                    }
+                    if shutdown.is_cancelled() {
+                        break;
+                    }
+                    continue;
+                }
+
+                backoff_ms.store(millis_as_u64(cfg.interval), Ordering::Release);
+                worker_attempted += outcome.attempted;
+                worker_written += outcome.written;
+                worker_failed += outcome.failed;
+                attempted.fetch_add(outcome.attempted, Ordering::AcqRel);
+                completed.fetch_add(outcome.written, Ordering::AcqRel);
+                failed.fetch_add(outcome.failed, Ordering::AcqRel);
+
+                let secs = elapsed.as_secs_f64().max(0.001);
+                let throughput = outcome.written as f64 / secs;
+                info!(
+                    worker_id,
+                    attempted = outcome.attempted,
+                    written = outcome.written,
+                    failed_slices = outcome.failed,
+                    slice_ms = elapsed.as_millis(),
+                    throughput_rows_per_sec = throughput,
+                    worker_total_attempted = worker_attempted,
+                    worker_total_written = worker_written,
+                    worker_total_failed = worker_failed,
+                    "worker throughput"
+                );
+
+                continue;
+            }
+            Err(err) => {
+                warn!(worker_id, err = %err, "claim slice failed");
+                let wait_ms = backoff_ms
+                    .load(Ordering::Acquire)
+                    .max(millis_as_u64(cfg.interval));
+                let next_ms = increase_backoff(wait_ms).max(wait_ms);
+                let _ = backoff_ms.compare_exchange(
+                    wait_ms,
+                    next_ms,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(wait_ms.min(max_backoff_ms))) => {}
+                    _ = shutdown.cancelled() => {}
+                }
+                if shutdown.is_cancelled() {
+                    break;
+                }
+            }
+        }
+    }
+
+    info!(
+        worker_id,
+        attempted = worker_attempted,
+        written = worker_written,
+        failed = worker_failed,
+        "worker exiting"
+    );
+}
+
+pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyhow::Result<()> {
+    let requested_workers = cfg.concurrency_max.max(1);
+
+    let pool = PgPoolOptions::new()
+        .max_connections(requested_workers as u32 + 4)
+        .connect(&cfg.database_url)
+        .await
+        .context("connect to postgres")?;
+
+    let pool_for_embed = HttpClient::builder()
+        .timeout(cfg.embed_timeout + Duration::from_secs(5))
+        // Keep enough idle connections for all concurrent workers so warmup and
+        // normal slices can reuse sockets without churn.
+        .pool_max_idle_per_host(requested_workers)
+        .build()
+        .context("build http client")?;
+
+    startup_probe(&pool_for_embed, &cfg).await?;
+
+    let effective_workers = {
+        let n = warmup_embeddings(&pool_for_embed, &cfg).await;
+        let n = n.max(1);
+        if n < requested_workers {
             warn!(
-                configured = cfg.concurrency_max,
+                requested = requested_workers,
                 effective = n,
-                "embed endpoint handled fewer concurrent requests than configured — capping concurrency"
+                "embed endpoint handled fewer concurrent requests than configured — capping worker count"
             );
         }
         info!(connections = n, "connection pool warmed");
-        n
+        n.min(requested_workers)
     };
 
     info!(
-        batch_size = cfg.batch_size,
+        worker_count = effective_workers,
         interval_ms = cfg.interval.as_millis(),
         concurrency_min = cfg.concurrency_min,
         concurrency_max = cfg.concurrency_max,
@@ -414,68 +328,84 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         "engram-reembed started"
     );
 
-    let mut controller = AdaptiveConcurrency::new(
-        cfg.concurrency_min,
-        effective_concurrency,
-        cfg.latency_high_ms,
-        cfg.latency_low_ms,
-        cfg.ramp_after,
-        cfg.failure_rate_backpressure,
-    );
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let attempted = Arc::new(AtomicUsize::new(0));
+    let completed = Arc::new(AtomicUsize::new(0));
+    let failed = Arc::new(AtomicUsize::new(0));
+    let backoff_ms = Arc::new(AtomicU64::new(millis_as_u64(cfg.interval)));
 
-    let mut backoff = cfg.interval;
-    let max_backoff = Duration::from_secs(300);
-
-    loop {
-        let prev_concurrency = controller.current;
-        match run_batch(&pool, &http, &cfg, controller.current).await {
-            Err(e) => {
-                error!(err = %e, "batch error");
-                // Treat batch error as a failure to back off immediately.
-                controller.update(1, 1, 1, Duration::from_millis(cfg.latency_high_ms * 2));
-                backoff = (backoff * 2).min(max_backoff);
-            }
-            Ok((0, _, _, _)) => {
-                backoff = (backoff * 2).min(max_backoff);
-            }
-            Ok((n, n_failed, total_sub_batches, elapsed)) => {
-                controller.update(n, n_failed, total_sub_batches, elapsed);
-                if controller.current != prev_concurrency {
-                    let per_chunk_ms = elapsed.as_millis() as u64 / n as u64;
-                    let reason = if controller.current < prev_concurrency {
-                        "latency_high"
-                    } else {
-                        "latency_low"
-                    };
-                    info!(
-                        prev = prev_concurrency,
-                        next = controller.current,
-                        reason,
-                        per_chunk_latency_ms = per_chunk_ms,
-                        "reembed concurrency adjusted"
-                    );
+    let gauge = {
+        let in_flight = in_flight.clone();
+        let attempted = attempted.clone();
+        let completed = completed.clone();
+        let failed = failed.clone();
+        let backoff_ms = backoff_ms.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        info!(
+                            in_flight = in_flight.load(Ordering::Acquire),
+                            attempted_total = attempted.load(Ordering::Acquire),
+                            completed_total = completed.load(Ordering::Acquire),
+                            failed_total = failed.load(Ordering::Acquire),
+                            backoff_ms = backoff_ms.load(Ordering::Acquire),
+                            "reembed progress gauge"
+                        );
+                    }
+                    _ = shutdown.cancelled() => break,
                 }
-                if n >= cfg.batch_size {
-                    // Full batch — drain immediately without sleeping.
-                    backoff = cfg.interval;
-                    continue;
-                }
-                // Partial batch — queue exhausted, reset backoff.
-                backoff = cfg.interval;
             }
-        }
+        })
+    };
 
-        tokio::select! {
-            _ = tokio::time::sleep(backoff) => {}
-            _ = signal::ctrl_c() => {
-                info!("shutdown signal received");
-                break;
-            }
+    let mut workers = JoinSet::new();
+    for worker_id in 0..effective_workers {
+        workers.spawn(run_worker(
+            worker_id,
+            pool.clone(),
+            pool_for_embed.clone(),
+            cfg.clone(),
+            shutdown.clone(),
+            in_flight.clone(),
+            attempted.clone(),
+            completed.clone(),
+            failed.clone(),
+            backoff_ms.clone(),
+        ));
+    }
+
+    while let Some(result) = workers.join_next().await {
+        if let Err(err) = result {
+            warn!(worker_error = %err, "worker task ended with panic");
         }
     }
 
+    gauge.abort();
+    let _ = gauge.await;
+
     pool.close().await;
     Ok(())
+}
+
+async fn run(cfg: Config) -> anyhow::Result<()> {
+    let shutdown = CancellationToken::new();
+    let mut runner = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("shutdown signal received");
+            shutdown.cancel();
+            (&mut runner)
+                .await
+                .context("reembed worker runner join failed")?
+        }
+        result = &mut runner => {
+            result.context("reembed worker runner join failed")?
+        }
+    }
 }
 
 #[tokio::main]
@@ -645,6 +575,13 @@ impl AdaptiveConcurrency {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().expect("config test env lock poisoned")
+    }
 
     fn reset_env() {
         for key in [
@@ -658,6 +595,8 @@ mod config_tests {
             "ENGRAM_REEMBED_STARTUP_PROBE_MAX_ATTEMPTS",
             "ENGRAM_REEMBED_STARTUP_PROBE_INITIAL_BACKOFF",
             "ENGRAM_REEMBED_STARTUP_PROBE_MAX_BACKOFF",
+            "ENGRAM_EMBED_SUB_BATCH",
+            "ENGRAM_REEMBED_BATCH_SIZE",
         ] {
             std::env::remove_var(key);
         }
@@ -665,6 +604,7 @@ mod config_tests {
 
     #[test]
     fn config_adaptive_defaults() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
@@ -673,10 +613,12 @@ mod config_tests {
         assert_eq!(cfg.latency_high_ms, 2000);
         assert_eq!(cfg.latency_low_ms, 400);
         assert_eq!(cfg.ramp_after, 3);
+        assert_eq!(cfg.embed_sub_batch, 8);
     }
 
     #[test]
     fn config_concurrency_backward_compat() {
+        let _guard = env_guard();
         // Legacy ENGRAM_REEMBED_CONCURRENCY sets concurrency_max when MAX absent.
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
@@ -687,6 +629,7 @@ mod config_tests {
 
     #[test]
     fn config_explicit_max_overrides_legacy() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY_MAX", "12");
@@ -697,6 +640,7 @@ mod config_tests {
 
     #[test]
     fn config_failure_rate_backpressure_default() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
@@ -705,11 +649,23 @@ mod config_tests {
 
     #[test]
     fn config_failure_rate_backpressure_override() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE", "0.05");
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
         assert!((cfg.failure_rate_backpressure - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn config_embed_sub_batch_alias_is_reem_batch_size() {
+        let _guard = env_guard();
+        reset_env();
+        std::env::set_var("ENGRAM_REEMBED_BATCH_SIZE", "23");
+        std::env::set_var("DATABASE_URL", "postgres://test");
+        let cfg = Config::from_env();
+        assert_eq!(cfg.batch_size, 23);
+        assert_eq!(cfg.embed_sub_batch, 23);
     }
 }
 
@@ -963,10 +919,6 @@ mod adaptive_concurrency_tests {
 mod ordering_tests {
     /// Regression guard: the chunk-selection query must use ORDER BY id DESC
     /// so that newest (highest-id) chunks are embedded first (#914).
-    ///
-    /// Starvation note: DESC ordering may not drain oldest rows if write rate
-    /// meets embed throughput. Monitor the pending-reembed gauge; switch to a
-    /// hybrid if oldest-chunk age grows unboundedly.
     #[test]
     fn chunk_query_uses_desc_ordering() {
         let query = r#"
@@ -982,10 +934,7 @@ mod ordering_tests {
             "chunk-selection query must use ORDER BY id DESC (newest-first) — found ASC or missing (#914)"
         );
         assert!(
-            !query.contains(
-                "ORDER BY id
-"
-            ),
+            !query.contains("ORDER BY id\n"),
             "chunk-selection query must not use bare ORDER BY id (ASC) — must be DESC (#914)"
         );
     }
