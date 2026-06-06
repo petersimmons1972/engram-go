@@ -76,3 +76,11 @@ tmp/
 *.bak
 *.temp
 .nextcloud-credentials
+
+# Host/runtime artifacts (homelab-config)
+*.lock
+Documents/Resume/
+.local/share/applications/
+.local/share/icons/
+.config/mimeapps.list
+archive/*.zip
