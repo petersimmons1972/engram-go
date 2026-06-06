@@ -345,6 +345,77 @@ func TestDispatchScoreWritesRunStatus(t *testing.T) {
 	}
 }
 
+func TestDispatchScoreRunStatusUsesCheckpointProjectProvenance(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Project: "lme-actualprefix-q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{
+		"longmemeval",
+		"score",
+		"--data", dataPath,
+		"--out", dir,
+		"--workers", "1",
+		"--run-id", "statusrun",
+		"--score-output", "quiet",
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch exit = %d, want 0; stderr=%s", exit, stderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "RUN_STATUS.json"))
+	if err != nil {
+		t.Fatalf("read RUN_STATUS.json: %v", err)
+	}
+	var status map[string]any
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatalf("parse RUN_STATUS.json: %v", err)
+	}
+	projects, ok := status["question_projects"].([]any)
+	if !ok || len(projects) != 1 {
+		t.Fatalf("question_projects = %v (%T), want one entry", status["question_projects"], status["question_projects"])
+	}
+	project, ok := projects[0].(map[string]any)
+	if !ok {
+		t.Fatalf("question_projects[0] = %v (%T), want object", projects[0], projects[0])
+	}
+	if project["question_id"] != "q001" {
+		t.Fatalf("question_id = %v, want q001", project["question_id"])
+	}
+	if project["project"] != "lme-actualprefix-q001" {
+		t.Fatalf("project = %v, want checkpoint-ingest project", project["project"])
+	}
+	if project["source"] != "checkpoint-ingest" {
+		t.Fatalf("source = %v, want checkpoint-ingest", project["source"])
+	}
+	if project["expected_run_project"] != "lme-statusrun-q001" {
+		t.Fatalf("expected_run_project = %v, want generated run-id project", project["expected_run_project"])
+	}
+	if project["warning"] == "" {
+		t.Fatalf("warning missing for project provenance mismatch")
+	}
+	if got := int(status["project_warning_total"].(float64)); got != 1 {
+		t.Fatalf("project_warning_total = %d, want 1", got)
+	}
+}
+
 func TestRunScore_AllAttemptedRowsFailReturnsNonZero(t *testing.T) {
 	dir := t.TempDir()
 
