@@ -121,7 +121,7 @@ check-env:
 	@# #701: route diagnostic to stderr so `make up > /dev/null` is clean
 	@echo "✓ .env credentials look set" >&2
 
-## Configure MCP client — fetches current bearer token and writes mcpServers.engram in ~/.claude.json
+## Configure MCP client — fetches current bearer token and writes mcpServers.engram to ~/.claude.json and ~/.claude/mcp_servers.json
 ## Run this after: first install, container restart (if key changed), or key rotation.
 ## After setup, run /mcp in Claude Code to reconnect.
 setup:

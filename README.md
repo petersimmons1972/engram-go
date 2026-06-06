@@ -85,6 +85,8 @@ make up
 make setup
 ```
 
+`make setup` uses `engram-setup` defaults, which target `https://engram.petersimmons.com` unless you override `--url` (for example `http://127.0.0.1:8788` during local-only startup).
+
 Both setups expose the server at `http://localhost:8788`. Cold start: ~200ms. Idle memory: 18 MB.
 
 ### Environment Configuration

@@ -260,6 +260,12 @@ func TestConfigFormatFlag(t *testing.T) {
 		if !strings.Contains(outputStr, "would write") {
 			t.Error("text format missing 'would write'")
 		}
+		if !strings.Contains(outputStr, ".claude/mcp_servers.json") {
+			t.Error("text format missing primary config path")
+		}
+		if !strings.Contains(outputStr, ".claude.json") {
+			t.Error("text format missing legacy config path")
+		}
 	})
 
 	t.Run("format flag is recognized", func(t *testing.T) {
@@ -270,7 +276,7 @@ func TestConfigFormatFlag(t *testing.T) {
 }
 
 // TestDefaultEndpointIsK8s verifies that the default server URL points to the
-// k8s ingress, not the retired local Docker address (#engram-setup-k8s).
+// remote ingress, not the retired local Docker address (#engram-setup-k8s).
 func TestDefaultEndpointIsK8s(t *testing.T) {
 	if defaultServerURL != "https://engram.petersimmons.com" {
 		t.Errorf("defaultServerURL = %q, want %q", defaultServerURL, "https://engram.petersimmons.com")
