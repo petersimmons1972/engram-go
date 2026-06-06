@@ -6,14 +6,58 @@ package search_test
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
+	"time"
 
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type failingRecallBackend struct {
+	err error
+	db.Backend
+}
+
+func (b *failingRecallBackend) VectorSearchWithDateRange(_ context.Context, _ string, _ []float32, _ int, _, _ *time.Time) ([]db.VectorHit, error) {
+	return nil, b.err
+}
+
+func (b *failingRecallBackend) FTSSearch(_ context.Context, _ string, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
+	return nil, b.err
+}
+
+func (b *failingRecallBackend) GetMeta(ctx context.Context, project string, key string) (string, bool, error) {
+	return b.Backend.GetMeta(ctx, project, key)
+}
+
+func (b *failingRecallBackend) SetMeta(ctx context.Context, project string, key string, val string) error {
+	return b.Backend.SetMeta(ctx, project, key, val)
+}
+
+func (b *failingRecallBackend) SetMetaTx(ctx context.Context, tx db.Tx, project string, key string, val string) error {
+	return b.Backend.SetMetaTx(ctx, tx, project, key, val)
+}
+
+func newEngineWithFailingBackend(t *testing.T, project string, err error) *search.SearchEngine {
+	t.Helper()
+	ctx := context.Background()
+	base, dsnErr := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, dsnErr)
+	backend := &failingRecallBackend{err: err, Backend: base}
+	t.Cleanup(base.Close)
+	t.Cleanup(func() {
+		if delErr := base.DeleteProject(context.Background(), project); delErr != nil {
+			t.Logf("cleanup delete project %q: %v", project, delErr)
+		}
+	})
+	return search.New(ctx, backend, &fakeClient{dims: 1024}, project,
+		"http://ollama:11434", "llama3.2", false, nil, 0)
+}
 
 // TestFederatedRecall_MergesResults verifies that RecallAcrossEngines returns
 // memories from multiple projects in a single result set sorted by score.
@@ -121,4 +165,26 @@ func TestFederatedRecall_AllEnginesFailReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, results)
 	assert.Contains(t, err.Error(), "federated recall failed across")
+}
+
+func TestFederatedRecall_PartialFailureReturnsMetadataAndResults(t *testing.T) {
+	engGood := newTestEngine(t, uniqueProject("fed-partial-good"))
+	t.Cleanup(func() { engGood.Close() })
+	engBad := newEngineWithFailingBackend(t, uniqueProject("fed-partial-bad"), errors.New("failing engine"))
+	t.Cleanup(func() { engBad.Close() })
+	ctx := context.Background()
+
+	m := &types.Memory{
+		Content:    "Federation mixed-engine result with one failing tenant",
+		MemoryType: types.MemoryTypePattern,
+		Project:    engGood.Project(), Importance: 2, StorageMode: "focused",
+	}
+	require.NoError(t, engGood.Store(ctx, m))
+
+	results, failed, err := search.RecallAcrossEnginesWithEventsAndOpts(ctx, []*search.SearchEngine{engGood, engBad}, "mixed-engine recall", 10, "normal", search.RecallOpts{}, false)
+	require.NoError(t, err, "partial federation failure should still return partial results")
+	require.Len(t, failed, 1, "partial failure should include exactly one failed project")
+	require.Equal(t, engBad.Project(), failed[0].Project)
+	require.Equal(t, "failing engine", failed[0].Error)
+	require.Greater(t, len(results), 0, "good engine should contribute recall results")
 }

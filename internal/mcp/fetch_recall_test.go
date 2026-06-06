@@ -216,6 +216,25 @@ func TestMemoryRecall_EmptyQuery_ReturnsValidationError(t *testing.T) {
 	require.Contains(t, text.Text, "query")
 }
 
+func TestHandleMemoryRecall_InvalidMode_ReturnsValidationError(t *testing.T) {
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "some query",
+		"mode":    "unsupported",
+	}
+	cfg := testConfig()
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "invalid mode must return an MCP tool error")
+	text, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok)
+	require.Contains(t, text.Text, "mode must be one of")
+}
+
 // TestMemoryRecall_MissingQuery_ReturnsValidationError: missing query key (not
 // supplied at all) must also return a clean MCP tool error, not a Go error.
 func TestMemoryRecall_MissingQuery_ReturnsValidationError(t *testing.T) {
@@ -456,9 +475,45 @@ func TestHandleMemoryRecall_FederatedInitFailuresReturnError(t *testing.T) {
 	}
 
 	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
-	require.Error(t, err)
-	require.Nil(t, res)
-	require.Contains(t, err.Error(), "failed to initialize any requested federated project")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "all federated init failures should return an MCP tool error")
+	text, ok := res.Content[0].(mcpgo.TextContent)
+	require.True(t, ok)
+	require.Contains(t, text.Text, "failed to initialize any requested federated project")
+	require.Contains(t, text.Text, "test-a")
+	require.Contains(t, text.Text, "test-b")
+}
+
+func TestHandleMemoryRecall_FederatedPartialInitFailureIncludesFailedProjects(t *testing.T) {
+	pool := NewEnginePool(func(ctx context.Context, project string) (*EngineHandle, error) {
+		if project == "project-fail-init" {
+			return nil, errors.New("init failed for project-fail-init")
+		}
+		backend := &handleFastPathBackend{}
+		engine := search.New(ctx, backend, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	})
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"projects": []any{"project-ok", "project-fail-init"},
+		"query":    "partial failures",
+		"mode":     "handle",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+	require.Equal(t, float64(1), out["count"])
+	failedRaw, ok := out["failed_projects"].([]any)
+	require.True(t, ok, "partial failure metadata should be present as []any")
+	require.Len(t, failedRaw, 1, "only one project should be reported as failed")
+	failed, ok := failedRaw[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "project-fail-init", failed["project"])
+	require.Equal(t, "init failed for project-fail-init", failed["error"])
 }
 
 // TestHandleMemoryRecall_EpisodeContextInjected verifies that

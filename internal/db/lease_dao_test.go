@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/petersimmons1972/engram/internal/testutil"
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -29,15 +30,21 @@ func testDSN(t *testing.T) string {
 func TestEnqueueChunkLease(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN(t)
+	project := testutil.UniqueProject("test-lease")
 
 	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	defer pool.Close()
 
 	// Create a test memory and chunk.
-	backend, err := NewPostgresBackend(ctx, "test-lease", dsn)
+	backend, err := NewPostgresBackend(ctx, project, dsn)
 	require.NoError(t, err)
-	defer backend.Close()
+	t.Cleanup(backend.Close)
+	t.Cleanup(func() {
+		if err := backend.DeleteProject(ctx, project); err != nil {
+			t.Logf("cleanup delete project %q: %v", project, err)
+		}
+	})
 
 	memID := types.NewMemoryID()
 	chunkID := types.NewMemoryID()
@@ -47,14 +54,14 @@ func TestEnqueueChunkLease(t *testing.T) {
 		ChunkText: "test chunk",
 		ChunkHash: "hash123",
 		ChunkType: "sentence_window",
-		Project:   "test-lease",
+		Project:   project,
 		Embedding: nil,
 	}
 
 	mem := &types.Memory{
 		ID:      memID,
 		Content: "test memory",
-		Project: "test-lease",
+		Project: project,
 	}
 
 	// Store memory and chunk.
@@ -65,7 +72,7 @@ func TestEnqueueChunkLease(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enqueue the chunk.
-	err = EnqueueChunkLease(ctx, pool, chunkID, "test-lease")
+	err = EnqueueChunkLease(ctx, pool, chunkID, project)
 	require.NoError(t, err)
 
 	// Verify the lease was set.
@@ -85,14 +92,20 @@ func TestEnqueueChunkLease(t *testing.T) {
 func TestEnqueueChunkLease_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN(t)
+	project := testutil.UniqueProject("test-lease-idempotent")
 
 	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	defer pool.Close()
 
-	backend, err := NewPostgresBackend(ctx, "test-lease-idempotent", dsn)
+	backend, err := NewPostgresBackend(ctx, project, dsn)
 	require.NoError(t, err)
-	defer backend.Close()
+	t.Cleanup(backend.Close)
+	t.Cleanup(func() {
+		if err := backend.DeleteProject(ctx, project); err != nil {
+			t.Logf("cleanup delete project %q: %v", project, err)
+		}
+	})
 
 	memID := types.NewMemoryID()
 	chunkID := types.NewMemoryID()
@@ -102,14 +115,14 @@ func TestEnqueueChunkLease_Idempotent(t *testing.T) {
 		ChunkText: "test chunk",
 		ChunkHash: "hash456",
 		ChunkType: "sentence_window",
-		Project:   "test-lease-idempotent",
+		Project:   project,
 		Embedding: nil,
 	}
 
 	mem := &types.Memory{
 		ID:      memID,
 		Content: "test memory",
-		Project: "test-lease-idempotent",
+		Project: project,
 	}
 
 	err = backend.StoreMemory(ctx, mem)
@@ -119,10 +132,10 @@ func TestEnqueueChunkLease_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Call EnqueueChunkLease twice.
-	err = EnqueueChunkLease(ctx, pool, chunkID, "test-lease-idempotent")
+	err = EnqueueChunkLease(ctx, pool, chunkID, project)
 	require.NoError(t, err)
 
-	err = EnqueueChunkLease(ctx, pool, chunkID, "test-lease-idempotent")
+	err = EnqueueChunkLease(ctx, pool, chunkID, project)
 	require.NoError(t, err, "second call should also succeed")
 }
 
@@ -133,14 +146,20 @@ func TestEnqueueChunkLease_Idempotent(t *testing.T) {
 func TestEnqueueChunkLeases_Batch(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN(t)
+	project := testutil.UniqueProject("test-lease-batch")
 
 	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	defer pool.Close()
 
-	backend, err := NewPostgresBackend(ctx, "test-lease-batch", dsn)
+	backend, err := NewPostgresBackend(ctx, project, dsn)
 	require.NoError(t, err)
-	defer backend.Close()
+	t.Cleanup(backend.Close)
+	t.Cleanup(func() {
+		if err := backend.DeleteProject(ctx, project); err != nil {
+			t.Logf("cleanup delete project %q: %v", project, err)
+		}
+	})
 
 	memID := types.NewMemoryID()
 	chunkIDs := []string{types.NewMemoryID(), types.NewMemoryID(), types.NewMemoryID()}
@@ -148,7 +167,7 @@ func TestEnqueueChunkLeases_Batch(t *testing.T) {
 	mem := &types.Memory{
 		ID:      memID,
 		Content: "test memory",
-		Project: "test-lease-batch",
+		Project: project,
 	}
 
 	err = backend.StoreMemory(ctx, mem)
@@ -162,7 +181,7 @@ func TestEnqueueChunkLeases_Batch(t *testing.T) {
 			ChunkText: fmt.Sprintf("test chunk %d", i),
 			ChunkHash: fmt.Sprintf("hash-%d", i),
 			ChunkType: "sentence_window",
-			Project:   "test-lease-batch",
+			Project:   project,
 			Embedding: nil,
 		}
 		chunks = append(chunks, chunk)

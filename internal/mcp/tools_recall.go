@@ -32,6 +32,44 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 	return map[string]any{"embed": false}
 }
 
+func normalizeRecallMode(rawMode string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(rawMode))
+	if mode == "" || mode == "handle" || mode == "full" {
+		return mode, nil
+	}
+	return "", fmt.Errorf("mode must be one of: handle, full")
+}
+
+func federatedFailurePayload(failed []search.FailedFederatedProject) []map[string]any {
+	out := make([]map[string]any, 0, len(failed))
+	for _, f := range failed {
+		out = append(out, map[string]any{
+			"project": f.Project,
+			"error":   f.Error,
+		})
+	}
+	return out
+}
+
+func federatedFailureMessage(baseErr error, failed []search.FailedFederatedProject) string {
+	parts := make([]string, 0, len(failed))
+	for _, f := range failed {
+		if f.Project == "" {
+			parts = append(parts, f.Error)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", f.Project, f.Error))
+	}
+	msg := "memory_recall: all federated projects failed"
+	if baseErr != nil {
+		msg += ": " + baseErr.Error()
+	}
+	if len(parts) > 0 {
+		msg += "; failures: " + strings.Join(parts, "; ")
+	}
+	return msg
+}
+
 func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
 	// NOTE: RecallDegradedTotal is intentionally NOT incremented here.
 	// The engine layer (RecallWithOpts / RecallWithinMemory) is the single
@@ -276,7 +314,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	detail := getString(args, "detail", "summary")
 	includeConflicts := getBool(args, "include_conflicts", false)
 	recordEvent := getBool(args, "record_event", false)
-	mode := getString(args, "mode", cfg.RecallDefaultMode)
+	rawMode := getString(args, "mode", cfg.RecallDefaultMode)
+	mode, err := normalizeRecallMode(rawMode)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
 	var opts search.RecallOpts
 	opts.Mode = mode
 	since, before, err := parseRecallDateBounds(args)
@@ -318,12 +360,14 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		engines := make([]*search.SearchEngine, 0, len(projectNames))
 		var firstHandle *EngineHandle // retained for conflict enrichment
 		var firstProject string       // project name that firstHandle was initialized for
+		failedProjects := make([]search.FailedFederatedProject, 0, len(projectNames))
 		for _, p := range projectNames {
 			h, err := pool.Get(ctx, p)
 			if err != nil {
-				// Log so callers know results may be partial (#130).
+				// Log and keep metadata for partial success diagnostics (#130, #1038).
 				slog.Warn("handleMemoryRecall: skipping project — init failed",
 					"project", p, "err", err)
+				failedProjects = append(failedProjects, search.FailedFederatedProject{Project: p, Error: err.Error()})
 				continue
 			}
 			if firstHandle == nil {
@@ -333,11 +377,19 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			engines = append(engines, h.Engine)
 		}
 		if len(engines) == 0 {
-			return nil, fmt.Errorf("memory_recall: failed to initialize any requested federated project")
+			return mcpgo.NewToolResultError(
+				federatedFailureMessage(
+					fmt.Errorf("memory_recall: failed to initialize any requested federated project"),
+					failedProjects,
+				),
+			), nil
 		}
-		results, err := search.RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, opts, recordEvent)
+		results, failedRecall, err := search.RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, opts, recordEvent)
+		failedProjects = append(failedProjects, failedRecall...)
 		if err != nil {
-			return nil, err
+			return mcpgo.NewToolResultError(
+				federatedFailureMessage(err, failedProjects),
+			), nil
 		}
 		sanitizeRecallResults(results)
 		if mode == "handle" {
@@ -348,12 +400,18 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 				"degraded":   degradedMap(!ok, reason),
 			}
+			if len(failedProjects) > 0 {
+				out["failed_projects"] = federatedFailurePayload(failedProjects)
+			}
 			if !ok {
 				addRecallDegradedWarning(out, cfg.RouterURL, reason)
 			}
 			return toolResult(out)
 		}
 		out := map[string]any{"results": results, "count": len(results)}
+		if len(failedProjects) > 0 {
+			out["failed_projects"] = federatedFailurePayload(failedProjects)
+		}
 		if includeConflicts && firstHandle != nil {
 			// All projects share the same Postgres instance, so the backend from
 			// the first successfully-initialized engine can serve cross-project

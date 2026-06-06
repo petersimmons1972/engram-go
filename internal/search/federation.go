@@ -15,6 +15,13 @@ import (
 // to prevent a large EnginePool from opening O(N) parallel database connections (#119).
 const maxFederationConcurrency = 4
 
+// FailedFederatedProject captures one federated Recall failure for error
+// attribution and API-level metadata.
+type FailedFederatedProject struct {
+	Project string
+	Error   string
+}
+
 // RecallAcrossEngines fans out a recall query to multiple project engines concurrently,
 // merges all results, deduplicates by memory ID, and returns the topK results sorted by
 // composite score descending. If topK <= 0, all results are returned.
@@ -25,7 +32,8 @@ const maxFederationConcurrency = 4
 // This is the engine-layer primitive for Cross-Project Knowledge Federation (Feature 4).
 // The MCP handler wires project name → engine via EnginePool and calls this function.
 func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string) ([]types.SearchResult, error) {
-	return RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, RecallOpts{}, true)
+	results, _, err := RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, RecallOpts{}, true)
+	return results, err
 }
 
 // RecallAcrossEnginesWithEvents is RecallAcrossEngines with explicit retrieval
@@ -33,27 +41,34 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 // retrieval-event writes but still follows the underlying recall mode's normal
 // access-heat behavior.
 func RecallAcrossEnginesWithEvents(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string, recordEvents bool) ([]types.SearchResult, error) {
-	return RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, RecallOpts{}, recordEvents)
+	results, _, err := RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, RecallOpts{}, recordEvents)
+	return results, err
 }
 
 // RecallAcrossEnginesWithEventsAndOpts is RecallAcrossEnginesWithEvents with
 // explicit RecallOpts propagation so federated callers can preserve the same
 // response-mode and post-processing semantics as single-project recall.
-func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string, opts RecallOpts, recordEvents bool) ([]types.SearchResult, error) {
+//
+// On a successful recall (even partial), it returns merged results plus metadata
+// for engines that failed to execute. If every engine fails, results is nil and
+// err is non-nil.
+func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string, opts RecallOpts, recordEvents bool) ([]types.SearchResult, []FailedFederatedProject, error) {
 	if len(engines) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(engines) == 1 {
 		if recordEvents {
 			results, _, err := engines[0].RecallWithEventAndOpts(ctx, query, topK, detail, opts)
-			return results, err
+			return results, nil, err
 		}
-		return engines[0].RecallWithOpts(ctx, query, topK, detail, opts)
+		results, err := engines[0].RecallWithOpts(ctx, query, topK, detail, opts)
+		return results, nil, err
 	}
 
 	type fanResult struct {
 		results []types.SearchResult
 		err     error
+		project string
 	}
 
 	// Semaphore limits concurrent Recall calls to maxFederationConcurrency.
@@ -77,7 +92,7 @@ func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*Search
 			} else {
 				res, err = eng.RecallWithOpts(ctx, query, topK, detail, opts)
 			}
-			ch <- fanResult{res, err}
+			ch <- fanResult{results: res, err: err, project: eng.Project()}
 		}()
 	}
 
@@ -89,12 +104,14 @@ func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*Search
 
 	// Collect, dedup by ID (keep highest score), then sort.
 	seen := make(map[string]types.SearchResult, len(engines)*topK)
-	failed := 0
+	failed := make([]FailedFederatedProject, 0, len(engines))
+	failedCount := 0
 	for fan := range ch {
 		if fan.err != nil {
-			failed++
+			failedCount++
+			failed = append(failed, FailedFederatedProject{Project: fan.project, Error: fan.err.Error()})
 			// Best-effort: log and skip failing engines rather than aborting the whole call.
-			slog.Warn("federation: engine recall failed", "err", fan.err)
+			slog.Warn("federation: engine recall failed", "project", fan.project, "err", fan.err)
 			continue
 		}
 		for _, r := range fan.results {
@@ -103,8 +120,8 @@ func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*Search
 			}
 		}
 	}
-	if failed == len(engines) {
-		return nil, fmt.Errorf("federated recall failed across %d engines", failed)
+	if failedCount == len(engines) {
+		return nil, failed, fmt.Errorf("federated recall failed across %d engines", failedCount)
 	}
 
 	merged := make([]types.SearchResult, 0, len(seen))
@@ -118,7 +135,10 @@ func RecallAcrossEnginesWithEventsAndOpts(ctx context.Context, engines []*Search
 	if topK > 0 && len(merged) > topK {
 		merged = merged[:topK]
 	}
-	return merged, nil
+	if len(failed) > 0 {
+		return merged, failed, nil
+	}
+	return merged, nil, nil
 }
 
 func federatedScoreGreater(a, b float64) bool {
