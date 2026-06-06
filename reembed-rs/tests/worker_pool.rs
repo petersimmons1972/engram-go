@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ fn response_template(delay: Duration) -> ResponseTemplate {
 
 fn scoped_database_url(base: &str, schema: &str) -> String {
     let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}options=-csearch_path={schema}")
+    format!("{base}{sep}options=-csearch_path={schema},public")
 }
 
 async fn setup_schema(database_url: &str) -> anyhow::Result<SchemaCtx> {
@@ -72,7 +72,7 @@ async fn setup_schema(database_url: &str) -> anyhow::Result<SchemaCtx> {
     sqlx::query(&format!("DROP TABLE IF EXISTS {schema_q}.chunks CASCADE"))
         .execute(&pool)
         .await?;
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
         .execute(&pool)
         .await?;
     sqlx::query(&format!(
@@ -102,11 +102,13 @@ async fn setup_schema(database_url: &str) -> anyhow::Result<SchemaCtx> {
 async fn insert_rows(ctx: &SchemaCtx, total: usize) -> anyhow::Result<()> {
     let table = format!("{}.chunks", quoted(&ctx.schema));
     for i in 0..total {
-        sqlx::query(&format!("INSERT INTO {table} (id, chunk_text) VALUES ($1, $2)"))
-            .bind(format!("row-{i}"))
-            .bind(format!("chunk text {i}"))
-            .execute(&ctx.pool)
-            .await?;
+        sqlx::query(&format!(
+            "INSERT INTO {table} (id, chunk_text) VALUES ($1, $2)"
+        ))
+        .bind(format!("row-{i}"))
+        .bind(format!("chunk text {i}"))
+        .execute(&ctx.pool)
+        .await?;
     }
     Ok(())
 }
@@ -168,6 +170,28 @@ async fn wait_processed(ctx: &SchemaCtx, expected: i64, timeout: Duration) -> an
     }
 }
 
+async fn wait_requests(
+    server: &MockServer,
+    expected: usize,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let seen = server
+            .received_requests()
+            .await
+            .map(|requests| requests.len())
+            .unwrap_or_default();
+        if seen >= expected {
+            return Ok(());
+        }
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("timed out waiting for {expected} requests; saw {seen}");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn run_custom_workers(
     ctx: SchemaCtx,
     cfg: Config,
@@ -184,20 +208,20 @@ async fn run_custom_workers(
         let http = HttpClient::new();
         let endpoint_id = endpoint.clone();
         set.spawn(async move {
-            let mut claimed_total = 0usize;
+            let mut written_total = 0usize;
             loop {
                 if token.is_cancelled() {
                     break;
                 }
-                let (claimed, _) = process_slice(&pool, &http, &local_cfg)
+                let outcome = process_slice(&pool, &http, &local_cfg)
                     .await
-                    .unwrap_or((0, 0));
-                claimed_total += claimed;
-                if claimed == 0 {
+                    .unwrap_or_default();
+                written_total += outcome.written;
+                if outcome.attempted == 0 {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             }
-            (endpoint_id, claimed_total)
+            (endpoint_id, written_total)
         });
     }
 
@@ -227,11 +251,16 @@ async fn skip_locked_no_double_processing() -> anyhow::Result<()> {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
-        .respond_with(response_template(Duration::from_millis(2)))
+        .respond_with(response_template(Duration::from_millis(25)))
         .mount(&server)
         .await;
 
-    let cfg = test_config(&scoped_database_url(&base_url, &ctx.schema), &server.uri(), 1, 4);
+    let cfg = test_config(
+        &scoped_database_url(&base_url, &ctx.schema),
+        &server.uri(),
+        4,
+        2,
+    );
     let shutdown = CancellationToken::new();
     let task = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
 
@@ -311,7 +340,11 @@ async fn slow_backend_does_not_gate_fast() -> anyhow::Result<()> {
     let slow_mixed = *mixed.get(&slow_server.uri()).unwrap_or(&0);
 
     assert!(fast_baseline > 0);
-    assert!(fast_mixed + slow_mixed >= fast_baseline);
+    let min_fast_mixed = fast_baseline * 8 / 10;
+    assert!(
+        fast_mixed >= min_fast_mixed,
+        "fast worker should individually process at least 80% of solo baseline; baseline={fast_baseline}, fast_mixed={fast_mixed}, slow_mixed={slow_mixed}"
+    );
 
     Ok(())
 }
@@ -340,9 +373,10 @@ async fn process_slice_happy_and_failure_paths() -> anyhow::Result<()> {
         4,
     );
     let http = HttpClient::new();
-    let (claimed, failed) = process_slice(&success_ctx.pool, &http, &cfg).await?;
-    assert_eq!(claimed, 4);
-    assert_eq!(failed, 0);
+    let outcome = process_slice(&success_ctx.pool, &http, &cfg).await?;
+    assert_eq!(outcome.attempted, 4);
+    assert_eq!(outcome.written, 4);
+    assert_eq!(outcome.failed, 0);
 
     let fail_ctx = setup_schema(&base_url).await?;
     insert_rows(&fail_ctx, 3).await?;
@@ -362,9 +396,10 @@ async fn process_slice_happy_and_failure_paths() -> anyhow::Result<()> {
     );
     slow_cfg.embed_timeout = Duration::from_millis(20);
     let slow_http = HttpClient::new();
-    let (failed_claimed, failed_count) = process_slice(&fail_ctx.pool, &slow_http, &slow_cfg).await?;
-    assert_eq!(failed_claimed, 3);
-    assert_eq!(failed_count, 3);
+    let failed_outcome = process_slice(&fail_ctx.pool, &slow_http, &slow_cfg).await?;
+    assert_eq!(failed_outcome.attempted, 3);
+    assert_eq!(failed_outcome.written, 0);
+    assert_eq!(failed_outcome.failed, 3);
 
     Ok(())
 }
@@ -382,22 +417,42 @@ async fn graceful_shutdown_drains_inflight() -> anyhow::Result<()> {
     let slow_server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/embeddings"))
-        .respond_with(response_template(Duration::from_millis(200)))
+        .and(body_partial_json(json!({"input": ["probe"]})))
+        .respond_with(response_template(Duration::from_millis(1)))
+        .with_priority(1)
+        .mount(&slow_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .and(body_partial_json(json!({"input": ["warmup"]})))
+        .respond_with(response_template(Duration::from_millis(1)))
+        .with_priority(1)
+        .mount(&slow_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(response_template(Duration::from_millis(300)))
+        .with_priority(5)
         .mount(&slow_server)
         .await;
 
-    let mut cfg = test_config(&scoped_database_url(&base_url, &ctx.schema), &slow_server.uri(), 1, 4);
+    let mut cfg = test_config(
+        &scoped_database_url(&base_url, &ctx.schema),
+        &slow_server.uri(),
+        1,
+        4,
+    );
     cfg.embed_timeout = Duration::from_millis(500);
 
     let shutdown = CancellationToken::new();
     let runner = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    wait_requests(&slow_server, 3, Duration::from_secs(2)).await?;
     shutdown.cancel();
     runner.await??;
 
     let done = count_embedded(&ctx).await?;
-    assert!(done > 0);
+    assert_eq!(done, 4);
 
     Ok(())
 }
@@ -412,7 +467,12 @@ async fn startup_probe_gates_workers() -> anyhow::Result<()> {
     let ctx = setup_schema(&base_url).await?;
     insert_rows(&ctx, 8).await?;
 
-    let mut cfg = test_config(&scoped_database_url(&base_url, &ctx.schema), "http://127.0.0.1:9", 2, 4);
+    let mut cfg = test_config(
+        &scoped_database_url(&base_url, &ctx.schema),
+        "http://127.0.0.1:9",
+        2,
+        4,
+    );
     cfg.startup_probe_max_attempts = 1;
     cfg.startup_probe_initial_backoff = Duration::from_millis(1);
 

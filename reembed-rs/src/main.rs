@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -132,7 +132,10 @@ async fn startup_probe(http: &HttpClient, cfg: &Config) -> anyhow::Result<()> {
     }
 
     if let Some(e) = last_err {
-        bail!("embed endpoint unreachable after startup probe retries: {}", e);
+        bail!(
+            "embed endpoint unreachable after startup probe retries: {}",
+            e
+        );
     }
     bail!("embed endpoint unreachable after startup probe retries")
 }
@@ -168,10 +171,7 @@ async fn warmup_embeddings(http: &HttpClient, cfg: &Config) -> usize {
 }
 
 fn millis_as_u64(duration: Duration) -> u64 {
-    duration
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 fn increase_backoff(current_ms: u64) -> u64 {
@@ -185,12 +185,14 @@ async fn run_worker(
     cfg: Config,
     shutdown: CancellationToken,
     in_flight: Arc<AtomicUsize>,
+    attempted: Arc<AtomicUsize>,
     completed: Arc<AtomicUsize>,
     failed: Arc<AtomicUsize>,
     backoff_ms: Arc<AtomicU64>,
 ) {
     let max_backoff_ms = millis_as_u64(Duration::from_secs(300));
-    let mut worker_completed = 0usize;
+    let mut worker_attempted = 0usize;
+    let mut worker_written = 0usize;
     let mut worker_failed = 0usize;
 
     loop {
@@ -204,9 +206,9 @@ async fn run_worker(
         in_flight.fetch_sub(1, Ordering::AcqRel);
 
         match result {
-            Ok((claimed, failed_count)) => {
+            Ok(outcome) => {
                 let elapsed = started.elapsed();
-                if claimed == 0 {
+                if outcome.attempted == 0 {
                     let wait_ms = backoff_ms.load(Ordering::Acquire);
                     let next_ms = increase_backoff(wait_ms);
                     let _ = backoff_ms.compare_exchange(
@@ -216,11 +218,7 @@ async fn run_worker(
                         Ordering::Acquire,
                     );
 
-                    warn!(
-                        worker_id,
-                        wait_ms,
-                        "no claim-eligible chunks; backing off"
-                    );
+                    warn!(worker_id, wait_ms, "no claim-eligible chunks; backing off");
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(wait_ms)) => {}
                         _ = shutdown.cancelled() => {}
@@ -232,20 +230,24 @@ async fn run_worker(
                 }
 
                 backoff_ms.store(millis_as_u64(cfg.interval), Ordering::Release);
-                worker_completed += claimed;
-                worker_failed += failed_count;
-                completed.fetch_add(claimed, Ordering::AcqRel);
-                failed.fetch_add(failed_count, Ordering::AcqRel);
+                worker_attempted += outcome.attempted;
+                worker_written += outcome.written;
+                worker_failed += outcome.failed;
+                attempted.fetch_add(outcome.attempted, Ordering::AcqRel);
+                completed.fetch_add(outcome.written, Ordering::AcqRel);
+                failed.fetch_add(outcome.failed, Ordering::AcqRel);
 
                 let secs = elapsed.as_secs_f64().max(0.001);
-                let throughput = claimed as f64 / secs;
+                let throughput = outcome.written as f64 / secs;
                 info!(
                     worker_id,
-                    claimed,
-                    failed_slices = failed_count,
+                    attempted = outcome.attempted,
+                    written = outcome.written,
+                    failed_slices = outcome.failed,
                     slice_ms = elapsed.as_millis(),
                     throughput_rows_per_sec = throughput,
-                    worker_total_claimed = worker_completed,
+                    worker_total_attempted = worker_attempted,
+                    worker_total_written = worker_written,
                     worker_total_failed = worker_failed,
                     "worker throughput"
                 );
@@ -254,7 +256,9 @@ async fn run_worker(
             }
             Err(err) => {
                 warn!(worker_id, err = %err, "claim slice failed");
-                let wait_ms = backoff_ms.load(Ordering::Acquire).max(millis_as_u64(cfg.interval));
+                let wait_ms = backoff_ms
+                    .load(Ordering::Acquire)
+                    .max(millis_as_u64(cfg.interval));
                 let next_ms = increase_backoff(wait_ms).max(wait_ms);
                 let _ = backoff_ms.compare_exchange(
                     wait_ms,
@@ -275,7 +279,8 @@ async fn run_worker(
 
     info!(
         worker_id,
-        claimed = worker_completed,
+        attempted = worker_attempted,
+        written = worker_written,
         failed = worker_failed,
         "worker exiting"
     );
@@ -324,12 +329,14 @@ pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyh
     );
 
     let in_flight = Arc::new(AtomicUsize::new(0));
+    let attempted = Arc::new(AtomicUsize::new(0));
     let completed = Arc::new(AtomicUsize::new(0));
     let failed = Arc::new(AtomicUsize::new(0));
     let backoff_ms = Arc::new(AtomicU64::new(millis_as_u64(cfg.interval)));
 
     let gauge = {
         let in_flight = in_flight.clone();
+        let attempted = attempted.clone();
         let completed = completed.clone();
         let failed = failed.clone();
         let backoff_ms = backoff_ms.clone();
@@ -341,6 +348,7 @@ pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyh
                     _ = tick.tick() => {
                         info!(
                             in_flight = in_flight.load(Ordering::Acquire),
+                            attempted_total = attempted.load(Ordering::Acquire),
                             completed_total = completed.load(Ordering::Acquire),
                             failed_total = failed.load(Ordering::Acquire),
                             backoff_ms = backoff_ms.load(Ordering::Acquire),
@@ -362,6 +370,7 @@ pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyh
             cfg.clone(),
             shutdown.clone(),
             in_flight.clone(),
+            attempted.clone(),
             completed.clone(),
             failed.clone(),
             backoff_ms.clone(),
@@ -383,17 +392,17 @@ pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyh
 
 async fn run(cfg: Config) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
-    let runner = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
+    let mut runner = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
 
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("shutdown signal received");
             shutdown.cancel();
-            runner
+            (&mut runner)
                 .await
                 .context("reembed worker runner join failed")?
         }
-        result = runner => {
+        result = &mut runner => {
             result.context("reembed worker runner join failed")?
         }
     }
@@ -566,6 +575,13 @@ impl AdaptiveConcurrency {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().expect("config test env lock poisoned")
+    }
 
     fn reset_env() {
         for key in [
@@ -588,6 +604,7 @@ mod config_tests {
 
     #[test]
     fn config_adaptive_defaults() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
@@ -601,6 +618,7 @@ mod config_tests {
 
     #[test]
     fn config_concurrency_backward_compat() {
+        let _guard = env_guard();
         // Legacy ENGRAM_REEMBED_CONCURRENCY sets concurrency_max when MAX absent.
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
@@ -611,6 +629,7 @@ mod config_tests {
 
     #[test]
     fn config_explicit_max_overrides_legacy() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY", "4");
         std::env::set_var("ENGRAM_REEMBED_CONCURRENCY_MAX", "12");
@@ -621,6 +640,7 @@ mod config_tests {
 
     #[test]
     fn config_failure_rate_backpressure_default() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("DATABASE_URL", "postgres://test");
         let cfg = Config::from_env();
@@ -629,6 +649,7 @@ mod config_tests {
 
     #[test]
     fn config_failure_rate_backpressure_override() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_FAILURE_RATE_BACKPRESSURE", "0.05");
         std::env::set_var("DATABASE_URL", "postgres://test");
@@ -638,6 +659,7 @@ mod config_tests {
 
     #[test]
     fn config_embed_sub_batch_alias_is_reem_batch_size() {
+        let _guard = env_guard();
         reset_env();
         std::env::set_var("ENGRAM_REEMBED_BATCH_SIZE", "23");
         std::env::set_var("DATABASE_URL", "postgres://test");

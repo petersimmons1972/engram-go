@@ -4,7 +4,6 @@ use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
-use std::time::Duration;
 use tokio::time;
 use tracing::warn;
 
@@ -26,6 +25,13 @@ struct EmbedData {
 struct PendingChunk {
     id: String,
     chunk_text: String,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessSliceResult {
+    pub attempted: usize,
+    pub written: usize,
+    pub failed: usize,
 }
 
 pub async fn embed_batch(
@@ -66,7 +72,7 @@ pub async fn process_slice(
     pool: &PgPool,
     http: &HttpClient,
     cfg: &Config,
-) -> Result<(usize, usize)> {
+) -> Result<ProcessSliceResult> {
     let mut tx = pool.begin().await.context("begin claim tx")?;
 
     let rows: Vec<PendingChunk> = sqlx::query_as(
@@ -87,8 +93,13 @@ pub async fn process_slice(
     tx.commit().await.context("commit claim tx")?;
 
     if rows.is_empty() {
-        return Ok((0, 0));
+        return Ok(ProcessSliceResult::default());
     }
+
+    // The claim transaction commits before embedding so workers do not hold DB
+    // locks across slow HTTP calls. Another worker can re-claim the same
+    // embedding-null row in that window, so the UPDATE below is conditional and
+    // row-counted: duplicate work is wasted but cannot double-write a vector.
 
     let texts: Vec<String> = rows
         .iter()
@@ -108,21 +119,37 @@ pub async fn process_slice(
 
     let embeddings = match time::timeout(
         cfg.embed_timeout,
-        embed_batch(&http, &cfg.litellm_url, &cfg.litellm_api_key, &cfg.embed_model, cfg.embed_dims, &texts),
+        embed_batch(
+            &http,
+            &cfg.litellm_url,
+            &cfg.litellm_api_key,
+            &cfg.embed_model,
+            cfg.embed_dims,
+            &texts,
+        ),
     )
     .await
     {
         Err(_) => {
             warn!(chunk_count = rows.len(), "embed sub-slice timed out");
-            return Ok((rows.len(), rows.len()));
+            return Ok(ProcessSliceResult {
+                attempted: rows.len(),
+                written: 0,
+                failed: rows.len(),
+            });
         }
         Ok(Err(e)) => {
             warn!(chunk_count = rows.len(), err = %e, "embed sub-slice failed");
-            return Ok((rows.len(), rows.len()));
+            return Ok(ProcessSliceResult {
+                attempted: rows.len(),
+                written: 0,
+                failed: rows.len(),
+            });
         }
         Ok(Ok(v)) => v,
     };
 
+    let mut written = 0usize;
     let mut failed = 0usize;
 
     let mut i = 0;
@@ -138,14 +165,23 @@ pub async fn process_slice(
             }
         };
 
-        if let Err(e) = sqlx::query("UPDATE chunks SET embedding = $1::vector WHERE id = $2")
-            .bind(Vector::from(vec.clone()))
-            .bind(&row.id)
-            .execute(pool)
-            .await
+        match sqlx::query(
+            "UPDATE chunks SET embedding = $1::vector WHERE id = $2 AND embedding IS NULL",
+        )
+        .bind(Vector::from(vec.clone()))
+        .bind(&row.id)
+        .execute(pool)
+        .await
         {
-            warn!(chunk_id = %row.id, err = %e, "failed to persist embedding");
-            failed += 1;
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    written += 1;
+                }
+            }
+            Err(e) => {
+                warn!(chunk_id = %row.id, err = %e, "failed to persist embedding");
+                failed += 1;
+            }
         }
         i += 1;
     }
@@ -158,5 +194,9 @@ pub async fn process_slice(
         );
     }
 
-    Ok((rows.len(), failed))
+    Ok(ProcessSliceResult {
+        attempted: rows.len(),
+        written,
+        failed,
+    })
 }
