@@ -78,14 +78,14 @@ Rules:
 
 // atomResponse is the per-atom JSON object returned by Claude.
 type atomResponse struct {
-	Type        string  `json:"atom_type"`
-	Subject     string  `json:"subject"`
-	Predicate   string  `json:"predicate"`
-	Value       string  `json:"value"`
-	Statement   string  `json:"statement"`
-	Scope       string  `json:"scope"`
-	Confidence  float64 `json:"confidence"`
-	SourceSpan  string  `json:"source_span"`
+	Type       string  `json:"atom_type"`
+	Subject    string  `json:"subject"`
+	Predicate  string  `json:"predicate"`
+	Value      string  `json:"value"`
+	Statement  string  `json:"statement"`
+	Scope      string  `json:"scope"`
+	Confidence float64 `json:"confidence"`
+	SourceSpan string  `json:"source_span"`
 }
 
 // Extract calls Claude and parses the JSON result into Atom slices.
@@ -104,16 +104,9 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]At
 		return nil, fmt.Errorf("atom extraction: claude call failed: %w", err)
 	}
 
-	raw = strings.TrimSpace(raw)
-	// Claude sometimes wraps JSON in markdown code fences — strip them.
-	if strings.HasPrefix(raw, "```") {
-		if idx := strings.Index(raw, "\n"); idx != -1 {
-			raw = raw[idx+1:]
-		}
-		if idx := strings.LastIndex(raw, "```"); idx != -1 {
-			raw = raw[:idx]
-		}
-		raw = strings.TrimSpace(raw)
+	raw, err = extractAtomJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("atom extraction: failed to parse response JSON: %w", err)
 	}
 
 	var resp []atomResponse
@@ -145,6 +138,108 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]At
 		atoms = append(atoms, a)
 	}
 	return atoms, nil
+}
+
+func extractAtomJSON(raw string) (string, error) {
+	raw = strings.TrimSpace(stripMarkdownFences(stripThinkBlocks(raw)))
+	if raw == "" {
+		return "", fmt.Errorf("no JSON object or array found in response")
+	}
+	if json.Valid([]byte(raw)) {
+		return raw, nil
+	}
+	if jsonText, ok := firstBalancedJSON(raw); ok {
+		return jsonText, nil
+	}
+	if strings.HasPrefix(raw, "[") || strings.HasPrefix(raw, "{") {
+		return raw, nil
+	}
+	return "", fmt.Errorf("no JSON object or array found in response")
+}
+
+func stripThinkBlocks(raw string) string {
+	const (
+		openTag  = "<think>"
+		closeTag = "</think>"
+	)
+	for {
+		lower := strings.ToLower(raw)
+		start := strings.Index(lower, openTag)
+		if start == -1 {
+			return raw
+		}
+		closeStart := strings.Index(lower[start+len(openTag):], closeTag)
+		if closeStart == -1 {
+			return raw
+		}
+		end := start + len(openTag) + closeStart + len(closeTag)
+		raw = raw[:start] + raw[end:]
+	}
+}
+
+func stripMarkdownFences(raw string) string {
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func firstBalancedJSON(raw string) (string, bool) {
+	for start := 0; start < len(raw); start++ {
+		if raw[start] != '[' && raw[start] != '{' {
+			continue
+		}
+		if jsonText, ok := balancedJSONFrom(raw, start); ok && json.Valid([]byte(jsonText)) {
+			return jsonText, true
+		}
+	}
+	return "", false
+}
+
+func balancedJSONFrom(raw string, start int) (string, bool) {
+	stack := make([]byte, 0, 4)
+	inString := false
+	escaped := false
+
+	for i := start; i < len(raw); i++ {
+		c := raw[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch c {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch c {
+		case '"':
+			inString = true
+		case '[':
+			stack = append(stack, ']')
+		case '{':
+			stack = append(stack, '}')
+		case ']', '}':
+			if len(stack) == 0 || c != stack[len(stack)-1] {
+				return "", false
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return strings.TrimSpace(raw[start : i+1]), true
+			}
+		}
+	}
+	return "", false
 }
 
 // ExtractionPrompt returns the system prompt used for atom extraction.

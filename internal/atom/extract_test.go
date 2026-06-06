@@ -157,6 +157,59 @@ func TestClaudeExtractor_MarkdownFenceStripped(t *testing.T) {
 	assert.Len(t, atoms, 1)
 }
 
+func TestExtract_StripsThinkBlock(t *testing.T) {
+	stub := &stubCompleter{response: "<think>I should return a preference atom.</think>\n" + preferenceAtomJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "dark chocolate text")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Equal(t, atom.TypePreference, atoms[0].Type)
+	assert.Equal(t, "dark chocolate", atoms[0].Value)
+}
+
+func TestExtract_StripsCodeFence(t *testing.T) {
+	stub := &stubCompleter{response: "```json\n" + preferenceAtomJSON + "\n```"}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "dark chocolate text")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Equal(t, atom.TypePreference, atoms[0].Type)
+	assert.Equal(t, "dark chocolate", atoms[0].Value)
+}
+
+func TestExtract_ProsePreambleAndPostamble(t *testing.T) {
+	stub := &stubCompleter{response: "Here are the atoms:\n" + preferenceAtomJSON + "\nHope this helps."}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "dark chocolate text")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Equal(t, atom.TypePreference, atoms[0].Type)
+	assert.Equal(t, "dark chocolate", atoms[0].Value)
+}
+
+func TestExtract_CleanArray(t *testing.T) {
+	stub := &stubCompleter{response: preferenceAtomJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "dark chocolate text")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Equal(t, atom.TypePreference, atoms[0].Type)
+	assert.Equal(t, "dark chocolate", atoms[0].Value)
+}
+
+func TestExtract_NonJSONErrors(t *testing.T) {
+	stub := &stubCompleter{response: "I could not extract any atoms from this text."}
+	ext := atom.NewClaudeExtractor(stub)
+
+	_, err := ext.Extract(context.Background(), "some content")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse response JSON")
+}
+
 func TestClaudeExtractor_TruncatesLongContent(t *testing.T) {
 	bigContent := strings.Repeat("a", 20000)
 	stub := &stubCompleter{response: `[]`}
