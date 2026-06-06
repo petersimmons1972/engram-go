@@ -47,7 +47,7 @@ func TestLMEPruneCronJobUsesSafeExecuteFlags(t *testing.T) {
 		t.Fatalf("read deploy/lme-prune-cronjob.yaml: %v", err)
 	}
 	manifest := string(data)
-	for _, current := range []string{"--execute", "--confirm-prefix=lme-", "--limit=200", "--use-default-token"} {
+	for _, current := range []string{"/engram", "--execute", "--confirm-prefix=lme-", "--limit=200", "--use-default-token"} {
 		if !strings.Contains(manifest, current) {
 			t.Fatalf("prune CronJob missing safe execute flag text %q:\n%s", current, manifest)
 		}
@@ -88,13 +88,29 @@ func TestLMEBenchmarkLearningsDocumentsPruneImageUpdateProcedure(t *testing.T) {
 
 	for _, current := range []string{
 		"v3.2.0",
+		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":true}}'",
+		"jsonpath='{.spec.suspend",
+		"command: [\"/engram\"]",
 		"replace it with the reviewed release tag or immutable digest",
 		"Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change",
 		"kubectl apply -f deploy/lme-prune-cronjob.yaml",
-		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":true}}'",
-		"JOB=lme-prune-manual-$(date +%s)",
-		"kubectl create job --from=cronjob/lme-prune -n engram \"$JOB\"",
-		"kubectl logs -n engram job/\"$JOB\"",
+		"#### Safe canary and rollout evidence",
+		"IMAGE=$(kubectl -n engram get cronjob lme-prune -o jsonpath",
+		"CANARY_JOB=lme-prune-canary-$(date +%s)",
+		"CANARY_EXIT_CODE",
+		"CANARY imageID",
+		"kubectl apply -f <<EOF",
+		"prune: DRY RUN — would delete",
+		"imageID",
+		"--timestamps",
+		"summary status",
+		"non-zero execute exit code",
+		"If the canary is unexpected",
+		"lme-prune-verify-$(date +%s)",
+		"--dry-run",
+		"--execute",
+		"--limit=50",
+		"--use-default-token",
 		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":false}}'",
 	} {
 		if !strings.Contains(section, current) {

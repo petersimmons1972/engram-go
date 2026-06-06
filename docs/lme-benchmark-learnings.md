@@ -447,7 +447,7 @@ By default this is a plan-only dry run. To delete, opt in explicitly:
 longmemeval prune \
   --database-url "${DATABASE_URL}" \
   --url "${ENGRAM_URL}" \
-  --use-default-token \
+  --api-key "${ENGRAM_API_KEY}" \
   --execute \
   --confirm-prefix lme- \
   --limit 50
@@ -457,7 +457,7 @@ Use `--unlimited` only for a deliberately unbounded sweep. If you want prune to 
 
 The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`.
 
-### Updating the prune image
+### Updating the prune image and rollout controls
 
 The checked-in CronJob pin is currently `ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0`.
 Do not switch this job to `:latest`. For destructive scheduled deletes, replace it with the reviewed release tag or immutable digest you intend to ship, and keep that change visible in git review.
@@ -466,28 +466,116 @@ Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change that approves
 new prune binary. The CronJob uses `imagePullPolicy: Always` so each run resolves the
 currently reviewed reference instead of reusing a cached mutable tag.
 
-After merge, roll it out explicitly:
-
-```bash
-kubectl apply -f deploy/lme-prune-cronjob.yaml
-kubectl -n engram get cronjob lme-prune -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}'
-```
-
-Before the next scheduled destructive run, suspend the CronJob and verify the new image
-through a one-off Job:
+Before rollout, suspend the CronJob so the next run cannot fire while evidence is
+being collected:
 
 ```bash
 kubectl patch cronjob lme-prune -n engram -p '{"spec":{"suspend":true}}'
-JOB=lme-prune-manual-$(date +%s)
-kubectl create job --from=cronjob/lme-prune -n engram "$JOB"
-kubectl wait -n engram --for=condition=complete job/"$JOB" --timeout=10m
-kubectl get pods -n engram -l job-name="$JOB" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].imageID}{"\n"}{end}'
-kubectl logs -n engram job/"$JOB"
+kubectl apply -f deploy/lme-prune-cronjob.yaml
+kubectl -n engram get cronjob lme-prune -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}'
+kubectl -n engram get cronjob lme-prune -o jsonpath='{.spec.suspend}{"\n"}'
 ```
 
-If the manual run is wrong or inconclusive, reapply the previous reviewed image reference,
-leave the CronJob suspended, and inspect the manual Job/Pod events before allowing the
-schedule to resume. When the manual run looks correct, unsuspend the CronJob:
+#### Safe canary and rollout evidence
+
+Before the next scheduled destructive run, run a dry-run canary with the same
+image and credentials. Use a short-lived one-off Job so blast radius stays bounded:
+
+```bash
+IMAGE=$(kubectl -n engram get cronjob lme-prune -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}')
+CANARY_JOB=lme-prune-canary-$(date +%s)
+
+cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${CANARY_JOB}
+  namespace: engram
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: lme-prune-canary
+        command: ["/engram"]
+        image: ${IMAGE}
+        envFrom:
+        - secretRef:
+            name: engram-lme
+        args:
+        - prune
+        - --prefix=lme-
+        - --dry-run
+        - --confirm-prefix=lme-
+        - --limit=50
+        - --use-default-token
+EOF
+
+kubectl wait -n engram --for=condition=complete job/"$CANARY_JOB" --timeout=10m
+CANARY_POD=$(kubectl -n engram get pod -l job-name="$CANARY_JOB" -o jsonpath='{.items[0].metadata.name}')
+CANARY_IMAGE_ID=$(kubectl -n engram get pod "$CANARY_POD" -o jsonpath='{.status.containerStatuses[0].imageID}')
+CANARY_EXIT_CODE=$(kubectl -n engram get pod "$CANARY_POD" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')
+kubectl logs -n engram job/"$CANARY_JOB" --timestamps
+echo "CANARY imageID: $CANARY_IMAGE_ID"
+echo "CANARY exit code: $CANARY_EXIT_CODE"
+```
+
+Use the canary log as your decision record:
+- planned deletion count and project list (`prune: DRY RUN — would delete`)
+- image identity (`imageID`)
+- command output timestamps (`--timestamps`)
+- command exit status (`$CANARY_EXIT_CODE`)
+- summary status (`prune: X of Y project(s) deleted`)
+
+If the canary is correct, run a second one-off execute job using the same `IMAGE`
+and then resume the CronJob. If the canary is unexpected, leave the CronJob suspended
+and keep the previous reviewed image manifest in place.
+
+If the canary or execute check reports unexpected `delete` failures, keep the
+CronJob suspended and begin recovery before resume.
+
+If you need to run a destructive one-off execute sweep for evidence, keep this
+bound similarly:
+
+```bash
+kubectl apply -f <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lme-prune-verify-$(date +%s)
+  namespace: engram
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: lme-prune
+        command: ["/engram"]
+        image: ${IMAGE}
+        envFrom:
+        - secretRef:
+            name: engram-lme
+        args:
+        - prune
+        - --prefix=lme-
+        - --execute
+        - --confirm-prefix=lme-
+        - --limit=50
+        - --use-default-token
+EOF
+```
+
+Rollout alert contract:
+
+- non-zero execute exit code
+- `prune: delete ... failed` appears in logs
+- blast radius exceeds 200 deletions on first verify run
+- cronjob repeatedly skips scheduling because the image cannot start (2 consecutive failures)
+
+When the execute run is complete and matches expected blast radius and logs, resume
+the scheduled CronJob:
 
 ```bash
 kubectl patch cronjob lme-prune -n engram -p '{"spec":{"suspend":false}}'

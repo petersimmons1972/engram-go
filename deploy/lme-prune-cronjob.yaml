@@ -44,6 +44,10 @@ spec:
             fsGroup: 65532
           containers:
             - name: lme-prune
+              # Run engram directly for deterministic subcommand execution.
+              # This avoids starter's subcommand allowlist and makes the
+              # execution contract explicit in this manifest.
+              command: ["/engram"]
               image: ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0
               imagePullPolicy: Always
               args:
