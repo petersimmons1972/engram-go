@@ -78,10 +78,13 @@ Both files are updated so the token stays fresh regardless of which file your Cl
 **Usage:**
 
 ```bash
-go run ./cmd/engram-setup              # Configure with defaults (localhost:8788)
+go run ./cmd/engram-setup              # Configure with defaults (remote ingress)
 go run ./cmd/engram-setup --dry-run    # Preview changes without writing
+go run ./cmd/engram-setup --url http://127.0.0.1:8788  # Local Docker override
 go run ./cmd/engram-setup --port 9000  # Non-default port
 ```
+
+Default behavior is remote-first (`https://engram.petersimmons.com`), and disk fallback credentials are used for bootstrap recovery when `/setup-token` returns 401.
 
 **When to run:**
 - Once after first `make up`

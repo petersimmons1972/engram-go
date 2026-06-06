@@ -3,7 +3,7 @@
 //
 // Primary path: calls /setup-token (requires Bearer auth since #540) to retrieve the
 // current token and writes the mcpServers.engram block in the Claude Code config.
-//
+// 
 // Fallback path (#614, #616): when /setup-token returns 401 (bootstrap scenario where
 // no valid token exists yet), engram-setup reads the key from disk in priority order:
 //  1. ~/.config/engram/api_key — backup written by `make init`, matches Infisical secret
@@ -14,14 +14,14 @@
 //
 // Claude Code reads MCP servers from two files:
 //   - ~/.claude/mcp_servers.json  — primary (live config, read each session)
-//   - ~/.claude.json              — secondary (user settings, also read at startup)
+//   - ~/.claude.json              — legacy user settings, also read at startup
 //
-// engram-setup writes both so the token stays fresh regardless of which file Claude
-// Code happens to use in a given version.
+// engram-setup writes both by default so the token stays fresh regardless of which
+// file Claude Code happens to use in a given version.
 //
 // Usage:
 //
-//	go run ./cmd/engram-setup              # configure with defaults (k8s ingress)
+//	go run ./cmd/engram-setup              # configure with defaults (remote default: https://engram.petersimmons.com)
 //	go run ./cmd/engram-setup --dry-run    # preview changes without writing
 //	go run ./cmd/engram-setup --url http://127.0.0.1:8788  # local Docker override
 //	go run ./cmd/engram-setup --port 9000  # local port override (sets base to http://127.0.0.1:<port>)
@@ -50,7 +50,7 @@ func main() {
 	}
 }
 
-// defaultServerURL is the k8s ingress endpoint for the engram MCP server.
+// defaultServerURL is the remote ingress endpoint for the engram MCP server.
 // Override with --url for local Docker development, or --port for a local port.
 const defaultServerURL = "https://engram.petersimmons.com"
 
