@@ -60,9 +60,9 @@ func TestLMEPruneCronJobPinsReviewedImage(t *testing.T) {
 		t.Fatalf("read deploy/lme-prune-cronjob.yaml: %v", err)
 	}
 	manifest := string(data)
-	const reviewedImage = "ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0"
+	const reviewedImage = "ghcr.io/petersimmons1972/engram-go/longmemeval@sha256:c51f11f15003768b965774669b753c885c40cfdf13e2bb8b7a42f652143161f3"
 
-	if strings.Contains(manifest, "ghcr.io/petersimmons1972/engram-go/longmemeval:latest") {
+	if strings.Contains(manifest, "ghcr.io/petersimmons1972/engram-go/longmemeval:latest") || strings.Contains(manifest, "ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0") {
 		t.Fatalf("prune CronJob must not use mutable :latest image:\n%s", manifest)
 	}
 	for _, current := range []string{
@@ -76,6 +76,9 @@ func TestLMEPruneCronJobPinsReviewedImage(t *testing.T) {
 			t.Fatalf("prune CronJob missing reviewed image pin guidance %q:\n%s", current, manifest)
 		}
 	}
+	if !strings.Contains(manifest, "@sha256:") {
+		t.Fatalf("prune CronJob image must be immutable by digest:\n%s", manifest)
+	}
 }
 
 func TestLMEBenchmarkLearningsDocumentsPruneImageUpdateProcedure(t *testing.T) {
@@ -87,10 +90,12 @@ func TestLMEBenchmarkLearningsDocumentsPruneImageUpdateProcedure(t *testing.T) {
 	section := between(t, doc, "### Updating the prune image", "### Backfilling existing runs")
 
 	for _, current := range []string{
-		"v3.2.0",
+		"@sha256:c51f11f15003768b965774669b753c885c40cfdf13e2bb8b7a42f652143161f3",
 		"kubectl patch cronjob lme-prune -n engram -p '{\"spec\":{\"suspend\":true}}'",
 		"jsonpath='{.spec.suspend",
 		"command: [\"/engram\"]",
+		"envFrom:",
+		"name: engram-lme",
 		"replace it with the reviewed release tag or immutable digest",
 		"Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change",
 		"kubectl apply -f deploy/lme-prune-cronjob.yaml",
