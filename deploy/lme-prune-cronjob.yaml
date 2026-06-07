@@ -4,7 +4,7 @@
 # Requires:
 #   - Secret "engram-lme" with keys: database-url, engram-url, engram-api-key
 #   - RBAC: no cluster permissions needed (contacts Postgres + Engram HTTP only)
-#   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0
+#   - Image: ghcr.io/petersimmons1972/engram-go/longmemeval@sha256:c51f11f15003768b965774669b753c885c40cfdf13e2bb8b7a42f652143161f3
 #
 # Never use :latest for this CronJob. This job runs a destructive `prune --execute`
 # path on a schedule, so image changes must be explicit and reviewable. To update it,
@@ -48,7 +48,7 @@ spec:
               # This avoids starter's subcommand allowlist and makes the
               # execution contract explicit in this manifest.
               command: ["/engram"]
-              image: ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0
+              image: ghcr.io/petersimmons1972/engram-go/longmemeval@sha256:c51f11f15003768b965774669b753c885c40cfdf13e2bb8b7a42f652143161f3
               imagePullPolicy: Always
               args:
                 - prune
