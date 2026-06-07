@@ -459,7 +459,7 @@ The sweep is deployed as a weekly K8s CronJob at `deploy/lme-prune-cronjob.yaml`
 
 ### Updating the prune image and rollout controls
 
-The checked-in CronJob pin is currently `ghcr.io/petersimmons1972/engram-go/longmemeval:v3.2.0`.
+The checked-in CronJob pin is currently `ghcr.io/petersimmons1972/engram-go/longmemeval@sha256:c51f11f15003768b965774669b753c885c40cfdf13e2bb8b7a42f652143161f3`.
 Do not switch this job to `:latest`. For destructive scheduled deletes, replace it with the reviewed release tag or immutable digest you intend to ship, and keep that change visible in git review.
 
 Update `deploy/lme-prune-cronjob.yaml` in the same reviewed change that approves the
@@ -498,18 +498,18 @@ spec:
       restartPolicy: Never
       containers:
         - name: lme-prune-canary
-        command: ["/engram"]
-        image: ${IMAGE}
-        envFrom:
-        - secretRef:
-            name: engram-lme
-        args:
-        - prune
-        - --prefix=lme-
-        - --dry-run
-        - --confirm-prefix=lme-
-        - --limit=50
-        - --use-default-token
+          command: ["/engram"]
+          image: ${IMAGE}
+          envFrom:
+            - secretRef:
+                name: engram-lme
+          args:
+            - prune
+            - --prefix=lme-
+            - --dry-run
+            - --confirm-prefix=lme-
+            - --limit=50
+            - --use-default-token
 EOF
 
 kubectl wait -n engram --for=condition=complete job/"$CANARY_JOB" --timeout=10m
@@ -555,15 +555,15 @@ spec:
         command: ["/engram"]
         image: ${IMAGE}
         envFrom:
-        - secretRef:
-            name: engram-lme
+          - secretRef:
+              name: engram-lme
         args:
-        - prune
-        - --prefix=lme-
-        - --execute
-        - --confirm-prefix=lme-
-        - --limit=50
-        - --use-default-token
+          - prune
+          - --prefix=lme-
+          - --execute
+          - --confirm-prefix=lme-
+          - --limit=50
+          - --use-default-token
 EOF
 ```
 
