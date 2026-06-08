@@ -1,0 +1,12 @@
+[Unit]
+Description=Codex protocol 17 janitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=python3 %h/scripts/codex_janitor.py --once
+
+[Install]
+WantedBy=default.target
