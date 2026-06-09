@@ -1,0 +1,7 @@
+[Unit]
+Description=Codex founder digest
+
+[Service]
+Type=oneshot
+ExecStart=%h/scripts/codex_digest.py --once
+KillMode=process
