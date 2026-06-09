@@ -247,7 +247,7 @@
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
             "timeout": 15,
-            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
+            "statusMessage": "Syncing armies profiles \u2192 ~/.claude/agents/"
           },
           {
             "type": "command",
@@ -296,5 +296,14 @@
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "disabledMcpjsonServers": [
+    "Definely",
+    "DocuSign",
+    "Google Drive",
+    "iManage",
+    "Ironclad",
+    "Slack",
+    "TopCounsel"
+  ]
 }
