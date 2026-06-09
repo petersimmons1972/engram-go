@@ -2,94 +2,94 @@
 # Expunge secrets from git history
 # WARNING: This rewrites git history and requires force push
 
-set -e
+set -euo pipefail
 
-echo "🔐 Git Secret Expungement Tool"
-echo "=============================="
-echo ""
-echo "WARNING: This script rewrites git history."
-echo "BACKUP YOUR REPO FIRST!"
-echo ""
+printf '🔐 Git Secret Expungement Tool\n'
+printf '==============================\n\n'
+printf 'WARNING: This script rewrites git history.\n'
+printf 'BACKUP YOUR REPO FIRST!\n\n'
 
-# Backup
-echo "1️⃣  Creating backup..."
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'ERROR: required command "%s" not found in PATH.\n' "$1" >&2
+    exit 1
+  }
+}
+
+run_filter_repo() {
+  local pattern="$1"
+  shift
+
+  require_cmd git-filter-repo
+  printf "\nRemoving files matching '%s' from all commits...\n" "$pattern"
+  git-filter-repo --force --path-glob "$pattern" --invert-paths --partial
+}
+
+run_scan() {
+  require_cmd gitleaks
+  printf '\nScanning git history for likely secret patterns...\n\n'
+  gitleaks detect --source . --log-opts='--all' --no-banner
+}
+
+printf '1) Create a backup reference (recommended)\n'
 BACKUP_DIR="/tmp/git-backup-$(date +%s)"
 cp -r .git "$BACKUP_DIR.git"
-echo "   Backup: $BACKUP_DIR.git"
-echo ""
+printf '   Backup: %s.git\n\n' "$BACKUP_DIR"
 
-# Ask user what to expunge
-echo "2️⃣  What secrets need to be removed?"
-echo ""
-echo "Options:"
-echo "  1) Remove all *_api_key files"
-echo "  2) Remove all db_password files"
-echo "  3) Remove all .env* files"
-echo "  4) Remove specific file pattern (you specify)"
-echo "  5) Scan and show what patterns exist (no changes)"
-echo ""
+printf '2) What secrets need to be removed?\n\n'
+printf 'Options:\n'
+printf '  1) Remove all *_api_key files\n'
+printf '  2) Remove all db_password files\n'
+printf '  3) Remove all .env* files\n'
+printf '  4) Remove specific file pattern (you specify)\n'
+printf '  5) Scan and show what patterns exist (no changes)\n\n'
 
-read -p "Choice (1-5): " choice
+read -rp 'Choice (1-5): ' choice
 
-case $choice in
-    5)
-        echo ""
-        echo "Scanning git history for secret patterns..."
-        echo ""
-        git log --all -p | grep -E '(password|api[_-]?key|secret|token|bearer|oauth)' -i | head -50
-        echo ""
-        exit 0
-        ;;
-    1)
-        echo ""
-        echo "Removing *_api_key files from all commits..."
-        git filter-branch -f --tree-filter 'find . -name "*_api_key" -type f -delete' -- --all
-        ;;
-    2)
-        echo ""
-        echo "Removing db_password files from all commits..."
-        git filter-branch -f --tree-filter 'find . -name "*db_password*" -type f -delete' -- --all
-        ;;
-    3)
-        echo ""
-        echo "Removing .env* files from all commits..."
-        git filter-branch -f --tree-filter 'find . -name ".env*" -type f -delete' -- --all
-        ;;
-    4)
-        read -p "Enter file pattern to remove (e.g., '*_secret'): " pattern
-        echo ""
-        echo "Removing files matching '$pattern' from all commits..."
-        git filter-branch -f --tree-filter "find . -name \"$pattern\" -type f -delete" -- --all
-        ;;
-    *)
-        echo "Invalid choice"
-        exit 1
-        ;;
+case "$choice" in
+  5)
+    run_scan
+    exit 0
+    ;;
+  1)
+    run_filter_repo '*_api_key'
+    ;;
+  2)
+    run_filter_repo '*db_password*'
+    ;;
+  3)
+    run_filter_repo '.env*'
+    ;;
+  4)
+    read -rp "Enter file pattern to remove (e.g., '*_secret'): " pattern
+    if [ -z "$pattern" ]; then
+      echo 'Pattern cannot be empty'
+      exit 1
+    fi
+    run_filter_repo "$pattern"
+    ;;
+  *)
+    echo 'Invalid choice'
+    exit 1
+    ;;
 esac
 
-echo ""
-echo "3️⃣  Cleaning up git refs..."
-rm -rf .git/refs/original/
+printf '\n3) Cleaning up git refs...\n'
 git reflog expire --expire=now --all
+
 git gc --prune=now --aggressive
 
-echo ""
-echo "4️⃣  ⚠️  NEXT STEPS:"
-echo ""
-echo "   a) Verify changes look correct:"
-echo "      git log --oneline -20"
-echo "      git show HEAD"
-echo ""
-echo "   b) If correct, force push to GitHub:"
-echo "      git push origin --all --force-with-lease"
-echo "      git push origin --tags --force-with-lease"
-echo ""
-echo "   c) If something went wrong, restore backup:"
-echo "      rm -rf .git"
-echo "      cp -r $BACKUP_DIR.git .git"
-echo ""
-echo "5️⃣  Tell your team to:"
-echo "   - Delete their local clones"
-echo "   - Re-clone from the cleaned repo"
-echo "   - Do NOT merge old branches"
-echo ""
+printf '\n4)\n'
+printf '   a) Verify changes look correct:\n'
+printf '      git log --oneline -20\n'
+printf '      git show HEAD\n\n'
+printf '   b) If correct, force push to GitHub:\n'
+printf '      git push origin --all --force-with-lease\n'
+printf '      git push origin --tags --force-with-lease\n\n'
+printf '   c) If something went wrong, restore backup:\n'
+printf '      rm -rf .git\n'
+printf '      cp -r %s.git .git\n\n' "$BACKUP_DIR"
+printf '5) Tell your team to:\n'
+printf '   - Delete their local clones\n'
+printf '   - Re-clone from the cleaned repo\n'
+printf '   - Do NOT merge old branches\n'

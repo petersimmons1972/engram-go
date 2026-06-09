@@ -1,1 +1,0 @@
-/home/psimmons/.config/opencode/superpowers/.opencode/plugin/superpowers.js

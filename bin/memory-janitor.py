@@ -17,13 +17,15 @@ def main():
         return 0
 
     content = FALLBACK.read_text()
-    entries = re.findall(r"^## \[\d{4}-\d{2}-\d{2}\]", content, re.MULTILINE)
+    entries_dated = re.findall(r"^## \[\d{4}-\d{2}-\d{2}\]", content, re.MULTILINE)
+    entries_pending = re.findall(r"^PENDING_ENGRAM_ENTRY", content, re.MULTILINE)
+    total = len(entries_dated) + len(entries_pending)
 
-    if not entries:
+    if total == 0:
         print("🧹 Memory janitor: fallback.md clean — no pending entries")
         return 0
 
-    print(f"🧹 Memory janitor: ⚠️  {len(entries)} pending entr{'y' if len(entries)==1 else 'ies'} in fallback.md — flush to Engram when available")
+    print(f"🧹 Memory janitor: ⚠️  {total} pending entr{'y' if total==1 else 'ies'} in fallback.md — flush to Engram when available")
     return 0
 
 

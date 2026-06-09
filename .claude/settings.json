@@ -21,7 +21,6 @@
       "mcp__claude_ai_Gmail__*",
       "mcp__claude_ai_Google_Calendar__*",
       "mcp__engram__*",
-      "mcp__agentgateway__*",
       "Agent",
       "Skill(schedule)",
       "Skill(linkedin-content)",
@@ -39,6 +38,8 @@
       "Bash(semgrep *)",
       "Bash(jq *)",
       "Bash(yq *)",
+      "Bash(infisical *)",
+      "Bash(/home/psimmons/bin/infisical *)",
       "Bash(cp /home/psimmons/.claude/agents/rickover-validator.md /home/psimmons/.worktrees/opus-47-migration/.claude/agents/rickover-validator.md)",
       "Bash(git commit -m 'chore: snapshot rickover-validator.md as migration baseline *)",
       "Bash(mkdir -p /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents)",
@@ -48,7 +49,8 @@
       "mcp__security-program__list_plugins",
       "Bash(rm /home/psimmons/.git/index.lock)",
       "mcp__codex-tools__*",
-      "Write(/home/psimmons/.claude/plans/**)"
+      "Write(/home/psimmons/.claude/plans/**)",
+      "Edit(/home/psimmons/.claude.json)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -190,6 +192,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/branch-check-pre-tool.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -207,6 +219,12 @@
     "SessionStart": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-start-branch.sh",
+            "timeout": 5,
+            "statusMessage": "Recording session start branch"
+          },
           {
             "type": "command",
             "command": "~/bin/engram hook SessionStart",
@@ -257,11 +275,21 @@
     "frontend-design@claude-code-plugins": false,
     "gopls-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "superpowers@claude-plugins-official": true,
+    "commercial-legal@claude-for-legal": true
   },
-  "effortLevel": "high",
+  "extraKnownMarketplaces": {
+    "claude-for-legal": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-for-legal"
+      }
+    }
+  },
+  "effortLevel": "medium",
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
   "verbose": false,
   "showTurnDuration": true,
   "terminalProgressBarEnabled": true,

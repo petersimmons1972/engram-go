@@ -1,31 +1,31 @@
 # Learning Index
 
-**Last Updated**: 2026-05-28T13:57:47Z
-**Session**: 20260528-095747
+**Last Updated**: 2026-06-09T19:29:25Z
+**Session**: 20260609-152925
 
 ---
 
 ## Recent Activity (Last 7 Days)
 
-- 2026-05-26: docs: optimize Codex prompt memory config
-- 2026-05-25: fix(olla): priority LB + leviathan embed deprioritised to 25
-- 2026-05-25: WIP on feat/llama-cpp-embed-leviathan: 394713c fix(hooks): make engram-precheck self-heal k8s-aware [#860]
-- 2026-05-25: index on feat/llama-cpp-embed-leviathan: 394713c fix(hooks): make engram-precheck self-heal k8s-aware [#860]
-- 2026-05-24: fix(hooks): make engram-precheck self-heal k8s-aware [#860]
-- 2026-05-24: docs(claude): codify 2026-05-24 session rules + lessons
-- 2026-05-24: docs(coordinator): mandatory bug-tracking block in every agent brief [AP.12]
-- 2026-05-24: docs(claude-md): add Branch Protection & Merge Discipline rules [QC.1]
-- 2026-05-23: feat(watcher): self-heal pattern - auto-restart on VRAM anomaly (closes #110)
-- 2026-05-22: fix(engram): restore token resolution in flush-fallback hook
+- 2026-06-08: feat(c3): add protocol 17 janitor automation
+- 2026-06-05: memory(codex): record publish-only handoff protocol + draft-PR semantics
+- 2026-06-05: docs(claude): compress CLAUDE.md + recall-fixes; repair 3 dangling AGENTS.md pointers
+- 2026-06-04: Merge homelab-config github/master into local trunk
+- 2026-06-04: chore(codex-poll): retire interim poller; canonical lives in petersimmons1972/codex
+- 2026-06-04: chore(skills): prune dead armies dup, refresh dispatching override, dedup superpowers
+- 2026-06-04: fix(codex-poll): stop poison-pill crash + make codex handoffs actually survive
+- 2026-06-03: chore(skills): remove 12 dead homelab-intelligence command symlinks
+- 2026-06-03: fix(codex-poll): separate add-label from remove-label to prevent stalled-label silent failures (#99)
+- 2026-06-02: feat(codex-poll): protocol v2 migration + per-repo checkout paths (#19)
 
 **Sessions**: - No recent session files found
-**Uncommitted**: ⚠️  6 modified, 0 staged
+**Uncommitted**: ⚠️  75 modified, 0 staged
 
 ---
 
 ## Infrastructure Health
 
-**Cluster**: ✅ All 9 nodes ready | **Services**: health-check failed to run
+**Cluster**: ✅ All 9 nodes ready | **Services**: ⚠️  14 OK, 0 failed, 1 warnings
 **Warnings**: None detected
 
 Health check: `~/bin/health-check.sh`
