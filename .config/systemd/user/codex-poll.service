@@ -5,3 +5,7 @@ Description=Codex work-loop poller
 Type=oneshot
 ExecStart=%h/bin/codex-poll
 KillMode=process
+NoNewPrivileges=true
+ProtectHome=read-only
+PrivateTmp=true
+TimeoutStopSec=30

@@ -49,11 +49,12 @@ Execute each step only when its trigger fires; never outside it.
 
 **Tier rule:** Lowest tier that decides correctly. Uneven teams preferred; homogeneous selection is a smell.
 
-| Tier | Use for |
-|------|---------|
-| **Haiku** | Classification, formatting, retries, health checks, mechanical transforms, bulk judge/scoring |
-| **Sonnet** | Implementation, debugging, multi-file edits, code review, executing diagnosed fixes |
-| **Opus** | Architecture decisions, irreversible high-stakes choices, reframing stuck diagnoses |
+| Tier       | Use for                                                                                                                                                    |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Haiku**  | Classification, formatting, retries, health checks, mechanical transforms, bulk judge/scoring                                                              |
+| **Sonnet** | Implementation, debugging, multi-file edits, code review, executing diagnosed fixes                                                                        |
+| **Opus**   | Architecture decisions, opus-advisor dispatches, reframing stuck diagnoses                                                                                 |
+| **Fable**  | Campaign-level strategy, coalition/multi-agent orchestration decisions, highest-stakes irreversible choices (main session or single advisor dispatch only)  |
 
 **Spawn Sonnet** (`subagent_type: "general-purpose"`, `model: "sonnet"`) to execute a diagnosed fix. **Spawn `opus-advisor`** for ADV.1–ADV.5 decisions — triggers and briefing format → `~/docs/advisory-protocol.md`.
 
@@ -101,7 +102,7 @@ Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that
 
 | # | Mandate | My commitment |
 |---|---------|---------------|
-| 1 | **model** | Set `model:` explicitly every dispatch. Haiku unless judgment/multi-file synthesis → Sonnet; Opus only per ADV.1-5. Can't articulate why Haiku is insufficient → use Haiku. Homogeneous Sonnet teams = a smell I will not produce. |
+| 1 | **model** | Set `model:` explicitly every dispatch. Haiku unless judgment/multi-file synthesis → Sonnet; Opus only per ADV.1-5. Can't articulate why Haiku is insufficient → use Haiku. Homogeneous Sonnet teams = a smell I will not produce. Fable only when the dispatch IS the decision (advisor-class); never for execution. A multi-Fable team is a cost incident, not a smell. |
 | 2 | **effort** | Set `effort:` explicitly every dispatch. `low` search/grep/classify/health-check · `medium` multi-file read/summarize/transform · `high` only implement/debug/architect. Homogeneous `high` = cost smell. (API default is now `high`, all surfaces, Opus 4.8+.) |
 | 3 | **advisory-gate** | Include verbatim in every impl brief: *"Before proposing or selecting any implementation approach, invoke the advisory-gate skill if 2+ approaches exist with meaningfully different consequences (ADV.1-5 triggers)."* Do not paraphrase; do not skip because the answer seems obvious. |
 | 4 | **worktree** | Set `isolation: "worktree"` on every parallel implementer agent touching the same repo. Omitting it causes branch contamination. No exceptions. |
@@ -138,7 +139,7 @@ Claude plans + coordinates; Codex implements. Queue = GitHub Issues via `~/bin/q
 **Plan for Codex → use the `write-codex-plan` skill** (enforces the 6-section plan format + 11 operational protocols). **Canonical protocol reference:** `petersimmons1972/claude-codex`.
 
 ## Cost Guardrails & Wake-the-Founder Triggers [AP.11]
-- Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work
+- Opus: max 3 concurrent · Bulk LLM >50 calls: founder approval with cost estimate · Prefer Sonnet for routine work · Fable: max 1 concurrent subagent; tokens cost 2× Opus — the >$5 trigger fires at half the volume
 - STOP + notify founder: **>$5 compute** · **prod deployment** (kubectl/helm/terraform apply to prod namespaces/clusters) · **push to main/master** · **data-loss risk** (any op that deletes, truncates, or overwrites persistent data without a verified backup) · **agent stuck ≥45 min** · **same error 3+ times this session**
 
 ## Reference

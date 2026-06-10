@@ -1,0 +1,11 @@
+[Unit]
+Description=Run codex janitor weekly
+
+[Timer]
+OnCalendar=Mon *-*-* 02:00:00
+Persistent=true
+AccuracySec=30m
+Unit=codex-janitor.service
+
+[Install]
+WantedBy=timers.target

@@ -3,7 +3,7 @@ name: write-codex-plan
 description: >
   Produce implementation plans destined for Codex via ~/bin/queue-agent. Enforces
   the 6-section plan structure (Context, Files, Acceptance TDD, Spec refs, Constraints,
-  Out of scope) and 10 operational protocols governing the Claude↔Codex Hybrid Workflow.
+  Out of scope) and 15 operational protocols governing the Claude↔Codex Hybrid Workflow.
   Use for: Codex handoff, queue-agent brief, implementation plan for Codex, agent/codex
   GitHub issue, Codex task. Triggers: write a codex plan, queue to codex, codex handoff,
   queue-agent, write a plan for codex, implementation plan for codex, create a codex issue.
@@ -12,7 +12,7 @@ description: >
 # write-codex-plan
 
 Produces implementation plans destined for Codex via `~/bin/queue-agent`. Enforces
-a 6-section plan structure and 10 operational protocols so handoffs do not require
+a 6-section plan structure and 15 operational protocols so handoffs do not require
 out-of-band clarification.
 
 ## When This Skill Fires
@@ -76,7 +76,7 @@ fail if absent or empty. Context and Out of scope are project conventions.
 
 ---
 
-## The 11 Codex Operational Protocols (summary)
+## The 15 Codex Operational Protocols (summary)
 
 The canonical protocol text lives at `petersimmons1972/claude-codex/protocol/operational-protocols.md`.
 Full text: **petersimmons1972/claude-codex/protocol/operational-protocols.md**
@@ -94,6 +94,10 @@ Summary:
 9. **Memory (Engram)** — `memory_store` decisions/errors at session end; `memory_recall` before arch choices
 10. **TDD discipline** — every commit includes a test; failing test before implementation; no exceptions
 11. **Subagent delegation** — delegate independent/parallelizable work to subagents; keep orchestration in main context
+12. **PR serialization (overlapping files):** If the plan creates 2+ PRs that touch overlapping files, sequence them explicitly. State which PR must merge first and make it a hard prerequisite: Codex does not begin PR N+1 until PR N is confirmed merged on origin/main. Never parallelize PRs with shared file scope.
+13. **Rebase gate before push:** Before any `git push` on an implementation branch, Codex must run `git fetch origin && git rebase origin/main`. If conflicts arise, resolve them and re-run the full test suite before pushing. A branch that hasn't been rebased against current main is not ready to push regardless of local test results.
+14. **Append-only PR updates:** Agents push additional commits to fix CI failures — never rewrite branch history. Force-push on PR branches is prohibited. Squash at merge time. For related queue items in the same subsystem, stack PRs (each targets the previous branch, not main); do not begin a stacked PR until the base branch is confirmed merged.
+15. **Auto-merge gate:** When opening a PR on olla, aifleet, or engram-go, immediately run `gh pr merge --auto --squash --delete-branch` to register auto-merge intent. GitHub will execute the merge when CI passes. Do not add manual merge-polling steps to plans for these repos. If `--auto` is rejected (e.g. GitHub Free plan restriction on private repos), fall back to a background watcher agent that polls `gh pr checks` every 60s and executes `gh pr merge --squash --delete-branch` when all checks pass. Plans must confirm: branch rebased on main, all required CI checks pass.
 
 ## Invocation Pattern
 

@@ -14,6 +14,10 @@ Spawn `opus-advisor` before any of:
 - **ADV.4 — Stuck on reasoning:** same root cause failed twice AND the failure is logic, not capacity
 - **ADV.5 — Irreversible + ambiguous:** can't easily undo and the right answer isn't clear
 
+## Fable vs. Opus — When to Escalate Higher
+
+ADV.1–ADV.5 escalations may target `model: "fable"` when the decision is **campaign-shaping** — i.e., it affects multiple workstreams, crosses system boundaries, or sets a direction that locks in choices for many subsequent agents. Plain `model: "opus"` remains correct for single-system architecture decisions (one repo, one service, one component). Fable is the coordinator/strategist tier, not an execution tier; never dispatch Fable to implement code.
+
 ## Opus Briefing Format
 
 1. **Decision** — one sentence

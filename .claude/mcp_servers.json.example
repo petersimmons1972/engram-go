@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "agentgateway": {
-      "type": "http",
-      "url": "https://app.agentgateway.com/api/mcp"
-    },
     "crux": {
       "type": "http",
       "url": "http://127.0.0.1:14801/mcp"

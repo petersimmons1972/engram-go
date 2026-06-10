@@ -74,6 +74,13 @@ Respond only with valid JSON, no other text."""
                 model=self.model,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
+                system=[
+                    {
+                        "type": "text",
+                        "text": "You are a job-application extraction assistant.",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
