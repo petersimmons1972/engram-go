@@ -33,6 +33,7 @@ repo=""
 title=""
 brief=""
 priority="p2"
+target_repo=""
 extra_labels=()
 
 base="$(basename "$0")"
@@ -78,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --title) title="${2:-}"; shift 2 ;;
     --brief) brief="${2:-}"; shift 2 ;;
     --priority) priority="${2:-}"; shift 2 ;;
+    --target-repo) target_repo="${2:-}"; shift 2 ;;
     --label) extra_labels+=("${2:-}"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
@@ -93,6 +95,9 @@ contains_word "$repo" $VALID_REPOS || fail "--repo must be one of: $VALID_REPOS"
 [[ -n "$title" ]] || fail "--title is required"
 [[ -n "$brief" && -f "$brief" ]] || fail "--brief must point to a readable file"
 [[ "$priority" =~ ^p[0-3]$ ]] || fail "--priority must be p0, p1, p2, or p3"
+if [[ -n "$target_repo" && ! "$target_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  fail "--target-repo must be in owner/name format"
+fi
 
 for section in "## Files" "## Acceptance (TDD)" "## Spec refs" "## Constraints"; do
   section_nonempty "$section" "$brief" || fail "brief missing non-empty section: $section"
@@ -102,6 +107,9 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
 {
+  if [[ -n "$target_repo" ]]; then
+    printf 'Target-Repo: %s\n' "$target_repo"
+  fi
   printf 'Filed by queue-agent on %s at the request of: %s\n\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$(git config user.name 2>/dev/null || printf unknown)"
   cat "$brief"
 } >"$tmp"
