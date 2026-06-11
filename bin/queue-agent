@@ -35,6 +35,7 @@ brief=""
 priority="p2"
 target_repo=""
 extra_labels=()
+parallel_safe=false
 
 base="$(basename "$0")"
 if [[ "$base" == "queue-codex" ]]; then
@@ -44,7 +45,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: queue-agent --agent <codex|hermes> --repo <name> --title "..." --brief brief.md [--priority p2] [--label bug]
+Usage: queue-agent --agent <codex|hermes> --repo <name> --title "..." --brief brief.md [--priority p2] [--label bug] [--parallel-safe]
 EOF
 }
 
@@ -81,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --priority) priority="${2:-}"; shift 2 ;;
     --target-repo) target_repo="${2:-}"; shift 2 ;;
     --label) extra_labels+=("${2:-}"); shift 2 ;;
+    --parallel-safe) parallel_safe=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -103,6 +105,19 @@ for section in "## Files" "## Acceptance (TDD)" "## Spec refs" "## Constraints";
   section_nonempty "$section" "$brief" || fail "brief missing non-empty section: $section"
 done
 
+# Parse ## Model section for tier → cosmetic model label
+model_tier=""
+if section_nonempty "## Model" "$brief"; then
+  model_tier="$(awk '/^## Model/{f=1; next} /^## /{f=0} f && /^tier:/{print $2; exit}' "$brief")"
+  case "$model_tier" in
+    codex|standard|elevated) ;;
+    *) echo "queue-agent: warning: unrecognized tier '${model_tier}' in ## Model; using standard" >&2; model_tier="standard" ;;
+  esac
+else
+  echo "queue-agent: warning: brief missing ## Model section; defaulting to standard/high" >&2
+  model_tier="standard"
+fi
+
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
@@ -114,7 +129,8 @@ trap 'rm -f "$tmp"' EXIT
   cat "$brief"
 } >"$tmp"
 
-labels=(--label "agent/$agent" --label "agent/$agent/queued" --label "priority/$priority")
+labels=(--label "agent/$agent" --label "agent/$agent/queued" --label "priority/$priority" --label "model/$model_tier")
+[[ "$parallel_safe" == "true" ]] && labels+=(--label "parallel-safe")
 for label in "${extra_labels[@]}"; do
   [[ -n "$label" ]] && labels+=(--label "$label")
 done
