@@ -575,14 +575,20 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			continue
 		}
 		if content != "" {
+			// Truncate at storage time so contentByID and contextBlocks stay
+			// consistent. If --exact-signal-boost later rebuilds contextBlocks
+			// from contentByID, it gets already-truncated content — preventing
+			// full-length blocks from exceeding the model's context window.
+			if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
+				content = content[:cfg.MaxBlockChars]
+			}
 			contentByID[id] = content
 			contextBlocks = append(contextBlocks, content)
 		}
 	}
-	// --max-block-chars: truncate each block so the assembled prompt stays within
-	// the model's max_model_len. Applied before chrono-sort so truncation is
-	// independent of ordering. Required when --context-topk is large (e.g. 100)
-	// and the vLLM endpoint has a modest context window (e.g. 131072 tokens).
+	// --max-block-chars: truncation already applied above at storage time.
+	// This loop is now a no-op but kept as a safety net for any path that
+	// populates contextBlocks without going through contentByID.
 	if cfg.MaxBlockChars > 0 {
 		for i, block := range contextBlocks {
 			if len(block) > cfg.MaxBlockChars {
