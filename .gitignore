@@ -84,3 +84,4 @@ Documents/Resume/
 .local/share/icons/
 .config/mimeapps.list
 archive/*.zip
+bin/codex-poll
