@@ -12,7 +12,7 @@ description: >
 # write-codex-plan
 
 Produces implementation plans destined for Codex via `~/bin/queue-agent`. Enforces
-a 6-section plan structure and 15 operational protocols so handoffs do not require
+a 7-section plan structure and 21 operational protocols so handoffs do not require
 out-of-band clarification.
 
 ## When This Skill Fires
