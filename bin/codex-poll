@@ -30,8 +30,14 @@ STATE_DIR="${CODEX_POLL_STATE_DIR:-${HOME}/.cache/codex-poll}"
 EVENT_DIR="${CODEX_POLL_EVENT_DIR:-${HOME}/.claude/events}"
 STRIKE_STATE_DIR="${CODEX_POLL_STRIKE_DIR:-${HOME}/.local/state/codex-poll/strikes}"
 STRIKE_WINDOW_SECONDS="${CODEX_POLL_STRIKE_WINDOW_SECONDS:-259200}"
-LOCK_FILE="${CODEX_POLL_LOCK_FILE:-${STATE_DIR}/lock}"
 LOG_FILE="${CODEX_POLL_LOG_FILE:-${STATE_DIR}/poll.log}"
+
+# Protocol 21 — parallel session mandate: 3-slot PID-file locking replaces the
+# old single LOCK_FILE. Slot 1 claims any queued issue; slots 2-3 only claim
+# issues labeled parallel-safe that pass the file-overlap backstop.
+PARALLEL_SAFE_LABEL="${CODEX_PARALLEL_SAFE_LABEL:-parallel-safe}"
+CURRENT_SLOT=1        # overwritten by main() after slot acquisition
+ACQUIRED_SLOT_FILE="" # PID file owned by this process
 CODEX_CACHE_SHA_FILE="${CODEX_CACHE_SHA_FILE:-${SCRIPT_DIR}/claude-codex.sha}"
 CODEX_CACHE_REPO_SHA="${CODEX_CACHE_REPO_SHA:-}"
 STRIKE_TOOL="${CODEX_POLL_STRIKE_TOOL:-${HOME}/scripts/strikes.py}"
@@ -503,6 +509,47 @@ release_claimed_issue() {
     --add-label "$QUEUE_LABEL" \
     --remove-label "$WORKING_LABEL" >>"$LOG_FILE" 2>&1 || \
     log "WARNING: failed to revert label state for ${repo}#${issue_number}"
+}
+
+# Extract file paths from a plan's "## Files" bullet list ("- path — description").
+extract_plan_files() {
+  awk '/^## Files/{f=1; next} /^## /{f=0} f' \
+    | sed -n 's/^[-*][[:space:]]*`\{0,1\}\([^[:space:]`]\{1,\}\)`\{0,1\}.*/\1/p' \
+    | grep -v '^$' | sort -u
+}
+
+# Protocol 21 backstop for slots 2-3: the candidate must carry the
+# parallel-safe label (Claude's queue-time judgment) AND its ## Files set must
+# not overlap the ## Files of any in-progress codex issue. Conservative on
+# purpose: a same-named path in a different repo still counts as overlap.
+check_parallel_safe_eligible() {
+  local candidate_repo="$1"
+  local candidate_issue="$2"
+  local label_names="$3"
+  local issue_body="$4"
+
+  if ! grep -qxF "$PARALLEL_SAFE_LABEL" <<< "$label_names"; then
+    log_skipped_issue "$candidate_repo" "$candidate_issue" "slot ${CURRENT_SLOT}: missing ${PARALLEL_SAFE_LABEL} label"
+    return 1
+  fi
+
+  local candidate_files
+  candidate_files="$(extract_plan_files <<< "$issue_body")"
+  if [[ -z "$candidate_files" ]]; then
+    log_skipped_issue "$candidate_repo" "$candidate_issue" "slot ${CURRENT_SLOT}: no ## Files paths for overlap backstop"
+    return 1
+  fi
+
+  local ip_files overlap
+  ip_files="$(gh search issues --owner "petersimmons1972" \
+    --label "$WORKING_LABEL" --state open \
+    --json body --jq '.[].body' 2>/dev/null | extract_plan_files)"
+  overlap="$(comm -12 <(printf '%s\n' "$candidate_files") <(printf '%s\n' "$ip_files"))"
+  if [[ -n "$overlap" ]]; then
+    log_skipped_issue "$candidate_repo" "$candidate_issue" "slot ${CURRENT_SLOT}: file overlap with in-progress work: $(tr '\n' ' ' <<< "$overlap")"
+    return 1
+  fi
+  return 0
 }
 
 claim_issue() {
@@ -1304,6 +1351,16 @@ run_issue_row() {
   candidate_priority="$(jq -r '.priority // 9' <<< "$row")"
 
   preflight_issue_body="$(gh issue view "$candidate_issue" --repo "$candidate_repo" --json body --jq '.body' 2>/dev/null || echo "")"
+
+  # Protocol 21: slots 2-3 only claim parallel-safe issues with no file overlap
+  if [[ "${CURRENT_SLOT:-1}" -ge 2 ]]; then
+    local candidate_label_names
+    candidate_label_names="$(jq -r '.label_names[]? // empty' <<< "$row" 2>/dev/null || true)"
+    if ! check_parallel_safe_eligible "$candidate_repo" "$candidate_issue" "$candidate_label_names" "$preflight_issue_body"; then
+      return 1
+    fi
+  fi
+
   target_repo="$(extract_target_repo_from_body "$preflight_issue_body")"
   if [[ -n "${target_repo:-}" ]]; then
     target_declared=1
@@ -1595,25 +1652,35 @@ main() {
     return 1
   fi
 
-  # PID-file locking (POSIX-portable; kill -0 checks process liveness)
-  if [[ -f "$LOCK_FILE" ]]; then
-    local existing_pid
-    existing_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-      log "another codex-poll is already running (pid ${existing_pid})"
-      return 0
+  # Protocol 21: 3-slot PID-file locking (POSIX-portable; kill -0 checks
+  # process liveness). Slot 1 behaves like the old single lock; slots 2-3
+  # admit concurrent sessions restricted to parallel-safe work (enforced in
+  # run_issue_row via check_parallel_safe_eligible).
+  local _slot _slot_file _existing_pid
+  for _slot in 1 2 3; do
+    _slot_file="${STATE_DIR}/slot${_slot}.pid"
+    if [[ -f "$_slot_file" ]]; then
+      _existing_pid="$(cat "$_slot_file" 2>/dev/null || true)"
+      if [[ -n "$_existing_pid" ]] && kill -0 "$_existing_pid" 2>/dev/null; then
+        continue
+      fi
+      log "removing stale slot ${_slot} lock (pid ${_existing_pid:-unknown} no longer running)"
+      rm -f "$_slot_file"
     fi
-    log "removing stale lock file (pid ${existing_pid:-unknown} no longer running)"
-    rm -f "$LOCK_FILE"
-  fi
-  # noclobber makes > fail atomically if another process created the file
-  # between our stale-check and our write, preventing a TOCTOU race.
-  if (set -o noclobber; printf '%s\n' "$$" > "$LOCK_FILE") 2>/dev/null; then
-    trap 'rm -f "$LOCK_FILE"' EXIT
-  else
-    log "another codex-poll acquired the lock concurrently"
+    # noclobber makes > fail atomically if another process created the file
+    # between our stale-check and our write, preventing a TOCTOU race.
+    if (set -o noclobber; printf '%s\n' "$$" > "$_slot_file") 2>/dev/null; then
+      CURRENT_SLOT="$_slot"
+      ACQUIRED_SLOT_FILE="$_slot_file"
+      trap 'rm -f "${ACQUIRED_SLOT_FILE:-}"' EXIT
+      break
+    fi
+  done
+  if [[ -z "$ACQUIRED_SLOT_FILE" ]]; then
+    log "all 3 codex-poll slots are active; exiting"
     return 0
   fi
+  log "acquired slot ${CURRENT_SLOT} (pid $$)"
 
   if [[ "${1:-}" == "webhook" ]]; then
     run_webhook
