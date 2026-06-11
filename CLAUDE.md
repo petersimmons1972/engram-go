@@ -96,7 +96,7 @@ Behavioral defaults (telemetry shows I default to the wrong tool without these):
 
 Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckdb`, `tokei`, `jq`, `just`, full `kubectl`/`git` workflows → `~/TOOLS.md`.
 
-## Agent Dispatch Mandates — I CHECK ALL SEVEN BEFORE EVERY AGENT CALL [AP.1, AP.11, QC.6]
+## Agent Dispatch Mandates — I CHECK ALL EIGHT BEFORE EVERY AGENT CALL [AP.1, AP.11, QC.6]
 
 Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that output as a hard gate.
 
@@ -109,6 +109,7 @@ Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that
 | 5 | **no push** | Never include `git push` in an agent brief. `git add`/`git commit` are fine. Push is mine, after explicit per-push founder confirmation. |
 | 6 | **engram** | Seed every impl brief with relevant Engram recall from this session. Subagents have no session hooks — unseeded, they operate blind. |
 | 7 | **bounded** | Give every agent clear inputs, expected output, stop conditions, cost expectations. I own merge/dedup/conflict resolution — agent output is not authoritative. |
+| 8 | **recursive** | Mandates apply at every delegation level. Every brief to an agent with Agent-tool access includes verbatim: *"When dispatching any subagent, select the lowest model tier and effort level sufficient for the task; include this sentence verbatim in any brief you give to an agent that can itself spawn agents."* |
 
 ---
 
