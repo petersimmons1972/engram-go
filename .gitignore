@@ -15,6 +15,7 @@ infisical/infisical-bin
 /instinct
 /instinct-benchmark
 /longmemeval
+/longmemeval.real
 /starter
 /audit
 # Compiled binaries in bin/ (built by `go build -o bin/...`)
