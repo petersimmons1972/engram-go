@@ -229,10 +229,27 @@ func runRun(cfg *Config) int {
 		itemMap[item.QuestionID] = item
 	}
 
-	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
-	if err != nil {
-		log.Printf("ERROR read ingest checkpoint: %v", err)
-		return 1
+	// #1079: oracle mode bypasses Engram entirely — no ingest checkpoint exists
+	// or is needed. Synthesize a minimal IngestEntry per item so the run loop
+	// processes all items without requiring a prior ingest stage.
+	var ingestEntries []longmemeval.IngestEntry
+	if cfg.AtomOracle {
+		ingestEntries = make([]longmemeval.IngestEntry, 0, len(items))
+		for _, item := range items {
+			ingestEntries = append(ingestEntries, longmemeval.IngestEntry{
+				QuestionID: item.QuestionID,
+				Project:    "", // no Engram project for oracle mode
+				Status:     "done",
+			})
+		}
+		log.Printf("run: oracle mode — synthesized %d ingest entries (no checkpoint required)", len(ingestEntries))
+	} else {
+		var err error
+		ingestEntries, err = longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
+		if err != nil {
+			log.Printf("ERROR read ingest checkpoint: %v", err)
+			return 1
+		}
 	}
 	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
 	for _, e := range ingestEntries {
@@ -375,6 +392,18 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 		item, ok := itemMap[ingestEntry.QuestionID]
 		if !ok {
 			out <- longmemeval.RunEntry{QuestionID: ingestEntry.QuestionID, Status: "error", Error: "item not found in data file"}
+			continue
+		}
+
+		// #1079: oracle mode bypasses Engram entirely — no MCP connection needed.
+		if cfg.AtomOracle {
+			entry := runOne(ctx, cfg, nil, item, ingestEntry)
+			out <- entry
+			if entry.Status == "error" {
+				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+			} else {
+				log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+			}
 			continue
 		}
 
