@@ -97,8 +97,16 @@ func buildOracleContext(ctx context.Context, cfg *Config, item longmemeval.Item)
 	if err != nil {
 		return nil, 0, fmt.Errorf("oracle: extraction error: %w", err)
 	}
+
 	if len(atoms) == 0 {
-		return nil, 0, fmt.Errorf("oracle: zero atoms extracted from %d gold session(s)", len(sessionTexts))
+		// Graceful fallback: atom extractor found no preference-type atoms (common
+		// for non-preference sessions). Rather than fail-closed (which would exclude
+		// the item from scoring), inject raw gold session text as the oracle context.
+		// This is still oracle knowledge — the ceiling being measured is
+		// "what's achievable with perfect access to the gold sessions?"
+		// The caller sets OracleZeroAtoms=true to track these items separately.
+		log.Printf("oracle: zero atoms for item (fallback to raw session text), sessions=%d", len(sessionTexts))
+		return sessionTexts, 0, nil
 	}
 
 	atomBlock := search.FormatAtomsAsContext(atoms)
@@ -117,7 +125,7 @@ func buildOracleContext(ctx context.Context, cfg *Config, item longmemeval.Item)
 func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, ingest longmemeval.IngestEntry) longmemeval.RunEntry {
 	contextBlocks, atomCount, err := buildOracleContext(ctx, cfg, item)
 	if err != nil {
-		log.Printf("WARN oracle [%s] zero atoms: %v", item.QuestionID, err)
+		log.Printf("WARN oracle [%s] extraction error: %v", item.QuestionID, err)
 		return longmemeval.RunEntry{
 			QuestionID:      item.QuestionID,
 			Status:          "error",
@@ -126,7 +134,8 @@ func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, inges
 		}
 	}
 
-	log.Printf("oracle [%s] atoms=%d sessions=%d variant=%s", item.QuestionID, atomCount, len(goldSessionTexts(item)), cfg.AtomOracleVariant)
+	oracleZeroAtoms := atomCount == 0
+	log.Printf("oracle [%s] atoms=%d sessions=%d variant=%s zero_atoms=%v", item.QuestionID, atomCount, len(goldSessionTexts(item)), cfg.AtomOracleVariant, oracleZeroAtoms)
 
 	// Build generation prompt using the same prompt-assembly path as normal mode.
 	// contextBlocks already contains oracle atoms (and optionally raw session text).
@@ -157,5 +166,6 @@ func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, inges
 		RetrievedIDs:    nil, // oracle bypasses Engram recall — no retrieved IDs
 		Status:          "done",
 		OracleAtomCount: atomCount,
+		OracleZeroAtoms: oracleZeroAtoms,
 	}
 }
