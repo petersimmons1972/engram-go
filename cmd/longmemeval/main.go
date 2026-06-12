@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -76,6 +77,9 @@ type Config struct {
 
 	// H15: dual-query preference recall (lme-h8h12h15 branch)
 	DualPreferenceRecall bool // run a second subject-anchor recall for preference questions and union results
+
+	// Turn-boundary chunk mode for session ingest (`off` or `turn`).
+	ChunkMode string
 
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
@@ -160,6 +164,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
 	_, _ = fmt.Fprintln(w, "                          never: preserve all projects (use if reusing data in a follow-up experiment)")
 	_, _ = fmt.Fprintln(w, "  --no-cleanup            DEPRECATED: alias for --cleanup-policy=never")
+	_, _ = fmt.Fprintln(w, "  --chunk-mode <mode>     Turn-chunking mode for session ingest: off (default), turn")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Backend contention guard (--exclusive-backend is on by default):")
 	_, _ = fmt.Fprintln(w, "  --exclusive-backend         Guard the vLLM endpoint with a PID-liveness lockfile (default true)")
@@ -249,6 +254,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")
+	fs.StringVar(&cfg.ChunkMode, "chunk-mode", envOr("ENGRAM_CHUNK_MODE", string(chunk.ChunkModeOff)),
+		"chunking mode for session ingest: off (default), turn (session-role boundaries)")
 	// Phase 0 (P0): SessionNDCGAgg — use NDCGAny-weighted session aggregation for the
 	// retrieval_log recall metrics on single-session question types. When on, single-session
 	// items use RecallAny (ANY gold session in top-K) instead of RecallAll (ALL gold sessions),

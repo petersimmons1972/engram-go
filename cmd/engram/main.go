@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/audit"
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/config"
 	"github.com/petersimmons1972/engram/internal/db"
@@ -195,6 +196,9 @@ func runServer(args []string) error {
 
 	// LEVER-8: session-DCG aggregation re-ranking.
 	sessionNDCGAgg := fs.Bool("session-ndcg-agg", envBool("ENGRAM_SESSION_NDCG_AGG", false), "LEVER-8: group recall results by sid: tag and re-rank sessions by DCG of chunk cosines (default false; targets multi-session and temporal question types)")
+	// Chunking mode controls how memories are split at store time. turn mode
+	// enables conversational-turn boundaries and emits turn metadata.
+	chunkMode := fs.String("chunk-mode", envOr("ENGRAM_CHUNK_MODE", string(chunk.ChunkModeOff)), "chunking mode for memory storage: off (default), turn (role-boundary)")
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
@@ -455,6 +459,7 @@ func runServer(args []string) error {
 		}
 		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
 		engine.SetEmbedRecallTimeout(*embedRecallTimeoutMS)
+		engine.SetChunkMode(chunk.ParseChunkMode(*chunkMode))
 		if embedGateway != nil {
 			engine.SetEmbedGateway(embedGateway)
 		} else {

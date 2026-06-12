@@ -265,6 +265,9 @@ type SearchEngine struct {
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
+	// chunkMode controls memory chunking strategy for future content modes.
+	// off: default sentence window behavior; turn: turn-boundary chunking.
+	chunkMode chunk.ChunkMode
 
 	// embedder metadata cache — eliminates 2-3 DB round-trips per recall/store.
 	// Protected by embedderMetaMu, which is SEPARATE from embedMu to avoid
@@ -299,6 +302,11 @@ func (e *SearchEngine) SetGlobalReembedder(n globalNotifier) {
 
 func (e *SearchEngine) SetEmbedGateway(g embedGateway) {
 	e.embedGateway = g
+}
+
+// SetChunkMode sets the chunking strategy used by storeChunksForMemory.
+func (e *SearchEngine) SetChunkMode(mode chunk.ChunkMode) {
+	e.chunkMode = mode
 }
 
 // SetHydeIndexer wires a HydeIndexer so that StoreWithRawBody generates and
@@ -380,6 +388,7 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 			}
 			return time.Duration(ms) * time.Millisecond
 		}(),
+		chunkMode: chunk.ParseChunkMode(envconf.String("ENGRAM_CHUNK_MODE", string(chunk.ChunkModeOff))),
 	}
 }
 
@@ -415,9 +424,14 @@ func (e *SearchEngine) storeChunksForMemory(ctx context.Context, m *types.Memory
 	// Produce chunk candidates. ChunkDocument returns []ChunkCandidate (with heading
 	// metadata). ChunkText returns plain []string which we wrap into candidates.
 	var candidates []chunk.ChunkCandidate
-	if m.StorageMode == "document" {
+	switch {
+	case m.StorageMode == "document":
 		candidates = chunk.ChunkDocument(chunkSource, 0 /* use package default */)
-	} else {
+	case e.chunkMode.IsTurnMode():
+		for _, candidate := range chunk.ChunkTurns(chunkSource, chunk.DefaultTurnChunkChars) {
+			candidates = append(candidates, candidate)
+		}
+	default:
 		// Chunk using the configured model's context window so no chunk
 		// exceeds what Ollama accepts for this embedding model (#361).
 		for _, text := range chunk.ChunkText(chunkSource, embed.ModelMaxTokens(e.getEmbedder().Name()), 50) {

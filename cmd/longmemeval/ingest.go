@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -95,6 +96,7 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 		sessionID string
 		item      longmemeval.BatchItem
 	}
+	mode := chunk.ParseChunkMode(cfg.ChunkMode)
 	var sessions []sessionEntry
 	for i, session := range item.HaystackSessions {
 		if i >= len(item.HaystackSessionIDs) {
@@ -105,10 +107,8 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
-		// Prepend session date so the model can anchor relative-time questions.
 		tags := []string{"lme", "sid:" + sessionID}
 		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
-			content = "Session date: " + item.HaystackDates[i] + "\n" + content
 			tags = append(tags, "date:"+item.HaystackDates[i])
 		}
 		sessions = append(sessions, sessionEntry{
@@ -128,7 +128,35 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 	}
 
 	memoryMap := make(map[string]string, len(sessions))
+	memoryProvenance := make(map[string]longmemeval.TurnChunkProvenance, len(sessions))
 	for i, s := range sessions {
+		if mode == chunk.ChunkModeTurn {
+			for _, tc := range chunk.ChunkTurns(s.item.Content, chunk.DefaultTurnChunkChars) {
+				tags := append([]string{}, s.item.Tags...)
+				tags = append(tags, "speaker:"+tc.Speaker, fmt.Sprintf("turn:%d", tc.TurnIndex))
+				chunkContent := tc.Text
+				if sessionDate := extractDateTag(s.item.Tags); sessionDate != "" {
+					chunkContent = "Session date: " + sessionDate + "\n" + chunkContent
+				}
+				id, err := restClient.QuickStore(ctx, project, chunkContent, tags, expiresAt)
+				if err != nil {
+					return longmemeval.IngestEntry{
+						QuestionID: item.QuestionID,
+						Project:    project,
+						Status:     "error",
+						Error:      fmt.Sprintf("quick-store offset %d: %v", i, err),
+					}
+				}
+				memoryMap[id] = s.sessionID
+				memoryProvenance[id] = longmemeval.TurnChunkProvenance{
+					SessionID: s.sessionID,
+					TurnIndex: tc.TurnIndex,
+					Speaker:   tc.Speaker,
+				}
+			}
+			continue
+		}
+
 		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags, expiresAt)
 		if err != nil {
 			return longmemeval.IngestEntry{
@@ -142,12 +170,23 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 	}
 
 	return longmemeval.IngestEntry{
-		QuestionID:   item.QuestionID,
-		Project:      project,
-		SessionCount: len(memoryMap),
-		MemoryMap:    memoryMap,
-		Status:       "done",
+		QuestionID:       item.QuestionID,
+		Project:          project,
+		SessionCount:     len(memoryMap),
+		MemoryMap:        memoryMap,
+		MemoryProvenance: memoryProvenance,
+		Status:           "done",
 	}
+}
+
+func extractDateTag(tags []string) string {
+	const prefix = "date:"
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, prefix) {
+			return strings.TrimPrefix(tag, prefix)
+		}
+	}
+	return ""
 }
 
 // loadItems parses the LongMemEval JSON file.

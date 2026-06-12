@@ -2,15 +2,45 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func newRestClientWithHandler(t *testing.T, h http.HandlerFunc) *longmemeval.RestClient {
+	t.Helper()
+	client := &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			recorder := httptest.NewRecorder()
+			h(recorder, req)
+			return recorder.Result(), nil
+		}),
+		Timeout: 30 * time.Second,
+	}
+	rc := longmemeval.NewRestClient("http://example.local", "")
+	rv := reflect.ValueOf(rc).Elem().FieldByName("http")
+	if !rv.IsValid() {
+		t.Fatal("RestClient does not expose http field")
+	}
+	reflect.NewAt(rv.Type(), unsafe.Pointer(rv.UnsafeAddr())).Elem().Set(reflect.ValueOf(client))
+	return rc
+}
 
 func TestLoadItems_MalformedJSON(t *testing.T) {
 	dir := t.TempDir()
@@ -189,5 +219,97 @@ func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	}
 	if _, ok := gotBody["expires_at"]; ok {
 		t.Error("expires_at must be absent from QuickStore body when ScratchTTL is 0")
+	}
+}
+
+func TestIngestOne_TurnMode_TagsAndProvenance(t *testing.T) {
+	type quickStoreRequest struct {
+		Content string   `json:"content"`
+		Tags    []string `json:"tags"`
+		Project string   `json:"project"`
+	}
+
+	requests := make([]quickStoreRequest, 0)
+	rc := newRestClientWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		var reqBody quickStoreRequest
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("decode quick-store body: %v", err)
+		}
+		requests = append(requests, reqBody)
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": fmt.Sprintf("m-%d", len(requests))})
+	})
+	cfg := &Config{RunID: "run-turn", Workers: 1, ChunkMode: string(chunk.ChunkModeTurn)}
+	item := longmemeval.Item{
+		QuestionID:         "q-turn",
+		HaystackSessionIDs: []string{"sid-1"},
+		HaystackDates:      []string{"2024-01-01"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{
+				{Role: "user", Content: "user turn " + strings.Repeat("u", 520)},
+				{Role: "assistant", Content: "assistant turn " + strings.Repeat("a", 520)},
+			},
+		},
+	}
+
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got status=%s: %s", entry.Status, entry.Error)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 quick-store calls for 2 turn chunks, got %d", len(requests))
+	}
+	if entry.SessionCount != 2 {
+		t.Fatalf("expected session_count 2, got %d", entry.SessionCount)
+	}
+	if len(entry.MemoryMap) != 2 {
+		t.Fatalf("expected memory_map with 2 entries, got %d", len(entry.MemoryMap))
+	}
+	if len(entry.MemoryProvenance) != 2 {
+		t.Fatalf("expected memory_provenance with 2 entries, got %d", len(entry.MemoryProvenance))
+	}
+
+	hasTag := func(tags []string, want string) bool {
+		for _, t := range tags {
+			if t == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	expectedTagByID := map[int]struct {
+		speaker string
+		turn    int
+	}{
+		0: {speaker: "user", turn: 0},
+		1: {speaker: "assistant", turn: 1},
+	}
+
+	for i, req := range requests {
+		if req.Project != entry.Project {
+			t.Fatalf("quick-store project should match generated project")
+		}
+		if !hasTag(req.Tags, "sid:sid-1") {
+			t.Fatalf("request tags missing sid:sid-1: %v", req.Tags)
+		}
+		if !hasTag(req.Tags, "date:2024-01-01") {
+			t.Fatalf("request tags missing date:2024-01-01: %v", req.Tags)
+		}
+		expected := expectedTagByID[i]
+		if !hasTag(req.Tags, "speaker:"+expected.speaker) {
+			t.Fatalf("request tags missing speaker:%s: %v", expected.speaker, req.Tags)
+		}
+		if !hasTag(req.Tags, fmt.Sprintf("turn:%d", expected.turn)) {
+			t.Fatalf("request tags missing turn:%d: %v", expected.turn, req.Tags)
+		}
+		if !strings.HasPrefix(req.Content, "Session date: 2024-01-01\n") {
+			t.Fatalf("request content missing session date prefix: %q", req.Content)
+		}
+	}
+
+	for id, p := range entry.MemoryProvenance {
+		if p.SessionID != "sid-1" {
+			t.Errorf("memory %s provenance session_id = %q, want sid-1", id, p.SessionID)
+		}
 	}
 }

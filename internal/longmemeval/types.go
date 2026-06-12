@@ -44,14 +44,26 @@ type Turn struct {
 	HasAnswer bool   `json:"has_answer,omitempty"`
 }
 
+// TurnChunkProvenance describes the session turn that produced a chunk memory.
+// TurnIndex is zero-based in the original session order.
+type TurnChunkProvenance struct {
+	SessionID string `json:"session_id"`
+	TurnIndex int    `json:"turn_index"`
+	Speaker   string `json:"speaker"`
+}
+
 // IngestEntry is one line written to checkpoint-ingest.jsonl.
 type IngestEntry struct {
 	QuestionID   string            `json:"question_id"`
 	Project      string            `json:"project"`
 	SessionCount int               `json:"session_count"`
-	MemoryMap    map[string]string `json:"memory_map"` // memory_id → session_id
-	Status       string            `json:"status"`     // "done" | "error"
-	Error        string            `json:"error,omitempty"`
+	MemoryMap    map[string]string `json:"memory_map"` // memory_id → session_id (parent session)
+	// MemoryProvenance carries per-memory provenance metadata for turn-mode
+	// ingest (session + turn index + speaker), enabling run-time context
+	// expansion and richer provenance.
+	MemoryProvenance map[string]TurnChunkProvenance `json:"memory_provenance,omitempty"`
+	Status           string                         `json:"status"` // "done" | "error"
+	Error            string                         `json:"error,omitempty"`
 }
 
 // RunEntry is one line written to checkpoint-run.jsonl.

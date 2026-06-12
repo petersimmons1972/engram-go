@@ -20,8 +20,42 @@ const LazyChunkThreshold = 8000
 // when the caller passes targetChunkChars <= 0.
 const DefaultTargetChunkChars = 2000
 
+// DefaultTurnChunkChars is the nominal target size for turn boundary mode.
+const DefaultTurnChunkChars = 500
+
+// ChunkMode controls how candidate chunks are generated.
+type ChunkMode string
+
+const (
+	ChunkModeOff  ChunkMode = "off"
+	ChunkModeTurn ChunkMode = "turn"
+)
+
+// ParseChunkMode normalizes and validates the configured mode. Unknown values
+// fall back to OFF for safe default behavior.
+func ParseChunkMode(raw string) ChunkMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(ChunkModeTurn):
+		return ChunkModeTurn
+	case "", string(ChunkModeOff):
+		return ChunkModeOff
+	default:
+		return ChunkModeOff
+	}
+}
+
+// IsTurnMode reports whether turn-boundary chunking is enabled.
+func (m ChunkMode) IsTurnMode() bool {
+	return m == ChunkModeTurn
+}
+
 // headingRE matches level-1 and level-2 Markdown headings at the start of a line.
 var headingRE = regexp.MustCompile(`(?m)^#{1,2}\s+(.+)$`)
+
+// rolePrefixRE extracts role headers from LongMemEval turn text.
+// Limiting to known roles avoids false positives on inline labels like
+// "Question:" or "Note:", which would otherwise split turns unexpectedly.
+var rolePrefixRE = regexp.MustCompile(`(?i)^(user|assistant|system|tool):\s*(.*)$`)
 
 // whitespaceRE collapses runs of whitespace for normalization.
 var whitespaceRE = regexp.MustCompile(`\s+`)
@@ -36,6 +70,10 @@ var paragraphSplitRE = regexp.MustCompile(`\n{2,}`)
 type ChunkCandidate struct {
 	// Text is the chunk content, possibly including overlap from the previous chunk.
 	Text string
+	// Speaker is the role associated with the chunk in turn mode.
+	Speaker string
+	// TurnIndex is the zero-based turn index in the original turn stream.
+	TurnIndex int
 	// SectionHeading is the nearest level-1/2 Markdown heading ancestor, or empty
 	// when the document has no headings.
 	SectionHeading string
@@ -167,6 +205,145 @@ func ChunkText(text string, maxTokens, overlapTokens int) []string {
 		return []string{text}
 	}
 	return chunks
+}
+
+// ParsedTurn is a complete role + text block parsed from turn-oriented text.
+type ParsedTurn struct {
+	Role      string
+	TurnIndex int
+	Text      string
+}
+
+// splitTurns splits role-labeled transcript text into complete turns.
+func splitTurns(text string) []ParsedTurn {
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	var turns []ParsedTurn
+	currentRole := ""
+	currentText := make([]string, 0)
+	currentIndex := -1
+	nextIndex := 0
+
+	flush := func() {
+		if len(currentText) == 0 {
+			return
+		}
+		role := strings.ToLower(strings.TrimSpace(currentRole))
+		if role == "" {
+			role = "user"
+		}
+		text := strings.Join(currentText, "\n")
+		if t := strings.TrimSpace(text); t != "" {
+			turns = append(turns, ParsedTurn{Role: role, TurnIndex: currentIndex, Text: t})
+		}
+		currentRole = ""
+		currentText = currentText[:0]
+		currentIndex = -1
+	}
+
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if m := rolePrefixRE.FindStringSubmatch(line); m != nil {
+			flush()
+			currentRole = m[1]
+			currentIndex = nextIndex
+			nextIndex++
+			if strings.TrimSpace(m[2]) != "" {
+				currentText = append(currentText, m[2])
+			}
+			continue
+		}
+		if currentIndex == -1 {
+			currentRole = "user"
+			currentIndex = nextIndex
+			nextIndex++
+		}
+		currentText = append(currentText, line)
+	}
+	flush()
+	return turns
+}
+
+// ChunkTurns chunks role-labeled transcripts into complete-turn chunks.
+// It does not split individual turns across chunks.
+func ChunkTurns(text string, targetChunkChars int) []ChunkCandidate {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if targetChunkChars <= 0 {
+		targetChunkChars = DefaultTurnChunkChars
+	}
+
+	parsedTurns := splitTurns(text)
+	if len(parsedTurns) == 0 {
+		trimmed := strings.TrimSpace(text)
+		return []ChunkCandidate{{
+			Text:      trimmed,
+			Speaker:   "user",
+			TurnIndex: 0,
+			ChunkType: "turn",
+		}}
+	}
+
+	var candidates []ChunkCandidate
+	var bucket []ParsedTurn
+	bucketLen := 0
+
+	flush := func() {
+		if len(bucket) == 0 {
+			return
+		}
+		parts := make([]string, 0, len(bucket))
+		for _, t := range bucket {
+			parts = append(parts, fmt.Sprintf("%s: %s", t.Role, t.Text))
+		}
+		speaker := "user"
+		turnIndex := 0
+		if bucket[0].Role != "" {
+			speaker = bucket[0].Role
+		}
+		if bucket[0].TurnIndex > -1 {
+			turnIndex = bucket[0].TurnIndex
+		}
+		candidates = append(candidates, ChunkCandidate{
+			Text:      strings.Join(parts, "\n"),
+			Speaker:   speaker,
+			TurnIndex: turnIndex,
+			ChunkType: "turn",
+		})
+		bucket = bucket[:0]
+		bucketLen = 0
+	}
+
+	for _, t := range parsedTurns {
+		turnText := fmt.Sprintf("%s: %s", t.Role, t.Text)
+		turnLen := len(turnText)
+		if len(bucket) > 0 && bucketLen+1+turnLen > targetChunkChars {
+			flush()
+		}
+		if turnLen > targetChunkChars && len(bucket) == 0 {
+			candidates = append(candidates, ChunkCandidate{
+				Text:      turnText,
+				Speaker:   t.Role,
+				TurnIndex: t.TurnIndex,
+				ChunkType: "turn",
+			})
+			continue
+		}
+		if bucketLen > 0 {
+			bucketLen += 1
+		}
+		bucketLen += turnLen
+		bucket = append(bucket, t)
+	}
+	flush()
+	return candidates
 }
 
 // ChunkDocument performs semantic chunking: headings → paragraphs → sentence-window fallback.

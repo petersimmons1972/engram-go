@@ -1,6 +1,7 @@
 package chunk_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -239,6 +240,114 @@ func TestChunkDocumentWithHeadings(t *testing.T) {
 func TestChunkDocumentEmpty(t *testing.T) {
 	if results := chunk.ChunkDocument("", 1200); results != nil {
 		t.Errorf("empty document should return nil, got %v", results)
+	}
+}
+
+func TestTurnBoundaryChunkingNeverSplitsTurn(t *testing.T) {
+	text := strings.Join([]string{
+		"user: " + strings.Repeat("u", 120) + " TURN0_START " + strings.Repeat("x", 40) + " TURN0_END",
+		"assistant: " + strings.Repeat("a", 520) + " TURN1_START " + strings.Repeat("y", 40) + " TURN1_END",
+		"user: " + strings.Repeat("v", 120) + " TURN2_START " + strings.Repeat("z", 40) + " TURN2_END",
+	}, "\n")
+
+	chunks := chunk.ChunkTurns(text, 250)
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(chunks))
+	}
+
+	markers := []string{"TURN0_START", "TURN0_END", "TURN1_START", "TURN1_END", "TURN2_START", "TURN2_END"}
+	occurrence := make(map[string][]int, len(markers))
+	for i, c := range chunks {
+		for _, marker := range markers {
+			if strings.Contains(c.Text, marker) {
+				occurrence[marker] = append(occurrence[marker], i)
+			}
+		}
+	}
+	for _, marker := range markers {
+		if got := occurrence[marker]; len(got) == 0 {
+			t.Errorf("expected marker %q to appear", marker)
+		} else if len(got) > 1 {
+			t.Errorf("marker %q appeared in multiple chunks: %v", marker, got)
+		}
+	}
+	if got := occurrence["TURN0_START"]; len(got) == 1 && len(occurrence["TURN0_END"]) == 1 && got[0] != occurrence["TURN0_END"][0] {
+		t.Errorf("turn0 start/end not in the same chunk: %v vs %v", got, occurrence["TURN0_END"])
+	}
+	if got := occurrence["TURN1_START"]; len(got) == 1 && len(occurrence["TURN1_END"]) == 1 && got[0] != occurrence["TURN1_END"][0] {
+		t.Errorf("turn1 start/end not in the same chunk: %v vs %v", got, occurrence["TURN1_END"])
+	}
+	if got := occurrence["TURN2_START"]; len(got) == 1 && len(occurrence["TURN2_END"]) == 1 && got[0] != occurrence["TURN2_END"][0] {
+		t.Errorf("turn2 start/end not in the same chunk: %v vs %v", got, occurrence["TURN2_END"])
+	}
+}
+
+func TestTurnChunkProvenanceTags(t *testing.T) {
+	text := strings.Join([]string{
+		"user: " + strings.Repeat("u", 260),
+		"assistant: " + strings.Repeat("a", 260),
+	}, "\n")
+
+	chunks := chunk.ChunkTurns(text, 180)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, c := range chunks {
+		if c.TurnIndex < 0 {
+			t.Fatalf("chunk %d has invalid turn index %d", i, c.TurnIndex)
+		}
+		if c.Speaker == "" {
+			t.Fatalf("chunk %d missing speaker", i)
+		}
+	}
+
+	for _, c := range chunks {
+		if c.ChunkType != "turn" {
+			t.Fatalf("chunk type must be turn for ChunkTurns output, got %q", c.ChunkType)
+		}
+	}
+	for _, c := range chunks {
+		if c.Speaker == "user" || c.Speaker == "assistant" {
+			continue
+		}
+		t.Fatalf("unexpected speaker %q in chunk %q", c.Speaker, c.Text)
+	}
+
+	if got := chunks[0].TurnIndex; got != 0 {
+		t.Fatalf("first chunk should have turn index 0, got %d", got)
+	}
+	if chunks[0].Speaker != "user" {
+		t.Fatalf("first chunk speaker should be user, got %q", chunks[0].Speaker)
+	}
+	if len(chunks) > 1 {
+		if got := chunks[1].TurnIndex; got != 1 {
+			t.Fatalf("second chunk should have turn index 1, got %d", got)
+		}
+		if chunks[1].Speaker != "assistant" {
+			t.Fatalf("second chunk speaker should be assistant, got %q", chunks[1].Speaker)
+		}
+	}
+}
+
+func TestChunkModeDefaultUnchanged(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want chunk.ChunkMode
+	}{
+		{"", chunk.ChunkModeOff},
+		{"off", chunk.ChunkModeOff},
+		{"OFF", chunk.ChunkModeOff},
+		{" turn ", chunk.ChunkModeTurn},
+		{"invalid", chunk.ChunkModeOff},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("mode=%q", tc.raw), func(t *testing.T) {
+			got := chunk.ParseChunkMode(tc.raw)
+			if got != tc.want {
+				t.Fatalf("ParseChunkMode(%q)=%q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 

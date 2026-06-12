@@ -566,6 +566,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextLimit = len(retrievedIDs)
 	}
 	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
+	contextIDs = expandContextIDs(contextIDs, ingest.MemoryProvenance)
 	contextBlocks := make([]string, 0, contextLimit)
 	contentByID := make(map[string]string, contextLimit)
 	for _, id := range contextIDs {
@@ -581,6 +582,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			// full-length blocks from exceeding the model's context window.
 			if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
 				content = content[:cfg.MaxBlockChars]
+			}
+			if sid := memorySessionForID(id, ingest); sid != "" {
+				content = "[session:" + sid + "] " + content
 			}
 			contentByID[id] = content
 			contextBlocks = append(contextBlocks, content)
@@ -682,6 +686,66 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		RetrievedIDs: retrievedIDs,
 		Status:       "done",
 	}
+}
+
+func memorySessionForID(id string, ingest longmemeval.IngestEntry) string {
+	if ingest.MemoryProvenance != nil {
+		if p, ok := ingest.MemoryProvenance[id]; ok && p.SessionID != "" {
+			return p.SessionID
+		}
+	}
+	if sid, ok := ingest.MemoryMap[id]; ok {
+		return sid
+	}
+	return ""
+}
+
+func expandContextIDs(contextIDs []string, provenance map[string]longmemeval.TurnChunkProvenance) []string {
+	if len(contextIDs) == 0 || len(provenance) == 0 {
+		return contextIDs
+	}
+
+	sessionTurnIndex := make(map[string]map[int][]string, len(provenance))
+	for id, p := range provenance {
+		if p.SessionID == "" {
+			continue
+		}
+		m := sessionTurnIndex[p.SessionID]
+		if m == nil {
+			m = make(map[int][]string)
+			sessionTurnIndex[p.SessionID] = m
+		}
+		m[p.TurnIndex] = append(m[p.TurnIndex], id)
+	}
+
+	seen := make(map[string]bool, len(contextIDs))
+	out := make([]string, 0, len(contextIDs)*3)
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+
+	for _, id := range contextIDs {
+		add(id)
+		p, ok := provenance[id]
+		if !ok || p.SessionID == "" {
+			continue
+		}
+		perTurn, ok := sessionTurnIndex[p.SessionID]
+		if !ok {
+			continue
+		}
+		for _, turn := range []int{p.TurnIndex - 1, p.TurnIndex + 1} {
+			for _, neighborID := range perTurn[turn] {
+				add(neighborID)
+			}
+		}
+	}
+
+	return out
 }
 
 func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {

@@ -239,6 +239,30 @@ func TestRunRun_LockContention_ExitCode75_Subprocess(t *testing.T) {
 	}
 }
 
+// TestNeighborTurnExpansion verifies that expandContextIDs includes immediate turn
+// neighbors from the same session and does not cross sessions.
+func TestNeighborTurnExpansion(t *testing.T) {
+	provenance := map[string]longmemeval.TurnChunkProvenance{
+		"sidA:0": {SessionID: "sidA", TurnIndex: 0},
+		"sidA:1": {SessionID: "sidA", TurnIndex: 1},
+		"sidA:2": {SessionID: "sidA", TurnIndex: 2},
+		"sidB:1": {SessionID: "sidB", TurnIndex: 1},
+	}
+
+	got := expandContextIDs([]string{"sidA:1", "sidB:1"}, provenance)
+	want := []string{"sidA:1", "sidA:0", "sidA:2", "sidB:1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expandContextIDs(%v) = %v, want %v", []string{"sidA:1", "sidB:1"}, got, want)
+	}
+
+	// Ensure duplicate selected IDs are de-duplicated after expansion.
+	got = expandContextIDs([]string{"sidA:1", "sidA:1", "sidA:0"}, provenance)
+	want = []string{"sidA:1", "sidA:0", "sidA:2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expandContextIDs dedupe case = %v, want %v", got, want)
+	}
+}
+
 // runRunLockHelper is the subprocess entry for TestRunRun_LockContention_ExitCode75_Subprocess.
 // It calls runRun with a minimal Config pointing at the locked backend URL.
 // The data file and out dir are intentionally invalid — runRun must exit at
