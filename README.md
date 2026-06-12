@@ -37,9 +37,9 @@ Both setups share the same PostgreSQL backend, API contract, and tool set. Swap 
 make init
 make build-postgres
 docker compose -f docker-compose.local.yml up -d
-make setup
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
-# Hybrid path for operator environments
+# Default home-network endpoint
 make init
 make up
 make setup
@@ -77,15 +77,15 @@ make init
 # Fresh-clone first run (recommended): local-only / no external backend
 make build-postgres
 docker compose -f docker-compose.local.yml up -d
-make setup
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
-# Hybrid startup (requires ENGRAM_ROUTER_URL)
+# Default home-network endpoint (requires operator environment)
 make init
 make up
 make setup
 ```
 
-Both setups expose the server at `http://localhost:8788`. Cold start: ~200ms. Idle memory: 18 MB.
+Local Docker profiles listen at `http://localhost:8788`. `make setup` targets the default home-network endpoint `https://engram.petersimmons.com`; use the explicit `--url http://127.0.0.1:8788` override when you want Claude Code connected to the local container. Cold start: ~200ms. Idle memory: 18 MB.
 
 ### Environment Configuration
 
@@ -104,13 +104,30 @@ If you prefer to author `.env` manually rather than using `make init`, see `.env
 
 ### Connect to Claude Code
 
-After `make setup`:
+After setup:
 
 ```bash
 /mcp
 ```
 
 All <!-- count:visible-default -->18<!-- /count --> visible tools (+ <!-- count:hidden -->28<!-- /count --> hidden maintenance tools, callable via `tools/call`) activate immediately. Four optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) activate when `ANTHROPIC_API_KEY` is set in `.env`. `memory_diagnose` is a built-in hidden tool, not AI-gated.
+
+### Setup Target and Config Writes
+
+`make setup` targets the default home-network endpoint `https://engram.petersimmons.com`. For local-only Docker, run the setup tool directly with an explicit local override:
+
+```bash
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
+```
+
+The setup tool health-checks the effective server URL, calls `/setup-token`, and writes the bearer-token MCP entry for Claude Code. Dry-run output redacts the token before printing. If `/setup-token` is unavailable during bootstrap, it validates fallback credentials from `~/.config/engram/api_key` first and `~/projects/engram-go/.env` (`ENGRAM_API_KEY`) second before writing anything.
+
+Config files touched:
+
+- `~/.claude/mcp_servers.json` — created or updated with `mcpServers.engram`.
+- `~/.claude.json` — updated only when the file already has a `mcpServers` block; otherwise skipped.
+
+Use `make setup-dry-run` or `go run ./cmd/engram-setup --dry-run` to print the effective server, endpoint, redacted entry, and target plan without writing files.
 
 ### Important: RFC1918 and `/setup-token`
 

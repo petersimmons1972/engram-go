@@ -1,4 +1,4 @@
-// Command engram-setup configures the local MCP client (Claude Code) to connect to a
+// Command engram-setup configures MCP clients (Claude Code) to connect to a
 // running engram server.
 //
 // Primary path: calls /setup-token (requires Bearer auth since #540) to retrieve the
@@ -16,8 +16,8 @@
 //   - ~/.claude/mcp_servers.json  — primary (live config, read each session)
 //   - ~/.claude.json              — secondary (user settings, also read at startup)
 //
-// engram-setup writes both so the token stays fresh regardless of which file Claude
-// Code happens to use in a given version.
+// engram-setup always creates or updates ~/.claude/mcp_servers.json. It only updates
+// ~/.claude.json when that file already has an mcpServers block.
 //
 // Usage:
 //
@@ -169,10 +169,10 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 		return fmt.Errorf("locate home directory: %w", err)
 	}
 
-	// Claude Code reads MCP servers from both of these files — keep both in sync.
-	targets := []string{
-		filepath.Join(home, ".claude", "mcp_servers.json"), // primary: Claude Code live config
-		filepath.Join(home, ".claude.json"),                // secondary: Claude Code user settings
+	targets := setupConfigTargets(home)
+	targetPaths := make([]string, 0, len(targets))
+	for _, target := range targets {
+		targetPaths = append(targetPaths, target.Path)
 	}
 
 	newEntry := map[string]interface{}{
@@ -198,11 +198,13 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 			// JSON format for --dry-run --format=json
 			output := map[string]interface{}{
 				"status":   "dry-run",
+				"server":   base,
 				"endpoint": setup.Endpoint,
 				"token":    redactedToken,
 				"would_write": map[string]interface{}{
-					"targets": targets,
-					"entry":   displayEntry,
+					"targets":     targetPaths,
+					"target_plan": targets,
+					"entry":       displayEntry,
 				},
 			}
 			outJSON, _ := json.MarshalIndent(output, "", "  ")
@@ -210,22 +212,28 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 		} else {
 			// Text format for --dry-run (default)
 			displayJSON, _ := json.MarshalIndent(displayEntry, "    ", "  ")
-			fmt.Printf("DRY RUN — would write mcpServers.%s to:\n  %s\n  %s\n\n",
-				name, targets[0], targets[1])
+			fmt.Printf("DRY RUN — would write mcpServers.%s\n", name)
+			fmt.Printf("  server:   %s\n", base)
+			fmt.Printf("  endpoint: %s\n\n", setup.Endpoint)
+			fmt.Println("  targets:")
+			for _, target := range targets {
+				fmt.Printf("  - %s (%s)\n", target.Path, target.Behavior)
+			}
+			fmt.Println()
 			fmt.Printf("  entry: %s\n\n(no changes written)\n", string(displayJSON))
 		}
 		return nil
 	}
 
 	var updated []string
-	for _, cfgPath := range targets {
-		action, err := updateMCPConfig(cfgPath, name, newEntry)
+	for _, target := range targets {
+		action, err := updateMCPConfig(target.Path, name, newEntry)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "engram-setup: warning: could not update %s: %v\n", cfgPath, err)
+			fmt.Fprintf(os.Stderr, "engram-setup: warning: could not update %s: %v\n", target.Path, err)
 			continue
 		}
 		if action != "" {
-			updated = append(updated, fmt.Sprintf("%s (%s)", cfgPath, action))
+			updated = append(updated, fmt.Sprintf("%s (%s)", target.Path, action))
 		}
 	}
 
@@ -253,6 +261,24 @@ func configureWithSetup(base, name string, dryRun bool, format string, setup *se
 		fmt.Println("Run /mcp in Claude Code to reconnect.")
 	}
 	return nil
+}
+
+type setupConfigTarget struct {
+	Path     string `json:"path"`
+	Behavior string `json:"behavior"`
+}
+
+func setupConfigTargets(home string) []setupConfigTarget {
+	return []setupConfigTarget{
+		{
+			Path:     filepath.Join(home, ".claude", "mcp_servers.json"),
+			Behavior: "create or update",
+		},
+		{
+			Path:     filepath.Join(home, ".claude.json"),
+			Behavior: "update only when the file already has mcpServers; otherwise skip",
+		},
+	}
 }
 
 func redactToken(token string) string {

@@ -269,6 +269,47 @@ func TestConfigFormatFlag(t *testing.T) {
 	})
 }
 
+func TestDryRunExplainsEffectiveTargets(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	setup := &setupResponse{
+		Token:    "token-123456789012345678901234567890",
+		Endpoint: "https://engram.petersimmons.com/mcp",
+		Name:     "engram",
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := configureWithSetup(defaultServerURL, "engram", true, "text", setup)
+
+	w.Close()
+	os.Stdout = oldStdout
+	output, _ := io.ReadAll(r)
+	outputStr := string(output)
+
+	if err != nil {
+		t.Fatalf("configureWithSetup returned error: %v", err)
+	}
+
+	expected := []string{
+		"server:   https://engram.petersimmons.com",
+		"endpoint: https://engram.petersimmons.com/mcp",
+		filepath.Join(tmpHome, ".claude", "mcp_servers.json") + " (create or update)",
+		filepath.Join(tmpHome, ".claude.json") + " (update only when the file already has mcpServers; otherwise skip)",
+	}
+	for _, want := range expected {
+		if !strings.Contains(outputStr, want) {
+			t.Errorf("dry-run output missing %q\noutput was:\n%s", want, outputStr)
+		}
+	}
+}
+
 // TestDefaultEndpointIsK8s verifies that the default server URL points to the
 // k8s ingress, not the retired local Docker address (#engram-setup-k8s).
 func TestDefaultEndpointIsK8s(t *testing.T) {
