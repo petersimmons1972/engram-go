@@ -145,10 +145,9 @@ func TestRecallWithinMemory_EmbedTimeout_ReturnsBM25Results(t *testing.T) {
 
 	require.NoError(t, err, "RecallWithinMemory must NOT error on embed timeout; degrade to keyword search")
 	require.NotNil(t, results, "results must be non-nil on embed timeout")
-	// Must complete well within caller deadline. Phase 0 (P0) raised
-	// defaultEmbedRecallTimeoutMS from 500ms → 1500ms; allow 3x the timeout
-	// as safe margin for CI jitter. (Pre-P0 this was a 1500ms cap; now 3000ms.)
-	require.Less(t, elapsed, 3000*time.Millisecond,
+	// Must complete well within caller deadline. The restored default is 500ms;
+	// allow slack for BM25 processing under CI jitter.
+	require.Less(t, elapsed, 700*time.Millisecond,
 		"RecallWithinMemory must return quickly after embed timeout; got %s", elapsed)
 }
 
