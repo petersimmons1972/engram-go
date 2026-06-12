@@ -14,7 +14,6 @@
       "Edit",
       "Write",
       "WebSearch",
-      "WebFetch",
       "mcp__github__*",
       "mcp__postgres__*",
       "mcp__Ref__*",
@@ -50,7 +49,9 @@
       "Bash(rm /home/psimmons/.git/index.lock)",
       "mcp__codex-tools__*",
       "Write(/home/psimmons/.claude/plans/**)",
-      "Edit(/home/psimmons/.claude.json)"
+      "Edit(/home/psimmons/.claude.json)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -75,6 +76,16 @@
     ],
     "defaultMode": "auto"
   },
+  "model": "sonnet",
+  "disabledMcpjsonServers": [
+    "Definely",
+    "DocuSign",
+    "Google Drive",
+    "iManage",
+    "Ironclad",
+    "Slack",
+    "TopCounsel"
+  ],
   "hooks": {
     "PostToolUse": [
       {
@@ -233,6 +244,12 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/session-start-claude-codex-connect.sh",
+            "timeout": 12,
+            "statusMessage": "Connecting to claude-codex infrastructure"
+          },
+          {
+            "type": "command",
             "command": "~/bin/generate-session-context.py",
             "timeout": 15,
             "statusMessage": "Generating session context"
@@ -247,7 +264,7 @@
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
             "timeout": 15,
-            "statusMessage": "Syncing armies profiles \u2192 ~/.claude/agents/"
+            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
           },
           {
             "type": "command",
@@ -296,14 +313,5 @@
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "disabledMcpjsonServers": [
-    "Definely",
-    "DocuSign",
-    "Google Drive",
-    "iManage",
-    "Ironclad",
-    "Slack",
-    "TopCounsel"
-  ]
+  "skipAutoPermissionPrompt": true
 }

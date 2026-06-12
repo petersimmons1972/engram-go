@@ -2,10 +2,20 @@
 Description=Codex work-loop poller
 
 [Service]
+Environment=CODEX_POLL_ID=codex
 Type=oneshot
+ExecStartPre=%h/.cache/claude-codex/scripts/install-codex-poll.sh --ensure
 ExecStart=%h/bin/codex-poll
 KillMode=process
 NoNewPrivileges=true
 ProtectHome=read-only
+# ExecStartPre writes ~/bin when restoring the binary (binary self-heal).
+# The poller runtime writes state, lease, log, liveness, and event dirs.
+# Keep ProtectHome=read-only and grant only the specific paths that need writes.
+ReadWritePaths=%h/bin
+ReadWritePaths=%h/.cache/codex-poll
+ReadWritePaths=%h/.cache/claude-codex/state
+ReadWritePaths=%h/.local/state/codex-poll
+ReadWritePaths=%h/.claude/events
 PrivateTmp=true
 TimeoutStopSec=30

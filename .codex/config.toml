@@ -1,5 +1,5 @@
-model = "gpt-5.4"
-model_reasoning_effort = "medium"
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 [projects."/home/psimmons"]
@@ -42,6 +42,12 @@ trust_level = "trusted"
 trust_level = "trusted"
 
 [projects."/home/psimmons/projects/homelab-config"]
+trust_level = "trusted"
+
+[projects."/home/psimmons/projects/claude-codex"]
+trust_level = "trusted"
+
+[projects."/home/psimmons/projects/claude-advisory-protocol"]
 trust_level = "trusted"
 
 [tui]
