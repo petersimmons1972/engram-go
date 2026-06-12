@@ -13,6 +13,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,8 @@ type Config struct {
 	// generation flags
 	GenerationModel string // claude model alias for answer generation (default "sonnet")
 	ContextTopKBump bool   // raise all contextTopK categories to 15 when true
+	// Benchmark recall timeout override for MCP memory_recall (ms; 0 = no timeout)
+	EmbedRecallTimeoutMS int
 
 	// retrieval ablation flags
 	RecallTopK          int  // memories recalled before context trim (default 100)
@@ -217,6 +220,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 	fs.StringVar(&cfg.ScoreOutput, "score-output", envOr("LME_SCORE_OUTPUT", "text"), "score summary stdout mode: text, json, or quiet")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
+	fs.IntVar(&cfg.EmbedRecallTimeoutMS, "embed-recall-timeout-ms", envInt("LME_EMBED_RECALL_TIMEOUT_MS", 1500), "MCP memory_recall embed timeout in ms (0 = no timeout; parent context governs)")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
 	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
@@ -540,6 +544,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			return time.Now().UTC()
 		}
 	}
+	if subcommand == "run" || subcommand == "all" {
+		setBenchmarkEmbedTimeoutMS(cfg.EmbedRecallTimeoutMS)
+	}
 
 	switch subcommand {
 	case "ingest":
@@ -585,6 +592,19 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func setBenchmarkEmbedTimeoutMS(ms int) {
+	_ = os.Setenv("ENGRAM_EMBED_RECALL_TIMEOUT_MS", strconv.Itoa(ms))
 }
 
 func applyRepairPreset(cfg *Config) error {

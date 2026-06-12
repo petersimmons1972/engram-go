@@ -62,11 +62,12 @@ func newEngineWithEmbedder(t *testing.T, project string, embedder embed.Client) 
 }
 
 // TestEmbedDeadline_RecallWithOpts verifies that RecallWithOpts degrades to
-// BM25+recency when Ollama is unavailable — no error, returns within 2s.
-// Phase 0 raised defaultEmbedRecallTimeoutMS 500→1500ms; bound updated accordingly.
+// BM25+recency when Ollama is unavailable — no error, returns quickly.
+// The test is bounded by the restored 500ms default embed timeout plus BM25
+// fallback slack.
 func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 	proj := uniqueProject("embed-deadline-recall")
-	// Embedder blocks for 60s — far longer than the 1500ms embed deadline.
+	// Embedder blocks for 60s — far longer than the 500ms embed deadline.
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
 	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -78,16 +79,17 @@ func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 
 	require.NoError(t, err, "RecallWithOpts must degrade to BM25+recency on embed failure, not return an error")
 	require.NotNil(t, results, "results slice must be non-nil even when degraded")
-	require.Less(t, elapsed, 2*time.Second,
-		"RecallWithOpts must return within 2s when embed times out (1500ms deadline); got %s", elapsed)
+	require.Less(t, elapsed, 1*time.Second,
+		"RecallWithOpts must return promptly when embed times out (500ms default); got %s", elapsed)
 }
 
 // TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory degrades
 // to keyword search (not an error) when Ollama is unavailable, and returns
-// within the embed deadline window (not 15s+). Phase 0: 1500ms deadline.
+// within the embed deadline window (not 15s+). This is the restored 500ms
+// deadline.
 func TestEmbedDeadline_RecallWithinMemory(t *testing.T) {
 	proj := uniqueProject("embed-deadline-within")
-	// Embedder blocks for 60s — far longer than the 1500ms embed deadline.
+	// Embedder blocks for 60s — far longer than the 500ms embed deadline.
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
 
 	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -99,8 +101,8 @@ func TestEmbedDeadline_RecallWithinMemory(t *testing.T) {
 
 	require.NoError(t, err, "RecallWithinMemory must degrade to keyword search on embed failure, not return an error")
 	require.NotNil(t, results, "results slice must be non-nil even when degraded")
-	require.Less(t, elapsed, 2*time.Second,
-		"RecallWithinMemory must return within 2s when embed times out (1500ms deadline); got %s", elapsed)
+	require.Less(t, elapsed, 1*time.Second,
+		"RecallWithinMemory must return promptly when embed times out (500ms default); got %s", elapsed)
 }
 
 // ── #973 regression: SetEmbedRecallTimeout(0) must disable the embed deadline ──
