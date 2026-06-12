@@ -429,6 +429,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}()
 
+	// Phase 2A (#1079): oracle mode bypasses all Engram recall. Atoms are
+	// extracted locally from gold sessions and injected as the context.
+	if cfg.AtomOracle {
+		return runOneOracle(ctx, cfg, item, ingest)
+	}
+
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
 	// When --disable-query-rewrite is set, use the raw question unchanged.
