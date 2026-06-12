@@ -126,7 +126,7 @@ Container image requirements → `~/docs/container-images.md` + `~/docs/containe
 
 ## Self-Learning & Autonomous Bug Fixing
 - **Fix without asking** when reversible and low-blast-radius (low-severity bugs, feedback integration). **Always ask** when irreversible, data-affecting, externally visible, or resource-intensive.
-- **After any user correction:** update `~/.claude/projects/-home-psimmons/memory/lessons-learned.md`. [QC.6]
+- **After any user correction:** append a record to `~/.claude/projects/-home-psimmons/memory/lessons-learned.jsonl` via `python3 ~/bin/render-lessons-learned.py --append '{"ts":"...","trigger":"user_correction","title":"...","lesson":"..."}'` (JSONL is canonical; it regenerates the `lessons-learned.md` view — do NOT edit the .md directly). [QC.6]
 - Retry/escalation limits live in §Cost Guardrails ("same error 3+ times" + circular loops).
 
 ## Projects

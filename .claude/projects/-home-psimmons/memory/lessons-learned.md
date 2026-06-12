@@ -1,6 +1,9 @@
 # Lessons Learned
 
 Per CLAUDE.md: append a dated entry whenever the user corrects course or reframes a problem.
+**Source of truth: `lessons-learned.jsonl`** — this file is auto-generated.
+Regenerate with: `python3 ~/bin/render-lessons-learned.py`
+Append new entry: `python3 ~/bin/render-lessons-learned.py --append '{...}'`
 
 ## 2026-05-16 — Pivot on user data, not on theory
 
@@ -75,7 +78,6 @@ During instinct-migration campaign, founder consistently chose more thorough opt
 **Calibration lesson for future coordinator briefings:** when presenting options to the founder, do NOT bias the "Recommended" tag toward velocity. The founder's track record is consistently to choose the more thorough path. The recommended-default in AskUserQuestion should reflect this — make the thoroughness option the recommended one unless the velocity option has a specific time-sensitive trigger (production fire, missed deadline, etc.).
 
 The founder also issued a mid-flight stabilization directive on engram-go that triggered the soft halt. This was upstream priority (service stability) overriding migration completion. Coordinator-level pattern: be alert to upstream priority signals that may pause or reframe a campaign even when execution is going well.
-
 
 ## 2026-05-20 — Sub-agent briefs must not contain push commands
 
@@ -162,3 +164,11 @@ Ran the Article 045/046 self-summary + compression audit on the 89-rule `CLAUDE.
 1. **Before dispatching an implementer against an issue, validate the issue's premise on live state** (config, status endpoint, a real request). Issue text — even your own from earlier in the session — goes stale; the running system is the source of truth. This is CLAUDE.md AP.1 ("validate on a real sample first") applied to bug *framing*, not just samples. Cheap, read-only, and here it converted a "rewrite all caps + priorities" task into "add caps for one endpoint + set 3 tier values" and caught a backwards assumption.
 2. **Never encode a load-balancer's priority direction from intuition or prose.** Drive real traffic and read the per-endpoint request counter to learn which way "preferred" goes. For Olla specifically: `/internal/status` exposes `priority` + `requests` per endpoint; higher priority number = more preferred. Full reference: [olla-priority-routing](reference_olla_priority_routing.md).
 3. **A capability-gated router drops mis-tagged endpoints silently** — no error, just zero traffic. When a healthy backend serves nothing, check whether it advertises the required capability before chasing health/network causes.
+
+## 2026-06-10 — Claude↔Codex protocol-vNext build + infra firefight
+
+- **Repo split (founder clarification):** `claude-codex` = the communication/protocol layer (contracts, specs, `.agent-comms` semantics); `codex` = the Rust tools only (codex-mcp, codex-poll, codex-doctor, binaries). Route protocol/contract changes → claude-codex; tool implementation → codex. (Engram global 019eb1ff)
+- **Don't tie service auth to the desktop keyring.** codex-poll authenticated to GitHub via the gnome-keyring `gh` token; a COSMIC desktop crash cut the systemd service's keyring access → git/gh "could not read Username" → poller silently found "no queued issues" while interactive agents worked fine. Fast fix: `systemctl --user restart codex-poll.timer` once the desktop is back. Durable fix: Infisical universal-auth MACHINE IDENTITY injection (non-interactive, survives crashes, works from a phone). Interactive `infisical login` is NOT durable — its session token is keyring-bound and expires (~7 days). (Engram homelab 019eb39e)
+- **Check before you alarm.** Verify root cause with evidence before escalating: SMART was clean (not a dying disk — it was systemd sandbox EROFS); a gh 401 was keyring-context loss, not a dead token; a doctor "fail" was a cosmetic env-visibility check, not an outage. Almost raised a false "disk failing" alarm. (Engram homelab 019eb3b4-9cac)
+- **Pace to founder merge throughput.** Surfacing one green draft PR at a time and letting the founder merge beats piling up unmerged PRs (WIP inventory). Hold large phases for an explicit checkpoint. (Engram global 019eb3b4-7afa)
+- **Subagent quirk:** when queuing via a subagent, tell it explicitly to USE BASH for the heredoc + queue-agent — one agent wrongly refused, thinking the Write tool was blocked.

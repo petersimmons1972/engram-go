@@ -3,42 +3,22 @@
 **Last Updated**: {{TIMESTAMP}}
 **Session**: {{SESSION_NUMBER}}
 
----
-
-## Recent Activity (Last 7 Days)
+## Recent Activity
 
 {{RECENT_COMMITS}}
-
-**Sessions**: {{RECENT_SESSIONS}}
 **Uncommitted**: {{UNCOMMITTED_CHANGES}}
 
----
+## Infrastructure
 
-## Infrastructure Health
-
-**Cluster**: {{CLUSTER_HEALTH}} | **Services**: {{SERVICE_STATUS}}
-**Warnings**: {{ACTIVE_WARNINGS}}
-
+**Cluster/Services**: {{CLUSTER_HEALTH}} | {{SERVICE_STATUS}} | **Warnings**: {{ACTIVE_WARNINGS}}
 Health check: `~/bin/health-check.sh`
-
-**J-2 Intelligence**: {{INTELLIGENCE_SUMMARY}}
-
----
+**J-2**: {{INTELLIGENCE_SUMMARY}}
 
 ## Key Lessons
 
-Stored in Engram. Recall:
-- Homelab patterns: `memory_recall("<topic>", project="homelab")`
-- General patterns: `memory_recall("<topic>", project="global")`
-
+Stored in Engram. Recall: `memory_recall("<topic>", project="homelab|global")`
 Topics: K8s PVCs · Chainguard fsGroup · cert-manager DNS · Cloudflare DNS/cache · BeautifulSoup/SVG · TDD · HTML processing · URL validation · MCP config · WordPress proxy · CronJobs · subagent isolation · validation checklists · Python method shadowing
+Fallback staging (Engram offline): `memory/fallback.md` — auto-flushed at session start.
 
 ---
-
-## Engram Offline?
-
-If Engram is unreachable, stage entries in `memory/fallback.md` and flush to Engram on reconnect.
-
----
-
-**Auto-updated at session start by `~/bin/generate-session-context.py`**
+*Auto-updated by `~/bin/generate-session-context.py`*
