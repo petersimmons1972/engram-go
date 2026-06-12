@@ -3,7 +3,7 @@ package search_test
 // recall_fallback_test.go — T5: Embed timeout fallback tests.
 //
 // Verifies that RecallWithOpts bounds the embed call with a short timeout
-// (500ms) and falls back to BM25+recency WITHOUT propagating the embed
+// (1500ms) and falls back to BM25+recency WITHOUT propagating the embed
 // timeout cancellation to the parent context.
 
 import (
@@ -55,14 +55,14 @@ func (e *errorEmbedder) Dimensions() int { return e.dims }
 var _ embed.Client = (*errorEmbedder)(nil)
 
 // TestRecallFallbackOnEmbedTimeout_DoesNotCancelParent verifies that when
-// the embed call times out after 500ms, the parent context remains alive
+// the embed call times out after 1500ms, the parent context remains alive
 // and RecallWithOpts completes with BM25+recency results (degraded, no error).
 func TestRecallFallbackOnEmbedTimeout_DoesNotCancelParent(t *testing.T) {
 	proj := uniqueProject("recall-fallback-timeout")
 	eng := newEngineWithEmbedder(t, proj, &hangingEmbedder{dims: 768})
 
 	// Parent context with a 5s deadline — should NOT be cancelled by the
-	// 500ms embed timeout.
+	// 1500ms embed timeout.
 	parentCtx, parentCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer parentCancel()
 
@@ -74,9 +74,9 @@ func TestRecallFallbackOnEmbedTimeout_DoesNotCancelParent(t *testing.T) {
 	require.NoError(t, err, "RecallWithOpts must NOT return error on embed timeout; should degrade to BM25+recency")
 	require.NotNil(t, results, "results slice must be non-nil even when degraded")
 
-	// Must return within ~700ms (500ms embed timeout + slack for BM25 search).
-	require.Less(t, elapsed, 700*time.Millisecond,
-		"RecallWithOpts must return within ~700ms on embed timeout; got %s", elapsed)
+	// Must return within ~2s (1500ms embed timeout + slack for BM25 search).
+	require.Less(t, elapsed, 2*time.Second,
+		"RecallWithOpts must return within ~2s on embed timeout (1500ms default + BM25 slack); got %s", elapsed)
 
 	// Parent context must NOT be cancelled.
 	require.NoError(t, parentCtx.Err(),

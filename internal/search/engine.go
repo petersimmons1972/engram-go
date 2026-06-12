@@ -229,7 +229,11 @@ type bestHit struct {
 // defaultEmbedRecallTimeoutMS is the bounded timeout for the embed call during
 // recall. On expiry the call degrades to BM25+recency; the parent context
 // deadline is untouched. Configurable via ENGRAM_EMBED_RECALL_TIMEOUT_MS.
-const defaultEmbedRecallTimeoutMS = 500
+// Phase 0 (P0): raised from 500→1500ms as the env-config default; embed
+// timeouts on busy homelab GPU were causing BM25 degradation for ~12% of
+// recalls in the full-500 run. This is the default used when the env var is
+// not set. Set ENGRAM_EMBED_RECALL_TIMEOUT_MS=500 to revert to the prior default.
+const defaultEmbedRecallTimeoutMS = 1500
 
 // noEmbedTimeout is a sentinel stored in embedRecallTimeout to indicate that
 // no per-embed deadline should be applied. The parent context's deadline (if

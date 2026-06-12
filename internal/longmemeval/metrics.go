@@ -72,3 +72,35 @@ func BuildRetrievalMetrics(rankedSessionIDs []string, answerSessionIDs []string)
 		NDCGAny10:   NDCGAny(rankedSessionIDs, relevant, 10),
 	}
 }
+
+// IsSingleSessionType returns true for question types that have exactly one
+// gold session. These types use RecallAny semantics (ANY gold in top-K) rather
+// than RecallAll (ALL gold sessions in top-K).
+func IsSingleSessionType(questionType string) bool {
+	switch questionType {
+	case "single-session-user", "single-session-assistant",
+		"single-session-preference", "knowledge-update":
+		return true
+	}
+	return false
+}
+
+// BuildRetrievalMetricsWithNDCGAgg computes session-level metrics using
+// RecallAny for single-session question types (NDCGAgg mode) and RecallAll
+// for multi-session types. Phase 0 (P0): this is the default for retrieval_log
+// when --session-ndcg-agg is true (the P0 default).
+func BuildRetrievalMetricsWithNDCGAgg(rankedSessionIDs []string, answerSessionIDs []string, questionType string) RetrievalMetrics {
+	if IsSingleSessionType(questionType) {
+		relevant := make(map[string]bool, len(answerSessionIDs))
+		for _, sid := range answerSessionIDs {
+			relevant[sid] = true
+		}
+		return RetrievalMetrics{
+			RecallAll5:  RecallAny(rankedSessionIDs, relevant, 5),
+			NDCGAny5:    NDCGAny(rankedSessionIDs, relevant, 5),
+			RecallAll10: RecallAny(rankedSessionIDs, relevant, 10),
+			NDCGAny10:   NDCGAny(rankedSessionIDs, relevant, 10),
+		}
+	}
+	return BuildRetrievalMetrics(rankedSessionIDs, answerSessionIDs)
+}
