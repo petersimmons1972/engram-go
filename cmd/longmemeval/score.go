@@ -194,7 +194,12 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 			continue
 		}
 		sessionIDs := longmemeval.SessionIDs(run.RetrievedIDs, ingest.MemoryMap)
-		metrics := longmemeval.BuildRetrievalMetrics(sessionIDs, item.AnswerSessionIDs)
+		var metrics longmemeval.RetrievalMetrics
+		if cfg.SessionNDCGAgg {
+			metrics = longmemeval.BuildRetrievalMetricsWithNDCGAgg(sessionIDs, item.AnswerSessionIDs, item.QuestionType)
+		} else {
+			metrics = longmemeval.BuildRetrievalMetrics(sessionIDs, item.AnswerSessionIDs)
+		}
 
 		var entry longmemeval.RetrievalLogEntry
 		entry.QuestionID = s.QuestionID

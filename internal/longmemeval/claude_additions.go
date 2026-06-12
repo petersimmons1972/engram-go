@@ -139,10 +139,14 @@ func UnionMemoryIDs(primary, secondary []string) []string {
 
 // ContextTopKForType returns how many recalled memories to feed to generation.
 // Multi-session and temporal questions need more context to capture the right
-// sessions; other types are fine with the baseline of 8.
+// sessions. Phase 0 (P0): single-session-user and single-session-preference
+// raised from 8→15; these types have low vocab-overlap with the gold session,
+// so a larger context window is required to surface the answer.
+// Revert: change "single-session-user", "single-session-preference" case to 8.
 func ContextTopKForType(questionType string) int {
 	switch questionType {
-	case "multi-session", "temporal-reasoning":
+	case "multi-session", "temporal-reasoning",
+		"single-session-user", "single-session-preference":
 		return 15
 	default:
 		return 8

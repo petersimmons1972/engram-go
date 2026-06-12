@@ -14,15 +14,18 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestContextTopKForTypeWithBump_BumpFalse(t *testing.T) {
+	// Phase 0 (P0): single-session-user and single-session-preference raised from
+	// 8→15 in ContextTopKForType. This test documents the P0-default values.
+	// To revert: change the want for ss-user and ss-preference back to 8.
 	cases := []struct {
 		questionType string
 		want         int
 	}{
 		{"multi-session", 15},
 		{"temporal-reasoning", 15},
-		{"single-session-preference", 8},
+		{"single-session-preference", 15}, // P0: raised from 8→15
 		{"knowledge-update", 8},
-		{"single-session-user", 8},
+		{"single-session-user", 15}, // P0: raised from 8→15
 		{"", 8},
 	}
 	for _, c := range cases {

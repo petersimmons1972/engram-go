@@ -305,16 +305,19 @@ func TestQueryParaphrasePassesFlag_StructuralGuard(t *testing.T) {
 	}
 }
 
-// TestQueryParaphrasePassesFlag_DefaultZero verifies that the Config field
-// defaults to 0 (off) so existing runs are unaffected.
-func TestQueryParaphrasePassesFlag_DefaultZero(t *testing.T) {
+// TestQueryParaphrasePassesFlag_DefaultThree verifies that the Config field
+// defaults to 3 (P0 champion config). Exp15 confirmed that --query-paraphrase-passes=3
+// achieves 100% gold-session-in-context on the ss-user/ss-preference panel.
+// To revert to the prior default (0 = off): change the default in main.go and
+// update the expected value here.
+func TestQueryParaphrasePassesFlag_DefaultThree(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
-	// The flag registration must use default value 0.
-	if !strings.Contains(string(src), `"query-paraphrase-passes", 0`) {
-		t.Error("main.go: --query-paraphrase-passes default must be 0 (off by default)")
+	// Phase 0 (P0): default changed 0→3. The flag registration must use default 3.
+	if !strings.Contains(string(src), `"query-paraphrase-passes", 3`) {
+		t.Error("main.go: --query-paraphrase-passes P0 default must be 3; update the flag registration or this test")
 	}
 }
 
