@@ -490,6 +490,16 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// H-NEW-2: propagate server-side PreferenceMMR flag into RecallOpts.
 	opts.PreferenceMMR = cfg.PreferenceMMR
 
+	// LME Phase 3 — evidence-first packing (issue #938 improvement).
+	// Re-orders results so memories with verbatim identifier matches (URLs,
+	// phone numbers, quoted phrases) come first, improving LLM answer accuracy
+	// for entity-specific questions. Enabled via ENGRAM_EVIDENCE_FIRST_PACK=true
+	// env var or per-request evidence_first_pack=true arg. Default OFF.
+	{
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_EVIDENCE_FIRST_PACK")))
+		opts.EvidenceFirstPack = v == "true" || v == "1" || getBool(args, "evidence_first_pack", false)
+	}
+
 	// Capture embedder degradation signal and reason from RecallWithOpts (#989).
 	var embedDegraded bool
 	var embedDegradeReason string
@@ -522,6 +532,15 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if recordEvent {
 			eventID = recordRecallEvent(ctx, h, project, query, results, "default path")
 		}
+	}
+
+	// LME Phase 3: evidence-first packing — reorder results by exact-signal score.
+	// Applied after all recall paths so it is consistently available regardless
+	// of which path (rerank, option, default) was taken. Skipped when no signals
+	// are present in the query (ExtractExactSignals returns empty, OrderResultsEvidenceFirst
+	// performs a stable no-op copy). No effect when flag is off.
+	if opts.EvidenceFirstPack {
+		results = search.OrderResultsEvidenceFirst(results, query)
 	}
 
 	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,

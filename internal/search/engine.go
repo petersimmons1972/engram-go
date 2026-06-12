@@ -146,6 +146,19 @@ type RecallOpts struct {
 	// format, e.g. "2023/06/09 (Fri)") used to resolve relative anchors such as
 	// "3 days ago". Has no effect unless TemporalWindowRecall is true.
 	QuestionDate string
+
+	// EvidenceFirstPack reorders the returned SearchResults by exact-signal score
+	// before returning them to the caller (LME Phase 3, issue #938 improvement).
+	// Memories whose content contains a verbatim identifier from the query (URL,
+	// phone number, or quoted phrase) are moved to the front of the result slice.
+	// Stable sort: equal-scoring entries keep their relative order.
+	//
+	// Enabled server-wide via ENGRAM_EVIDENCE_FIRST_PACK=true env var,
+	// or per-request via the MCP evidence_first_pack argument.
+	// Suppressed automatically for temporal-reasoning questions where chronological
+	// ordering is load-bearing (mirrors the run.go precedence rule).
+	// Default false (ablatable — no behavior change until explicitly enabled).
+	EvidenceFirstPack bool
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
