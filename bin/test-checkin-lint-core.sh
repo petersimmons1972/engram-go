@@ -81,6 +81,44 @@ run_k8s_check() {
 run_k8s_check "latest-image-bad"       "bad-latest-image.yaml"       "_check_latest_image"  1
 run_k8s_check "hardcoded-ip-bad"       "bad-networkpolicy-ip.yaml"   "_check_hardcoded_ip"  1
 
+# ── _do_baseline_audit ────────────────────────────────────────────────────────
+test_audit_baseline_stale() {
+  local tmp_baseline tmp_keys
+  tmp_baseline="$(mktemp)"; tmp_keys="$(mktemp)"
+  # Put a stale key in the baseline (no matching current finding)
+  echo "C.home-literal::./nonexistent.yaml::99" > "$tmp_baseline"
+  # tmp_keys is empty — no current findings match
+  local out
+  out="$(CHECKIN_LINT_BASELINE="$tmp_baseline" _ALL_FINDING_KEYS_FILE="$tmp_keys" \
+         bash -c "source \"$CORE\" 2>/dev/null; _do_baseline_audit" 2>&1)"
+  rm -f "$tmp_baseline" "$tmp_keys"
+  if echo "$out" | grep -q 'STALE'; then
+    pass "[audit-baseline-stale] stale entry correctly flagged"
+  else
+    fail "[audit-baseline-stale] expected STALE in output; got: $out"
+  fi
+}
+
+test_audit_baseline_active() {
+  local tmp_baseline tmp_keys
+  tmp_baseline="$(mktemp)"; tmp_keys="$(mktemp)"
+  # Same key in both baseline and keys_file — active, not stale
+  echo "C.home-literal::./foo.yaml::5" > "$tmp_baseline"
+  echo "C.home-literal::./foo.yaml::5" > "$tmp_keys"
+  local out
+  out="$(CHECKIN_LINT_BASELINE="$tmp_baseline" _ALL_FINDING_KEYS_FILE="$tmp_keys" \
+         bash -c "source \"$CORE\" 2>/dev/null; _do_baseline_audit" 2>&1)"
+  rm -f "$tmp_baseline" "$tmp_keys"
+  if echo "$out" | grep -q 'STALE'; then
+    fail "[audit-baseline-active] active entry incorrectly flagged as stale; got: $out"
+  else
+    pass "[audit-baseline-active] active entry correctly not flagged"
+  fi
+}
+
+test_audit_baseline_stale
+test_audit_baseline_active
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 if [[ $FAIL -eq 0 ]]; then
