@@ -182,20 +182,24 @@ _do_baseline_audit() {
     echo -e "${YLW}SKIP${RST}  no baseline file found at ${baseline:-<unset>}"
     return 0
   fi
-  if [[ -z "$keys_file" || ! -f "$keys_file" ]]; then
-    echo -e "${YLW}SKIP${RST}  no finding-keys file (pass --audit-baseline to collect keys)"
+  if [[ -z "$keys_file" ]]; then
+    echo -e "${YLW}SKIP${RST}  keys file path not set — pass --audit-baseline to collect finding keys"
     return 0
   fi
-  local stale=0
+  if [[ ! -f "$keys_file" ]]; then
+    echo -e "${YLW}SKIP${RST}  keys file missing on disk: ${keys_file}"
+    return 0
+  fi
+  local stale=0 total=0
   while IFS= read -r entry; do
     [[ -z "$entry" || "$entry" == \#* ]] && continue
+    ((total++)) || true
     if ! grep -Fxq "$entry" "$keys_file" 2>/dev/null; then
       echo -e "${YLW}STALE${RST}  $entry"
       ((stale++)) || true
+      ((FINDINGS++)) || true
     fi
   done < "$baseline"
-  local total
-  total="$(grep -c '^[^#[:space:]]' "$baseline" 2>/dev/null || echo 0)"
   rm -f "$keys_file"
   if [[ $stale -eq 0 ]]; then
     pass_rule "baseline-audit" "all ${total} entries correspond to active findings"
@@ -203,7 +207,6 @@ _do_baseline_audit() {
     echo -e "${YLW}WARNING${RST}  ${stale} of ${total} baseline entries are stale — safe to remove from $(basename "$baseline")"
   fi
 }
-export -f _do_baseline_audit
 
 run_core_checks() {
   local _audit_baseline=0
