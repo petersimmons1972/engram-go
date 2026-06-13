@@ -1057,6 +1057,21 @@ mod backoff_decision_tests {
         let next = next_backoff_ms(&outcome, 5_000, 7_777, 30_000);
         assert_eq!(next, 7_777, "reset must return exactly min_backoff_ms, not a hardcoded sentinel");
     }
+
+    // Short-payload: embed API returned fewer vectors than chunks requested.
+    // claim.rs:160-164 increments failed++ per missing embedding; this is the
+    // third failed-increment site. attempted=32, written=0, failed>0 → Grow.
+    // This test verifies that a partially-truncated payload (backend returning a
+    // short response) is treated as a backend error, not a contention loss.
+    #[test]
+    fn short_payload_grows_backoff() {
+        // Simulate: 32 chunks attempted, API returned fewer vectors → some failed,
+        // none written (short payload means no embeddings were usable)
+        let outcome = ProcessSliceResult { attempted: 32, written: 0, failed: 16 };
+        let next = next_backoff_ms(&outcome, 100, 100, 30_000);
+        assert!(next > 100, "short payload (truncated embed response) must grow backoff");
+        assert_eq!(next, 200, "increase_backoff doubles: 100 → 200");
+    }
 }
 
 // ── Ordering regression tests ─────────────────────────────────────────────────
