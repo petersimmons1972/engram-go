@@ -153,3 +153,4 @@ Claude plans + coordinates; Codex implements. Queue = GitHub Issues via `~/bin/q
 **Engram Memory full rules** (verbose R-table + R7 dispute tracking) → `~/docs/engram-memory-rules.md` [QC.6]
 **Container image standard** (Chainguard full pattern + K8s security context) → `~/docs/container-images.md` [QC.7]
 **Quality Contract** → `~/docs/quality-contract.md` | **Architectural Principles** → `~/docs/architectural-principles.md`
+**Failure-mode standard (universal, all projects)** → `~/docs/failure-modes-standard.md` — consult before check-in on any infra/config/deploy change; append new bug classes here (per-repo checklists inherit from this catalog). [QC.2]
