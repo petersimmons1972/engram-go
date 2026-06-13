@@ -384,6 +384,15 @@ func (b *PostgresBackend) GetPendingEmbeddingCount(ctx context.Context, project 
 
 // EnqueueChunkLeases sets initial leases on chunks with NULL embeddings.
 // Idempotent — calling it multiple times on the same chunks is safe.
+func (b *PostgresBackend) CountProjectChunks(ctx context.Context, project string) (int, error) {
+	var count int
+	err := b.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM chunks c JOIN memories m ON m.id = c.memory_id WHERE m.project=$1",
+		project,
+	).Scan(&count)
+	return count, err
+}
+
 func (b *PostgresBackend) EnqueueChunkLeases(ctx context.Context, chunkIDs []string) error {
 	if len(chunkIDs) == 0 {
 		return nil

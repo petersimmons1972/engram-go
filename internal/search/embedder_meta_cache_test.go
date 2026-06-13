@@ -62,10 +62,19 @@ type cacheMetaBackend struct {
 	mu           sync.Mutex
 	meta         map[string]string // key: "project:key"
 	getMetaCalls atomic.Int64
+	nullAllCalls atomic.Int32          // counts NullAllEmbeddingsTx calls
+	chunkCounts  map[string]int        // project → chunk count for volume guard
 }
 
 func newCacheMetaBackend() *cacheMetaBackend {
-	return &cacheMetaBackend{meta: make(map[string]string)}
+	return &cacheMetaBackend{meta: make(map[string]string), chunkCounts: make(map[string]int)}
+}
+
+// setChunkCount configures the stub chunk count returned by CountProjectChunks.
+func (b *cacheMetaBackend) setChunkCount(project string, n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.chunkCounts[project] = n
 }
 
 func metaKey(project, key string) string { return project + ":" + key }
@@ -159,8 +168,17 @@ func (b *cacheMetaBackend) DeleteChunksByIDs(_ context.Context, _ []string) (int
 func (b *cacheMetaBackend) NullAllEmbeddings(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
-func (b *cacheMetaBackend) NullAllEmbeddingsTx(_ context.Context, _ db.Tx, _ string) (int, error) {
-	return 0, nil
+func (b *cacheMetaBackend) NullAllEmbeddingsTx(_ context.Context, _ db.Tx, project string) (int, error) {
+	b.nullAllCalls.Add(1)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := b.chunkCounts[project]
+	return n, nil
+}
+func (b *cacheMetaBackend) CountProjectChunks(_ context.Context, project string) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.chunkCounts[project], nil
 }
 func (b *cacheMetaBackend) GetChunksPendingEmbedding(_ context.Context, _ string, _ int) ([]*types.Chunk, error) {
 	return nil, nil
@@ -433,7 +451,7 @@ func TestCheckEmbedderMeta_CacheInvalidatedAfterMigrate_GatewayPath(t *testing.T
 	}
 
 	// Migrate to new model (gateway path — no LiteLLM call needed).
-	if _, err := eng.MigrateEmbedder(ctx, "new-model-v2"); err != nil {
+	if _, err := eng.MigrateEmbedder(ctx, MigrateParams{NewModel: "new-model-v2"}); err != nil {
 		t.Fatalf("MigrateEmbedder: %v", err)
 	}
 
@@ -470,7 +488,7 @@ func TestCheckEmbedderMeta_PostMigrationReadsFreshValues(t *testing.T) {
 	// Migrate (gateway path writes embedder_name=new-model and
 	// embedding_migration_in_progress=true, then invalidates cache).
 	const newModel = "BAAI/bge-m3-v2"
-	if _, err := eng.MigrateEmbedder(ctx, newModel); err != nil {
+	if _, err := eng.MigrateEmbedder(ctx, MigrateParams{NewModel: newModel, Confirm: true}); err != nil {
 		t.Fatalf("MigrateEmbedder: %v", err)
 	}
 

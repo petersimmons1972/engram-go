@@ -2008,10 +2008,98 @@ func (e *SearchEngine) Verify(ctx context.Context) (map[string]any, error) {
 	}, nil
 }
 
+// migrateConfirmThreshold is the chunk count above which an explicit confirm
+// is required before MigrateEmbedder will null all embeddings.
+// At the default 1000-chunk threshold an accidental alias-rename is blocked;
+// a deliberate large migration passes confirm=true.
+const migrateConfirmThreshold = 1000
+
+// MigrateParams holds the arguments for MigrateEmbedder.
+// Separating params from the method signature lets us add guards without
+// changing every call site each time a new safeguard is added.
+type MigrateParams struct {
+	// NewModel is the raw model name (alias or canonical) to migrate to.
+	NewModel string
+	// NewDims is the embedding dimension of the new model.
+	// When non-zero and equal to the stored dimension, Force must be true.
+	// When zero the dimension guard is skipped (dimension pre-flight in the
+	// MCP handler already validated it before calling MigrateEmbedder).
+	NewDims int
+	// Force allows a same-dimension migration to proceed. Without it, a
+	// same-dim migrate is refused to prevent accidental re-embedding when
+	// vectors are still reusable.
+	Force bool
+	// DryRun returns chunks_would_null without nulling anything.
+	DryRun bool
+	// Confirm must be true when the affected chunk count exceeds
+	// migrateConfirmThreshold. Prevents accidental mass-null on large corpora.
+	Confirm bool
+}
+
 // MigrateEmbedder initiates an embedding migration to a new model by nulling all
 // existing embeddings and recording the new model name in project metadata.
 // A background reembed worker will repopulate embeddings after this call.
-func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (map[string]any, error) {
+//
+// Safety guards (applied in order, highest priority first):
+//  G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
+//  G2 — Same dimension without force: soft-refused (result["error"] set).
+//  G3 — dry_run: counts affected chunks without nulling.
+//       Large volume without confirm: soft-refused.
+//  G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
+func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (map[string]any, error) {
+	newModel := p.NewModel
+
+	// ── G1: Same-canonical-identity guard ────────────────────────────────────
+	// Read the currently stored embedder name from meta.
+	storedName, _, _ := e.backend.GetMeta(ctx, e.project, "embedder_name")
+	if storedName != "" && canonicalEmbedderName(newModel) == canonicalEmbedderName(storedName) {
+		return map[string]any{
+			"chunks_nulled": 0,
+			"new_model":     canonicalEmbedderName(newModel),
+			"status":        "identity unchanged",
+		}, nil
+	}
+
+	// ── G2: Same-dimension guard ──────────────────────────────────────────────
+	// If caller supplied NewDims and they match the stored dims, require Force.
+	if p.NewDims > 0 && !p.Force {
+		storedDimsStr, ok, _ := e.backend.GetMeta(ctx, e.project, "embedder_dimensions")
+		if ok && storedDimsStr != "" {
+			var storedDims int
+			if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
+				if p.NewDims == storedDims {
+					return map[string]any{
+						"error":  fmt.Sprintf("new model produces %d-dim vectors (same as current) — existing vectors are still reusable; pass force=true to force a full re-embed", p.NewDims),
+						"status": "refused",
+					}, nil
+				}
+			}
+		}
+	}
+
+	// ── G3a: dry_run — count without nulling ──────────────────────────────────
+	chunkCount, countErr := e.backend.CountProjectChunks(ctx, e.project)
+	if countErr != nil {
+		return nil, fmt.Errorf("count chunks for volume guard: %w", countErr)
+	}
+	if p.DryRun {
+		return map[string]any{
+			"chunks_would_null": chunkCount,
+			"new_model":         canonicalEmbedderName(newModel),
+			"status":            "dry_run",
+		}, nil
+	}
+
+	// ── G3b: Volume guard — require confirm for large corpus ──────────────────
+	if chunkCount >= migrateConfirmThreshold && !p.Confirm {
+		return map[string]any{
+			"error":             fmt.Sprintf("%d chunks would be nulled — this is a large corpus; pass confirm=true to proceed", chunkCount),
+			"chunks_would_null": chunkCount,
+			"status":            "refused",
+		}, nil
+	}
+
+	// ── Execute migration ─────────────────────────────────────────────────────
 	// Wrap null + meta writes in a single transaction (#102).
 	// Without this, a crash between NullAllEmbeddings and SetMeta leaves chunks
 	// without embeddings but the migrator flag never set — reembed worker never runs.
@@ -2028,7 +2116,9 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedding_migration_in_progress", "true"); err != nil {
 		return nil, err
 	}
-	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedder_name", newModel); err != nil {
+	// ── G4: Stamp canonical, not raw ─────────────────────────────────────────
+	canonicalNewModel := canonicalEmbedderName(newModel)
+	if err := e.backend.SetMetaTx(ctx, tx, e.project, "embedder_name", canonicalNewModel); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2048,7 +2138,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 		// gets a clean slate on the next checkEmbedderMeta call (#929).
 		return map[string]any{
 			"chunks_nulled": nulled,
-			"new_model":     newModel,
+			"new_model":     canonicalNewModel,
 			"status":        "migration queued — embed gateway will drain NULL embeddings",
 		}, nil
 	}
@@ -2059,9 +2149,9 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 	e.reembedder.Stop()
 
 	// ctx is used only for the startup probe; the returned client is context-independent.
-	newEmbedder, err := embed.NewLiteLLMClient(ctx, e.ollamaURL, newModel, "", e.targetDims)
+	newEmbedder, err := embed.NewLiteLLMClient(ctx, e.ollamaURL, canonicalNewModel, "", e.targetDims)
 	if err != nil {
-		return nil, fmt.Errorf("create embedder for new model %q: %w", newModel, err)
+		return nil, fmt.Errorf("create embedder for new model %q: %w", canonicalNewModel, err)
 	}
 	e.embedMu.Lock()
 	e.embedder = newEmbedder
@@ -2072,7 +2162,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, newModel string) (ma
 
 	return map[string]any{
 		"chunks_nulled": nulled,
-		"new_model":     newModel,
+		"new_model":     canonicalNewModel,
 		"status":        "migration started — reembed worker running with new model",
 	}, nil
 }
