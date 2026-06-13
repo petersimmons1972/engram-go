@@ -78,11 +78,13 @@ func (g *EmbedGateway) drainBatch(ctx context.Context) (int, error) {
 			if err != nil {
 				return nil
 			}
-			if _, err := g.pool.Exec(egCtx,
-				"UPDATE chunks SET embedding=$1 WHERE id=$2",
+			if tag, err := g.pool.Exec(egCtx,
+				"UPDATE chunks SET embedding=$1 WHERE id=$2 AND embedding IS NULL",
 				pgvector.NewVector(vec), chunk.id,
 			); err != nil {
 				slog.Warn("embed gateway: update failed", "chunk", chunk.id, "err", err)
+			} else if tag.RowsAffected() == 0 {
+				slog.Warn("embed gateway: update matched zero rows — chunk may have been deleted or already embedded by a concurrent drainer", "chunk", chunk.id)
 			}
 			return nil
 		})

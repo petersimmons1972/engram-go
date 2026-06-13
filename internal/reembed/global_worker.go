@@ -264,12 +264,12 @@ func (g *GlobalReembedder) runBatch(ctx context.Context) (int, error) {
 				return nil // non-fatal: skip chunk, retry on next tick
 			}
 			if tag, err := g.pool.Exec(egCtx,
-				"UPDATE chunks SET embedding=$1 WHERE id=$2",
+				"UPDATE chunks SET embedding=$1 WHERE id=$2 AND embedding IS NULL",
 				pgvector.NewVector(vec), c.id,
 			); err != nil {
 				slog.Warn("global reembedder: update failed", "chunk", c.id, "err", err)
 			} else if tag.RowsAffected() == 0 {
-				slog.Warn("global reembedder: update matched zero rows — chunk may have been deleted between fetch and update", "chunk", c.id)
+				slog.Warn("global reembedder: update matched zero rows — chunk may have been deleted or already embedded by a concurrent drainer", "chunk", c.id)
 			}
 			return nil
 		})
