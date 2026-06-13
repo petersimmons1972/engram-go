@@ -180,8 +180,10 @@ fn increase_backoff(current_ms: u64) -> u64 {
 
 /// Determine the next backoff duration based on the outcome of a process_slice call.
 ///
+/// Preconditions: `outcome.attempted > 0` (empty-slice is handled by the caller before
+/// this function is invoked); `max_backoff_ms > 0`; `min_backoff_ms <= max_backoff_ms`.
+///
 /// Decision logic:
-/// - Empty slice (attempted=0): Grow — idle or done, not a healthy signal.
 /// - Any HTTP failures (failed > 0): Grow — backend errors detected.
 /// - SKIP LOCKED contention loss (attempted>0, written=0, failed=0): Reset — backend was
 ///   fine; another worker won the race. Do not penalize a healthy backend.
@@ -189,18 +191,19 @@ fn increase_backoff(current_ms: u64) -> u64 {
 fn next_backoff_ms(
     outcome: &claim::ProcessSliceResult,
     current_backoff_ms: u64,
+    min_backoff_ms: u64,
     max_backoff_ms: u64,
 ) -> u64 {
-    // Reset threshold: what counts as "the interval" (minimum backoff, ~10ms)
-    const INTERVAL_MS: u64 = 10;
+    debug_assert!(outcome.attempted > 0, "next_backoff_ms called with attempted == 0; empty-slice must be handled by caller");
+    debug_assert!(max_backoff_ms > 0, "max_backoff_ms must be > 0");
 
-    if outcome.attempted == 0 || outcome.failed > 0 {
-        // Idle/done or any HTTP failures → grow
+    if outcome.failed > 0 {
+        // Any HTTP failures → grow
         increase_backoff(current_backoff_ms).min(max_backoff_ms)
     } else {
         // attempted>0, failed==0 → either written>0 (progress) or written==0 (contention loss)
-        // Both are "backend healthy" signals → reset
-        INTERVAL_MS
+        // Both are "backend healthy" signals → reset to the configured interval floor
+        min_backoff_ms
     }
 }
 
@@ -255,9 +258,13 @@ async fn run_worker(
                     continue;
                 }
 
-                let next_ms =
-                    next_backoff_ms(&outcome, backoff_ms.load(Ordering::Acquire), max_backoff_ms);
                 let interval_ms = millis_as_u64(cfg.interval);
+                let next_ms = next_backoff_ms(
+                    &outcome,
+                    backoff_ms.load(Ordering::Acquire),
+                    interval_ms,
+                    max_backoff_ms,
+                );
 
                 worker_attempted += outcome.attempted;
                 worker_written += outcome.written;
@@ -355,6 +362,18 @@ pub async fn run_with_shutdown(cfg: Config, shutdown: CancellationToken) -> anyh
         .context("build http client")?;
 
     startup_probe(&pool_for_embed, &cfg).await?;
+
+    // FM-08: embed_timeout must exceed latency_high_ms. If the HTTP timeout fires before
+    // the latency threshold, every sub-batch returns as failed, backoff grows indefinitely,
+    // and all progress stalls. Warn loudly at startup so operators notice misconfiguration.
+    if cfg.embed_timeout.as_millis() as u64 <= cfg.latency_high_ms {
+        warn!(
+            embed_timeout_ms = cfg.embed_timeout.as_millis(),
+            latency_high_ms = cfg.latency_high_ms,
+            "FM-08 INVARIANT VIOLATED: embed_timeout must exceed latency_high_ms; \
+             embed timeouts will fire before backpressure triggers, causing indefinite backoff"
+        );
+    }
 
     let effective_workers = {
         let n = warmup_embeddings(&pool_for_embed, &cfg).await;
@@ -975,28 +994,31 @@ mod backoff_decision_tests {
     #[test]
     fn all_failed_slice_grows_backoff() {
         let outcome = ProcessSliceResult { attempted: 32, written: 0, failed: 32 };
-        let next = next_backoff_ms(&outcome, 100, 30_000);
+        // min=100ms, max=30_000ms, current=100ms → increase_backoff(100)=200
+        let next = next_backoff_ms(&outcome, 100, 100, 30_000);
         assert!(next > 100, "expected backoff to grow when all failed");
+        assert_eq!(next, 200, "increase_backoff doubles: 100 → 200");
     }
 
-    // Partial progress → reset to interval (backend healthy)
+    // Partial progress → reset to min_backoff_ms (backend healthy)
     #[test]
     fn partial_progress_resets_backoff() {
         let outcome = ProcessSliceResult { attempted: 32, written: 16, failed: 0 };
-        let next = next_backoff_ms(&outcome, 8_000, 30_000);
-        assert!(next <= 100, "expected backoff to reset when partial progress");
+        // Backoff was high (8_000ms); reset must return exactly min_backoff_ms (500ms)
+        let next = next_backoff_ms(&outcome, 8_000, 500, 30_000);
+        assert_eq!(next, 500, "expected backoff to reset to min_backoff_ms on partial progress");
     }
 
-    // Empty slice (no rows claimed) → grow backoff (idle/done)
+    // Empty-slice is handled by run_worker's early-continue BEFORE next_backoff_ms is called.
+    // This test documents the precondition: next_backoff_ms must not be called with attempted=0.
+    // In debug builds the debug_assert fires; in release we document the contract.
     #[test]
-    fn empty_slice_grows_backoff() {
-        // NOTE: empty → Grow is intentional. The caller cannot distinguish
-        // "all embeddings complete (done)" from "all rows SKIP LOCKED by other
-        // worker (transient)". Growing backoff on empty is a known false-positive
-        // for the completed-state, but it is the safe default.
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "next_backoff_ms called with attempted == 0")]
+    fn empty_slice_panics_in_debug() {
+        // attempted=0 violates the precondition; run_worker never reaches this call.
         let outcome = ProcessSliceResult { attempted: 0, written: 0, failed: 0 };
-        let next = next_backoff_ms(&outcome, 100, 30_000);
-        assert!(next > 100, "expected backoff to grow on empty slice (idle/done)");
+        let _ = next_backoff_ms(&outcome, 100, 100, 30_000);
     }
 
     // SKIP LOCKED contention: all rows claimed, backend embedded OK,
@@ -1005,24 +1027,35 @@ mod backoff_decision_tests {
     #[test]
     fn contention_loss_not_penalized() {
         let outcome = ProcessSliceResult { attempted: 32, written: 0, failed: 0 };
-        let next = next_backoff_ms(&outcome, 8_000, 30_000);
-        assert!(next <= 100, "expected backoff to reset on contention loss (backend was fine)");
+        // Backoff was high (8_000ms); contention loss means backend was healthy → reset
+        let next = next_backoff_ms(&outcome, 8_000, 500, 30_000);
+        assert_eq!(next, 500, "expected backoff to reset to min_backoff_ms on contention loss");
     }
 
     // Mixed failure: some embed OK, some HTTP fail → grow backoff
     #[test]
     fn mixed_failure_penalized() {
         let outcome = ProcessSliceResult { attempted: 32, written: 16, failed: 16 };
-        let next = next_backoff_ms(&outcome, 100, 30_000);
+        let next = next_backoff_ms(&outcome, 100, 100, 30_000);
         assert!(next > 100, "expected backoff to grow on mixed failure");
+        assert_eq!(next, 200, "increase_backoff doubles: 100 → 200");
     }
 
     // Backoff never exceeds max
     #[test]
     fn backoff_capped_at_max() {
         let outcome = ProcessSliceResult { attempted: 32, written: 0, failed: 32 };
-        let next = next_backoff_ms(&outcome, 25_000, 30_000);
-        assert!(next <= 30_000, "backoff must not exceed max");
+        let next = next_backoff_ms(&outcome, 25_000, 100, 30_000);
+        assert_eq!(next, 30_000, "backoff must be capped at max (25_000*2=50_000 → clamped to 30_000)");
+    }
+
+    // Reset returns exactly min_backoff_ms — no hardcoded sentinel, the caller's floor
+    #[test]
+    fn reset_returns_configured_min() {
+        let outcome = ProcessSliceResult { attempted: 10, written: 10, failed: 0 };
+        // Use a non-round min to confirm no constant is being returned
+        let next = next_backoff_ms(&outcome, 5_000, 7_777, 30_000);
+        assert_eq!(next, 7_777, "reset must return exactly min_backoff_ms, not a hardcoded sentinel");
     }
 }
 
