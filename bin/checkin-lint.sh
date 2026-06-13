@@ -30,9 +30,13 @@ finding() {
      grep -Fxq "$key" "${CHECKIN_LINT_BASELINE}" 2>/dev/null; then
     echo -e "${YLW}baselined${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
     ((BASELINED++)) || true
+    [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
+      echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
     return 0
   fi
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
+  [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
+    echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
   ((FINDINGS++)) || true
 }
 # Re-export so subprocesses spawned after this point see the overridden version, not core's.
