@@ -40,7 +40,7 @@ _check_remote_guard() {
   fi
   local remote_url
   remote_url="$(git -C "$repo_root" remote get-url origin 2>/dev/null || true)"
-  if echo "$remote_url" | grep -q "$expected"; then
+  if echo "$remote_url" | grep -qF "$expected"; then
     pass_rule "F.remote-guard" "origin matches $expected"
   else
     echo -e "${RED}ERROR${RST}: origin does not match $expected (got: ${remote_url:-<none>})." >&2
@@ -55,7 +55,7 @@ _check_home_literal() {
   while IFS= read -r hit; do
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}" match="${rest#*:}"
-    echo "$match" | grep -qE '/home/(user|runner)([/[:space:]]|$|["\x27])' && continue
+    echo "$match" | grep -qE '/home/(user|runner)([/[:space:]]|$|["])' && continue
     finding "C.home-literal" "$file" "$lineno" \
       "hardcoded /home/<user> path — use %h / __HOME__ / env-var injection"
     hint "In systemd units: %h expands in ExecStart but NOT in Environment= strings."

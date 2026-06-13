@@ -4,7 +4,7 @@
 # Usage: bash ~/bin/test-checkin-lint-core.sh
 # Exit:  0 = all pass  1 = failures
 
-set -uo pipefail
+set -euo pipefail
 
 PASS=0; FAIL=0
 CORE="$(cd "$(dirname "$0")" && pwd)/checkin-lint-core.sh"
