@@ -85,3 +85,13 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.1
+
+  checkin-lint:
+    name: Checkin lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run checkin-lint
+        run: bin/checkin-lint.sh
