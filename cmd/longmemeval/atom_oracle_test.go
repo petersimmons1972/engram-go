@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
-	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // stubCompleter is a test double for atom.ClaudeCompleter that returns canned
@@ -123,19 +124,18 @@ func TestOracleAtomsOnlyFromAnswerSessions(t *testing.T) {
 	}
 }
 
-// --- Test 2: AtomOracleVariants produce correct context block shapes ---
+// --- Test 2: AtomOracleVariants produce correct context block shapes via buildOracleContext ---
 
 func TestAtomOracleVariantsContext(t *testing.T) {
 	t.Parallel()
 	item := buildTestItem()
 
 	tests := []struct {
-		variant         string
-		wantAtomBlock   bool
-		wantSessionText bool
+		variant        string
+		wantBlockCount int
 	}{
-		{"atom-only", true, false},
-		{"atom-plus-source", true, true},
+		{"atom-only", 1},
+		{"atom-plus-source", 2}, // atom block + 1 gold session text
 	}
 
 	for _, tc := range tests {
@@ -143,44 +143,20 @@ func TestAtomOracleVariantsContext(t *testing.T) {
 		t.Run(tc.variant, func(t *testing.T) {
 			t.Parallel()
 			cfg := &Config{
-				LLMBaseURL:        "http://stub",
-				LLMModel:          "stub-model",
 				AtomOracle:        true,
 				AtomOracleVariant: tc.variant,
-				Retries:           1,
 			}
-
-			// Patch buildOracleContext to use the stub completer by exercising
-			// goldSessionTexts + extractAtomsFromSessions directly.
-			sessionTexts := goldSessionTexts(item)
 			stub := &stubCompleter{atoms: twoTestAtoms()}
-			atoms, err := extractAtomsFromSessions(context.Background(), stub, sessionTexts)
+
+			contextBlocks, atomCount, _, err := buildOracleContext(context.Background(), stub, cfg, item)
 			if err != nil {
-				t.Fatalf("extractAtomsFromSessions: %v", err)
+				t.Fatalf("buildOracleContext: %v", err)
 			}
-			if len(atoms) != 2 {
-				t.Fatalf("want 2 atoms, got %d", len(atoms))
+			if atomCount == 0 {
+				t.Fatal("expected atoms to be extracted")
 			}
-
-			// Reproduce what buildOracleContext does with the extracted atoms + variant.
-			atomBlock := search.FormatAtomsAsContext(atoms)
-			if atomBlock == "" {
-				t.Fatal("FormatAtomsAsContext returned empty string for 2 atoms")
-			}
-			var contextBlocks []string
-			contextBlocks = append(contextBlocks, atomBlock)
-			if cfg.AtomOracleVariant == "atom-plus-source" {
-				contextBlocks = append(contextBlocks, sessionTexts...)
-			}
-
-			if tc.wantAtomBlock && len(contextBlocks) == 0 {
-				t.Error("expected at least one context block (atom block)")
-			}
-			if tc.wantSessionText && len(contextBlocks) < 2 {
-				t.Errorf("atom-plus-source: want ≥2 blocks (atom+session), got %d", len(contextBlocks))
-			}
-			if !tc.wantSessionText && len(contextBlocks) != 1 {
-				t.Errorf("atom-only: want exactly 1 block, got %d", len(contextBlocks))
+			if len(contextBlocks) != tc.wantBlockCount {
+				t.Errorf("variant %q: want %d context blocks, got %d", tc.variant, tc.wantBlockCount, len(contextBlocks))
 			}
 		})
 	}
@@ -196,40 +172,38 @@ func TestOracleReportByQuestionType(t *testing.T) {
 		{QuestionID: "q2", QuestionType: "single-session-preference", ScoreLabel: "INCORRECT", Status: "done"},
 		{QuestionID: "q3", QuestionType: "temporal-reasoning", ScoreLabel: "CORRECT", Status: "done"},
 	}
+	cfg := &Config{OutDir: t.TempDir(), RunID: "by-type-test"}
 
-	// Replicate the by-type grouping logic from writeScoreReportWithCompleteness.
-	byQType := make(map[string]map[string]int)
-	for _, s := range scores {
-		if s.Status != "done" {
-			continue
-		}
-		qbt := byQType[s.QuestionType]
-		if qbt == nil {
-			qbt = make(map[string]int)
-			byQType[s.QuestionType] = qbt
-		}
-		qbt["total"]++
-		switch s.ScoreLabel {
-		case "CORRECT":
-			qbt["correct"]++
-		case "PARTIALLY_CORRECT":
-			qbt["partially_correct"]++
-		default:
-			qbt["incorrect"]++
-		}
+	// Call the real writeScoreReport so this test fails if the grouping logic changes.
+	writeScoreReport(cfg, scores)
+
+	data, err := os.ReadFile(filepath.Join(cfg.OutDir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+	byType, ok := report["by_type"].(map[string]any)
+	if !ok {
+		t.Fatalf("by_type missing or wrong type: %v", report["by_type"])
 	}
 
-	if _, ok := byQType["single-session-preference"]; !ok {
-		t.Error("by_type: missing key single-session-preference")
+	ssp, ok := byType["single-session-preference"].(map[string]any)
+	if !ok {
+		t.Fatal("by_type: missing key single-session-preference")
 	}
-	if _, ok := byQType["temporal-reasoning"]; !ok {
-		t.Error("by_type: missing key temporal-reasoning")
+	if total := int(ssp["total"].(float64)); total != 2 {
+		t.Errorf("single-session-preference total: want 2, got %d", total)
 	}
-	if got := byQType["single-session-preference"]["total"]; got != 2 {
-		t.Errorf("single-session-preference total: want 2, got %d", got)
+
+	tr, ok := byType["temporal-reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("by_type: missing key temporal-reasoning")
 	}
-	if got := byQType["temporal-reasoning"]["correct"]; got != 1 {
-		t.Errorf("temporal-reasoning correct: want 1, got %d", got)
+	if correct := int(tr["correct"].(float64)); correct != 1 {
+		t.Errorf("temporal-reasoning correct: want 1, got %d", correct)
 	}
 }
 
@@ -263,7 +237,7 @@ func TestOracleFallsBackToRawTextOnZeroAtoms(t *testing.T) {
 	}
 }
 
-// --- Test 6: buildOracleContext with atoms present ---
+// --- Test 5: buildOracleContext with atoms present ---
 
 func TestBuildOracleContextWithAtoms(t *testing.T) {
 	t.Parallel()
@@ -304,7 +278,7 @@ func TestBuildOracleContextWithAtoms(t *testing.T) {
 	}
 }
 
-// --- Test 7: runOneOracleWithDeps — injectable generation ---
+// --- Test 6: runOneOracleWithDeps — injectable generation ---
 
 func TestRunOneOracleWithDeps(t *testing.T) {
 	t.Parallel()
@@ -367,7 +341,7 @@ func TestRunOneOracleWithDeps(t *testing.T) {
 	})
 }
 
-// --- Test 5: AtomOracle flag defaults ---
+// --- Test 7: AtomOracle flag defaults ---
 
 func TestOracleModeDefaultOff(t *testing.T) {
 	t.Parallel()
