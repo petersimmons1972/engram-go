@@ -123,7 +123,7 @@ _check_latest_image() {
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' \
     --exclude-dir='.git' \
-    -E 'image:\s+[^@\s]+:latest' . 2>/dev/null || true)
+    -E 'image:\s+[^@[:space:]]+:latest' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "G.latest-image" "no ':latest' image tags"
 }
 

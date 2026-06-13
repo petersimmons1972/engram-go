@@ -550,3 +550,33 @@ P1.hardcoded-dsn::./.worktrees/issue-1063-extract-parser/internal/db/postgres_sh
 P1.hardcoded-dsn::./.worktrees/issue-1063-extract-parser/internal/db/postgres_shared_pool_test.go::52
 P1.hardcoded-dsn::./.worktrees/issue-1063-extract-parser/.github/workflows/ci.yml::41
 P1.hardcoded-dsn::./.github/workflows/ci.yml::41
+# G.latest-image (regex fix 2026-06-13): docker-compose and worktree copies previously
+#   missed by [^@\s]+ bug — all pre-existing at gate installation.
+G.latest-image::./.claude/worktrees/agent-a2cbd88800d65d534/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.claude/worktrees/agent-a2cbd88800d65d534/docker-compose.local.yml::28
+G.latest-image::./.claude/worktrees/agent-a2cbd88800d65d534/docker-compose.yml::49
+G.latest-image::./.claude/worktrees/agent-a5d5b91cfbd744b58/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.claude/worktrees/agent-a5d5b91cfbd744b58/docker-compose.local.yml::28
+G.latest-image::./.claude/worktrees/agent-a5d5b91cfbd744b58/docker-compose.yml::49
+G.latest-image::./.claude/worktrees/agent-abaa12dc3918c42b3/docker-compose.local.yml::29
+G.latest-image::./.claude/worktrees/agent-abaa12dc3918c42b3/docker-compose.yml::51
+G.latest-image::./.claude/worktrees/campaign-plan-20260610/docker-compose.local.yml::29
+G.latest-image::./.claude/worktrees/campaign-plan-20260610/docker-compose.yml::51
+G.latest-image::./.claude/worktrees/lme-phase3-mcp/docker-compose.local.yml::29
+G.latest-image::./.claude/worktrees/lme-phase3-mcp/docker-compose.yml::51
+G.latest-image::./docker-compose.local.yml::29
+G.latest-image::./docker-compose.yml::51
+G.latest-image::./.worktrees/issue-1063-extract-parser/docker-compose.local.yml::29
+G.latest-image::./.worktrees/issue-1063-extract-parser/docker-compose.yml::51
+G.latest-image::./.worktrees/issue-918/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.worktrees/issue-918/docker-compose.local.yml::28
+G.latest-image::./.worktrees/issue-918/docker-compose.yml::49
+G.latest-image::./.worktrees/issue-943/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.worktrees/issue-943/docker-compose.local.yml::28
+G.latest-image::./.worktrees/issue-943/docker-compose.yml::49
+G.latest-image::./.worktrees/lme-codex-execution-20260530/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.worktrees/lme-codex-execution-20260530/docker-compose.local.yml::28
+G.latest-image::./.worktrees/lme-codex-execution-20260530/docker-compose.yml::49
+G.latest-image::./.worktrees/w2-947/deploy/lme-prune-cronjob.yaml::42
+G.latest-image::./.worktrees/w2-947/docker-compose.local.yml::28
+G.latest-image::./.worktrees/w2-947/docker-compose.yml::49
