@@ -157,6 +157,7 @@ func (noopBackend) NullAllEmbeddings(_ context.Context, _ string) (int, error)  
 func (noopBackend) NullAllEmbeddingsTx(_ context.Context, _ db.Tx, _ string) (int, error) {
 	return 0, nil
 }
+func (noopBackend) CountProjectChunks(_ context.Context, _ string) (int, error) { return 0, nil }
 func (noopBackend) GetChunksPendingEmbedding(_ context.Context, _ string, _ int) ([]*types.Chunk, error) {
 	return nil, nil
 }

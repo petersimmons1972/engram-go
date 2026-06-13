@@ -15,6 +15,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/netutil"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
@@ -44,8 +45,16 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 		ollamaURL = raw
 	}
 
+	// Extract new safety-guard args early — dry_run must bypass the dimension
+	// pre-flight since a dry_run only counts; it never nulls anything.
+	force := getBool(args, "force", false)
+	dryRun := getBool(args, "dry_run", false)
+	confirm := getBool(args, "confirm", false)
+
 	// Dimension pre-flight (#251): compare stored dims against the new model's output.
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
+	// Skipped for dry_run (informational only — no nulling will occur).
+	if !dryRun {
 	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
 		var probeFunc func(ctx context.Context, baseURL, model string) (embed.Client, error)
 		if cfg.testHooks != nil {
@@ -72,15 +81,60 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 			}
 		}
 	}
+	} // end if !dryRun
+
+	// Resolve new model's dimension from the probe client (already probed above).
+	// newDims is 0 when the dimension pre-flight was skipped (no stored dims) —
+	// G2 in MigrateEmbedder skips the same-dim guard when NewDims==0.
+	var newDims int
+	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
+		// We already probed the new model above; if probeFunc ran, we have a client.
+		// Re-probe only if we need newDims for G2. Use testHooks path when present.
+		var probeForDims func(ctx context.Context, baseURL, model string) (embed.Client, error)
+		if cfg.testHooks != nil && cfg.testHooks.embedProbe != nil {
+			probeForDims = cfg.testHooks.embedProbe
+		}
+		if probeForDims == nil {
+			targetDims := cfg.EmbedDimensions
+			probeForDims = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
+				return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
+			}
+		}
+		if pc, probeErr := probeForDims(ctx, ollamaURL, newModel); probeErr == nil && pc != nil {
+			newDims = pc.Dimensions()
+		}
+		_ = storedDimsStr // used only to gate the probe
+	}
+
+	p := search.MigrateParams{
+		NewModel: newModel,
+		NewDims:  newDims,
+		Force:    force,
+		DryRun:   dryRun,
+		Confirm:  confirm,
+	}
 
 	var result map[string]any
 	if cfg.testHooks != nil && cfg.testHooks.migrateFunc != nil {
-		result, err = cfg.testHooks.migrateFunc(ctx, newModel)
+		result, err = cfg.testHooks.migrateFunc(ctx, p)
 	} else {
-		result, err = h.Engine.MigrateEmbedder(ctx, newModel)
+		result, err = h.Engine.MigrateEmbedder(ctx, p)
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// Surface soft refusals (G1 identity unchanged is NOT an error; G2/G3 ARE).
+	if errMsg, hasErr := result["error"]; hasErr {
+		if s, ok := errMsg.(string); ok && s != "" {
+			return mcpgo.NewToolResultError(s), nil
+		}
+	}
+
+	// Skip post-migrate weight reset for no-op results (identity unchanged, dry_run,
+	// or refused). Only a real NULL operation warrants a weight reset.
+	if status, _ := result["status"].(string); status == "identity unchanged" || status == "dry_run" || status == "refused" {
+		return toolResult(result)
 	}
 
 	// Reset weight_config to defaults for this project: learned weights are

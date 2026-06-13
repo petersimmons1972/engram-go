@@ -187,7 +187,7 @@ func TestHandleMemoryMigrateEmbedder_MigrateError(t *testing.T) {
 	cfg := Config{
 		RouterURL: "http://ollama-test:11434",
 		testHooks: &testHooks{
-			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
+			migrateFunc: func(_ context.Context, _ search.MigrateParams) (map[string]any, error) {
 				return nil, fmt.Errorf("db unavailable")
 			},
 			onPostMigrate: func(_ context.Context, _ string) {
@@ -217,8 +217,8 @@ func TestHandleMemoryMigrateEmbedder_HappyPath(t *testing.T) {
 			embedProbe: func(_ context.Context, _, _ string) (embed.Client, error) {
 				return dimEmbedder{dims: 384}, nil // pre-flight passes
 			},
-			migrateFunc: func(_ context.Context, _ string) (map[string]any, error) {
-				return map[string]any{"nulled": 0, "model": "same-dim-model"}, nil
+			migrateFunc: func(_ context.Context, _ search.MigrateParams) (map[string]any, error) {
+				return map[string]any{"nulled": 0, "model": "same-dim-model", "status": "migration queued"}, nil
 			},
 			onPostMigrate: func(_ context.Context, _ string) {
 				postMigrateFired = true
@@ -312,9 +312,9 @@ func TestHandleMemoryMigrateEmbedder_OllamaURL_HostnameResolvingPrivateBlocked(t
 }
 
 // TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate verifies that when
-// probe succeeds and dimensions match, the pre-flight passes and execution reaches
-// MigrateEmbedder. The noop backend panics there — we recover and assert we got
-// past the pre-flight without a dimension or probe error.
+// probe succeeds and dimensions match, the pre-flight passes (no dim-mismatch error).
+// Since G2 was added, same-dim without force is a soft refusal from MigrateEmbedder —
+// the call reaches MigrateEmbedder and returns a tool error, NOT a Go error.
 func TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate(t *testing.T) {
 	pool := newDimPool(t, "384", 384) // stored: 384-dim
 	req := makeMigrateRequest("proj", "same-dim-model")
@@ -327,19 +327,10 @@ func TestHandleMemoryMigrateEmbedder_DimsMatch_ProceedToMigrate(t *testing.T) {
 		},
 	}
 
-	var reachedMigrate bool
-	var preflightErr error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				reachedMigrate = true // noop backend panics in MigrateEmbedder — expected
-			}
-		}()
-		_, preflightErr = handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
-	}()
-	if preflightErr != nil {
-		require.NotContains(t, preflightErr.Error(), "dimension mismatch",
-			"matching dims must not produce a pre-flight error")
-	}
-	require.True(t, reachedMigrate, "pre-flight passed, execution should reach MigrateEmbedder")
+	// Pre-flight passes (384==384), then G2 in MigrateEmbedder soft-refuses same-dim.
+	// Expect a tool-error result (not a Go error) mentioning "force".
+	result, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
+	require.NoError(t, err, "same-dim refusal is a soft refusal, not a Go error")
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "same-dim without force must surface as MCP tool error")
 }

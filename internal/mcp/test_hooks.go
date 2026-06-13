@@ -5,6 +5,7 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/embed"
+	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/weight"
 )
 
@@ -20,5 +21,5 @@ type testHooks struct {
 	// onPostMigrate replaces the weight_config reset block after MigrateEmbedder.
 	onPostMigrate func(ctx context.Context, project string)
 	// migrateFunc replaces h.Engine.MigrateEmbedder in handleMemoryMigrateEmbedder.
-	migrateFunc func(ctx context.Context, model string) (map[string]any, error)
+	migrateFunc func(ctx context.Context, p search.MigrateParams) (map[string]any, error)
 }

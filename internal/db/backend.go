@@ -118,6 +118,9 @@ type Backend interface {
 	UpdateChunkLastMatched(ctx context.Context, chunkID string) error
 	// GetPendingEmbeddingCount returns the count of chunks with NULL embedding.
 	GetPendingEmbeddingCount(ctx context.Context, project string) (int, error)
+	// CountProjectChunks returns the total number of chunks for a project.
+	// Used by MigrateEmbedder's volume guard before nulling embeddings.
+	CountProjectChunks(ctx context.Context, project string) (int, error)
 	// EnqueueChunkLeases sets initial leases on chunks with NULL embeddings,
 	// marking them for async re-embedding by the reembed worker. Idempotent.
 	EnqueueChunkLeases(ctx context.Context, chunkIDs []string) error
