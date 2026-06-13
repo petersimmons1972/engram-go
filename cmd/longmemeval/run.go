@@ -229,10 +229,27 @@ func runRun(cfg *Config) int {
 		itemMap[item.QuestionID] = item
 	}
 
-	ingestEntries, err := longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
-	if err != nil {
-		log.Printf("ERROR read ingest checkpoint: %v", err)
-		return 1
+	// #1079: oracle mode bypasses Engram entirely — no ingest checkpoint exists
+	// or is needed. Synthesize a minimal IngestEntry per item so the run loop
+	// processes all items without requiring a prior ingest stage.
+	var ingestEntries []longmemeval.IngestEntry
+	if cfg.AtomOracle {
+		ingestEntries = make([]longmemeval.IngestEntry, 0, len(items))
+		for _, item := range items {
+			ingestEntries = append(ingestEntries, longmemeval.IngestEntry{
+				QuestionID: item.QuestionID,
+				Project:    "", // no Engram project for oracle mode
+				Status:     "done",
+			})
+		}
+		log.Printf("run: oracle mode — synthesized %d ingest entries (no checkpoint required)", len(ingestEntries))
+	} else {
+		var err error
+		ingestEntries, err = longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
+		if err != nil {
+			log.Printf("ERROR read ingest checkpoint: %v", err)
+			return 1
+		}
 	}
 	ingestMap := make(map[string]longmemeval.IngestEntry, len(ingestEntries))
 	for _, e := range ingestEntries {
@@ -378,6 +395,18 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 			continue
 		}
 
+		// #1079: oracle mode bypasses Engram entirely — no MCP connection needed.
+		if cfg.AtomOracle {
+			entry := runOneOracle(ctx, cfg, item, ingestEntry)
+			out <- entry
+			if entry.Status == "error" {
+				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
+			} else {
+				log.Printf("run [%s] status=%s hypothesis_len=%d", item.QuestionID, entry.Status, len(entry.Hypothesis))
+			}
+			continue
+		}
+
 		// Fresh connection per item — SSE sessions expire under long runs.
 		mcpClient, err := longmemeval.Connect(ctx, cfg.ServerURL, cfg.APIKey)
 		if err != nil {
@@ -428,6 +457,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			}
 		}
 	}()
+
+	// Phase 2A (#1079): oracle mode bypasses all Engram recall. Atoms are
+	// extracted locally from gold sessions and injected as the context.
+	if cfg.AtomOracle {
+		return runOneOracle(ctx, cfg, item, ingest)
+	}
 
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".

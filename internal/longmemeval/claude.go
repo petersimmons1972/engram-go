@@ -165,6 +165,10 @@ type OAIOptions struct {
 	// request is sent without auth (local/oblivion endpoints). Populated from
 	// --llm-api-key flag or LLM_API_KEY env var.
 	APIKey string
+	// SystemPrompt overrides the default system message in buildOAIRequestBody.
+	// When empty, the QA-assistant default is used. Set this when calling the
+	// endpoint for non-QA tasks (e.g. atom extraction). (#1079)
+	SystemPrompt string
 }
 
 // GenerateOAI calls an OpenAI-compatible chat completions endpoint instead of
@@ -688,7 +692,12 @@ func buildOAIRequestBody(model, prompt string, opts OAIOptions) ([]byte, error) 
 	}{
 		Model: model,
 		Messages: []oaiMessage{
-			{Role: "system", Content: "You are a precise QA assistant. Answer concisely using only the provided memory context."},
+			{Role: "system", Content: func() string {
+				if opts.SystemPrompt != "" {
+					return opts.SystemPrompt
+				}
+				return "You are a precise QA assistant. Answer concisely using only the provided memory context."
+			}()},
 			{Role: "user", Content: prompt},
 		},
 		MaxTokens:   maxTokens,

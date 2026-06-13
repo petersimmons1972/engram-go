@@ -120,6 +120,11 @@ type Config struct {
 	// Format: <AtomCacheDir>/<project>.json  each file is []atom.Atom JSON.
 	AtomCacheDir string
 
+	// Phase 2A (#1079): oracle atom-ceiling probe. Both fields are OFF/empty
+	// by default; existing run behaviour is entirely unchanged when unset.
+	AtomOracle        bool   // --atom-oracle: bypass Engram recall, extract atoms from gold sessions only
+	AtomOracleVariant string // --atom-oracle-variant: "atom-only" | "atom-plus-source"
+
 	Now func() time.Time
 }
 
@@ -274,6 +279,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// atom-cache-dir: fallback for atom-mode when the /atoms server endpoint is not deployed.
 	// atom-build writes per-project JSON files here; run reads them when FetchAtoms returns empty.
 	fs.StringVar(&cfg.AtomCacheDir, "atom-cache-dir", envOr("LME_ATOM_CACHE_DIR", ""), "fallback directory for atom-mode: reads <dir>/<project>.json when /atoms endpoint returns empty")
+	// Phase 2A (#1079): oracle atom-ceiling probe flags. OFF by default.
+	fs.BoolVar(&cfg.AtomOracle, "atom-oracle", false, "#1079: oracle ceiling probe — extract atoms from gold sessions only, bypass Engram recall (benchmark-only, off by default)")
+	fs.StringVar(&cfg.AtomOracleVariant, "atom-oracle-variant", "atom-only", "#1079: atom-only = atoms only; atom-plus-source = atoms + raw gold session text")
 
 	// prune has its own flag set and early return — it does not share the
 	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
@@ -534,6 +542,21 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	if cfg.ContextTopKOverride < 0 || cfg.ContextTopKOverride > cfg.RecallTopK {
 		_, _ = fmt.Fprintf(stderr, "--context-topk %d is out of range; must be 0–%d (recall-topk)\n", cfg.ContextTopKOverride, cfg.RecallTopK)
 		return 1
+	}
+
+	// Phase 2A (#1079): validate oracle flags when set.
+	if cfg.AtomOracle {
+		if cfg.LLMBaseURL == "" {
+			_, _ = fmt.Fprintln(stderr, "--atom-oracle requires --llm-url (local LLM endpoint for atom extraction)")
+			return 1
+		}
+		switch cfg.AtomOracleVariant {
+		case "atom-only", "atom-plus-source":
+			// valid
+		default:
+			_, _ = fmt.Fprintf(stderr, "--atom-oracle-variant %q is not allowed; must be one of: atom-only, atom-plus-source\n", cfg.AtomOracleVariant)
+			return 1
+		}
 	}
 
 	if cfg.RunID == "" {

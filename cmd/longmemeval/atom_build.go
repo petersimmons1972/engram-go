@@ -58,8 +58,14 @@ type oaiCompleterAdapter struct {
 }
 
 func (a *oaiCompleterAdapter) Complete(ctx context.Context, system, prompt, _, _ string, _ int, maxTokens int) (string, error) {
-	combined := system + "\n\n" + prompt
-	return longmemeval.GenerateOAI(ctx, combined, a.baseURL, a.model, a.retries)
+	// Pass system as the OAI system message, not concatenated into the user prompt.
+	// Concatenation was silently overridden by buildOAIRequestBody's fixed default system message,
+	// causing the model to ignore the extraction instructions entirely (#1079).
+	opts := longmemeval.OAIOptions{
+		SystemPrompt: system,
+		MaxTokens:    maxTokens,
+	}
+	return longmemeval.GenerateOAIWithOpts(ctx, prompt, a.baseURL, a.model, a.retries, opts)
 }
 
 // sonnetCompleterAdapter satisfies atom.ClaudeCompleter by calling
