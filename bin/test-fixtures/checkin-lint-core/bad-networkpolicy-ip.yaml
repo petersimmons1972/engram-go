@@ -1,0 +1,9 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: test-netpol
+spec:
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
