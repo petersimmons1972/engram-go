@@ -397,7 +397,7 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 
 		// #1079: oracle mode bypasses Engram entirely — no MCP connection needed.
 		if cfg.AtomOracle {
-			entry := runOne(ctx, cfg, nil, item, ingestEntry)
+			entry := runOneOracle(ctx, cfg, item, ingestEntry)
 			out <- entry
 			if entry.Status == "error" {
 				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)

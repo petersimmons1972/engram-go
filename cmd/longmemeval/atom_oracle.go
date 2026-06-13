@@ -72,6 +72,10 @@ func extractAtomsFromSessions(ctx context.Context, completer atom.ClaudeComplete
 	return all, nil
 }
 
+// oracleGenerateFn is the injectable generation function type for oracle mode.
+// It allows tests to replace real OAI generation with a stub.
+type oracleGenerateFn func(ctx context.Context, prompt string) (string, error)
+
 // buildOracleContext is the main oracle function. It finds the gold sessions
 // from item, extracts atoms from them, and returns formatted context blocks.
 //
@@ -79,34 +83,30 @@ func extractAtomsFromSessions(ctx context.Context, completer atom.ClaudeComplete
 //   - "atom-only" (default): context blocks = [atom context block]
 //   - "atom-plus-source": context blocks = [atom context block, raw session text...]
 //
-// Returns a non-nil error when zero atoms are extracted (fail-closed). A zero-
-// atom result would silently score the item as memory-less, hiding the failure.
-func buildOracleContext(ctx context.Context, cfg *Config, item longmemeval.Item) (contextBlocks []string, atomCount int, err error) {
+// When zero atoms are extracted, falls back to returning raw gold session text as
+// the oracle context (oracle_zero_atoms=true). This preserves oracle measurement
+// integrity: the ceiling is "what's achievable with perfect access to gold sessions?"
+// Zero-atom items are flagged separately and do not cause an error.
+func buildOracleContext(ctx context.Context, completer atom.ClaudeCompleter, cfg *Config, item longmemeval.Item) (contextBlocks []string, atomCount int, sessionCount int, err error) {
 	sessionTexts := goldSessionTexts(item)
 	if len(sessionTexts) == 0 {
-		return nil, 0, fmt.Errorf("oracle: no gold sessions found (answer_session_ids=%v)", item.AnswerSessionIDs)
-	}
-
-	completer := &oaiCompleterAdapter{
-		baseURL: cfg.LLMBaseURL,
-		model:   cfg.LLMModel,
-		retries: cfg.Retries,
+		return nil, 0, 0, fmt.Errorf("oracle: no gold sessions found (answer_session_ids=%v)", item.AnswerSessionIDs)
 	}
 
 	atoms, err := extractAtomsFromSessions(ctx, completer, sessionTexts)
 	if err != nil {
-		return nil, 0, fmt.Errorf("oracle: extraction error: %w", err)
+		return nil, 0, len(sessionTexts), fmt.Errorf("oracle: extraction error: %w", err)
 	}
 
 	if len(atoms) == 0 {
 		// Graceful fallback: atom extractor found no preference-type atoms (common
-		// for non-preference sessions). Rather than fail-closed (which would exclude
-		// the item from scoring), inject raw gold session text as the oracle context.
-		// This is still oracle knowledge — the ceiling being measured is
-		// "what's achievable with perfect access to the gold sessions?"
-		// The caller sets OracleZeroAtoms=true to track these items separately.
+		// for non-preference sessions). Rather than excluding the item from scoring,
+		// inject raw gold session text as the oracle context.
+		// This is still oracle knowledge — the ceiling is "achievable with perfect
+		// access to gold sessions?" The caller sets OracleZeroAtoms=true to flag
+		// these items in the checkpoint.
 		log.Printf("oracle: zero atoms for item (fallback to raw session text), sessions=%d", len(sessionTexts))
-		return sessionTexts, 0, nil
+		return sessionTexts, 0, len(sessionTexts), nil
 	}
 
 	atomBlock := search.FormatAtomsAsContext(atoms)
@@ -116,41 +116,33 @@ func buildOracleContext(ctx context.Context, cfg *Config, item longmemeval.Item)
 		contextBlocks = append(contextBlocks, sessionTexts...)
 	}
 
-	return contextBlocks, len(atoms), nil
+	return contextBlocks, len(atoms), len(sessionTexts), nil
 }
 
-// runOneOracle handles oracle mode for a single item. It replaces the normal
-// recall+fetch pipeline entirely: atoms are extracted locally from gold sessions
-// and injected as the generation context. The generator is held fixed.
-func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, ingest longmemeval.IngestEntry) longmemeval.RunEntry {
-	contextBlocks, atomCount, err := buildOracleContext(ctx, cfg, item)
+// runOneOracleWithDeps handles oracle mode for a single item with injectable
+// dependencies (completer and generateFn) for testability. It replaces the
+// normal recall+fetch pipeline: atoms are extracted locally from gold sessions
+// and injected as the generation context.
+func runOneOracleWithDeps(ctx context.Context, cfg *Config, completer atom.ClaudeCompleter, generateFn oracleGenerateFn, item longmemeval.Item, _ longmemeval.IngestEntry) longmemeval.RunEntry {
+	contextBlocks, atomCount, sessionCount, err := buildOracleContext(ctx, completer, cfg, item)
 	if err != nil {
 		log.Printf("WARN oracle [%s] extraction error: %v", item.QuestionID, err)
 		return longmemeval.RunEntry{
 			QuestionID:      item.QuestionID,
 			Status:          "error",
 			Error:           err.Error(),
-			OracleZeroAtoms: true,
+			OracleZeroAtoms: false, // error was "no sessions found", not "extraction returned zero"
 		}
 	}
 
 	oracleZeroAtoms := atomCount == 0
-	log.Printf("oracle [%s] atoms=%d sessions=%d variant=%s zero_atoms=%v", item.QuestionID, atomCount, len(goldSessionTexts(item)), cfg.AtomOracleVariant, oracleZeroAtoms)
+	log.Printf("oracle [%s] atoms=%d sessions=%d variant=%s zero_atoms=%v", item.QuestionID, atomCount, sessionCount, cfg.AtomOracleVariant, oracleZeroAtoms)
 
 	// Build generation prompt using the same prompt-assembly path as normal mode.
 	// contextBlocks already contains oracle atoms (and optionally raw session text).
 	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 
-	opts := longmemeval.OAIOptions{
-		EnableThinking: cfg.EnableThinking,
-		MaxTokens:      cfg.LLMMaxTokens,
-		APIKey:         cfg.LLMApiKey,
-	}
-	if opts.MaxTokens == 0 && cfg.EnableThinking {
-		opts.MaxTokens = 8192
-	}
-
-	hypothesis, genErr := longmemeval.GenerateOAIWithOpts(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
+	hypothesis, genErr := generateFn(ctx, prompt)
 	if genErr != nil {
 		return longmemeval.RunEntry{
 			QuestionID:      item.QuestionID,
@@ -168,4 +160,26 @@ func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, inges
 		OracleAtomCount: atomCount,
 		OracleZeroAtoms: oracleZeroAtoms,
 	}
+}
+
+// runOneOracle handles oracle mode for a single item. Thin wrapper around
+// runOneOracleWithDeps that wires real production dependencies.
+func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, ingest longmemeval.IngestEntry) longmemeval.RunEntry {
+	completer := &oaiCompleterAdapter{
+		baseURL: cfg.LLMBaseURL,
+		model:   cfg.LLMModel,
+		retries: cfg.Retries,
+	}
+	opts := longmemeval.OAIOptions{
+		EnableThinking: cfg.EnableThinking,
+		MaxTokens:      cfg.LLMMaxTokens,
+		APIKey:         cfg.LLMApiKey,
+	}
+	if opts.MaxTokens == 0 && cfg.EnableThinking {
+		opts.MaxTokens = 8192
+	}
+	generateFn := func(ctx context.Context, prompt string) (string, error) {
+		return longmemeval.GenerateOAIWithOpts(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
+	}
+	return runOneOracleWithDeps(ctx, cfg, completer, generateFn, item, ingest)
 }

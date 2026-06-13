@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -232,52 +233,138 @@ func TestOracleReportByQuestionType(t *testing.T) {
 	}
 }
 
-// --- Test 4: buildOracleContext fails closed on zero atoms ---
+// --- Test 4: buildOracleContext falls back to raw text on zero atoms ---
 
-func TestOracleFailsClosedOnEmptyAtoms(t *testing.T) {
+func TestOracleFallsBackToRawTextOnZeroAtoms(t *testing.T) {
+	t.Parallel()
+	item := buildTestItem()
+	cfg := &Config{
+		AtomOracle:        true,
+		AtomOracleVariant: "atom-only",
+	}
+	stub := &stubCompleter{atoms: []atom.Atom{}} // extractor returns empty array
+
+	contextBlocks, atomCount, sessionCount, err := buildOracleContext(context.Background(), stub, cfg, item)
+	if err != nil {
+		t.Fatalf("buildOracleContext: unexpected error on zero atoms: %v", err)
+	}
+	if atomCount != 0 {
+		t.Errorf("atomCount: want 0, got %d", atomCount)
+	}
+	if sessionCount != 1 {
+		t.Errorf("sessionCount: want 1 (one gold session), got %d", sessionCount)
+	}
+	// Fallback must return raw gold session text, not an empty context.
+	if len(contextBlocks) == 0 {
+		t.Fatal("expected fallback to raw session text, got no context blocks")
+	}
+	if !strings.Contains(contextBlocks[0], "dark chocolate") {
+		t.Errorf("fallback context must contain gold session content, got: %q", contextBlocks[0])
+	}
+}
+
+// --- Test 6: buildOracleContext with atoms present ---
+
+func TestBuildOracleContextWithAtoms(t *testing.T) {
 	t.Parallel()
 	item := buildTestItem()
 
-	// extractAtomsFromSessions with a stub returning no atoms.
-	sessionTexts := goldSessionTexts(item)
-	stub := &stubCompleter{atoms: []atom.Atom{}} // returns empty JSON array
-	atoms, err := extractAtomsFromSessions(context.Background(), stub, sessionTexts)
-	if err != nil {
-		t.Fatalf("extractAtomsFromSessions: unexpected error: %v", err)
-	}
-	if len(atoms) != 0 {
-		t.Fatalf("want 0 atoms from empty stub, got %d", len(atoms))
+	tests := []struct {
+		variant        string
+		wantBlockCount int
+	}{
+		{"atom-only", 1},        // only atom block
+		{"atom-plus-source", 2}, // atom block + 1 gold session
 	}
 
-	// buildOracleContext must return an error when atoms is empty.
-	// We test by calling the oracle path manually with a cfg wired to the stub
-	// and verifying the returned RunEntry has OracleZeroAtoms=true.
-	//
-	// We cannot inject the stub completer directly into buildOracleContext
-	// (it reads cfg.LLMBaseURL), so we test the contract via runOneOracle
-	// indirectly by checking that zero atoms yields a non-nil error string.
-	// The intent: if extractAtomsFromSessions returns [], buildOracleContext
-	// must not silently produce an empty-context generation.
-	if len(atoms) == 0 {
-		// Simulate what buildOracleContext does when len(atoms)==0.
-		wantErrSubstr := "zero atoms"
-		simulatedErr := "oracle: zero atoms extracted from 1 gold session(s)"
-		if !strings.Contains(simulatedErr, wantErrSubstr) {
-			t.Errorf("expected error to contain %q, got %q", wantErrSubstr, simulatedErr)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.variant, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{
+				AtomOracle:        true,
+				AtomOracleVariant: tc.variant,
+			}
+			stub := &stubCompleter{atoms: twoTestAtoms()}
+
+			contextBlocks, atomCount, sessionCount, err := buildOracleContext(context.Background(), stub, cfg, item)
+			if err != nil {
+				t.Fatalf("buildOracleContext: %v", err)
+			}
+			if atomCount != 2 {
+				t.Errorf("atomCount: want 2, got %d", atomCount)
+			}
+			if sessionCount != 1 {
+				t.Errorf("sessionCount: want 1, got %d", sessionCount)
+			}
+			if len(contextBlocks) != tc.wantBlockCount {
+				t.Errorf("contextBlocks: want %d blocks, got %d", tc.wantBlockCount, len(contextBlocks))
+			}
+		})
+	}
+}
+
+// --- Test 7: runOneOracleWithDeps — injectable generation ---
+
+func TestRunOneOracleWithDeps(t *testing.T) {
+	t.Parallel()
+	item := buildTestItem()
+	cfg := &Config{
+		AtomOracle:        true,
+		AtomOracleVariant: "atom-only",
+	}
+	ingest := longmemeval.IngestEntry{QuestionID: item.QuestionID}
+
+	t.Run("happy path returns done with hypothesis", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubCompleter{atoms: twoTestAtoms()}
+		generateFn := func(_ context.Context, _ string) (string, error) {
+			return "dark chocolate", nil
 		}
-		entry := longmemeval.RunEntry{
-			QuestionID:      item.QuestionID,
-			Status:          "error",
-			Error:           simulatedErr,
-			OracleZeroAtoms: true,
+		entry := runOneOracleWithDeps(context.Background(), cfg, stub, generateFn, item, ingest)
+		if entry.Status != "done" {
+			t.Errorf("status: want done, got %q (err: %q)", entry.Status, entry.Error)
+		}
+		if entry.Hypothesis != "dark chocolate" {
+			t.Errorf("hypothesis: want %q, got %q", "dark chocolate", entry.Hypothesis)
+		}
+		if entry.OracleAtomCount != 2 {
+			t.Errorf("OracleAtomCount: want 2, got %d", entry.OracleAtomCount)
+		}
+		if entry.OracleZeroAtoms {
+			t.Error("OracleZeroAtoms must be false when atoms were extracted")
+		}
+	})
+
+	t.Run("zero atoms falls back — status done, OracleZeroAtoms true", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubCompleter{atoms: []atom.Atom{}}
+		generateFn := func(_ context.Context, _ string) (string, error) {
+			return "some answer", nil
+		}
+		entry := runOneOracleWithDeps(context.Background(), cfg, stub, generateFn, item, ingest)
+		if entry.Status != "done" {
+			t.Errorf("status: want done for zero-atoms fallback, got %q", entry.Status)
 		}
 		if !entry.OracleZeroAtoms {
-			t.Error("OracleZeroAtoms must be true in the RunEntry when zero atoms extracted")
+			t.Error("OracleZeroAtoms must be true when extraction returned zero atoms")
 		}
+	})
+
+	t.Run("generate error propagates as status error", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubCompleter{atoms: twoTestAtoms()}
+		generateFn := func(_ context.Context, _ string) (string, error) {
+			return "", fmt.Errorf("LLM unreachable")
+		}
+		entry := runOneOracleWithDeps(context.Background(), cfg, stub, generateFn, item, ingest)
 		if entry.Status != "error" {
-			t.Errorf("Status must be error when zero atoms; got %q", entry.Status)
+			t.Errorf("status: want error, got %q", entry.Status)
 		}
-	}
+		if !strings.Contains(entry.Error, "oracle generate") {
+			t.Errorf("error must mention oracle generate, got %q", entry.Error)
+		}
+	})
 }
 
 // --- Test 5: AtomOracle flag defaults ---
