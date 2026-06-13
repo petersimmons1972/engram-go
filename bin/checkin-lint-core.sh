@@ -16,6 +16,8 @@
 RED='\033[0;31m'; YLW='\033[1;33m'; GRN='\033[0;32m'; BLU='\033[0;34m'
 BOLD='\033[1m'; RST='\033[0m'
 _CORE_FIX_HINTS=0
+_ALL_FINDING_KEYS_FILE="${_ALL_FINDING_KEYS_FILE:-}"
+export _ALL_FINDING_KEYS_FILE
 
 section()   { echo -e "\n${BOLD}${BLU}── $* ──${RST}"; }
 pass_rule() { echo -e "${GRN}ok${RST}  [$1] $2"; }
@@ -23,6 +25,8 @@ hint()      { [[ "${_CORE_FIX_HINTS:-0}" -eq 1 ]] && echo -e "    ${YLW}hint:${R
 finding() {
   local rule="$1" file="$2" line="$3" why="$4"
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
+  [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
+    echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
   ((FINDINGS++)) || true
 }
 export -f section pass_rule hint finding
@@ -170,10 +174,49 @@ _check_missing_namespace() {
   [[ $n -eq 0 ]] && pass_rule "G.missing-namespace" "all referenced namespaces have manifests"
 }
 
+_do_baseline_audit() {
+  local baseline="${CHECKIN_LINT_BASELINE:-}"
+  local keys_file="${_ALL_FINDING_KEYS_FILE:-}"
+  section "Baseline audit — stale entry check"
+  if [[ -z "$baseline" || ! -f "$baseline" ]]; then
+    echo -e "${YLW}SKIP${RST}  no baseline file found at ${baseline:-<unset>}"
+    return 0
+  fi
+  if [[ -z "$keys_file" || ! -f "$keys_file" ]]; then
+    echo -e "${YLW}SKIP${RST}  no finding-keys file (pass --audit-baseline to collect keys)"
+    return 0
+  fi
+  local stale=0
+  while IFS= read -r entry; do
+    [[ -z "$entry" || "$entry" == \#* ]] && continue
+    if ! grep -Fxq "$entry" "$keys_file" 2>/dev/null; then
+      echo -e "${YLW}STALE${RST}  $entry"
+      ((stale++)) || true
+    fi
+  done < "$baseline"
+  local total
+  total="$(grep -c '^[^#[:space:]]' "$baseline" 2>/dev/null || echo 0)"
+  rm -f "$keys_file"
+  if [[ $stale -eq 0 ]]; then
+    pass_rule "baseline-audit" "all ${total} entries correspond to active findings"
+  else
+    echo -e "${YLW}WARNING${RST}  ${stale} of ${total} baseline entries are stale — safe to remove from $(basename "$baseline")"
+  fi
+}
+export -f _do_baseline_audit
+
 run_core_checks() {
+  local _audit_baseline=0
   for arg in "$@"; do
-    case "$arg" in --fix-hints) _CORE_FIX_HINTS=1 ;; esac
+    [[ "$arg" == "--fix-hints" ]] && _CORE_FIX_HINTS=1
+    [[ "$arg" == "--audit-baseline" ]] && _audit_baseline=1
   done
+
+  if [[ $_audit_baseline -eq 1 ]]; then
+    _ALL_FINDING_KEYS_FILE="$(mktemp)"
+    export _ALL_FINDING_KEYS_FILE
+  fi
+
   _check_remote_guard
   _check_home_literal
   _check_version_pinned_path
@@ -183,7 +226,11 @@ run_core_checks() {
     _check_hardcoded_ip
     _check_missing_namespace
   fi
+
+  if [[ $_audit_baseline -eq 1 ]]; then
+    _do_baseline_audit
+  fi
 }
 export -f run_core_checks _check_home_literal _check_version_pinned_path
 export -f _check_exit_zero_wrapper _check_latest_image _check_hardcoded_ip
-export -f _check_missing_namespace _check_remote_guard
+export -f _check_missing_namespace _check_remote_guard _do_baseline_audit
