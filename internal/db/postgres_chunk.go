@@ -223,7 +223,7 @@ func (b *PostgresBackend) GetChunksPendingEmbedding(ctx context.Context, project
 
 func (b *PostgresBackend) UpdateChunkEmbedding(ctx context.Context, chunkID string, embedding []float32) (int, error) {
 	tag, err := b.pool.Exec(ctx,
-		"UPDATE chunks SET embedding=$1 WHERE id=$2", pgvector.NewVector(embedding), chunkID,
+		"UPDATE chunks SET embedding=$1 WHERE id=$2 AND embedding IS NULL", pgvector.NewVector(embedding), chunkID,
 	)
 	return int(tag.RowsAffected()), err
 }
