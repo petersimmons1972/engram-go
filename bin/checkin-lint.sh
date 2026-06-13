@@ -11,6 +11,7 @@ export EXPECTED_REMOTE CHECKIN_K8S
 
 FINDINGS=0
 BASELINED=0
+export FINDINGS BASELINED
 
 # ── Baseline file path (exported so finding() subshells can read it) ──────────
 BASELINE_FILE_DEFAULT="${SCRIPT_DIR}/checkin-lint.baseline"
@@ -33,11 +34,15 @@ finding() {
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
   ((FINDINGS++)) || true
 }
+# Re-export so subprocesses spawned after this point see the overridden version, not core's.
 export -f finding
 
-run_core_checks "$@" || true
+if ! run_core_checks "$@"; then
+  _core_exit=$?
+  [[ $_core_exit -eq 2 ]] && exit 2
+fi
 
-# ── P1. No hardcoded DB connection strings (FM-21 related) ────────────────────
+# ── P1. No hardcoded DB connection strings (FM-06 / secrets) ─────────────────
 section "P1. Hardcoded DB connection strings"
 p1_n=0
 while IFS= read -r hit; do
@@ -46,10 +51,11 @@ while IFS= read -r hit; do
     "hardcoded postgres:// DSN — use environment variable injection"
   hint "Replace with: os.Getenv(\"DATABASE_URL\") or equivalent config struct."
   ((p1_n++)) || true
+# postgres://[^$][^{] — excludes $VAR and ${VAR} style env references; flags bare DSNs
 done < <(grep -rn \
   --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
   --exclude-dir='.git' \
-  'postgres://[^$\$][^{]' . 2>/dev/null || true)
+  'postgres://[^$][^{]' . 2>/dev/null || true)
 [[ $p1_n -eq 0 ]] && pass_rule "P1.hardcoded-dsn" "no hardcoded postgres:// DSNs"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
