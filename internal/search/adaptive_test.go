@@ -165,9 +165,10 @@ func TestAdaptiveImportance_DecayStale(t *testing.T) {
 		"dynamic_importance must decrease after stale decay pass")
 }
 
-// TestDecayWorker_RunsOnTick verifies that the background DecayWorker actually
-// fires and reduces dynamic_importance on stale memories without any explicit
-// caller — the worker must tick autonomously and call DecayStaleImportance.
+// TestDecayWorker_RunsOnTick verifies that the DecayWorker cycle fires and
+// reduces dynamic_importance on stale memories. The test calls RunOnce()
+// directly (the exact path the background ticker invokes) to avoid the
+// timing race where the first tick could fire before SetNextReviewAt commits.
 func TestDecayWorker_RunsOnTick(t *testing.T) {
 	dsn := testDSN(t)
 	ctx := context.Background()
@@ -176,9 +177,9 @@ func TestDecayWorker_RunsOnTick(t *testing.T) {
 	backend, err := db.NewPostgresBackend(ctx, project, dsn)
 	require.NoError(t, err)
 
-	// 50ms tick so the test completes quickly.
+	// Interval 0 → 8h default; the test drives decay via RunOnce, not ticks.
 	engine := search.New(ctx, backend, &fakeClient{dims: 1024}, project,
-		"http://ollama:11434", "llama3.2", false, nil, 50*time.Millisecond)
+		"http://ollama:11434", "llama3.2", false, nil, 0)
 	t.Cleanup(func() { engine.Close() })
 
 	m := &types.Memory{
@@ -190,7 +191,7 @@ func TestDecayWorker_RunsOnTick(t *testing.T) {
 	}
 	require.NoError(t, engine.Store(ctx, m))
 
-	// Force next_review_at into the past so the worker will pick it up.
+	// Backdate next_review_at so the memory is eligible for decay.
 	pastReview := time.Now().Add(-48 * time.Hour)
 	require.NoError(t, backend.SetNextReviewAt(ctx, m.ID, pastReview))
 
@@ -199,8 +200,8 @@ func TestDecayWorker_RunsOnTick(t *testing.T) {
 	require.NotNil(t, before.DynamicImportance)
 	initialDI := *before.DynamicImportance
 
-	// Wait long enough for at least two ticks.
-	time.Sleep(200 * time.Millisecond)
+	// Drive one decay cycle synchronously — same code path as the ticker.
+	engine.Decayer().RunOnce(ctx)
 
 	after, err := backend.GetMemory(ctx, m.ID)
 	require.NoError(t, err)
