@@ -109,6 +109,13 @@ func (w *DecayWorker) run(ctx context.Context) {
 	}
 }
 
+// RunOnce synchronously executes one decay pass — identical to the path the
+// background ticker invokes. Intended for tests that need deterministic control
+// over when decay fires without relying on wall-clock timing.
+func (w *DecayWorker) RunOnce(ctx context.Context) {
+	w.safeRunOnce(ctx)
+}
+
 // safeRunOnce wraps runOnce with per-iteration panic recovery so a single bad
 // row cannot kill the worker goroutine permanently.
 func (w *DecayWorker) safeRunOnce(ctx context.Context) {
