@@ -331,6 +331,21 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		// 023_null_embed_covering_idx.sql and 024_reembed_null_partial_index.sql
 		// use CREATE INDEX CONCURRENTLY, which also must run outside a transaction block.
 		if name == "003_pgvector.sql" || name == "023_null_embed_covering_idx.sql" || name == "024_reembed_null_partial_index.sql" {
+			// 003_pgvector.sql calls CREATE EXTENSION, a database-global operation.
+			// The per-project advisory lock above only serializes within a project;
+			// concurrent backends for different projects can race on CREATE EXTENSION
+			// and hit pg_type_typname_nsp_index duplicate-key errors (issue #1104).
+			// Acquire a separate global advisory lock (single-arg form, no project
+			// key) that covers only extension-creating migrations.
+			// Lock constant 1986753121 = lockClass+1, reserved for global extension ops.
+			if name == "003_pgvector.sql" {
+				if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(1986753121)`); err != nil {
+					return fmt.Errorf("acquire global extension lock for %s: %w", name, err)
+				}
+				defer func() {
+					_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock(1986753121)`)
+				}()
+			}
 			if _, err := b.pool.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("apply migration %s: %w", name, err)
 			}
