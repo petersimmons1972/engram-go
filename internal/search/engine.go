@@ -397,6 +397,11 @@ func (e *SearchEngine) Backend() db.Backend { return e.backend }
 // Project returns the project slug this engine is scoped to.
 func (e *SearchEngine) Project() string { return e.project }
 
+// Decayer exposes the underlying DecayWorker for test-only use.
+// Tests that need deterministic decay control call w.RunOnce(ctx) directly
+// instead of sleeping and waiting for a background tick.
+func (e *SearchEngine) Decayer() *DecayWorker { return e.decayer }
+
 // storeChunksForMemory chunks content and returns records with NULL embeddings.
 // It is used by both Store (new memories) and Correct (re-chunking after a
 // content change). Background workers fill vectors after callers commit chunks.
