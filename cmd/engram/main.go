@@ -22,6 +22,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/embedgateway"
+	"github.com/petersimmons1972/engram/internal/embedmodel"
 	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
@@ -35,6 +36,19 @@ import (
 
 // Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
+
+var newLiteLLMEmbedClient = func(baseURL, model, apiKey string, targetDims int, cbCfg embed.CircuitConfig) embed.Client {
+	return embed.NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey, targetDims, cbCfg)
+}
+
+func reembedModelFromEnv() string {
+	return envOr("ENGRAM_REEMBED_MODEL", embedmodel.ReembedAlias)
+}
+
+func newEmbedClients(embedURL, liveModel, reembedModel, apiKey string, targetDims int, cbCfg embed.CircuitConfig) (embed.Client, embed.Client) {
+	return newLiteLLMEmbedClient(embedURL, liveModel, apiKey, targetDims, cbCfg),
+		newLiteLLMEmbedClient(embedURL, reembedModel, apiKey, targetDims, cbCfg)
+}
 
 func main() {
 	// Subcommand dispatch for the hook daemon and its shim client (#396).
@@ -140,6 +154,7 @@ func runServer(args []string) error {
 	// embed backend is different from the generation backend (e.g. direct llama.cpp).
 	embedURL := envOr("ENGRAM_EMBED_URL", routerURLFromEnv("http://litellm:4000", slog.Default()))
 	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "")), "Embedding model (required; set ENGRAM_EMBED_MODEL or --model)")
+	reembedModel := reembedModelFromEnv()
 	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
@@ -319,7 +334,7 @@ func runServer(args []string) error {
 		BackoffMultiplier: *embedCircuitBackoffMultiplier,
 		BackoffCap:        *embedCircuitBackoffCap,
 	}
-	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
+	embedClient, reembedClient := newEmbedClients(embedURL, *embedModel, reembedModel, litellmAPIKey, *embedDims, cbCfg)
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	probeVec, probeModelID, probeErr := embedClient.EmbedWithModel(probeCtx, "startup probe")
 	probeCancel()
@@ -414,7 +429,7 @@ func runServer(args []string) error {
 			return fmt.Errorf("embed gateway pool: %w", err)
 		}
 		defer gatewayPool.Close()
-		modelEmbedder, ok := embedClient.(embedgateway.Embedder)
+		modelEmbedder, ok := reembedClient.(embedgateway.Embedder)
 		if !ok {
 			return fmt.Errorf("embed gateway requires an embedder that reports response model IDs")
 		}
@@ -431,7 +446,7 @@ func runServer(args []string) error {
 		reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
 		// ENGRAM_REEMBED_BATCH_SIZE=0 disables the GlobalReembedder in this process.
 		// Use this when a dedicated engram-reembed container owns all embedding work.
-		globalReembedder = reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
+		globalReembedder = reembed.NewGlobalReembedder(pgxPool, reembedClient, reembedBatchSize, reembedInterval)
 		if reembedBatchSize > 0 {
 			globalReembedder.Start(ctx)
 			slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
@@ -454,6 +469,7 @@ func runServer(args []string) error {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
 		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine.SetReembedEmbedder(reembedClient)
 		engine.SetEmbedRecallTimeout(*embedRecallTimeoutMS)
 		if embedGateway != nil {
 			engine.SetEmbedGateway(embedGateway)
