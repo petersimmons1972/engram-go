@@ -61,6 +61,14 @@ type RerankResult struct {
 // RecallOpts controls optional post-processing for Recall.
 type RecallOpts struct {
 	Reranker ResultReranker // nil = skip re-ranking
+	// DenseReranker re-scores the dense/vector leg before hybrid scoring.
+	// Unlike Reranker, which reorders the final fused result set, DenseReranker
+	// only sees the top-N vector candidates and rewrites their dense score before
+	// BM25/recency/precision fusion. Nil = skip dense-leg reranking.
+	DenseReranker ResultReranker
+	// DenseRerankTopN caps how many vector candidates DenseReranker receives.
+	// 0 uses defaultDenseRerankTopN (20). Ignored when DenseReranker is nil.
+	DenseRerankTopN int
 	// Mode controls response format. "" or "full" returns complete SearchResults;
 	// "handle" returns lightweight Handle references (content omitted).
 	Mode string
@@ -219,6 +227,7 @@ type MergeDecision struct {
 // the function returns.
 type bestHit struct {
 	cosine         float64
+	denseScore     float64
 	chunkText      string
 	chunkIndex     int
 	sectionHeading *string // borrowed; see struct comment
@@ -232,6 +241,10 @@ type bestHit struct {
 // Embed recall timeout used when the env var is unset. This value was restored
 // to 500ms to preserve the production recall SLA contract.
 const defaultEmbedRecallTimeoutMS = 500
+
+// defaultDenseRerankTopN bounds the number of vector candidates sent to a
+// dense-leg reranker (for example a cross-encoder) before hybrid fusion.
+const defaultDenseRerankTopN = 20
 
 // noEmbedTimeout is a sentinel stored in embedRecallTimeout to indicate that
 // no per-embed deadline should be applied. The parent context's deadline (if
@@ -858,6 +871,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
 			bestHits[h.MemoryID] = bestHit{
 				cosine:         cosine,
+				denseScore:     cosine,
 				chunkText:      h.ChunkText,
 				chunkIndex:     h.ChunkIndex,
 				sectionHeading: h.SectionHeading,
@@ -932,6 +946,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 						if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
 							bestHits[h.MemoryID] = bestHit{
 								cosine:         cosine,
+								denseScore:     cosine,
 								chunkText:      h.ChunkText,
 								chunkIndex:     h.ChunkIndex,
 								sectionHeading: h.SectionHeading,
@@ -989,6 +1004,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
+	// Optional dense-leg reranking: re-score the top vector candidates before
+	// hybrid fusion so the weighted scorer sees a stronger dense signal than raw
+	// cosine alone. This is distinct from opts.Reranker, which reorders the
+	// already-fused final result set.
+	applyDenseRerank(ctx, query, memories, bestHits, opts.DenseReranker, opts.DenseRerankTopN)
+
 	// Detect query type once before the scoring loop.
 	prefQuery := isPreferenceQuery(query)
 	tempQuery := isTemporalQuery(query)
@@ -1000,6 +1021,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// RRF setup (LME experiment #6, issue #938 improvement #1): pre-compute
 	// per-leg rank positions. applyFusion is a strict no-op when Fusion=false.
 	vecRanks := rankVectorHits(vecHits)
+	if opts.DenseReranker != nil {
+		vecRanks = rankBestHitsByDenseScore(bestHits)
+	}
 	ftsRanks := rankFTSResults(ftsRes.results)
 	applyFusion(opts, memories, bestHits, vecRanks, ftsRanks)
 
@@ -1061,7 +1085,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		hit := bestHits[id]
 		exactMatch := exactBoostEnabled && ExactIdentifierHit(m.Content, query)
 		input := ScoreInput{
-			Cosine:             hit.cosine,
+			Cosine:             hit.denseScore,
 			BM25:               bm25,
 			HoursSince:         temporalAnchorHours(*m),
 			Importance:         m.Importance,
@@ -1114,10 +1138,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			ScoreBreakdown: func() map[string]float64 {
 				bd := map[string]float64{
 					"cosine":           hit.cosine,
+					"dense_score":      hit.denseScore,
 					"bm25":             bm25,
 					"recency":          RecencyDecay(input.HoursSince),
 					"episode_boost":    1.0,
 					"valid_from_boost": vwBoost,
+				}
+				if hit.denseScore != hit.cosine {
+					bd["cross_encoder_score"] = hit.denseScore
 				}
 				if input.EpisodeMatch {
 					bd["episode_boost"] = 1.15
@@ -1286,18 +1314,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		items := make([]RerankItem, len(rerankCandidates))
 		for i, r := range rerankCandidates {
-			summary := ""
-			if r.Memory.Summary != nil {
-				summary = *r.Memory.Summary
-			} else {
-				summary = r.Memory.Content
-				if len(summary) > 500 {
-					summary = summary[:500]
-				}
-			}
 			items[i] = RerankItem{
 				ID:      r.Memory.ID,
-				Summary: summary,
+				Summary: rerankTextForMemory(r.Memory),
 				Score:   r.Score,
 			}
 		}
@@ -1457,18 +1476,9 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 	}
 	items := make([]RerankItem, len(rerankCandidates))
 	for i, r := range rerankCandidates {
-		summary := ""
-		if r.Memory.Summary != nil {
-			summary = *r.Memory.Summary
-		} else {
-			summary = r.Memory.Content
-			if len(summary) > 500 {
-				summary = summary[:500]
-			}
-		}
 		items[i] = RerankItem{
 			ID:      r.Memory.ID,
-			Summary: summary,
+			Summary: rerankTextForMemory(r.Memory),
 			Score:   r.Score,
 		}
 	}
@@ -1486,6 +1496,155 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 		sortResults(results)
 	}
 	return results
+}
+
+// applyDenseRerank rewrites the dense score for the top vector candidates
+// before hybrid fusion. Original cosine values are preserved for observability
+// and matched-chunk reporting; only denseScore is overwritten.
+func applyDenseRerank(ctx context.Context, query string, memories map[string]*types.Memory, bestHits map[string]bestHit, reranker ResultReranker, topN int) {
+	if reranker == nil || len(memories) == 0 || len(bestHits) == 0 {
+		return
+	}
+	if topN <= 0 {
+		topN = defaultDenseRerankTopN
+	}
+
+	type denseCandidate struct {
+		item   RerankItem
+		cosine float64
+	}
+
+	candidates := make([]denseCandidate, 0, len(bestHits))
+	for id, hit := range bestHits {
+		m := memories[id]
+		if m == nil {
+			continue
+		}
+		candidates = append(candidates, denseCandidate{
+			item: RerankItem{
+				ID:      id,
+				Summary: rerankTextForMemory(m),
+				Score:   hit.cosine,
+			},
+			cosine: hit.cosine,
+		})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].cosine == candidates[j].cosine {
+			return candidates[i].item.ID < candidates[j].item.ID
+		}
+		return candidates[i].cosine > candidates[j].cosine
+	})
+	if len(candidates) > topN {
+		candidates = candidates[:topN]
+	}
+
+	items := make([]RerankItem, len(candidates))
+	for i, c := range candidates {
+		items[i] = c.item
+	}
+
+	reranked, err := reranker.RerankResults(ctx, query, items)
+	if err != nil || len(reranked) == 0 {
+		return
+	}
+
+	normalized := normalizeDenseRerankScores(items, reranked)
+	for _, item := range items {
+		newScore, ok := normalized[item.ID]
+		if !ok {
+			continue
+		}
+		hit := bestHits[item.ID]
+		hit.denseScore = newScore
+		bestHits[item.ID] = hit
+	}
+}
+
+func normalizeDenseRerankScores(items []RerankItem, reranked []RerankResult) map[string]float64 {
+	if len(items) == 0 {
+		return nil
+	}
+
+	raw := make(map[string]float64, len(reranked))
+	minScore := 0.0
+	maxScore := 0.0
+	first := true
+	for _, rr := range reranked {
+		raw[rr.ID] = rr.Score
+		if first {
+			minScore = rr.Score
+			maxScore = rr.Score
+			first = false
+			continue
+		}
+		if rr.Score < minScore {
+			minScore = rr.Score
+		}
+		if rr.Score > maxScore {
+			maxScore = rr.Score
+		}
+	}
+
+	out := make(map[string]float64, len(items))
+	if first || maxScore == minScore {
+		for _, item := range items {
+			out[item.ID] = item.Score
+		}
+		return out
+	}
+
+	for _, item := range items {
+		score, ok := raw[item.ID]
+		if !ok {
+			out[item.ID] = item.Score
+			continue
+		}
+		out[item.ID] = (score - minScore) / (maxScore - minScore)
+	}
+	return out
+}
+
+func rankBestHitsByDenseScore(bestHits map[string]bestHit) map[string]int {
+	type rankedHit struct {
+		id    string
+		dense float64
+	}
+
+	ranked := make([]rankedHit, 0, len(bestHits))
+	for id, hit := range bestHits {
+		ranked = append(ranked, rankedHit{id: id, dense: hit.denseScore})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].dense == ranked[j].dense {
+			return ranked[i].id < ranked[j].id
+		}
+		return ranked[i].dense > ranked[j].dense
+	})
+
+	out := make(map[string]int, len(ranked))
+	for i, hit := range ranked {
+		out[hit.id] = i + 1
+	}
+	return out
+}
+
+func rerankTextForMemory(m *types.Memory) string {
+	if m == nil {
+		return ""
+	}
+	if m.Summary != nil {
+		return *m.Summary
+	}
+	summary := m.Content
+	if len(summary) > 500 {
+		summary = summary[:500]
+	}
+	return summary
 }
 
 // mergeSearchResults unions two result slices, preserving the order of a first and
