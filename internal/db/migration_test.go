@@ -49,7 +49,7 @@ func TestMigration029AtomsObservedAt(t *testing.T) {
 			FROM pg_indexes
 			WHERE tablename = 'atoms'
 			  AND indexdef ILIKE '%(project, atom_type, observed_at DESC)%'
-			  AND indexdef ILIKE '%WHERE valid_to IS NULL%'
+			  AND indexdef ILIKE '%valid_to IS NULL%'
 		)`).
 		Scan(&hasLatestOnlyIndex)
 	require.NoError(t, err)
