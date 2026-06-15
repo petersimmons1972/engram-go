@@ -243,8 +243,9 @@ const noEmbedTimeout = time.Duration(-1)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
 	backend             db.Backend
-	embedMu             sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedMu             sync.RWMutex // protects live + reembed embedder selection
 	embedder            embed.Client
+	reembedderOverride  embed.Client
 	project             string
 	ollamaURL           string
 	targetDims          int             // MRL truncation target; 0 = model native output
@@ -282,10 +283,51 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 	return e.embedder
 }
 
+// getReembedEmbedder returns the embedder used by reembed workers. By default
+// it follows the live embedder, but main.go may install an override so
+// batch/backfill work routes to a different model alias.
+func (e *SearchEngine) getReembedEmbedder() embed.Client {
+	e.embedMu.RLock()
+	defer e.embedMu.RUnlock()
+	if e.reembedderOverride != nil {
+		return e.reembedderOverride
+	}
+	return e.embedder
+}
+
 // Embedder returns the current embedding client. Used by callers (e.g. consolidate
 // runner) that need the live embedder rather than a nil placeholder (#94).
 func (e *SearchEngine) Embedder() embed.Client {
 	return e.getEmbedder()
+}
+
+// ReembedEmbedder returns the embedder currently used by reembed workers.
+func (e *SearchEngine) ReembedEmbedder() embed.Client {
+	return e.getReembedEmbedder()
+}
+
+// SetReembedEmbedder overrides the embedder used by reembed workers. When not
+// called, reembed work uses the live embedder. The worker is rebuilt so future
+// Notify() calls and embedder migrations use the new routing immediately.
+func (e *SearchEngine) SetReembedEmbedder(client embed.Client) {
+	if client == nil {
+		return
+	}
+	wasActive := e.reembedder != nil && e.reembedder.IsActive()
+	if e.reembedder != nil {
+		e.reembedder.Stop()
+	}
+
+	e.embedMu.Lock()
+	e.reembedderOverride = client
+	e.embedMu.Unlock()
+
+	if wasActive {
+		e.reembedder = reembed.NewWorker(e.backend, client, e.project, true)
+		e.reembedder.StartWithContext(e.ctx)
+		return
+	}
+	e.reembedder = reembed.NewWorkerFromMeta(e.ctx, e.backend, client, e.project)
 }
 
 // SetGlobalReembedder wires the shared GlobalReembedder so StoreWithRawBody and
@@ -2162,7 +2204,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (ma
 	e.embedder = newEmbedder
 	e.embedMu.Unlock()
 
-	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
+	e.reembedder = reembed.NewWorker(e.backend, e.getReembedEmbedder(), e.project, true)
 	e.reembedder.StartWithContext(e.ctx)
 
 	return map[string]any{
