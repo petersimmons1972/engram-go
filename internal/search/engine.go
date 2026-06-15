@@ -2129,11 +2129,12 @@ type MigrateParams struct {
 // A background reembed worker will repopulate embeddings after this call.
 //
 // Safety guards (applied in order, highest priority first):
-//  G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
-//  G2 — Same dimension without force: soft-refused (result["error"] set).
-//  G3 — dry_run: counts affected chunks without nulling.
-//       Large volume without confirm: soft-refused.
-//  G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
+//
+//	G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
+//	G2 — Same dimension without force: soft-refused (result["error"] set).
+//	G3 — dry_run: counts affected chunks without nulling.
+//	     Large volume without confirm: soft-refused.
+//	G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (map[string]any, error) {
 	newModel := p.NewModel
 

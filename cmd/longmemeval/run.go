@@ -730,12 +730,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	return longmemeval.RunEntry{
-		QuestionID:     item.QuestionID,
-		Hypothesis:     hypothesis,
-		RetrievedIDs:   retrievedIDs,
-		Status:         "done",
-		AtomRetrieved:  atomPreamble != "",
-		AtomInContext:  atomContextBlock != "",
+		QuestionID:    item.QuestionID,
+		Hypothesis:    hypothesis,
+		RetrievedIDs:  retrievedIDs,
+		Status:        "done",
+		AtomRetrieved: atomPreamble != "",
+		AtomInContext: atomContextBlock != "",
 	}
 }
 

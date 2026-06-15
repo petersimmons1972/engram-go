@@ -442,7 +442,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	// Parse both and prefer whichever is populated.
 	var resp struct {
 		AtomPreamble string `json:"atom_preamble"`
-		Results []struct {
+		Results      []struct {
 			Memory struct {
 				ID string `json:"id"`
 			} `json:"memory"`

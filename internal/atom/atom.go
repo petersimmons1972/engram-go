@@ -29,11 +29,11 @@ const (
 
 // Atom is a single extracted, typed belief or preference.
 type Atom struct {
-	ID     string `json:"id"`
+	ID      string `json:"id"`
 	Project string `json:"project"`
 
 	// Typed triple.
-	Type      string `json:"atom_type"`  // preference|fact|event|attribute|relationship
+	Type      string `json:"atom_type"` // preference|fact|event|attribute|relationship
 	Subject   string `json:"subject"`
 	Predicate string `json:"predicate"`
 	Value     string `json:"value"`
@@ -46,8 +46,8 @@ type Atom struct {
 	Scope string `json:"scope"`
 
 	// Bi-temporal columns (nil = unbounded).
-	ValidFrom *time.Time `json:"valid_from,omitempty"`
-	ValidTo   *time.Time `json:"valid_to,omitempty"`
+	ValidFrom  *time.Time `json:"valid_from,omitempty"`
+	ValidTo    *time.Time `json:"valid_to,omitempty"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
 
 	// Confidence in [0,1] range; defaults to 1.0 when not specified.

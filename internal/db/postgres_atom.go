@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/atom"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 // AtomQueryOpts controls filtered active-atom queries.
