@@ -166,3 +166,4 @@ Claude plans + coordinates; Codex implements. Queue = GitHub Issues via `~/bin/q
 **Container image standard** (Chainguard full pattern + K8s security context) → `~/docs/container-images.md` [QC.7]
 **Quality Contract** → `~/docs/quality-contract.md` | **Architectural Principles** → `~/docs/architectural-principles.md`
 **Failure-mode standard (universal, all projects)** → `~/docs/failure-modes-standard.md` — consult before check-in on any infra/config/deploy change; append new bug classes here (per-repo checklists inherit from this catalog). [QC.2]
+**Homelab API access** → `~/docs/homelab-api-access.md` — API credentials for homelab devices: Proxmox nuc/pve (`:8006`), UniFi gateway (`192.168.0.1`); Infisical Homelab/production; references only, never values. [QC.6]
