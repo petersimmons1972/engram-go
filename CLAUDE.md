@@ -121,6 +121,18 @@ Full procedures → `~/docs/security-procedures.md`; k8s netpol diagnosis → `~
 - **`main` branch protection is mandatory** on every `petersimmons1972` repo: required up-to-date CI checks, no admin bypass, agent service accounts are not admins.
 - **Worktree isolation (AP.1)** is also a secret-leak control — shared checkouts let agents observe each other's uncommitted `.env`.
 
+## Infrastructure Routing — Non-Negotiables [GPU embed roles · Olla control model]
+
+**GPU embed role separation (HARD — founder-stated repeatedly, kept getting lost):**
+- **MI-50** (precision GPU[1], Radeon VII / gfx906; service `ai-fleet-embed-mi50` at `precision.petersimmons.com:8007`, model `bge-m3-live`) = **Engram LIVE embed queries ONLY**. Never batch, reembed, or experiment on it.
+- **W6800** (`precision:8005`) and **7900XT** (leviathan, `REEMBED_7900XT_URL`) = **reembed / batch ONLY**. Never route live embed onto them.
+- Enforce the split by **embed model name**: live → `bge-m3-live` (→ MI-50); reembed/batch → `BAAI/bge-m3` (→ W6800/7900XT). Verify before any embed-routing change.
+- **Routing alias ≠ stored identity (do not "unify away" the role aliases).** `bge-m3-live`/`bge-m3-reembed` are *Olla routing aliases* only — they steer FC discovery to the right card. engram-go canonicalizes them to the single stored identity `BAAI/bge-m3` (`internal/embedmodel/model.go` `CanonicalName` + `engine.go` `checkEmbedderMeta`), so `project_meta` always records `BAAI/bge-m3` and **no alias change can trigger a corpus mass-reembed**. The old "unify all endpoints to `BAAI/bge-m3` + route by endpoint" cutover was never built (Olla routes by model name, not endpoint; no per-endpoint routing exists) — the canonicalization layer is the actual mass-reembed safeguard, so these role aliases are **permanent and safe**, not transitional. The aifleet `checkin-lint` baseline records `bge-m3-live` as sanctioned for this reason.
+
+**Olla control model:**
+- Olla lives **only as a network service** — k8s Service in namespace `ai-fleet` (NodePort `30411`). It does **not** run on leviathan or any single host and is **not** a docker container.
+- Olla is owned and controlled by the **ai-fleet controller** (FC discovery). **Do not control Olla directly** — never hand-edit its backends, pin models to hosts, or restart it to change routing. Model→GPU routing is the controller's job, enforced via how each GPU service registers. Only operator-editable surface: bootstrap ConfigMap `~/projects/aifleet/controller/deploy/olla.yaml` (canonical source of truth).
+
 ## Container Image Standard
 Container image requirements → `~/docs/container-images.md` + `~/docs/container-hardening.md` (Chainguard, UID 65532, tini, fsGroup, securityContext). (Old AGENTS.md section pointer was dangling — content now lives in docs/.)
 
