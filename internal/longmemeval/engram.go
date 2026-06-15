@@ -269,6 +269,13 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 	})
 }
 
+// RecallResult is the structured memory_recall response used by LongMemEval
+// when auxiliary metadata such as atom preambles must survive transport.
+type RecallResult struct {
+	IDs          []string
+	AtomPreamble string
+}
+
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
 // recall: the server parses temporal anchors from questionText against questionDate
 // and unions a date-filtered pass with the unfiltered pass. questionText/questionDate
@@ -290,6 +297,17 @@ func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK
 	})
 }
 
+// RecallWithAtomRecall calls memory_recall and preserves any returned atom preamble.
+func (c *Client) RecallWithAtomRecall(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost, exactFactBoost bool, atomRecallAsOf *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost,
+		exactFactBoost:   exactFactBoost,
+		atomRecall:       true,
+		atomRecallAsOf:   atomRecallAsOf,
+	})
+}
+
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project          string
@@ -302,29 +320,39 @@ type recallParams struct {
 	questionDate     string
 	exactFactBoost   bool
 	topicAnchorBoost bool
+	atomRecall       bool
+	atomRecallAsOf   *time.Time
 }
 
 func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
+	result, err := c.recallResultWithParams(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return result.IDs, nil
+}
+
+func (c *Client) recallResultWithParams(ctx context.Context, p recallParams) (RecallResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
 			// Reconnect — previous connection may be dead (SSE drop race).
 			if err := c.Connect(ctx); err != nil {
-				return nil, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
+				return RecallResult{}, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
 			}
 			select {
 			case <-time.After(5 * time.Second):
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return RecallResult{}, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, p)
+		result, err := c.recall(ctx, p)
 		if err == nil {
-			return ids, nil
+			return result, nil
 		}
 		lastErr = err
 	}
-	return nil, lastErr
+	return RecallResult{}, lastErr
 }
 
 // RecallOpts holds optional parameters for the LongMemEval recall client.
@@ -343,7 +371,7 @@ func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string
 	})
 }
 
-func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
+func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, error) {
 	args := map[string]any{
 		"query":   p.query,
 		"project": p.project,
@@ -375,6 +403,12 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	if p.topicAnchorBoost {
 		args["topic_anchor_boost"] = true
 	}
+	if p.atomRecall {
+		args["atom_recall"] = true
+	}
+	if p.atomRecallAsOf != nil {
+		args["atom_recall_as_of"] = p.atomRecallAsOf.UTC().Format(time.RFC3339)
+	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      "memory_recall",
@@ -382,17 +416,17 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 		},
 	})
 	if err != nil {
-		return nil, err
+		return RecallResult{}, err
 	}
 	if result.IsError {
-		return nil, toolErrorMsg(result, "memory_recall")
+		return RecallResult{}, toolErrorMsg(result, "memory_recall")
 	}
 	if len(result.Content) == 0 {
-		return nil, fmt.Errorf("memory_recall returned no content")
+		return RecallResult{}, fmt.Errorf("memory_recall returned no content")
 	}
 	tc, ok := result.Content[0].(mcp.TextContent)
 	if !ok {
-		return nil, fmt.Errorf("unexpected content type from memory_recall: %T", result.Content[0])
+		return RecallResult{}, fmt.Errorf("unexpected content type from memory_recall: %T", result.Content[0])
 	}
 	if os.Getenv("LME_DEBUG_RECALL") != "" {
 		preview := tc.Text
@@ -407,7 +441,8 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	//   handle: {"handles":[{"id":"...","score":...}, ...]}
 	// Parse both and prefer whichever is populated.
 	var resp struct {
-		Results []struct {
+		AtomPreamble string `json:"atom_preamble"`
+		Results      []struct {
 			Memory struct {
 				ID string `json:"id"`
 			} `json:"memory"`
@@ -419,7 +454,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 		} `json:"handles"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
-		return nil, fmt.Errorf("parse recall response: %w", err)
+		return RecallResult{}, fmt.Errorf("parse recall response: %w", err)
 	}
 	ids := make([]string, 0, len(resp.Results)+len(resp.Handles))
 	for _, r := range resp.Results {
@@ -432,7 +467,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 			ids = append(ids, h.ID)
 		}
 	}
-	return ids, nil
+	return RecallResult{IDs: ids, AtomPreamble: resp.AtomPreamble}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.

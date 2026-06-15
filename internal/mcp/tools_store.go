@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -24,6 +25,10 @@ import (
 //
 // Declared as a var (not const) so tests can substitute a shorter duration.
 var storeTimeout = 10 * time.Second
+
+type atomJobEnqueuer interface {
+	EnqueueAtomExtractionJob(ctx context.Context, memoryID, project string) error
+}
 
 func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
@@ -105,6 +110,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		}
 		return nil, err
 	}
+	enqueueAtomExtractionJob(ctx, h.Engine.Backend(), m.ID, project)
 
 	// Preference extraction: when the memory is not already typed as a preference,
 	// run the extractor and store each discovered fact as a separate short preference
@@ -335,6 +341,9 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		}
 		return nil, err
 	}
+	for _, m := range memories {
+		enqueueAtomExtractionJob(ctx, h.Engine.Backend(), m.ID, project)
+	}
 
 	ids := make([]string, len(memories))
 	for i, m := range memories {
@@ -410,6 +419,28 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return nil, fmt.Errorf("memory %q not found or has been soft-deleted", id)
 	}
 	return toolResult(updated)
+}
+
+func enqueueAtomExtractionJob(ctx context.Context, backend interface{}, memoryID, project string) {
+	if !atomExtractionEnabled() {
+		return
+	}
+	enqueuer, ok := backend.(atomJobEnqueuer)
+	if !ok {
+		return
+	}
+	if err := enqueuer.EnqueueAtomExtractionJob(ctx, memoryID, project); err != nil {
+		slog.Warn("failed to enqueue atom extraction job", "memory_id", memoryID, "project", project, "err", err)
+	}
+}
+
+func atomExtractionEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_ATOM_EXTRACTION_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleMemoryForget soft-deletes a memory by ID (sets valid_to=NOW(), preserves history).

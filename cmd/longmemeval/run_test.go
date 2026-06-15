@@ -757,13 +757,13 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	since := time.Date(2023, 5, 8, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2023, 5, 11, 0, 0, 0, 0, time.UTC)
 	var calls []string
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		if callSince != nil || callBefore != nil {
 			calls = append(calls, "filtered")
-			return []string{"dated-a", "dated-b"}, nil
+			return longmemeval.RecallResult{IDs: []string{"dated-a", "dated-b"}}, nil
 		}
 		calls = append(calls, "unfiltered")
-		return []string{"undated-answer", "dated-a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"undated-answer", "dated-a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("recent concert", 10, &since, &before, recall)
@@ -773,7 +773,7 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	if got, want := strings.Join(calls, ","), "filtered,unfiltered"; got != want {
 		t.Fatalf("calls = %s, want %s", got, want)
 	}
-	if got, want := strings.Join(retrieved, ","), "dated-a,dated-b,undated-answer"; got != want {
+	if got, want := strings.Join(retrieved.IDs, ","), "dated-a,dated-b,undated-answer"; got != want {
 		t.Fatalf("retrieved = %s, want %s", got, want)
 	}
 	if got, want := strings.Join(secondary, ","), "undated-answer,dated-a"; got != want {
@@ -783,12 +783,12 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 
 func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T) {
 	var calls int
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		calls++
 		if callSince != nil || callBefore != nil {
 			t.Fatal("non-temporal recall should not pass date bounds")
 		}
-		return []string{"a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("plain query", 10, nil, nil, recall)
@@ -798,7 +798,7 @@ func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
-	if got := strings.Join(retrieved, ","); got != "a" {
+	if got := strings.Join(retrieved.IDs, ","); got != "a" {
 		t.Fatalf("retrieved = %s, want a", got)
 	}
 	if len(secondary) != 0 {

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/config"
@@ -641,6 +642,26 @@ func runServer(args []string) error {
 		}
 	}
 
+	if cc != nil && envBool("ENGRAM_ATOM_EXTRACTION_ENABLED", false) {
+		atomBackend, err := db.NewPostgresBackendWithPool(ctx, "_atoms", pgxPool)
+		if err != nil {
+			slog.Warn("atom worker: could not open backend", "err", err)
+		} else {
+			adapter := &atomDBAdapter{backend: atomBackend}
+			extractor := atom.NewClaudeExtractor(cc)
+			w := atom.NewWorker(adapter, extractor, atom.WorkerConfig{
+				Projects: []string{""},
+			})
+			workersWg.Add(1)
+			go func() {
+				defer workersWg.Done()
+				w.Run(ctx)
+				slog.Debug("atom extraction worker shutdown complete")
+			}()
+			slog.Info("atom extraction worker started", "scope", "all-projects")
+		}
+	}
+
 	// Start pprof profiling server on localhost:6060 when ENGRAM_PPROF=1.
 	// Bound to loopback only — not reachable from outside the host.
 	// Operators can SSH-forward if they need remote access.
@@ -893,6 +914,34 @@ func (a *entityDBAdapter) GetEntitiesByProject(ctx context.Context, project stri
 
 func (a *entityDBAdapter) UpsertEntity(ctx context.Context, e *entity.Entity) (string, error) {
 	return a.backend.UpsertEntity(ctx, e)
+}
+
+type atomDBAdapter struct {
+	backend *db.PostgresBackend
+}
+
+func (a *atomDBAdapter) ClaimAtomExtractionJobs(ctx context.Context, project string, limit int) ([]atom.ExtractionJob, error) {
+	return a.backend.ClaimAtomExtractionJobs(ctx, project, limit)
+}
+
+func (a *atomDBAdapter) CompleteAtomExtractionJob(ctx context.Context, jobID string, err error) error {
+	return a.backend.CompleteAtomExtractionJob(ctx, jobID, err)
+}
+
+func (a *atomDBAdapter) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
+	return a.backend.GetMemory(ctx, id)
+}
+
+func (a *atomDBAdapter) GetActiveAtoms(ctx context.Context, project string, atomType string) ([]atom.Atom, error) {
+	return a.backend.GetActiveAtoms(ctx, project, atomType)
+}
+
+func (a *atomDBAdapter) InsertAtom(ctx context.Context, at *atom.Atom) error {
+	return a.backend.InsertAtom(ctx, at)
+}
+
+func (a *atomDBAdapter) RetireAtom(ctx context.Context, atomID string, validTo time.Time) error {
+	return a.backend.RetireAtom(ctx, atomID, validTo)
 }
 
 // auditRecallerAdapter adapts the engine pool to the audit.Recaller interface.

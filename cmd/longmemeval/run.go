@@ -366,12 +366,12 @@ func exitCodeForRunOutcome(attempted, errors int64) int {
 	return 0
 }
 
-type dateRangeRecallFunc func(query string, topK int, since, before *time.Time) ([]string, error)
+type dateRangeRecallFunc func(query string, topK int, since, before *time.Time) (longmemeval.RecallResult, error)
 
-func recallWithTemporalFallback(query string, topK int, since, before *time.Time, recall dateRangeRecallFunc) ([]string, []string, error) {
+func recallWithTemporalFallback(query string, topK int, since, before *time.Time, recall dateRangeRecallFunc) (longmemeval.RecallResult, []string, error) {
 	primary, err := recall(query, topK, since, before)
 	if err != nil {
-		return nil, nil, err
+		return longmemeval.RecallResult{}, nil, err
 	}
 	if since == nil && before == nil {
 		return primary, nil, nil
@@ -381,7 +381,8 @@ func recallWithTemporalFallback(query string, topK int, since, before *time.Time
 		log.Printf("WARN temporal fallback recall failed: %v", err)
 		return primary, nil, nil
 	}
-	return longmemeval.UnionMemoryIDs(primary, fallback), fallback, nil
+	primary.IDs = longmemeval.UnionMemoryIDs(primary.IDs, fallback.IDs)
+	return primary, fallback.IDs, nil
 }
 
 // runWorker processes items from work, writing RunEntry results to out and
@@ -469,18 +470,34 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
-
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
+	var atomRecallAsOf *time.Time
+	if cfg.AtomMode {
+		if asOf, ok := parseLongMemEvalQuestionDate(item.QuestionDate); ok {
+			atomRecallAsOf = &asOf
 		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
 	}
-	recallDefault := func(query string, topK int) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
+
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
+		if cfg.AtomMode {
+			return mcpClient.RecallWithAtomRecall(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost, cfg.ExactSignalBoost, atomRecallAsOf)
 		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		if cfg.ExactSignalBoost {
+			ids, err := mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
+			return longmemeval.RecallResult{IDs: ids}, err
+		}
+		ids, err := mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+		return longmemeval.RecallResult{IDs: ids}, err
+	}
+	recallDefault := func(query string, topK int) (longmemeval.RecallResult, error) {
+		if cfg.AtomMode {
+			return mcpClient.RecallWithAtomRecall(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost, cfg.ExactSignalBoost, atomRecallAsOf)
+		}
+		if cfg.ExactSignalBoost {
+			ids, err := mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
+			return longmemeval.RecallResult{IDs: ids}, err
+		}
+		ids, err := mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		return longmemeval.RecallResult{IDs: ids}, err
 	}
 
 	// H-NEW-1: when --temporal-window-recall is set, hand temporal anchoring to the
@@ -493,6 +510,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	var (
 		retrievedIDs        []string
 		temporalFallbackIDs []string
+		atomPreamble        string
 		err                 error
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
@@ -506,7 +524,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			}
 		}
 	} else {
-		retrievedIDs, temporalFallbackIDs, err = recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
+		recallResult, fallbackIDs, recallErr := recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
+		retrievedIDs, temporalFallbackIDs, atomPreamble, err = recallResult.IDs, fallbackIDs, recallResult.AtomPreamble, recallErr
 		if err != nil {
 			return longmemeval.RunEntry{
 				QuestionID: item.QuestionID,
@@ -525,12 +544,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		// fusion candidates to at most 3 swapped-in slots, defeating the lever.
 		variants := buildRecallVariants(item.Question, recallQuery, cfg.DisableQueryRewrite, true)
 		for _, q := range variants[1:] {
-			ids, qErr := recallDefault(q, cfg.RecallTopK)
+			recallResult, qErr := recallDefault(q, cfg.RecallTopK)
 			if qErr != nil {
 				log.Printf("WARN run [%s] fusion recall (%q): %v", item.QuestionID, q, qErr)
 				continue
 			}
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, ids)
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, recallResult.IDs)
 		}
 	}
 
@@ -539,10 +558,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if cfg.ExhaustiveAggregation && !serverTemporalWindow && longmemeval.IsAggregationQuestion(item.Question) {
 		const aggregationSweepTopK = 500
 		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
-		sweepIDs, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
+		sweepResult, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
 		if sweepErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, sweepIDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
+			secondaryContextIDs = append(secondaryContextIDs, sweepResult.IDs...)
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepResult.IDs)
 		} else {
 			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
 		}
@@ -556,10 +575,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			anchorTopK = 1
 		}
 		anchor := longmemeval.PreferenceSubjectAnchorQuery(item.Question)
-		anchorIDs, anchorErr := recallDefault(anchor, anchorTopK)
+		anchorResult, anchorErr := recallDefault(anchor, anchorTopK)
 		if anchorErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, anchorIDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
+			secondaryContextIDs = append(secondaryContextIDs, anchorResult.IDs...)
+			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorResult.IDs)
 		} else {
 			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
 		}
@@ -577,13 +596,13 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
 		} else {
 			for _, pq := range paraphrases {
-				pIDs, pErr := recallDefault(pq, cfg.RecallTopK)
+				pResult, pErr := recallDefault(pq, cfg.RecallTopK)
 				if pErr != nil {
 					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
 					continue
 				}
-				secondaryContextIDs = append(secondaryContextIDs, pIDs...)
-				retrievedIDs = append(retrievedIDs, pIDs...)
+				secondaryContextIDs = append(secondaryContextIDs, pResult.IDs...)
+				retrievedIDs = append(retrievedIDs, pResult.IDs...)
 			}
 			retrievedIDs = longmemeval.DeduplicateIDs(retrievedIDs)
 		}
@@ -663,13 +682,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 
-	// #938: --atom-mode: fetch extracted preference atoms for the project and
-	// prepend them as a labeled block in the generation prompt. This code path
-	// is OFF by default. It is the Milestone 1 eval gate switch; enable ONLY
-	// after the post-reset atom extraction pass has been completed.
 	var atomContextBlock string
 	if cfg.AtomMode {
-		atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
+		atomContextBlock = atomPreamble
+		if atomContextBlock == "" {
+			atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
+		}
 	}
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
 	// the two are mutually exclusive. When both are set, aug wins.
@@ -712,10 +730,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	return longmemeval.RunEntry{
-		QuestionID:   item.QuestionID,
-		Hypothesis:   hypothesis,
-		RetrievedIDs: retrievedIDs,
-		Status:       "done",
+		QuestionID:    item.QuestionID,
+		Hypothesis:    hypothesis,
+		RetrievedIDs:  retrievedIDs,
+		Status:        "done",
+		AtomRetrieved: atomPreamble != "",
+		AtomInContext: atomContextBlock != "",
 	}
 }
 
