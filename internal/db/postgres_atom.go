@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,6 +10,13 @@ import (
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/petersimmons1972/engram/internal/atom"
 )
+
+// AtomQueryOpts controls filtered active-atom queries.
+type AtomQueryOpts struct {
+	AtomType   string
+	AsOf       *time.Time
+	LatestOnly bool
+}
 
 // InsertAtom inserts a new atom into the atoms table. A UUIDv4 ID is generated
 // if a.ID is empty. The atom's Project must be set by the caller.
@@ -20,20 +28,24 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now().UTC()
 	}
+	if a.ObservedAt == nil {
+		observedAt := a.CreatedAt
+		a.ObservedAt = &observedAt
+	}
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO atoms (
 			id, project, atom_type, subject, predicate, value,
 			statement, scope, valid_from, valid_to, confidence,
-			provenance_memory_id, provenance_span, supersedes, created_at
+			provenance_memory_id, provenance_span, supersedes, observed_at, created_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15
+			$12, $13, $14, $15, $16
 		) ON CONFLICT (id) DO NOTHING`,
 		a.ID, a.Project, a.Type, a.Subject, a.Predicate, a.Value,
 		a.Statement, a.Scope, a.ValidFrom, a.ValidTo, a.Confidence,
 		nullableString(a.ProvenanceMemoryID), nullableString(a.ProvenanceSpan),
-		nullableString(a.Supersedes), a.CreatedAt,
+		nullableString(a.Supersedes), a.ObservedAt, a.CreatedAt,
 	)
 	return err
 }
@@ -71,30 +83,51 @@ func (p *PostgresBackend) RetireAtom(ctx context.Context, atomID string, validTo
 // GetActiveAtoms returns all atoms for the project with valid_to IS NULL.
 // If atomType is non-empty, results are filtered to that type.
 func (p *PostgresBackend) GetActiveAtoms(ctx context.Context, project string, atomType string) ([]atom.Atom, error) {
-	var rows interface{ Close() }
-	var err error
+	return p.GetActiveAtomsFiltered(ctx, project, AtomQueryOpts{AtomType: atomType})
+}
 
-	if atomType == "" {
-		rows, err = p.pool.Query(ctx, `
-			SELECT id, project, atom_type, subject, predicate, value,
-			       statement, scope, valid_from, valid_to, confidence,
-			       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-			       COALESCE(supersedes,''), created_at
-			FROM atoms
-			WHERE project = $1 AND valid_to IS NULL
-			ORDER BY created_at DESC`,
-			project)
-	} else {
-		rows, err = p.pool.Query(ctx, `
-			SELECT id, project, atom_type, subject, predicate, value,
-			       statement, scope, valid_from, valid_to, confidence,
-			       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-			       COALESCE(supersedes,''), created_at
-			FROM atoms
-			WHERE project = $1 AND atom_type = $2 AND valid_to IS NULL
-			ORDER BY created_at DESC`,
-			project, atomType)
+// GetActiveAtomsFiltered returns active atoms with optional type/as-of/latest filtering.
+func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project string, opts AtomQueryOpts) ([]atom.Atom, error) {
+	where := []string{"project = $1", "valid_to IS NULL"}
+	args := []interface{}{project}
+	nextArg := 2
+
+	if opts.AtomType != "" {
+		where = append(where, fmt.Sprintf("atom_type = $%d", nextArg))
+		args = append(args, opts.AtomType)
+		nextArg++
 	}
+	if opts.AsOf != nil {
+		where = append(where, fmt.Sprintf("observed_at <= $%d", nextArg))
+		args = append(args, *opts.AsOf)
+		nextArg++
+	}
+
+	selectClause := `
+		SELECT id, project, atom_type, subject, predicate, value,
+		       statement, scope, valid_from, valid_to, observed_at, confidence,
+		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
+		       COALESCE(supersedes,''), created_at
+		FROM atoms`
+	if opts.LatestOnly {
+		selectClause = `
+		SELECT DISTINCT ON (subject, predicate)
+		       id, project, atom_type, subject, predicate, value,
+		       statement, scope, valid_from, valid_to, observed_at, confidence,
+		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
+		       COALESCE(supersedes,''), created_at
+		FROM atoms`
+	}
+
+	orderBy := "ORDER BY observed_at DESC NULLS LAST, created_at DESC"
+	if opts.LatestOnly {
+		orderBy = "ORDER BY subject, predicate, observed_at DESC NULLS LAST, created_at DESC"
+	}
+
+	rows, err := p.pool.Query(ctx, `
+		`+selectClause+`
+		WHERE `+strings.Join(where, " AND ")+`
+		`+orderBy, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,17 +148,40 @@ func (p *PostgresBackend) EnqueueAtomExtractionJob(ctx context.Context, memoryID
 // ClaimAtomExtractionJobs atomically marks up to limit pending jobs as
 // 'processing' for the given project and returns them.
 func (p *PostgresBackend) ClaimAtomExtractionJobs(ctx context.Context, project string, limit int) ([]atom.ExtractionJob, error) {
-	pgRows, err := p.pool.Query(ctx, `
-		UPDATE atom_extraction_jobs
-		SET status = 'processing'
-		WHERE id IN (
-			SELECT id FROM atom_extraction_jobs
-			WHERE project = $1 AND status = 'pending'
-			ORDER BY created_at ASC
-			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING id, memory_id, project`, project, limit)
+	var (
+		pgRows interface {
+			Close()
+			Next() bool
+			Scan(dest ...interface{}) error
+			Err() error
+		}
+		err error
+	)
+	if project == "" {
+		pgRows, err = p.pool.Query(ctx, `
+			UPDATE atom_extraction_jobs
+			SET status = 'processing'
+			WHERE id IN (
+				SELECT id FROM atom_extraction_jobs
+				WHERE status = 'pending'
+				ORDER BY created_at ASC
+				LIMIT $1
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id, memory_id, project`, limit)
+	} else {
+		pgRows, err = p.pool.Query(ctx, `
+			UPDATE atom_extraction_jobs
+			SET status = 'processing'
+			WHERE id IN (
+				SELECT id FROM atom_extraction_jobs
+				WHERE project = $1 AND status = 'pending'
+				ORDER BY created_at ASC
+				LIMIT $2
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id, memory_id, project`, project, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +241,7 @@ func scanAtomRows(rows interface{ Close() }) ([]atom.Atom, error) {
 		var a atom.Atom
 		if err := r.Scan(
 			&a.ID, &a.Project, &a.Type, &a.Subject, &a.Predicate, &a.Value,
-			&a.Statement, &a.Scope, &a.ValidFrom, &a.ValidTo, &a.Confidence,
+			&a.Statement, &a.Scope, &a.ValidFrom, &a.ValidTo, &a.ObservedAt, &a.Confidence,
 			&a.ProvenanceMemoryID, &a.ProvenanceSpan,
 			&a.Supersedes, &a.CreatedAt,
 		); err != nil {

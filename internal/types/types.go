@@ -334,6 +334,7 @@ type SearchResult struct {
 	MatchedChunk      string             `json:"matched_chunk"`
 	ChunkScore        float64            `json:"chunk_score"`
 	MatchedChunkIndex int                `json:"matched_chunk_index"`
+	AtomPreamble      string             `json:"atom_preamble,omitempty"`
 
 	// Connected holds memories linked via the knowledge graph.
 	Connected []ConnectedMemory `json:"connected"`

@@ -109,6 +109,15 @@ func sanitizeMemoryFloatFields(m *types.Memory) {
 	}
 }
 
+func atomPreambleForResults(results []types.SearchResult) string {
+	for _, r := range results {
+		if r.AtomPreamble != "" {
+			return r.AtomPreamble
+		}
+	}
+	return ""
+}
+
 func sanitizeRecallResults(results []types.SearchResult) {
 	for i := range results {
 		results[i].Score = finiteOrZero(results[i].Score)
@@ -332,6 +341,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	temporalWindowRecall := getBool(args, "temporal_window_recall", false)
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
+	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
+	if err != nil {
+		return nil, err
+	}
+	opts.AtomRecallEnabled = getBool(args, "atom_recall", false)
+	opts.AtomRecallAsOf = atomRecallAsOf
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames, err := toStringSlice(args["projects"])
@@ -542,6 +557,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if opts.EvidenceFirstPack {
 		results = search.OrderResultsEvidenceFirst(results, query)
 	}
+	atomPreamble := atomPreambleForResults(results)
 
 	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
 	// surface a structured error instead of silently returning BM25 results.
@@ -560,6 +576,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
 		}
+		if atomPreamble != "" {
+			out["atom_preamble"] = atomPreamble
+		}
 		if embedDegraded {
 			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
 		}
@@ -571,6 +590,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
+	if atomPreamble != "" {
+		out["atom_preamble"] = atomPreamble
+	}
 	if eventID != "" {
 		out["event_id"] = eventID
 		out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"

@@ -61,6 +61,8 @@ type RunEntry struct {
 	RetrievedIDs []string `json:"retrieved_ids"` // memory IDs in ranked order
 	Status       string   `json:"status"`
 	Error        string   `json:"error,omitempty"`
+	AtomRetrieved bool    `json:"atom_retrieved,omitempty"`
+	AtomInContext bool    `json:"atom_in_context,omitempty"`
 	// Oracle probe fields (--atom-oracle, Phase 2A #1079). Omitted when zero/false.
 	OracleZeroAtoms bool `json:"oracle_zero_atoms,omitempty"` // set when --atom-oracle extracted zero atoms
 	OracleAtomCount int  `json:"oracle_atom_count,omitempty"` // atoms extracted and injected

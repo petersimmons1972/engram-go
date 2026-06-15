@@ -21,8 +21,8 @@ type Extractor interface {
 }
 
 // ClaudeExtractor uses a Claude language model to extract typed atoms from
-// freeform session text. It is preference-focused (Milestone 1): the prompt
-// emphasises casual-language preferences that keyword-based extractors miss.
+// freeform session text. It focuses on preference/profile/status-state signals
+// expressed in casual language that keyword-based extractors miss.
 type ClaudeExtractor struct {
 	client ClaudeCompleter
 }
@@ -40,7 +40,7 @@ const maxSessionChars = 6000
 // Milestone 1 targets casual-language preferences — statements like "I usually
 // prefer X", "I don't really like Y", "I tend to go with Z" — which PatternPreferenceExtractor
 // misses because they don't match keyword anchors.
-const extractionSystem = `You are a precise preference and fact extraction assistant.
+const extractionSystem = `You are a precise preference and state extraction assistant.
 Given a passage of conversational text, identify typed atoms — minimal, self-contained
 beliefs or preferences stated by the user.
 
@@ -52,10 +52,14 @@ Focus especially on PREFERENCES expressed in casual language:
 These casual phrasings are easy to miss — capture them even when they are
 stated indirectly or embedded in a longer sentence.
 
+Also capture stable PROFILE facts and STATUS CHANGES when they are stated plainly:
+  "I'm vegetarian", "I work nights", "I'm based in Seattle",
+  "I started a new job", "I moved to Boston", "I switched to Android"
+
 Return ONLY a JSON array of atom objects — no prose, no markdown fences — in this exact schema:
 [
   {
-    "atom_type": "<preference|fact|event|attribute|relationship>",
+    "atom_type": "<preference|profile|status_change|fact|event|attribute|relationship>",
     "subject":   "<who or what the atom is about>",
     "predicate": "<the property or relationship>",
     "value":     "<the stated value, choice, or belief>",
@@ -67,7 +71,9 @@ Return ONLY a JSON array of atom objects — no prose, no markdown fences — in
 ]
 
 Rules:
-- atom_type must be exactly one of: preference, fact, event, attribute, relationship.
+- atom_type must be exactly one of: preference, profile, status_change, fact, event, attribute, relationship.
+- use profile for relatively stable user descriptors (diet, location, profession, timezone, routine).
+- use status_change for explicit updates or transitions in user state ("started", "moved", "switched", "stopped").
 - subject should be the first-person actor ("the user") or a named entity.
 - Normalise subject to "the user" for first-person statements.
 - statement must be a complete, standalone sentence (no pronouns requiring external context).
@@ -96,7 +102,7 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]At
 		sessionText = string([]rune(sessionText)[:maxSessionChars])
 	}
 
-	prompt := "Extract typed atoms (focus on preferences) from the following session text:\n\n" + sessionText
+	prompt := "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n" + sessionText
 
 	raw, err := e.client.Complete(ctx, extractionSystem, prompt,
 		"claude-sonnet-4-6", "claude-opus-4-6", 0, 2048)

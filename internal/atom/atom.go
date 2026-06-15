@@ -16,6 +16,8 @@ const (
 	TypeEvent        = "event"
 	TypeAttribute    = "attribute"
 	TypeRelationship = "relationship"
+	TypeProfile      = "profile"
+	TypeStatusChange = "status_change"
 )
 
 // Scope prefixes for the scope column.
@@ -46,6 +48,7 @@ type Atom struct {
 	// Bi-temporal columns (nil = unbounded).
 	ValidFrom *time.Time `json:"valid_from,omitempty"`
 	ValidTo   *time.Time `json:"valid_to,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
 
 	// Confidence in [0,1] range; defaults to 1.0 when not specified.
 	Confidence float64 `json:"confidence"`
@@ -68,7 +71,7 @@ func (a *Atom) IsValid() bool {
 		return false
 	}
 	switch a.Type {
-	case TypePreference, TypeFact, TypeEvent, TypeAttribute, TypeRelationship:
+	case TypePreference, TypeFact, TypeEvent, TypeAttribute, TypeRelationship, TypeProfile, TypeStatusChange:
 	default:
 		return false
 	}

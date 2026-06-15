@@ -159,6 +159,14 @@ type RecallOpts struct {
 	// ordering is load-bearing (mirrors the run.go precedence rule).
 	// Default false (ablatable — no behavior change until explicitly enabled).
 	EvidenceFirstPack bool
+
+	// AtomRecallEnabled attaches a separate structured atom preamble for
+	// preference-shaped queries. The preamble is additive metadata only and does
+	// not enter composite scoring or the ranked result pool.
+	AtomRecallEnabled bool
+	// AtomRecallAsOf filters recalled atoms to observations at or before this
+	// point in time. Nil means no observed_at cutoff.
+	AtomRecallAsOf *time.Time
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -993,6 +1001,15 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	prefQuery := isPreferenceQuery(query)
 	tempQuery := isTemporalQuery(query)
 	kuQuery := isKnowledgeUpdateQuery(query)
+	atomPreamble := ""
+	if opts.AtomRecallEnabled && prefQuery {
+		if atomBackend, ok := e.backend.(AtomBackend); ok {
+			atomPreamble, err = RecallPreferenceAtoms(ctx, atomBackend, e.project, query, opts.AtomRecallAsOf)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Identifier query detection for exact-fact boost (LME #938 improvement #3).
 	// Only active when the caller enables the flag; detection is cheap (regex).
 	exactBoostEnabled := opts.ExactFactBoost && isIdentifierQuery(query)
@@ -1387,6 +1404,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
+	if atomPreamble != "" {
+		for i := range results {
+			results[i].AtomPreamble = atomPreamble
+		}
+	}
+
 	return results, nil
 }
 
@@ -1495,6 +1518,10 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResult {
 	merged := make([]types.SearchResult, 0, len(a)+len(b))
 	seen := make(map[string]struct{}, len(a)+len(b))
+	atomPreamble := firstAtomPreamble(a)
+	if atomPreamble == "" {
+		atomPreamble = firstAtomPreamble(b)
+	}
 	for _, r := range a {
 		if r.Memory == nil {
 			continue
@@ -1518,7 +1545,21 @@ func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResu
 	if limit > 0 && len(merged) > limit {
 		merged = merged[:limit]
 	}
+	if atomPreamble != "" {
+		for i := range merged {
+			merged[i].AtomPreamble = atomPreamble
+		}
+	}
 	return merged
+}
+
+func firstAtomPreamble(results []types.SearchResult) string {
+	for _, r := range results {
+		if r.AtomPreamble != "" {
+			return r.AtomPreamble
+		}
+	}
+	return ""
 }
 
 // RecallWithinMemory returns up to topK chunks from a single memory's document
