@@ -232,6 +232,8 @@ ANTHROPIC_API_KEY=                         # Set this to enable memory_reason an
 ENGRAM_CLAUDE_SUMMARIZE=false             # Use Claude instead of Ollama for summaries
 ENGRAM_CLAUDE_CONSOLIDATE=false           # Use Claude for consolidation analysis
 ENGRAM_CLAUDE_RERANK=false                # Use Claude to rerank results (slower, better)
+ENGRAM_CROSS_ENCODER_RERANK=false         # Use a cross-encoder on top dense hits before hybrid fusion
+ENGRAM_CROSS_ENCODER_URL=                 # TEI-compatible /rerank endpoint, e.g. http://localhost:6006/rerank
 ```
 
 | Variable                   | Default              | Required | Purpose                                               |
@@ -246,6 +248,8 @@ ENGRAM_CLAUDE_RERANK=false                # Use Claude to rerank results (slower
 | `ENGRAM_CLAUDE_SUMMARIZE`  | `false`              | No       | Use Claude for async summaries instead of Ollama      |
 | `ENGRAM_CLAUDE_CONSOLIDATE`| `false`              | No       | Use Claude for graph consolidation                    |
 | `ENGRAM_CLAUDE_RERANK`     | `false`              | No       | Use Claude to rerank search results                   |
+| `ENGRAM_CROSS_ENCODER_RERANK` | `false`           | No       | Enable dense-leg cross-encoder reranking before BM25/recency fusion |
+| `ENGRAM_CROSS_ENCODER_URL` | *(empty)*            | No       | Full TEI-compatible `/rerank` endpoint used when cross-encoder reranking is on |
 | `POSTGRES_DB`              | `engram`             | No       | Database name (rarely needs changing)                 |
 | `POSTGRES_USER`            | `engram`             | No       | Database user (rarely needs changing)                 |
 | `ENGRAM_TRUST_PROXY_HEADERS` | `false`              | No       | Trust `X-Forwarded-For` / `X-Real-IP` for rate limiting. Set to `1` only when a trusted reverse proxy is in front. |

@@ -459,10 +459,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.Reranker = arReranker
 	}
 	// Cross-encoder reranker (LEVER-2): flag-gated via ENGRAM_CROSS_ENCODER_RERANK=true.
-	// When enabled, replaces any other reranker — cross-encoder is the stronger signal.
 	// ENGRAM_CROSS_ENCODER_URL must be set to the TEI /rerank endpoint.
+	// This reranks the dense/vector leg before hybrid fusion; it does not replace
+	// the final fused-result reranker.
 	if ceReranker := search.NewCrossEncoderRerankerFromEnv(); ceReranker != nil {
-		opts.Reranker = ceReranker
+		opts.DenseReranker = ceReranker
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
 	if id, ok := episodeIDFromContext(ctx); ok {
