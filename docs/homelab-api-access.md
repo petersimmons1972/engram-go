@@ -12,6 +12,8 @@ it never lands on disk:
 Do NOT write a secret to a temp file (even mode-600 + shred trips credential-leak policy).
 Use `-k` for these hosts' self-signed certs.
 
+**Do not MCP-retrieve a secret you will use in bash.** `mcp__infisical-personal__get-secret` returns the value as a plaintext literal into the agent's context, after which the bash secret-classifier pattern-matches that literal and blocks every subsequent command. Instead retrieve via the Infisical CLI inside a command substitution so the value is injected at exec time and never becomes a literal in any transcript/argv — e.g. `curl -H "X-API-KEY: $(infisical secrets get UNIFI_API_TOKEN --projectId=<id> --env=prod --path=/unifi --plain)" ...`. Verify CLI auth first via a non-secret key (e.g. `UNIFI_TOKEN_NAME` → `unifi-admin`).
+
 The coordinator persona (bedell-smith) has no Bash and cannot make API calls —
 dispatch a Bash-equipped specialist to exercise any of these.
 
@@ -55,6 +57,4 @@ Infisical path: **`/unifi`**. API credential for the UniFi gateway/controller at
 |---------------------|---------------------------|--------------------------|----------------|
 | UniFi @ 192.168.0.1 | `UNIFI_TOKEN_NAME`        | `UNIFI_API_TOKEN`        | `unifi-admin`  |
 
-**Auth header:** `X-API-KEY: <UNIFI_API_TOKEN>` against the controller API endpoints
-(UniFi Network integration API). Self-signed cert → `curl -k`. Status: not yet
-exercised against the live device — verify with a read-only call before relying on it.
+**Auth header:** `X-API-KEY: <UNIFI_API_TOKEN>` against the UniFi OS Network Integration API (base `https://192.168.0.1/proxy/network/integration/v1/`). Self-signed cert → `curl -k`. **Verified 2026-06-15:** `GET /sites` and `GET /info` return 200; key has at least site-level read access (1 site: `Default`; Network app v10.4.57).
