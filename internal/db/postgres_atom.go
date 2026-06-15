@@ -100,7 +100,8 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	if opts.AsOf != nil {
 		where = append(where, fmt.Sprintf("observed_at <= $%d", nextArg))
 		args = append(args, *opts.AsOf)
-		nextArg++
+		// nextArg is intentionally not incremented here: AsOf is the last
+		// positional clause. Re-add `nextArg++` if another $-clause is appended below.
 	}
 
 	selectClause := `
