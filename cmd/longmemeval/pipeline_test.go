@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -186,6 +187,145 @@ func TestRunOne_HappyPath(t *testing.T) {
 	}
 	if entry.Hypothesis == "" {
 		t.Error("hypothesis should not be empty on success")
+	}
+}
+
+func TestRunOne_DualPreferenceRecall_OnlyRunsForInferredPreferenceQuestions(t *testing.T) {
+	var queries []string
+	url := newTestEngram(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			query, _ := req.GetArguments()["query"].(string)
+			queries = append(queries, query)
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "m1", "score": 0.9}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"memory": map[string]any{"content": "Session date: 2024-01-10\nNeutral context."},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"answer"}}]}`)
+	}))
+	defer llmSrv.Close()
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	item := longmemeval.Item{
+		QuestionID:   "q-neutral-pref-type",
+		QuestionType: "single-session-preference",
+		Question:     "What happened last week?",
+		QuestionDate: "2024-01-15",
+	}
+	ingest := longmemeval.IngestEntry{QuestionID: item.QuestionID, Project: "lme-r-q-neutral-pref-type", MemoryMap: map[string]string{"m1": "sid-1"}}
+	cfg := &Config{LLMBaseURL: llmSrv.URL, LLMModel: "test", Retries: 0, DualPreferenceRecall: true}
+
+	entry := runOne(ctx, cfg, c, item, ingest)
+	if entry.Status != "done" {
+		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
+	}
+	if len(queries) != 1 {
+		t.Fatalf("memory_recall call count = %d, want 1 for non-inferred preference question; queries=%v", len(queries), queries)
+	}
+}
+
+func TestRunOne_DualPreferenceRecall_RanksByMaxScoreAndUsesCleanAnchor(t *testing.T) {
+	var queries []string
+	url := newTestEngram(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			query, _ := req.GetArguments()["query"].(string)
+			queries = append(queries, query)
+
+			var payload map[string]any
+			switch query {
+			case "user preference a conference about AI in healthcare? like dislike use avoid":
+				payload = map[string]any{
+					"handles": []map[string]any{
+						{"id": "m1", "score": 0.93},
+						{"id": "m2", "score": 0.61},
+					},
+				}
+			case "conference AI healthcare":
+				payload = map[string]any{
+					"handles": []map[string]any{
+						{"id": "m2", "score": 0.97},
+						{"id": "m3", "score": 0.88},
+					},
+				}
+			default:
+				t.Fatalf("unexpected recall query: %q", query)
+			}
+
+			resp, _ := json.Marshal(payload)
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id, _ := req.GetArguments()["id"].(string)
+			resp, _ := json.Marshal(map[string]any{
+				"memory": map[string]any{"content": "Session date: 2024-01-10\nContext for " + id},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"answer"}}]}`)
+	}))
+	defer llmSrv.Close()
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	item := longmemeval.Item{
+		QuestionID:   "q-pref",
+		QuestionType: "single-session-preference",
+		Question:     "Can you recommend a conference about AI in healthcare?",
+		QuestionDate: "2024-01-15",
+	}
+	ingest := longmemeval.IngestEntry{
+		QuestionID: item.QuestionID,
+		Project:    "lme-r-q-pref",
+		MemoryMap:  map[string]string{"m1": "sid-1", "m2": "sid-2", "m3": "sid-3"},
+	}
+	cfg := &Config{LLMBaseURL: llmSrv.URL, LLMModel: "test", Retries: 0, DualPreferenceRecall: true}
+
+	entry := runOne(ctx, cfg, c, item, ingest)
+	if entry.Status != "done" {
+		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("memory_recall call count = %d, want 2; queries=%v", len(queries), queries)
+	}
+	wantQueries := []string{
+		"user preference a conference about AI in healthcare? like dislike use avoid",
+		"conference AI healthcare",
+	}
+	if !reflect.DeepEqual(queries, wantQueries) {
+		t.Fatalf("memory_recall queries = %v, want %v", queries, wantQueries)
+	}
+	wantIDs := []string{"m2", "m1", "m3"}
+	if !reflect.DeepEqual(entry.RetrievedIDs, wantIDs) {
+		t.Fatalf("retrieved IDs = %v, want %v", entry.RetrievedIDs, wantIDs)
 	}
 }
 

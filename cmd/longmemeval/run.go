@@ -493,6 +493,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		ids, err := mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
 		return longmemeval.RecallResult{IDs: ids}, err
 	}
+	recallScoredDefault := func(query string, topK int) ([]longmemeval.ScoredMemoryID, error) {
+		if cfg.ExactSignalBoost {
+			return mcpClient.RecallScoredWithExactBoost(ctx, ingest.Project, query, topK, since, before)
+		}
+		return mcpClient.RecallScoredWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+	}
 	recallDefault := func(query string, topK int) (longmemeval.RecallResult, error) {
 		if cfg.AtomMode {
 			return mcpClient.RecallWithAtomRecall(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost, cfg.ExactSignalBoost, atomRecallAsOf)
@@ -516,9 +522,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		retrievedIDs        []string
 		temporalFallbackIDs []string
 		atomPreamble        string
+		primaryScoredHits   []longmemeval.ScoredMemoryID
 		err                 error
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
+	dualPreferenceRecall := cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
 	if serverTemporalWindow {
 		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
@@ -528,6 +536,16 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				Error:      fmt.Sprintf("temporal-window recall: %v", err),
 			}
 		}
+	} else if dualPreferenceRecall {
+		primaryScoredHits, err = recallScoredDefault(recallQuery, cfg.RecallTopK)
+		if err != nil {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("recall: %v", err),
+			}
+		}
+		retrievedIDs = longmemeval.IDsFromScoredRecall(primaryScoredHits)
 	} else {
 		recallResult, fallbackIDs, recallErr := recallWithTemporalFallback(recallQuery, effectiveRecallTopK, since, before, recall)
 		retrievedIDs, temporalFallbackIDs, atomPreamble, err = recallResult.IDs, fallbackIDs, recallResult.AtomPreamble, recallErr
@@ -564,17 +582,18 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// than a separate anchor sweep — see internal/longmemeval/claude_additions.go.
 
 	// H15 (lme-h8h12h15): dual-query preference recall — run a second recall
-	// using the subject-anchor query for preference questions and union results.
-	if cfg.DualPreferenceRecall && item.QuestionType == "single-session-preference" {
+	// using the subject-anchor query for inferred preference questions only.
+	if dualPreferenceRecall {
 		anchorTopK := cfg.RecallTopK / 2
 		if anchorTopK < 1 {
 			anchorTopK = 1
 		}
 		anchor := longmemeval.PreferenceSubjectAnchorQuery(item.Question)
-		anchorResult, anchorErr := recallDefault(anchor, anchorTopK)
+		anchorHits, anchorErr := recallScoredDefault(anchor, anchorTopK)
 		if anchorErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, anchorResult.IDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorResult.IDs)
+			anchorIDs := longmemeval.IDsFromScoredRecall(anchorHits)
+			secondaryContextIDs = append(secondaryContextIDs, anchorIDs...)
+			retrievedIDs = longmemeval.IDsFromScoredRecall(longmemeval.MergeScoredRecall(primaryScoredHits, anchorHits))
 		} else {
 			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
 		}
