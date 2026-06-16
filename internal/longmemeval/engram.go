@@ -412,14 +412,6 @@ type recallParams struct {
 	atomRecallAsOf   *time.Time
 }
 
-func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
-	result, err := c.recallResultWithParams(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	return result.IDs, nil
-}
-
 func (c *Client) recallResultWithParams(ctx context.Context, p recallParams) (RecallResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
