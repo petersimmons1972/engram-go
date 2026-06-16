@@ -99,6 +99,13 @@ type Config struct {
 	// Phase 0: SessionNDCGAgg — RecallAny+NDCGAny for single-session types in retrieval_log.
 	SessionNDCGAgg bool // default true; use RecallAny/NDCGAny for single-session types
 
+	// LEVER-9: SessionDiversityN — per-session chunk cap in recall results.
+	// When non-zero, the server caps each session's chunk contribution to N.
+	// The server reads ENGRAM_SESSION_DIVERSITY_N directly; this field is for
+	// logging and documentation of the effective value at eval start.
+	// Set via ENGRAM_SESSION_DIVERSITY_N env var on the server; 0 = off (baseline).
+	SessionDiversityN int
+
 	// #749: contention guard
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
@@ -269,6 +276,16 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// which correctly matches the single-gold-session semantics. Default: true.
 	// Use --no-session-ndcg-agg to revert to RecallAll for all types.
 	fs.BoolVar(&cfg.SessionNDCGAgg, "session-ndcg-agg", true, "P0: use RecallAny+NDCGAny aggregation for single-session question types in retrieval_log (default: on)")
+	// LEVER-9: session-diversity-n — log the effective per-session chunk cap.
+	// The server reads ENGRAM_SESSION_DIVERSITY_N directly; this flag just records
+	// what value the caller expects for observability in run logs.
+	defaultDiversityN := 0
+	if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			defaultDiversityN = n
+		}
+	}
+	fs.IntVar(&cfg.SessionDiversityN, "session-diversity-n", defaultDiversityN, "LEVER-9: expected per-session chunk cap on the server (0 = off; reads ENGRAM_SESSION_DIVERSITY_N as default)")
 	// #749: contention guard. --no-exclusive-backend is the negation flag.
 	// Default is exclusive=true; --no-exclusive-backend sets it false.
 	var noExclusiveBackend bool
