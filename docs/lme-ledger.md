@@ -89,9 +89,8 @@ Packaged as Codex issue engram-go#1113 (p1, parallel-safe).
 Registered failure modes from the red-team: FM-76 (forced-commitment confident-wrong),
 FM-77 (aggregate metric masks per-segment collapse). Home repo commit 8ba2b68.
 
-Stack-first validation (sonnet + preference-enumerate, reranker OFF, full 135): IN PROGRESS.
-Expected ~34.8% overall (base 32.6% + preference 16.7%->26.7% over 30/135). Number to be
-appended on completion.
+Stack-first validation (sonnet + preference-enumerate, reranker OFF, full 135): COMPLETE.
+See STACK VALIDATION RESULT below.
 
 ## STACK VALIDATION RESULT (2026-06-16) — CONFIRMED
 Sonnet + preference-enumerate, reranker OFF, full 135, Nemotron judge.
@@ -105,3 +104,25 @@ generation NON-DETERMINISM (single-item flips in small-n categories), NOT flag l
 Net +3.0pp is real and preference-driven. Scope-isolation holds.
 VERDICT: stack-first validation PASSED. The +10pp preference lever survives stacking and
 the gains are additive. Path B (engram-go#1113) ships this behavior client-side.
+
+## BENCH CONFIRMATION RUN (2026-06-16) — CURRENT BASELINE
+Run: stack-sonnet-prefenum-0616 (run_id: 9742c4dd47cc9c5c). Independent rerun, same config:
+Sonnet generator, preference-enumerate, reranker OFF, full 135, Nemotron scorer (thinking=true).
+
+Per-category (correct/total = %):
+- temporal-reasoning:        23/45 = 51.1%  (19 incorrect, 3 partial)
+- multi-session:             13/47 = 27.7%  (28 incorrect, 6 partial)  ← largest gap
+- single-session-preference:  8/30 = 26.7%  (13 incorrect, 9 partial)
+- single-session-user:        1/5  = 20.0%  (3 incorrect, 1 partial)
+- knowledge-update:           1/6  = 16.7%  (4 incorrect, 1 partial)
+- single-session-assistant:   2/2  = 100%
+- OVERALL:                   48/135 = 35.6%  (67 incorrect, 20 partial)
+
+TWO independent runs (stack-validation + this confirmation) both produce 35.6% OVERALL.
+Per-category ≤3.3pp run-to-run variance = expected claude --print non-determinism.
+Baseline is stable. CURRENT PRODUCTION BASELINE = 35.6%.
+
+NEXT TARGET: multi-session (27.7%, 47 items, 28 incorrect). Largest category by item count;
+widest gap below OVERALL. Moving 10 incorrect→correct = +7.4pp OVERALL.
+Leading hypothesis: context window management (reduce distractor chunks before synthesis).
+Recall is ~100%; loss is gold buried under distractors at generation time.
