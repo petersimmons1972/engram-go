@@ -15,7 +15,8 @@ export FINDINGS BASELINED
 
 # ── Baseline file path (exported so finding() subshells can read it) ──────────
 BASELINE_FILE_DEFAULT="${SCRIPT_DIR}/checkin-lint.baseline"
-export CHECKIN_LINT_BASELINE="${CHECKIN_LINT_BASELINE:-$BASELINE_FILE_DEFAULT}"
+BASELINE_FILE="${CHECKIN_LINT_BASELINE:-$BASELINE_FILE_DEFAULT}"
+export CHECKIN_LINT_BASELINE="$BASELINE_FILE"
 
 # Source core first (it defines and exports finding()), then override it.
 source "${SCRIPT_DIR}/checkin-lint-core.sh"
@@ -29,18 +30,21 @@ finding() {
      grep -Fxq "$key" "${CHECKIN_LINT_BASELINE}" 2>/dev/null; then
     echo -e "${YLW}baselined${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
     ((BASELINED++)) || true
+    [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
+      echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
     return 0
   fi
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
+  [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
+    echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
   ((FINDINGS++)) || true
 }
 # Re-export so subprocesses spawned after this point see the overridden version, not core's.
 export -f finding
 
-if ! run_core_checks "$@"; then
-  _core_exit=$?
-  [[ $_core_exit -eq 2 ]] && exit 2
-fi
+_core_exit=0
+run_core_checks "$@" || _core_exit=$?
+[[ $_core_exit -eq 2 ]] && exit 2
 
 # ── P1. No hardcoded DB connection strings (FM-06 / secrets) ─────────────────
 section "P1. Hardcoded DB connection strings"
