@@ -179,6 +179,42 @@ func TestRecall_HandleMode(t *testing.T) {
 	}
 }
 
+func TestRecallScored_HandleMode(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "h-aaa", "score": 0.8},
+					{"id": "h-bbb", "score": 0.6},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	got, err := c.RecallScored(ctx, "proj", "query", 5)
+	if err != nil {
+		t.Fatalf("RecallScored handle mode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("RecallScored handle mode len = %d, want 2", len(got))
+	}
+	if got[0].ID != "h-aaa" || got[0].Score != 0.8 {
+		t.Fatalf("RecallScored handle mode first = %+v, want id=h-aaa score=0.8", got[0])
+	}
+	if got[1].ID != "h-bbb" || got[1].Score != 0.6 {
+		t.Fatalf("RecallScored handle mode second = %+v, want id=h-bbb score=0.6", got[1])
+	}
+}
+
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

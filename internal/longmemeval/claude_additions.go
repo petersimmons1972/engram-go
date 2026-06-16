@@ -14,6 +14,9 @@ const exhaustiveAggregationTopK = 500
 var preferenceStripRe = regexp.MustCompile(
 	`(?i)^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me) `)
 
+var inferredPreferenceQuestionRe = regexp.MustCompile(
+	`(?i)(^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me)\b|\bfavorite\b|\bfavourite\b|\bwhat\b.*\b(do|would)\s+i\s+(like|love|enjoy|prefer|avoid)\b|\bwhich\b.*\b(do|would)\s+i\s+(like|love|enjoy|prefer|avoid)\b)`)
+
 // PreferenceRecallQuery rewrites a preference question into a recall query
 // targeting sessions where the user expressed preferences, not sessions that
 // would answer the literal question. Only the RECALL QUERY changes — the
@@ -36,10 +39,16 @@ func PreferenceRecallQuery(question string) string {
 var preferenceStopWords = map[string]bool{
 	"a": true, "an": true, "the": true, "for": true, "on": true,
 	"in": true, "of": true, "to": true, "and": true, "or": true,
+	"about": true, "with": true, "at": true, "by": true, "from": true,
+	"near": true, "around": true, "into": true, "through": true,
 	"i": true, "me": true, "my": true, "you": true, "your": true,
 	"do": true, "is": true, "are": true, "some": true, "any": true,
 	"can": true, "could": true, "would": true, "should": true,
 	"what": true, "which": true, "how": true, "when": true, "where": true,
+	"recommend": true, "suggest": true, "advise": true,
+	"like": true, "likes": true, "love": true, "loves": true,
+	"enjoy": true, "enjoys": true, "prefer": true, "prefers": true,
+	"favorite": true, "favourite": true, "avoid": true, "avoids": true,
 }
 
 // ExtractSubjectAnchor (H15) builds a domain-specific recall query from the
@@ -69,14 +78,23 @@ func ExtractSubjectAnchor(question string) string {
 	return strings.Join(keep, " ")
 }
 
-// PreferenceSubjectAnchorQuery keeps the H15 domain anchor while preserving the
-// preference signal required for extracted-preference memories to be eligible.
+// PreferenceSubjectAnchorQuery returns the cleaned subject noun phrase only.
+// The primary preference recall carries the preference signal; the anchor pass
+// is intentionally lexical so BM25 can target the subject domain precisely.
 func PreferenceSubjectAnchorQuery(question string) string {
 	anchor := ExtractSubjectAnchor(question)
 	if strings.TrimSpace(anchor) == "" {
 		anchor = question
 	}
-	return "user preference " + anchor + " like dislike use avoid"
+	return anchor
+}
+
+// IsInferredPreferenceQuestion reports whether the raw user question is asking
+// for a recommendation or preference-oriented answer. This is used to gate the
+// opt-in dual-preference recall path so non-preference questions keep the
+// single-call baseline even when their dataset label is noisy.
+func IsInferredPreferenceQuestion(question string) bool {
+	return inferredPreferenceQuestionRe.MatchString(strings.TrimSpace(question))
 }
 
 // RunOpts carries opt-in H8/H12 switches that alter recall depth and prompt

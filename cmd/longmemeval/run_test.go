@@ -322,6 +322,16 @@ func TestQueryParaphrasePassesFlag_DefaultThree(t *testing.T) {
 	}
 }
 
+func TestDualPreferenceRecallFlag_DefaultOff(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(src), `"dual-preference-recall", false`) {
+		t.Error("main.go: --dual-preference-recall must be opt-in (default false)")
+	}
+}
+
 func TestBuildRecallVariants_IncludesRawAndIdentifierQueries(t *testing.T) {
 	question := "What song did we discuss at https://foo.test/bar with 555-121-3434?"
 	primary := "recent song discussed"

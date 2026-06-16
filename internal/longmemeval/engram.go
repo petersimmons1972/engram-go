@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -264,9 +265,81 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 }
 
 func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithDateRange(ctx, project, query, topK, since, before)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallScored(ctx context.Context, project, query string, topK int) ([]ScoredMemoryID, error) {
+	return c.RecallScoredWithDateRange(ctx, project, query, topK, nil, nil)
+}
+
+func (c *Client) RecallScoredWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]ScoredMemoryID, error) {
+	return c.recallScoredWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 	})
+}
+
+// ScoredMemoryID is one recall hit with its server-provided score.
+type ScoredMemoryID struct {
+	ID    string
+	Score float64
+}
+
+// IDsFromScoredRecall strips scores while preserving ranked order.
+func IDsFromScoredRecall(hits []ScoredMemoryID) []string {
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if hit.ID != "" {
+			ids = append(ids, hit.ID)
+		}
+	}
+	return ids
+}
+
+// MergeScoredRecall unions recall hits by memory ID, keeps the maximum score
+// per ID, and re-ranks the merged slice by score descending.
+func MergeScoredRecall(primary, secondary []ScoredMemoryID) []ScoredMemoryID {
+	type mergedHit struct {
+		hit   ScoredMemoryID
+		order int
+	}
+	merged := make(map[string]mergedHit, len(primary)+len(secondary))
+	order := 0
+	for _, batch := range [][]ScoredMemoryID{primary, secondary} {
+		for _, hit := range batch {
+			if hit.ID == "" {
+				continue
+			}
+			current, ok := merged[hit.ID]
+			if !ok {
+				merged[hit.ID] = mergedHit{hit: hit, order: order}
+				order++
+				continue
+			}
+			if hit.Score > current.hit.Score {
+				current.hit.Score = hit.Score
+				merged[hit.ID] = current
+			}
+		}
+	}
+	out := make([]mergedHit, 0, len(merged))
+	for _, hit := range merged {
+		out = append(out, hit)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].hit.Score == out[j].hit.Score {
+			return out[i].order < out[j].order
+		}
+		return out[i].hit.Score > out[j].hit.Score
+	})
+	flattened := make([]ScoredMemoryID, 0, len(out))
+	for _, hit := range out {
+		flattened = append(flattened, hit.hit)
+	}
+	return flattened
 }
 
 // RecallResult is the structured memory_recall response used by LongMemEval
@@ -274,6 +347,9 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 type RecallResult struct {
 	IDs          []string
 	AtomPreamble string
+	// Hits carries the scored recall results for callers that need score-based
+	// merging (e.g. H15 dual preference recall). IDsFromScoredRecall(Hits) == IDs.
+	Hits []ScoredMemoryID
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -282,16 +358,28 @@ type RecallResult struct {
 // are advisory — the server falls back to baseline single-pass recall when no window
 // resolves (e.g. "how many X ago").
 func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.recallScoredWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK,
 		temporalWindow: true, questionText: questionText, questionDate: questionDate,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
 }
 
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
 func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithOpts(ctx, project, query, topK, since, before, topicAnchorBoost)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallScoredWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]ScoredMemoryID, error) {
+	return c.recallScoredWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 		topicAnchorBoost: topicAnchorBoost,
 	})
@@ -355,6 +443,14 @@ func (c *Client) recallResultWithParams(ctx context.Context, p recallParams) (Re
 	return RecallResult{}, lastErr
 }
 
+func (c *Client) recallScoredWithParams(ctx context.Context, p recallParams) ([]ScoredMemoryID, error) {
+	result, err := c.recallResultWithParams(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return result.Hits, nil
+}
+
 // RecallOpts holds optional parameters for the LongMemEval recall client.
 type RecallOpts struct {
 	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
@@ -365,7 +461,15 @@ type RecallOpts struct {
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.
 // Convenience wrapper for the longmemeval run command.
 func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithExactBoost(ctx, project, query, topK, since, before)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallScoredWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]ScoredMemoryID, error) {
+	return c.recallScoredWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 		exactFactBoost: true,
 	})
@@ -456,18 +560,18 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return RecallResult{}, fmt.Errorf("parse recall response: %w", err)
 	}
-	ids := make([]string, 0, len(resp.Results)+len(resp.Handles))
+	hits := make([]ScoredMemoryID, 0, len(resp.Results)+len(resp.Handles))
 	for _, r := range resp.Results {
 		if r.Memory.ID != "" {
-			ids = append(ids, r.Memory.ID)
+			hits = append(hits, ScoredMemoryID{ID: r.Memory.ID, Score: r.Score})
 		}
 	}
 	for _, h := range resp.Handles {
 		if h.ID != "" {
-			ids = append(ids, h.ID)
+			hits = append(hits, ScoredMemoryID{ID: h.ID, Score: h.Score})
 		}
 	}
-	return RecallResult{IDs: ids, AtomPreamble: resp.AtomPreamble}, nil
+	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
