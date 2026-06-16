@@ -476,6 +476,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
 	}
+	recallScored := func(query string, topK int, callSince, callBefore *time.Time) ([]longmemeval.RecallResult, error) {
+		if cfg.ExactSignalBoost {
+			return mcpClient.RecallResultsWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
+		}
+		return mcpClient.RecallResultsWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+	}
 	recallDefault := func(query string, topK int) ([]string, error) {
 		if cfg.ExactSignalBoost {
 			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
@@ -503,6 +509,28 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				QuestionID: item.QuestionID,
 				Status:     "error",
 				Error:      fmt.Sprintf("temporal-window recall: %v", err),
+			}
+		}
+	} else if cfg.DualPreferenceRecall && longmemeval.InferQuestionType(item.Question) == "single-session-preference" {
+		results, dualErr := longmemeval.RecallForQuestion(
+			item.Question,
+			recallQuery,
+			longmemeval.RunOpts{DualPreferenceRecall: true},
+			func(query string) ([]longmemeval.RecallResult, error) {
+				return recallScored(query, cfg.RecallTopK, since, before)
+			},
+		)
+		if dualErr != nil {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("recall: %v", dualErr),
+			}
+		}
+		retrievedIDs = make([]string, 0, len(results))
+		for _, result := range results {
+			if result.ID != "" {
+				retrievedIDs = append(retrievedIDs, result.ID)
 			}
 		}
 	} else {
@@ -545,23 +573,6 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
 		} else {
 			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
-		}
-	}
-
-	// H15 (lme-h8h12h15): dual-query preference recall — run a second recall
-	// using the subject-anchor query for preference questions and union results.
-	if cfg.DualPreferenceRecall && item.QuestionType == "single-session-preference" {
-		anchorTopK := cfg.RecallTopK / 2
-		if anchorTopK < 1 {
-			anchorTopK = 1
-		}
-		anchor := longmemeval.PreferenceSubjectAnchorQuery(item.Question)
-		anchorIDs, anchorErr := recallDefault(anchor, anchorTopK)
-		if anchorErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, anchorIDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, anchorIDs)
-		} else {
-			log.Printf("WARN run [%s] H15 anchor recall failed: %v", item.QuestionID, anchorErr)
 		}
 	}
 

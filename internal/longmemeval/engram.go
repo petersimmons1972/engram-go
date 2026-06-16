@@ -264,7 +264,14 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 }
 
 func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	results, err := c.recallResultsWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+	})
+	return recallResultIDs(results), err
+}
+
+func (c *Client) RecallResultsWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]RecallResult, error) {
+	return c.recallResultsWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 	})
 }
@@ -275,16 +282,22 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 // are advisory — the server falls back to baseline single-pass recall when no window
 // resolves (e.g. "how many X ago").
 func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	results, err := c.recallResultsWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK,
 		temporalWindow: true, questionText: questionText, questionDate: questionDate,
 	})
+	return recallResultIDs(results), err
 }
 
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
 func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	results, err := c.RecallResultsWithOpts(ctx, project, query, topK, since, before, topicAnchorBoost)
+	return recallResultIDs(results), err
+}
+
+func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]RecallResult, error) {
+	return c.recallResultsWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 		topicAnchorBoost: topicAnchorBoost,
 	})
@@ -304,7 +317,38 @@ type recallParams struct {
 	topicAnchorBoost bool
 }
 
-func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
+// RecallOpts holds optional parameters for the LongMemEval recall client.
+type RecallOpts struct {
+	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
+	// handler, enabling the entity-identifier scoring boost (LME #938 improvement #3).
+	ExactFactBoost bool
+}
+
+// RecallWithExactBoost calls recall with exact_fact_boost enabled.
+// Convenience wrapper for the longmemeval run command.
+func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+	results, err := c.RecallResultsWithExactBoost(ctx, project, query, topK, since, before)
+	return recallResultIDs(results), err
+}
+
+func (c *Client) RecallResultsWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]RecallResult, error) {
+	return c.recallResultsWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true,
+	})
+}
+
+func recallResultIDs(results []RecallResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.ID != "" {
+			ids = append(ids, result.ID)
+		}
+	}
+	return ids
+}
+
+func (c *Client) recallResultsWithParams(ctx context.Context, p recallParams) ([]RecallResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
@@ -318,32 +362,16 @@ func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string
 				return nil, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, p)
+		results, err := c.recallResults(ctx, p)
 		if err == nil {
-			return ids, nil
+			return results, nil
 		}
 		lastErr = err
 	}
 	return nil, lastErr
 }
 
-// RecallOpts holds optional parameters for the LongMemEval recall client.
-type RecallOpts struct {
-	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
-	// handler, enabling the entity-identifier scoring boost (LME #938 improvement #3).
-	ExactFactBoost bool
-}
-
-// RecallWithExactBoost calls recall with exact_fact_boost enabled.
-// Convenience wrapper for the longmemeval run command.
-func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
-		project: project, query: query, topK: topK, since: since, before: before,
-		exactFactBoost: true,
-	})
-}
-
-func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
+func (c *Client) recallResults(ctx context.Context, p recallParams) ([]RecallResult, error) {
 	args := map[string]any{
 		"query":   p.query,
 		"project": p.project,
@@ -421,18 +449,18 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return nil, fmt.Errorf("parse recall response: %w", err)
 	}
-	ids := make([]string, 0, len(resp.Results)+len(resp.Handles))
+	results := make([]RecallResult, 0, len(resp.Results)+len(resp.Handles))
 	for _, r := range resp.Results {
 		if r.Memory.ID != "" {
-			ids = append(ids, r.Memory.ID)
+			results = append(results, RecallResult{ID: r.Memory.ID, Score: r.Score})
 		}
 	}
 	for _, h := range resp.Handles {
 		if h.ID != "" {
-			ids = append(ids, h.ID)
+			results = append(results, RecallResult{ID: h.ID, Score: h.Score})
 		}
 	}
-	return ids, nil
+	return results, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.

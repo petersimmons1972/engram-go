@@ -4,13 +4,32 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 // preferenceStripRe strips the opening recommendation verb phrase from a question.
 // e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?".
 var preferenceStripRe = regexp.MustCompile(
-	`(?i)^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me) `)
+	`(?i)^(?:(?:can|could|would) you )?(?:recommend|suggest|advise|give me|tell me)\s+|^what do you think about\s+|^do you prefer\s+|^what did i say about\s+`)
+
+// preferenceQuestionRe is the text-only heuristic used to infer that a raw
+// question is preference-shaped in the production recall path, where dataset
+// question_type is unavailable (FM-77).
+var preferenceQuestionRe = regexp.MustCompile(
+	`(?i)^(?:(?:can|could|would) you )?(?:recommend|suggest|advise|give me|tell me)\b|^what do you think about\b|^do you prefer\b|^what did i say about\b|^what do i like\b|^what do i love\b|^what do i hate\b`)
+
+// RunOpts holds longmemeval run-side options used by the dual preference recall
+// planner. The zero value preserves the baseline single-call path.
+type RunOpts struct {
+	DualPreferenceRecall bool
+}
+
+// RecallResult is one scored memory_recall hit.
+type RecallResult struct {
+	ID    string
+	Score float64
+}
 
 // PreferenceRecallQuery rewrites a preference question into a recall query
 // targeting sessions where the user expressed preferences, not sessions that
@@ -22,6 +41,93 @@ func PreferenceRecallQuery(question string) string {
 		stripped = question
 	}
 	return "user preference " + stripped + " like dislike use avoid"
+}
+
+// SubjectNPQuery strips preference framing and returns the clean subject noun
+// phrase for the anchor recall pass in H15.
+func SubjectNPQuery(question string) string {
+	stripped := preferenceStripRe.ReplaceAllString(strings.TrimSpace(question), "")
+	stripped = strings.TrimSpace(strings.TrimRight(stripped, "?!.,;:"))
+	if stripped == "" {
+		return strings.TrimSpace(strings.TrimRight(question, "?!.,;:"))
+	}
+	return stripped
+}
+
+// InferQuestionType infers the preference category directly from question text.
+// Only the single-session-preference case is needed by the eval harness today.
+func InferQuestionType(question string) string {
+	if preferenceQuestionRe.MatchString(strings.TrimSpace(question)) {
+		return "single-session-preference"
+	}
+	return ""
+}
+
+// RecallForQuestion executes the baseline recall path or, when enabled and the
+// question text is preference-shaped, the H15 dual-pass recall:
+//  1. subject noun-phrase anchor query
+//  2. generic preference recall query
+//
+// The union is deduped by memory ID and ranked by max(score).
+func RecallForQuestion(question, baselineQuery string, opts RunOpts, recall func(query string) ([]RecallResult, error)) ([]RecallResult, error) {
+	if !opts.DualPreferenceRecall || InferQuestionType(question) != "single-session-preference" {
+		return recall(baselineQuery)
+	}
+
+	subjectResults, err := recall(SubjectNPQuery(question))
+	if err != nil {
+		return nil, err
+	}
+	preferenceResults, err := recall(PreferenceRecallQuery(question))
+	if err != nil {
+		return nil, err
+	}
+	return unionRecallResults(subjectResults, preferenceResults), nil
+}
+
+func unionRecallResults(primary, secondary []RecallResult) []RecallResult {
+	type scored struct {
+		result    RecallResult
+		firstSeen int
+	}
+	merged := make(map[string]scored, len(primary)+len(secondary))
+	order := 0
+	ingest := func(results []RecallResult) {
+		for _, result := range results {
+			if result.ID == "" {
+				continue
+			}
+			current, ok := merged[result.ID]
+			if !ok {
+				merged[result.ID] = scored{result: result, firstSeen: order}
+				order++
+				continue
+			}
+			if result.Score > current.result.Score {
+				current.result.Score = result.Score
+				merged[result.ID] = current
+			}
+		}
+	}
+	ingest(primary)
+	ingest(secondary)
+
+	out := make([]scored, 0, len(merged))
+	for _, result := range merged {
+		out = append(out, result)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].result.Score == out[j].result.Score {
+			return out[i].firstSeen < out[j].firstSeen
+		}
+		return out[i].result.Score > out[j].result.Score
+	})
+
+	combined := make([]RecallResult, 0, len(out))
+	for _, result := range out {
+		combined = append(combined, result.result)
+	}
+	return combined
 }
 
 // ---------------------------------------------------------------------------
