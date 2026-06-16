@@ -66,3 +66,29 @@ by forcing commitment. Trades safety for commitment: hard-wrong rate ~doubles. D
 Sonnet generator = the lever (+8.0pp, ship it). Opus = not worth the cost. Residual LME loss is
 ranking+generation on preference: address with (1) preference-enumerate prompt on Sonnet (+10pp,
 Opus-grade preference without Opus cost), (2) answerability reranker gated to multi-session/temporal only.
+
+## SESSION UPDATE 2026-06-16 — socialization + ship decision (Path B)
+
+Socialized the plan three-way (Codex implementer review + Hermes contrarian). Outcome:
+the plan got SMALLER. Per-type reranker gating KILLED (Hermes: question_type is an
+eval-only artifact absent in prod; aggregate +0.03 NDCG@5 hid preference Recall@5 -0.10).
+Preference-enumerate kept for the SCORE (strict-correct +10pp is real under LME's
+CORRECT-only metric; the +20pp incorrect is scoring-neutral) but flagged for a product-side
+abstention gate. Run order flipped to stack-first.
+
+SHIP DECISION (founder, Path B). "Sonnet generator" cannot ship server-side: engram's only
+Claude path (internal/claude.Client -> Anthropic /v1/messages, x-api-key) needs an API key
+that does not exist by policy; the eval's claude --print is a host CLI a pod cannot call.
+But the eval generation step MODELS the calling agent — in real use the client's own Claude
+IS the Sonnet generator. So: engram stays a memory backend; ship preference-enumerate as a
+synthesis_directive attached to preference-intent recall responses, applied client-side.
+- Gate on an OBSERVABLE lexical preference-intent signal, never question_type (FM-77).
+- Directive carries an abstention clause to avoid confident-wrong (FM-76).
+Packaged as Codex issue engram-go#1113 (p1, parallel-safe).
+
+Registered failure modes from the red-team: FM-76 (forced-commitment confident-wrong),
+FM-77 (aggregate metric masks per-segment collapse). Home repo commit 8ba2b68.
+
+Stack-first validation (sonnet + preference-enumerate, reranker OFF, full 135): IN PROGRESS.
+Expected ~34.8% overall (base 32.6% + preference 16.7%->26.7% over 30/135). Number to be
+appended on completion.
