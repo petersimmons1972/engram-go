@@ -443,6 +443,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if !ok {
 			addRecallDegradedWarning(out, cfg.RouterURL, reason)
 		}
+		attachSynthesisDirective(out, query)
 		return toolResult(out)
 	}
 
@@ -591,6 +592,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
+	attachSynthesisDirective(out, query)
 	if atomPreamble != "" {
 		out["atom_preamble"] = atomPreamble
 	}
