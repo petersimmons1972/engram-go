@@ -494,17 +494,16 @@ func GenerationPromptForTypeWithDateInjection(question, questionType, questionDa
 	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 }
 
-// GenerationPromptForTypeEnumerate (H12, lme-h8h12h15) is like
-// GenerationPromptForType but accepts an enumerateFirst flag. When
-// enumerateFirst is true AND the question matches the aggregation pattern, the
-// generation prompt instructs the model to enumerate each relevant event from
-// the retrieved blocks before stating a count. For non-aggregation questions
-// the flag is a no-op so other question types are unaffected.
+// GenerationPromptForTypeEnumerate (H12) is like GenerationPromptForType but
+// prepends an enumerate-first instruction when enumerateFirst is true and the
+// question matches the aggregation heuristic. For non-aggregation questions the
+// flag is a no-op so other question types are unaffected.
 func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
+	prompt := GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 	if enumerateFirst && questionType != "temporal-reasoning" && questionType != "single-session-preference" && IsAggregationQuestion(question) {
-		return GenerationPromptEnumerateFirst(question, questionDate, contextBlocks)
+		return prependPromptPrefix(EnumerateFirstPrefix(), prompt)
 	}
-	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+	return prompt
 }
 
 // GenerationPromptForTypePreferenceEnumerate (H-PE) is like
@@ -555,21 +554,7 @@ Instructions:
 // enumeration pass that prevents the model from returning a session count
 // instead of an entity count.
 func GenerationPromptEnumerateFirst(question, questionDate string, contextBlocks []string) string {
-	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
-	return fmt.Sprintf(`You are answering questions about a person's conversation history.
-
-Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
-
-Relevant memory context:
-%s
-
-Question (asked on %s): %s
-
-Instructions:
-1. First, enumerate each relevant event or entity mentioned across the memory blocks above. List each one separately (e.g. "1. Visit on 2023-03-10", "2. Visit on 2023-07-22"). If the same event appears in multiple blocks, count it only once.
-2. Then, sum or total the distinct items you enumerated to answer the question.
-3. State the final answer concisely. If the answer is a number, return only that number with minimal framing.
-4. If the answer is not present in the memory blocks, say so. Do not invent events or dates not found in the context.`, questionDate, ctx, questionDate, question)
+	return prependPromptPrefix(EnumerateFirstPrefix(), GenerationPrompt(question, questionDate, contextBlocks))
 }
 
 // GenerationPrompt builds the prompt for answer generation.

@@ -468,7 +468,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
 	// When --disable-query-rewrite is set, use the raw question unchanged.
+	runOpts := longmemeval.RunOpts{
+		ExhaustiveAggregation: cfg.ExhaustiveAggregation,
+		EnumerateFirst:        cfg.EnumerateFirst,
+	}
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
+	effectiveRecallTopK := runOpts.EffectiveRecallTopK(item.Question, cfg.RecallTopK)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
 	var atomRecallAsOf *time.Time
 	if cfg.AtomMode {
@@ -515,7 +520,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
 	if serverTemporalWindow {
-		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, cfg.RecallTopK, item.Question, item.QuestionDate)
+		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
 			return longmemeval.RunEntry{
 				QuestionID: item.QuestionID,
@@ -524,7 +529,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			}
 		}
 	} else {
-		recallResult, fallbackIDs, recallErr := recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
+		recallResult, fallbackIDs, recallErr := recallWithTemporalFallback(recallQuery, effectiveRecallTopK, since, before, recall)
 		retrievedIDs, temporalFallbackIDs, atomPreamble, err = recallResult.IDs, fallbackIDs, recallResult.AtomPreamble, recallErr
 		if err != nil {
 			return longmemeval.RunEntry{
@@ -544,7 +549,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		// fusion candidates to at most 3 swapped-in slots, defeating the lever.
 		variants := buildRecallVariants(item.Question, recallQuery, cfg.DisableQueryRewrite, true)
 		for _, q := range variants[1:] {
-			recallResult, qErr := recallDefault(q, cfg.RecallTopK)
+			recallResult, qErr := recallDefault(q, effectiveRecallTopK)
 			if qErr != nil {
 				log.Printf("WARN run [%s] fusion recall (%q): %v", item.QuestionID, q, qErr)
 				continue
@@ -553,19 +558,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
-	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
-	// the object noun-phrase for count-shaped questions and union with primary.
-	if cfg.ExhaustiveAggregation && !serverTemporalWindow && longmemeval.IsAggregationQuestion(item.Question) {
-		const aggregationSweepTopK = 500
-		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
-		sweepResult, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
-		if sweepErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, sweepResult.IDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepResult.IDs)
-		} else {
-			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
-		}
-	}
+	// H8 (lme-h8h12h15): exhaustive aggregation recall is now handled by
+	// RunOpts.EffectiveRecallTopK (deep primary recall for count-shaped questions)
+	// and RunOpts.UseFullAggregationContext (full result set into context), rather
+	// than a separate anchor sweep — see internal/longmemeval/claude_additions.go.
 
 	// H15 (lme-h8h12h15): dual-query preference recall — run a second recall
 	// using the subject-anchor query for preference questions and union results.
@@ -596,7 +592,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
 		} else {
 			for _, pq := range paraphrases {
-				pResult, pErr := recallDefault(pq, cfg.RecallTopK)
+				pResult, pErr := recallDefault(pq, effectiveRecallTopK)
 				if pErr != nil {
 					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
 					continue
@@ -613,6 +609,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	var contextLimit int
 	if cfg.ContextTopKOverride > 0 {
 		contextLimit = cfg.ContextTopKOverride
+	} else if runOpts.UseFullAggregationContext(item.Question) {
+		contextLimit = len(retrievedIDs)
 	} else {
 		contextLimit = longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
 	}
@@ -691,8 +689,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
 	// the two are mutually exclusive. When both are set, aug wins.
-	// H12 (--enumerate-first) is orthogonal — it only fires for aggregation
-	// questions, which the temporal/preference branches above never match.
+	// H12 (--enumerate-first) is applied after the per-type prompt is chosen
+	// (via runOpts.ApplyEnumerateFirst below) so it prefixes the baseline prompt
+	// instead of replacing it.
 	// H-PE (--preference-enumerate) is orthogonal — it only fires for
 	// single-session-preference questions and is independent of the other flags.
 	var prompt string
@@ -701,13 +700,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypeWithTemporalAug(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.InjectQuestionDate:
 		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.EnumerateFirst:
-		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.PreferenceEnumerate:
 		prompt = longmemeval.GenerationPromptForTypePreferenceEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
+	prompt = runOpts.ApplyEnumerateFirst(prompt, item.Question, item.QuestionType)
 
 	// #938: prepend atom context block before the memory context when --atom-mode is set.
 	if atomContextBlock != "" {
