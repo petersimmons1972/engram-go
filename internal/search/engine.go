@@ -123,6 +123,11 @@ type RecallOpts struct {
 	// identical to the baseline. Default false. (LEVER-8)
 	SessionNDCGAgg bool
 
+	// SessionDiversityN caps how many results from one session can occupy the
+	// leading window before another distinct session gets a turn. A value of 0
+	// disables the pass. Applied after SessionNDCGAgg and before topK truncation.
+	SessionDiversityN int
+
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for preference
 	// queries. When true and the query is preference-shaped, the engine fetches
 	// best-chunk embeddings for top candidates, computes a centroid of the top-10
@@ -1135,6 +1140,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// preference-first path already produces coherent ordering.
 	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg && !prefQuery)
 
+	sessionDiversityN := opts.SessionDiversityN
+	if sessionDiversityN == 0 {
+		sessionDiversityN = SessionDiversityNFromEnv()
+	}
+	results = applySessionDiversity(results, topK, sessionDiversityN)
+
 	// Preference-first recall path: when the query is preference-shaped, ensure
 	// preference-typed memories are represented in the top results even if their
 	// raw composite scores are lower than irrelevant context memories.
@@ -2046,11 +2057,12 @@ type MigrateParams struct {
 // A background reembed worker will repopulate embeddings after this call.
 //
 // Safety guards (applied in order, highest priority first):
-//  G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
-//  G2 — Same dimension without force: soft-refused (result["error"] set).
-//  G3 — dry_run: counts affected chunks without nulling.
-//       Large volume without confirm: soft-refused.
-//  G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
+//
+//	G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
+//	G2 — Same dimension without force: soft-refused (result["error"] set).
+//	G3 — dry_run: counts affected chunks without nulling.
+//	     Large volume without confirm: soft-refused.
+//	G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (map[string]any, error) {
 	newModel := p.NewModel
 

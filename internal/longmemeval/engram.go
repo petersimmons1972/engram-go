@@ -282,26 +282,28 @@ func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query st
 }
 
 // RecallWithOpts calls memory_recall with additional server-side options.
-// topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
-func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
+func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, opts RecallOpts) ([]string, error) {
 	return c.recallWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
-		topicAnchorBoost: topicAnchorBoost,
+		exactFactBoost:    opts.ExactFactBoost,
+		topicAnchorBoost:  opts.TopicAnchorBoost,
+		sessionDiversityN: opts.SessionDiversityN,
 	})
 }
 
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
-	project          string
-	query            string
-	topK             int
-	since            *time.Time
-	before           *time.Time
-	temporalWindow   bool
-	questionText     string
-	questionDate     string
-	exactFactBoost   bool
-	topicAnchorBoost bool
+	project           string
+	query             string
+	topK              int
+	since             *time.Time
+	before            *time.Time
+	temporalWindow    bool
+	questionText      string
+	questionDate      string
+	exactFactBoost    bool
+	topicAnchorBoost  bool
+	sessionDiversityN int
 }
 
 func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
@@ -332,14 +334,19 @@ type RecallOpts struct {
 	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
 	// handler, enabling the entity-identifier scoring boost (LME #938 improvement #3).
 	ExactFactBoost bool
+	// TopicAnchorBoost passes topic_anchor_boost=true to the server-side
+	// memory_recall handler (H-TAB, LME exp #3).
+	TopicAnchorBoost bool
+	// SessionDiversityN carries the benchmark harness setting for the session-
+	// diversity post-pass. Zero disables it.
+	SessionDiversityN int
 }
 
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.
 // Convenience wrapper for the longmemeval run command.
 func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
-		project: project, query: query, topK: topK, since: since, before: before,
-		exactFactBoost: true,
+	return c.RecallWithOpts(ctx, project, query, topK, since, before, RecallOpts{
+		ExactFactBoost: true,
 	})
 }
 
@@ -374,6 +381,9 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
 	if p.topicAnchorBoost {
 		args["topic_anchor_boost"] = true
+	}
+	if p.sessionDiversityN > 0 {
+		args["session_diversity_n"] = p.sessionDiversityN
 	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{

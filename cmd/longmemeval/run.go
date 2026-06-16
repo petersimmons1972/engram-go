@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // preservedLog is a mutex-protected accumulator for project names that were
@@ -469,18 +470,17 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
+	recallOpts := longmemeval.RecallOpts{
+		ExactFactBoost:    cfg.ExactSignalBoost,
+		TopicAnchorBoost:  cfg.TopicAnchorBoost,
+		SessionDiversityN: search.SessionDiversityNFromEnv(),
+	}
 
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
-		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, recallOpts)
 	}
 	recallDefault := func(query string, topK int) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
-		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, recallOpts)
 	}
 
 	// H-NEW-1: when --temporal-window-recall is set, hand temporal anchoring to the
