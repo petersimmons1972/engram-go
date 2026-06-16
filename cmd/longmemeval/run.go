@@ -467,7 +467,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
 	// When --disable-query-rewrite is set, use the raw question unchanged.
+	runOpts := longmemeval.RunOpts{
+		ExhaustiveAggregation: cfg.ExhaustiveAggregation,
+		EnumerateFirst:        cfg.EnumerateFirst,
+	}
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
+	effectiveRecallTopK := runOpts.EffectiveRecallTopK(item.Question, cfg.RecallTopK)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
 
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
@@ -497,7 +502,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
 	if serverTemporalWindow {
-		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, cfg.RecallTopK, item.Question, item.QuestionDate)
+		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
 			return longmemeval.RunEntry{
 				QuestionID: item.QuestionID,
@@ -506,7 +511,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			}
 		}
 	} else {
-		retrievedIDs, temporalFallbackIDs, err = recallWithTemporalFallback(recallQuery, cfg.RecallTopK, since, before, recall)
+		retrievedIDs, temporalFallbackIDs, err = recallWithTemporalFallback(recallQuery, effectiveRecallTopK, since, before, recall)
 		if err != nil {
 			return longmemeval.RunEntry{
 				QuestionID: item.QuestionID,
@@ -525,26 +530,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		// fusion candidates to at most 3 swapped-in slots, defeating the lever.
 		variants := buildRecallVariants(item.Question, recallQuery, cfg.DisableQueryRewrite, true)
 		for _, q := range variants[1:] {
-			ids, qErr := recallDefault(q, cfg.RecallTopK)
+			ids, qErr := recallDefault(q, effectiveRecallTopK)
 			if qErr != nil {
 				log.Printf("WARN run [%s] fusion recall (%q): %v", item.QuestionID, q, qErr)
 				continue
 			}
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, ids)
-		}
-	}
-
-	// H8 (lme-h8h12h15): exhaustive aggregation recall — run a topK=500 sweep on
-	// the object noun-phrase for count-shaped questions and union with primary.
-	if cfg.ExhaustiveAggregation && !serverTemporalWindow && longmemeval.IsAggregationQuestion(item.Question) {
-		const aggregationSweepTopK = 500
-		sweepQuery := longmemeval.ExtractAggregationAnchor(item.Question)
-		sweepIDs, sweepErr := recallDefault(sweepQuery, aggregationSweepTopK)
-		if sweepErr == nil {
-			secondaryContextIDs = append(secondaryContextIDs, sweepIDs...)
-			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, sweepIDs)
-		} else {
-			log.Printf("WARN run [%s] H8 aggregation sweep failed: %v", item.QuestionID, sweepErr)
 		}
 	}
 
@@ -577,7 +568,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
 		} else {
 			for _, pq := range paraphrases {
-				pIDs, pErr := recallDefault(pq, cfg.RecallTopK)
+				pIDs, pErr := recallDefault(pq, effectiveRecallTopK)
 				if pErr != nil {
 					log.Printf("WARN run [%s] paraphrase recall (%q): %v", item.QuestionID, pq, pErr)
 					continue
@@ -594,6 +585,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	var contextLimit int
 	if cfg.ContextTopKOverride > 0 {
 		contextLimit = cfg.ContextTopKOverride
+	} else if runOpts.UseFullAggregationContext(item.Question) {
+		contextLimit = len(retrievedIDs)
 	} else {
 		contextLimit = longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
 	}
@@ -681,11 +674,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypeWithTemporalAug(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.InjectQuestionDate:
 		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.EnumerateFirst:
-		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
+	prompt = runOpts.ApplyEnumerateFirst(prompt, item.Question, item.QuestionType)
 
 	// #938: prepend atom context block before the memory context when --atom-mode is set.
 	if atomContextBlock != "" {

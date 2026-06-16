@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const exhaustiveAggregationTopK = 500
+
 // preferenceStripRe strips the opening recommendation verb phrase from a question.
 // e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?".
 var preferenceStripRe = regexp.MustCompile(
@@ -77,10 +79,49 @@ func PreferenceSubjectAnchorQuery(question string) string {
 	return "user preference " + anchor + " like dislike use avoid"
 }
 
-// aggregationRe (H8) matches count-shaped questions that require
-// population-level retrieval rather than a single top-scoring session.
+// RunOpts carries H8/H12 run-time switches that alter recall depth and prompt
+// construction without changing the default benchmark path.
+type RunOpts struct {
+	ExhaustiveAggregation bool
+	EnumerateFirst        bool
+}
+
+// EffectiveRecallTopK returns the topK value that should be used for the
+// question. H8 is opt-in and only affects aggregation-shaped questions.
+func (o RunOpts) EffectiveRecallTopK(question string, baseline int) int {
+	if o.ExhaustiveAggregation && IsAggregationQuestion(question) {
+		return exhaustiveAggregationTopK
+	}
+	return baseline
+}
+
+// UseFullAggregationContext reports whether the full recalled result set should
+// be swept into the generation context for this question.
+func (o RunOpts) UseFullAggregationContext(question string) bool {
+	return o.ExhaustiveAggregation && IsAggregationQuestion(question)
+}
+
+// ApplyEnumerateFirst prepends the H12 instruction to an existing prompt when
+// the flag is enabled for an aggregation-shaped question.
+func (o RunOpts) ApplyEnumerateFirst(prompt, question, questionType string) string {
+	if !o.EnumerateFirst || !IsAggregationQuestion(question) {
+		return prompt
+	}
+	if questionType == "temporal-reasoning" || questionType == "single-session-preference" {
+		return prompt
+	}
+	return prependPromptPrefix(EnumerateFirstPrefix(), prompt)
+}
+
+// aggregationRe (H8) matches exhaustive retrieval questions that need all
+// matching sessions, including list/every-time phrasing.
 var aggregationRe = regexp.MustCompile(
-	`(?i)\b(how many|how often|how much total|total number of|sum of|count of)\b`)
+	`(?i)\b(how many(?: times)?|how often|how much total|total number of|sum of|count of|list (?:all|every|everything)|every time|all occasions?)\b`)
+
+// temporalQuantityRe excludes relative-time arithmetic questions like
+// "how many days ago", which are temporal reasoning rather than aggregation.
+var temporalQuantityRe = regexp.MustCompile(
+	`(?i)\bhow many (days?|weeks?|months?|years?) (ago|before|after)\b`)
 
 // aggregationStripRe (H8) strips the counting interrogative phrase so that the
 // remaining tokens describe the object being counted.
@@ -90,7 +131,16 @@ var aggregationStripRe = regexp.MustCompile(
 // IsAggregationQuestion (H8) returns true when the question matches the
 // aggregation pattern that requires exhaustive population recall.
 func IsAggregationQuestion(question string) bool {
+	if temporalQuantityRe.MatchString(question) {
+		return false
+	}
 	return aggregationRe.MatchString(question)
+}
+
+// EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
+// prompts so the model enumerates evidence before synthesizing an answer.
+func EnumerateFirstPrefix() string {
+	return "First, list every relevant event/fact from the context, numbered, and enumerate each distinct item only once. Then synthesize your answer from that list."
 }
 
 // ExtractAggregationAnchor (H8) strips the counting interrogative prefix and
@@ -114,6 +164,19 @@ func ExtractAggregationAnchor(question string) string {
 		return stripped
 	}
 	return strings.Join(keep, " ")
+}
+
+func prependPromptPrefix(prefix, prompt string) string {
+	prefix = strings.TrimSpace(prefix)
+	prompt = strings.TrimSpace(prompt)
+	switch {
+	case prefix == "":
+		return prompt
+	case prompt == "":
+		return prefix
+	default:
+		return prefix + "\n\n" + prompt
+	}
 }
 
 // UnionMemoryIDs (H8/H15) merges primary and secondary ID slices, preserving
