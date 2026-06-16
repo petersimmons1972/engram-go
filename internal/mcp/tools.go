@@ -142,6 +142,19 @@ type Config struct {
 	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
 	SessionNDCGAgg bool
 
+	// SessionDiversityN is the LEVER-9 per-session chunk cap for recall results.
+	// When non-zero, recall results are post-processed to ensure no single session
+	// contributes more than N chunks to the returned topK. This surfaces minority-
+	// session gold chunks buried under a dominant session's higher-scoring chunks.
+	//
+	// Note: RecallWithOpts reads ENGRAM_SESSION_DIVERSITY_N directly as a fallback
+	// when this field is zero, so the env var alone is sufficient for server-wide
+	// activation without wiring through the MCP handler. This field is provided for
+	// future per-request override support.
+	//
+	// Default 0 = off (baseline-safe). (LEVER-9, issue #1121)
+	SessionDiversityN int
+
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for
 	// preference-shaped recall queries. When true, RecallWithOpts applies an
 	// MMR re-scoring post-pass that surfaces domain-specific preference sessions

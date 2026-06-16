@@ -168,6 +168,19 @@ type RecallOpts struct {
 	// Default false (ablatable — no behavior change until explicitly enabled).
 	EvidenceFirstPack bool
 
+	// SessionDiversityN caps the per-session chunk contribution to N chunks in the
+	// post-ranking result set (LEVER-9, issue #1121). When N > 0 and ≥2 distinct
+	// sessions are present, applySessionDiversity redistributes topK slots so no
+	// single session dominates the context window. Default 0 = off (baseline-safe).
+	//
+	// When 0, RecallWithOpts additionally checks ENGRAM_SESSION_DIVERSITY_N from
+	// the environment, allowing server-side configuration without modifying the
+	// MCP handler. Tests set this field directly to bypass the env var.
+	//
+	// Dynamic gate: when ≤1 distinct session is present in results, the pass is
+	// skipped entirely (no-op, no allocation). No question_type gating (FM-77).
+	SessionDiversityN int
+
 	// AtomRecallEnabled attaches a separate structured atom preamble for
 	// preference-shaped queries. The preamble is additive metadata only and does
 	// not enter composite scoring or the ranked result pool.
@@ -1221,6 +1234,27 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// singletons (no sid: tag) — session packing adds no value here — and the
 	// preference-first path already produces coherent ordering.
 	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg && !prefQuery)
+
+	// LEVER-9: session-diversity sampling (issue #1121).
+	// After SessionNDCGAgg re-ranking, a dominant session may still flood topK with
+	// its highest-scoring chunks, burying gold from minority sessions. This pass caps
+	// the per-session contribution at SessionDiversityN chunks. Applied before
+	// topK truncation, preference-first reordering, and downstream re-rankers so
+	// the diverse candidate set flows into all subsequent passes.
+	//
+	// Dynamic gate: skipped when ≤1 distinct session is present (single-session
+	// queries, cold-start items). No question_type gating (FM-77) — gate uses only
+	// observable data signals.
+	//
+	// N source precedence: RecallOpts.SessionDiversityN (direct callers / tests) →
+	// ENGRAM_SESSION_DIVERSITY_N env var (server-wide flag) → 0 (baseline identity).
+	{
+		divN := opts.SessionDiversityN
+		if divN == 0 {
+			divN = SessionDiversityNFromEnv()
+		}
+		results = applySessionDiversity(results, topK, divN)
+	}
 
 	// Preference-first recall path: when the query is preference-shaped, ensure
 	// preference-typed memories are represented in the top results even if their

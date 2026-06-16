@@ -211,6 +211,7 @@ func runServer(args []string) error {
 
 	// LEVER-8: session-DCG aggregation re-ranking.
 	sessionNDCGAgg := fs.Bool("session-ndcg-agg", envBool("ENGRAM_SESSION_NDCG_AGG", false), "LEVER-8: group recall results by sid: tag and re-rank sessions by DCG of chunk cosines (default false; targets multi-session and temporal question types)")
+	sessionDiversityN := fs.Int("session-diversity-n", envInt("ENGRAM_SESSION_DIVERSITY_N", 0), "LEVER-9: cap per-session chunk contribution to N in recall results (0 = off; targets multi-session flooding; RecallWithOpts also reads this env var directly)")
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
@@ -546,6 +547,7 @@ func runServer(args []string) error {
 		EmbedRatePerSecond:     *embedRatePerSecond,
 		LogLevelVar:            logLevelVar,
 		SessionNDCGAgg:         *sessionNDCGAgg,
+		SessionDiversityN:      *sessionDiversityN,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
