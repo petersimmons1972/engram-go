@@ -184,7 +184,9 @@ fn increase_backoff(current_ms: u64) -> u64 {
 /// this function is invoked); `max_backoff_ms > 0`; `min_backoff_ms <= max_backoff_ms`.
 ///
 /// Decision logic:
-/// - Any HTTP failures (failed > 0): Grow — backend errors detected.
+/// - Any HTTP failures (failed > 0): Grow — backend errors detected. This includes short-payload
+///   responses where the embed API returns fewer vectors than chunks requested (claim.rs:160-164
+///   increments failed++ per missing embedding); partial truncation is treated as a backend error.
 /// - SKIP LOCKED contention loss (attempted>0, written=0, failed=0): Reset — backend was
 ///   fine; another worker won the race. Do not penalize a healthy backend.
 /// - Partial or full progress (written > 0, failed == 0): Reset — backend healthy.
