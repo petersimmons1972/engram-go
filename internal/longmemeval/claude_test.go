@@ -742,3 +742,70 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 		}
 	}
 }
+
+// TestPreferenceEnumeratePrompt_SelectedForPreferenceType verifies that
+// GenerationPromptForTypePreferenceEnumerate selects the preference-enumerate
+// prompt when preferenceEnumerate=true AND question_type is
+// "single-session-preference". Guards H-PE flag routing.
+func TestPreferenceEnumeratePrompt_SelectedForPreferenceType(t *testing.T) {
+	question := "What kind of car accessories does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-02-10\nUser: I really want a Thule roof rack, a WeatherTech floor mat, and a Garmin dash cam.",
+	}
+	prompt := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-preference", "2024-06-01",
+		contextBlocks,
+		true,
+	)
+	// The preference-enumerate prompt must contain enumeration instruction keywords.
+	enumerationHints := []string{"list", "each", "specific", "enumerate", "every"}
+	lowerPrompt := strings.ToLower(prompt)
+	found := false
+	for _, hint := range enumerationHints {
+		if strings.Contains(lowerPrompt, hint) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("preference-enumerate prompt must contain an enumeration instruction; got:\n%s", prompt)
+	}
+}
+
+// TestPreferenceEnumeratePrompt_FallsThrough_WhenFlagOff verifies that
+// GenerationPromptForTypePreferenceEnumerate falls through to the standard
+// preference prompt when preferenceEnumerate=false.
+func TestPreferenceEnumeratePrompt_FallsThrough_WhenFlagOff(t *testing.T) {
+	question := "What hotel features does the user want?"
+	contextBlocks := []string{
+		"Session date: 2024-03-01\nUser: I want a hotel with a rooftop pool.",
+	}
+	standardPrompt := longmemeval.GenerationPromptForType(
+		question, "single-session-preference", "2024-06-01", contextBlocks,
+	)
+	enumPromptFlagOff := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-preference", "2024-06-01", contextBlocks,
+		false,
+	)
+	if standardPrompt != enumPromptFlagOff {
+		t.Errorf("preference-enumerate with flag=false must return same prompt as GenerationPromptForType; got diff")
+	}
+}
+
+// TestPreferenceEnumeratePrompt_FallsThrough_WhenNonPreferenceType verifies
+// that GenerationPromptForTypePreferenceEnumerate does NOT activate for
+// non-preference question types even when the flag is true.
+func TestPreferenceEnumeratePrompt_FallsThrough_WhenNonPreferenceType(t *testing.T) {
+	question := "What restaurant did I visit last?"
+	contextBlocks := []string{"Session date: 2024-04-01\nUser: Went to The French Laundry."}
+	standardPrompt := longmemeval.GenerationPromptForType(
+		question, "single-session-user", "2024-06-01", contextBlocks,
+	)
+	enumPromptWrongType := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-user", "2024-06-01", contextBlocks,
+		true,
+	)
+	if standardPrompt != enumPromptWrongType {
+		t.Errorf("preference-enumerate with non-preference type must return same prompt as GenerationPromptForType; got diff")
+	}
+}

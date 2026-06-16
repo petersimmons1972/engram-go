@@ -693,6 +693,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// the two are mutually exclusive. When both are set, aug wins.
 	// H12 (--enumerate-first) is orthogonal — it only fires for aggregation
 	// questions, which the temporal/preference branches above never match.
+	// H-PE (--preference-enumerate) is orthogonal — it only fires for
+	// single-session-preference questions and is independent of the other flags.
 	var prompt string
 	switch {
 	case cfg.TemporalPromptAug:
@@ -701,6 +703,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.EnumerateFirst:
 		prompt = longmemeval.GenerationPromptForTypeEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	case cfg.PreferenceEnumerate:
+		prompt = longmemeval.GenerationPromptForTypePreferenceEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}

@@ -507,6 +507,48 @@ func GenerationPromptForTypeEnumerate(question, questionType, questionDate strin
 	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 }
 
+// GenerationPromptForTypePreferenceEnumerate (H-PE) is like
+// GenerationPromptForType but applies the preference-enumerate variant for
+// single-session-preference questions when preferenceEnumerate is true. When
+// the flag is set and the question type is "single-session-preference", the
+// prompt instructs the model to exhaustively list every specific named
+// item/brand/attribute/feature the user expressed a preference about, rather
+// than summarising the preference abstractly. For all other question types or
+// when the flag is false the standard GenerationPromptForType output is
+// returned unchanged.
+// Activated by --preference-enumerate (Config.PreferenceEnumerate). Off by default.
+func GenerationPromptForTypePreferenceEnumerate(question, questionType, questionDate string, contextBlocks []string, preferenceEnumerate bool) string {
+	if preferenceEnumerate && questionType == "single-session-preference" {
+		return GenerationPromptPreferenceEnumerate(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptPreferenceEnumerate (H-PE) returns a generation prompt that
+// instructs the model to list every specific named item, brand, attribute, or
+// feature the user expressed a preference about that appears in the provided
+// context — not an abstract summary. Targets the judge failure mode where a
+// correct-substance answer is marked PARTIALLY_CORRECT because it omits the
+// specific concrete items the gold answer lists.
+func GenerationPromptPreferenceEnumerate(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Instructions:
+1. Read the context carefully and identify every specific named item, brand, model, attribute, or feature the user expressed a preference about that is relevant to the question.
+2. List each one explicitly — do not summarise or generalise. For example: name the specific product, brand, feature, or location rather than saying "functional accessories" or "a pool".
+3. Start your response with "The user prefers:" followed by the enumerated list.
+4. Include what the user would NOT prefer if the context supports it.
+5. Only include preferences found in the memory context. Do not invent items not present in the context.`, questionDate, ctx, questionDate, question)
+}
+
 // GenerationPromptEnumerateFirst (H12) returns a generation prompt that
 // instructs the model to enumerate each relevant event from the memory blocks
 // individually before computing a total. Forces an explicit intermediate
