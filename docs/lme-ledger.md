@@ -92,3 +92,16 @@ FM-77 (aggregate metric masks per-segment collapse). Home repo commit 8ba2b68.
 Stack-first validation (sonnet + preference-enumerate, reranker OFF, full 135): IN PROGRESS.
 Expected ~34.8% overall (base 32.6% + preference 16.7%->26.7% over 30/135). Number to be
 appended on completion.
+
+## STACK VALIDATION RESULT (2026-06-16) — CONFIRMED
+Sonnet + preference-enumerate, reranker OFF, full 135, Nemotron judge.
+- OVERALL 32.6% -> 35.6% (+3.0pp); vs 24.6% baseline = +11.0pp.
+- single-session-preference 16.7% -> 30.0% (+13.3pp) — the lever, confirmed (beat the
+  isolated 30-item run's 26.7%).
+- temporal +2.2, multi-session -2.1, single-session-user -20.0 (n=5, ONE item), ku flat.
+CAVEAT (FM-77 discipline): non-preference categories are byte-identical prompts (the flag
+only alters preference, code-proven), so the small non-pref wobble is claude --print
+generation NON-DETERMINISM (single-item flips in small-n categories), NOT flag leakage.
+Net +3.0pp is real and preference-driven. Scope-isolation holds.
+VERDICT: stack-first validation PASSED. The +10pp preference lever survives stacking and
+the gains are additive. Path B (engram-go#1113) ships this behavior client-side.
