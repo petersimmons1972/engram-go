@@ -55,7 +55,7 @@ func (c *h8h12Capture) lastPrompt(t *testing.T) string {
 	return c.prompts[len(c.prompts)-1]
 }
 
-func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) h8h12Capture {
+func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) *h8h12Capture {
 	t.Helper()
 
 	var capture h8h12Capture
@@ -130,7 +130,7 @@ func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) h8h12Ca
 		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
 	}
 
-	return capture
+	return &capture
 }
 
 func TestExhaustiveAggregation_DisabledIsBaseline(t *testing.T) {
