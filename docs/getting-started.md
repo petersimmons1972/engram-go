@@ -118,15 +118,21 @@ Subsequent local-only starts are fast — the model is cached in the Ollama volu
 
 ## Step 5: Connect Your IDE
 
-For Claude Code, run `make setup` once the containers are healthy:
+For Claude Code, configure the MCP client once the server is healthy. `make setup` targets the default home-network endpoint `https://engram.petersimmons.com`:
 
 ```bash
 make setup
 ```
 
-This calls the `/setup-token` endpoint on the running server, retrieves the bearer token, and writes it to `~/.claude/mcp_servers.json`. The bootstrap path is one-time localhost setup; after that, the endpoint requires normal bearer-authenticated access. Run `/mcp` in Claude Code afterward to activate the connection.
+For local-only Docker, pass the local server URL explicitly:
 
-Re-run `make setup` any time the server restarts (if `ENGRAM_API_KEY` rotates) or after a fresh install.
+```bash
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
+```
+
+This calls the `/setup-token` endpoint on the effective server, retrieves the bearer token, and writes it to `~/.claude/mcp_servers.json`. It also updates `~/.claude.json` when that file already has a `mcpServers` block. If `/setup-token` is unavailable during bootstrap, setup validates fallback credentials from `~/.config/engram/api_key` first and `~/projects/engram-go/.env` (`ENGRAM_API_KEY`) second before writing anything. Run `/mcp` in Claude Code afterward to activate the connection.
+
+Re-run the same setup command any time the server restarts (if `ENGRAM_API_KEY` rotates) or after a fresh install.
 
 For Cursor, VS Code, Windsurf, or Claude Desktop, see [Connecting Your IDE](connecting.md) — you will need to copy the token from `.env` manually for those clients.
 
