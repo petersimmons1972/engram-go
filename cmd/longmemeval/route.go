@@ -62,6 +62,12 @@ type openAIModel struct {
 	ID string `json:"id"`
 }
 
+// routeDiscoverClient is a dedicated http.Client for Olla model enumeration
+// and readiness validation during route discovery. The 30-second Timeout is a
+// transport-layer backstop so a stalled gateway cannot block discovery
+// indefinitely even when the context deadline fires late (#1107).
+var routeDiscoverClient = &http.Client{Timeout: 30 * time.Second}
+
 func discoverRoute(cfg routeDiscoverConfig) (routeDiscoverResult, error) {
 	if cfg.FleetURL == "" {
 		return routeDiscoverResult{}, errors.New("--fleet-url is required")
@@ -88,7 +94,7 @@ func discoverRoute(cfg routeDiscoverConfig) (routeDiscoverResult, error) {
 	if err != nil {
 		return routeDiscoverResult{}, fmt.Errorf("query AI Flight Controller registry: %w", err)
 	}
-	ollaModels, err := fetchOllaModels(ctx, http.DefaultClient, strings.TrimRight(cfg.OllaURL, "/")+"/olla/openai/v1/models")
+	ollaModels, err := fetchOllaModels(ctx, routeDiscoverClient, strings.TrimRight(cfg.OllaURL, "/")+"/olla/openai/v1/models")
 	if err != nil {
 		return routeDiscoverResult{}, fmt.Errorf("query Olla models: %w", err)
 	}
@@ -100,7 +106,7 @@ func discoverRoute(cfg routeDiscoverConfig) (routeDiscoverResult, error) {
 	baseURL := strings.TrimRight(cfg.OllaURL, "/") + "/olla/openai/v1"
 	validated := false
 	if requiresChatReadiness(cfg.Purpose) {
-		if err := validateOllaChatRoute(ctx, http.DefaultClient, baseURL, selected); err != nil {
+		if err := validateOllaChatRoute(ctx, routeDiscoverClient, baseURL, selected); err != nil {
 			return routeDiscoverResult{}, fmt.Errorf("validate Olla chat route for %q: %w", selected, err)
 		}
 		validated = true
@@ -149,7 +155,10 @@ func routeHTTPClient(cfg routeDiscoverConfig) (*http.Client, error) {
 		}
 		tlsCfg.RootCAs = pool
 	}
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}, nil
+	return &http.Client{
+		Timeout:   30 * time.Second, // transport-layer backstop for stalled gateways (#1107)
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}, nil
 }
 
 func fetchFleetRegistry(ctx context.Context, client *http.Client, url string) ([]fleetHost, error) {
