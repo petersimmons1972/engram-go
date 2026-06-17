@@ -14,6 +14,17 @@
       "Edit",
       "Write",
       "WebSearch",
+      "WebFetch",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput",
+      "TaskUpdate",
+      "TaskStop",
+      "Workflow",
+      "NotebookEdit",
+      "LSP",
+      "Monitor",
       "mcp__github__*",
       "mcp__postgres__*",
       "mcp__Ref__*",
@@ -221,6 +232,21 @@
             "type": "command",
             "command": "~/.claude/hooks/branch-check-pre-tool.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/branch-write-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/secret-pattern-scanner.sh",
+            "timeout": 8
           }
         ]
       }

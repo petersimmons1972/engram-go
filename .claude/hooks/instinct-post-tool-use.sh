@@ -209,33 +209,20 @@ if (( count % threshold == 0 )); then
                     _key_file="$HOME/.config/gmail-job-tracker/anthropic_api_key"
                     [[ -r "$_key_file" ]] && _api_key=$(tr -d '\n' < "$_key_file") || true
                 fi
-                _rc=0
-                # Option A: bounded wait for the dispatch lock. The previous
-                # idiom `flock -n 9 || exit 0` inside this subshell swallowed
-                # lock-busy as exit 0, which the outer `_rc=$?` then read as
-                # success — masking the sentinel mechanism for a legitimate
-                # failure mode (concurrent invocation already running). Using
-                # `flock -w` waits briefly; if the lock cannot be acquired in
-                # time, flock exits 1, the subshell propagates that, and the
-                # outer code path correctly trips the sentinel. We do NOT use
-                # background-and-disown here because the synchronous exit
-                # code is the whole point of the sentinel mechanism for go.
+                # Background the go binary: CC's 5s hook timeout sends SIGKILL to the
+                # entire process group. The previous synchronous pattern (flock -w; timeout;
+                # _rc=$?) was never reaching _rc=$? — CC killed the group at 5s before the
+                # subshell returned, so the sentinel never fired and the go backend silently
+                # failed every invocation. Backgrounding + disown escapes the process group.
+                # (FM-90: go backend SIGKILL prevents sentinel from firing)
+                # Note: exit-code-based sentinel is not viable with CC's SIGKILL model.
+                # To force python fallback manually: touch ~/.local/state/instinct/.go-broken
                 (
-                    flock -w 0.5 -x 9 || exit 1
+                    flock -n 9 || exit 0
                     ANTHROPIC_API_KEY="$_api_key" \
                         timeout "$CONSOLIDATOR_TIMEOUT" "$_go_bin" >> "$LOG_FILE" 2>&1
-                ) 9>"$BUFFER_DIR/.run.lock"
-                _rc=$?
-                # timeout exits 124 on kill; flock-busy exits 1; any non-zero
-                # means failure → sentinel.
-                if [[ $_rc -ne 0 ]]; then
-                    touch "$SENTINEL" || true
-                    (
-                        if flock -w 0.1 -x 9; then
-                            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) instinct: go binary failed rc=$_rc — sentinel set; manual clearance: rm $SENTINEL" >> "$LOG_FILE"
-                        fi
-                    ) 9>"$BUFFER_DIR/.run.lock" || true
-                fi
+                ) 9>"$BUFFER_DIR/.run.lock" &
+                disown $! || true
             fi
             ;;
 

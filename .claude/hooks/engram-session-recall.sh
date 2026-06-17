@@ -105,6 +105,7 @@ fi
 
 # Write RECALL_JSON to a temp file to avoid shell injection into Python (#393)
 _recall_tmp=$(mktemp)
+trap 'rm -f "${_recall_tmp:-}"' EXIT
 printf '%s' "$RECALL_JSON" > "$_recall_tmp"
 RECALL_SECTION=$(python3 - "$_recall_tmp" <<'PYEOF'
 import json, sys

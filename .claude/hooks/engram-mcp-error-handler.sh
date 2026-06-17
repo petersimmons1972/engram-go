@@ -85,7 +85,7 @@ print(f"""## [{today}] Auto-captured from failed {tool_name}
 # Write to fallback.md if we have content to preserve
 if [[ -n "$fallback_entry" ]]; then
     # flock + atomic write to avoid race with engram-flush-fallback.sh (#394)
-    python3 - "$FALLBACK" "$fallback_entry" <<'PYEOF'
+    python3 - "$FALLBACK" "$fallback_entry" <<'PYEOF' || true
 import sys, os, tempfile, fcntl, re, hashlib
 
 path = sys.argv[1]

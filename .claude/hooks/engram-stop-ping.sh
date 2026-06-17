@@ -64,7 +64,7 @@ if [[ "$PROBE_OK" -eq 1 ]]; then
     if [[ -f "$DISCONNECT_STATE" ]]; then
         # Was previously disconnected — emit recovery message and clean up state
         rm -f "$DISCONNECT_STATE"
-        printf '{"type":"system","content":"✅ Engram MCP reconnected — memory tools restored."}'
+        printf '{"sessionMessage":"✅ Engram MCP reconnected — memory tools restored."}'
     fi
     # Healthy and was healthy: no output
 else
@@ -73,7 +73,7 @@ else
         # First failure — write state file and emit disconnection message
         mkdir -p "$(dirname "$DISCONNECT_STATE")"
         date -u +'%Y-%m-%dT%H:%M:%SZ' > "$DISCONNECT_STATE"
-        printf '{"type":"system","content":"⚠️  Engram MCP disconnected — memory tools unavailable. Check: kubectl get pods -n engram. No MCP reset needed — tools will recover automatically when server restarts."}'
+        printf '{"sessionMessage":"⚠️  Engram MCP disconnected — memory tools unavailable. Check: kubectl get pods -n engram. No MCP reset needed — tools will recover automatically when server restarts."}'
     fi
     # Already flagged: stay quiet to avoid repeating the warning every turn
 fi

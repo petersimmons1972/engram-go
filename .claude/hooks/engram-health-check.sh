@@ -68,7 +68,8 @@ fi
 # Update state file atomically
 STATE_DIR=$(dirname "$STATE_FILE")
 mkdir -p "$STATE_DIR"
-TMPFILE=$(mktemp)
+TMPFILE=$(mktemp "${STATE_DIR}/.engram-health-state.XXXXXX")
+trap 'rm -f "${TMPFILE:-}"' EXIT
 {
   echo "FAILURES=$FAILURES"
   echo "LAST_FAILURE=$LAST_FAILURE_TIME"

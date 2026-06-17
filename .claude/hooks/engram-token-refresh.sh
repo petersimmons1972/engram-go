@@ -28,7 +28,7 @@ HTTP_STATUS=$(curl -so /dev/null -w "%{http_code}" --max-time 3 \
 
 case "$HTTP_STATUS" in
   200)
-    echo "Engram: authenticated and ready (k8s)"
+    # Silent on healthy auth — no output needed
     ;;
   401)
     printf '{"systemMessage":"Engram token needs refresh.\nRun: kubectl -n engram rollout restart deployment/engram-go\nThen update ~/.config/engram/api_key with the new token from Infisical."}'
@@ -37,6 +37,8 @@ case "$HTTP_STATUS" in
     printf '{"systemMessage":"Engram is unreachable at %s/health (timeout 3s).\nCheck: kubectl -n engram get pods"}' "${ENGRAM_BASE_URL}"
     ;;
   *)
-    echo "Engram: unexpected health status ${HTTP_STATUS} — memory recall may be degraded"
+    printf '{"sessionMessage":"Engram: unexpected health status %s — memory recall may be degraded"}\n' "$HTTP_STATUS"
     ;;
 esac
+
+exit 0

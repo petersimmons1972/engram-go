@@ -27,7 +27,7 @@ DISCONNECT_STATE="$HOME/.claude/.engram-disconnect-state"
 if [[ -f "$DISCONNECT_STATE" ]]; then
   AGE_DISCONNECT=$(( $(date +%s) - $(date -r "$DISCONNECT_STATE" +%s 2>/dev/null || echo 0) ))
   if [[ "$AGE_DISCONNECT" -lt 1200 ]]; then
-    echo "⚠️  engram-flush-fallback: degraded-skip — leaving fallback.md intact"
+    echo "⚠️  engram-flush-fallback: degraded-skip — leaving fallback.md intact" >&2
     exit 0
   fi
   rm -f "$DISCONNECT_STATE"
@@ -35,7 +35,7 @@ fi
 
 # Server must be up (engram-token-refresh.sh already ensured this, but double-check)
 if ! curl -sf --max-time 2 "${BASE}/health" > /dev/null 2>&1; then
-    echo "⚠️  engram-flush-fallback: Engram not reachable — leaving fallback.md intact"
+    echo "⚠️  engram-flush-fallback: Engram not reachable — leaving fallback.md intact" >&2
     exit 0
 fi
 
@@ -57,21 +57,24 @@ if [[ -z "$TOKEN" && -f "$HOME/projects/engram-go/.env" ]]; then
         | cut -d= -f2- | tr -d '[:space:]' || true)
 fi
 
-# Source 3: /setup-token unauthenticated (TOFU bootstrap fallback)
-if [[ -z "$TOKEN" ]]; then
-    TOKEN=$(curl -sf --max-time 3 "${BASE}/setup-token" 2>/dev/null \
-        | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
-fi
+# Source 3 (TOFU unauthenticated bootstrap) removed: ran on every SessionStart,
+# making an unauthenticated request to /setup-token regardless of token status.
+# The TOFU grant is consumed on first use — repeated calls are a silent no-op at
+# best and a SSRF/token-hijack risk if the endpoint is ever misconfigured. (FM-96)
+# If bootstrapping is needed: run `make init` in ~/projects/engram-go manually.
 
-[[ -z "$TOKEN" ]] && { echo "⚠️  engram-flush-fallback: no token — skipping flush"; exit 0; }
+[[ -z "$TOKEN" ]] && { echo "⚠️  engram-flush-fallback: no token — skipping flush" >&2; exit 0; }
 
 # Parse, snapshot, flush entries — lock held minimally (#398)
 # Phase 1: snapshot under lock. Phase 2: HTTP flush (no lock). Phase 3: re-append failures under lock.
-FLUSHED=$(python3 - "$FALLBACK" "$BASE" "$TOKEN" <<'PYEOF'
+FLUSHED=$(TOKEN="$TOKEN" python3 - "$FALLBACK" "$BASE" <<'PYEOF'
 import json, re, sys, urllib.request, urllib.error, os, tempfile, fcntl
 from datetime import datetime, timezone, timedelta
 
-fallback_path, base_url, token = sys.argv[1], sys.argv[2], sys.argv[3]
+fallback_path, base_url = sys.argv[1], sys.argv[2]
+# Read TOKEN from env var then scrub it — passing secrets as argv exposes them
+# in /proc/<pid>/cmdline (world-readable on Linux). (FM-97)
+token = os.environ.pop('TOKEN', '')
 lock_path = fallback_path + ".lock"
 entry_re = re.compile(r'^## \[\d{4}-\d{2}-\d{2}\] .+', re.MULTILINE)
 
@@ -253,12 +256,11 @@ PYEOF
 )
 
 if [[ -n "$FLUSHED" && "$FLUSHED" -gt 0 ]]; then
-    echo "✅ engram-flush-fallback: flushed ${FLUSHED} pending entries to Engram"
+    printf '{"sessionMessage":"Engram: flushed %s pending entries from fallback.md"}\n' "$FLUSHED"
     # Reset state counters on successful flush (#404)
     _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     update_state "last_flush_at" "\"${_now}\"" 2>/dev/null || true
     update_state "sessions_since_last_flush" "0" 2>/dev/null || true
     update_state "fallback_entry_count" "0" 2>/dev/null || true
-else
-    echo "ℹ️  engram-flush-fallback: nothing to flush"
 fi
+# nothing-to-flush case: silent — no output needed

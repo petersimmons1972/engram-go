@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# ORPHANED — not registered in any settings.json (verified 2026-06-17, Article 041 audit).
+# Superseded by `~/bin/engram hook UserPromptSubmit` (registered in settings.json).
+# SECURITY NOTE: line 112 passes ENV_KEY as sys.argv[2] — exposes API key in
+# /proc/<pid>/cmdline. If re-enabling, change to env var injection first. (FM-98)
 . ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 # UserPromptSubmit hook: fast per-message Engram auth check.
 # If auth is broken: auto-runs engram-setup to refresh the token,
@@ -109,9 +113,10 @@ if [[ "$HTTP_STATUS" == "401" || "$HTTP_STATUS" == "000" ]]; then
         -d '{"query":"auth-check","project":"global","limit":1}' 2>/dev/null || echo "000")
       if [[ "$ENV_STATUS" != "401" && "$ENV_STATUS" != "000" ]]; then
         # Fallback key is valid — write it atomically to mcp_servers.json (#614)
-        python3 - "$MCP_CONFIG" "$ENV_KEY" <<'PYEOF' 2>/dev/null && REFRESHED=true || true
+        ENGRAM_KEY_INJECT="$ENV_KEY" python3 - "$MCP_CONFIG" <<'PYEOF' 2>/dev/null && REFRESHED=true || true
 import json, os, sys, tempfile
-path, key = sys.argv[1], sys.argv[2]
+path = sys.argv[1]
+key = os.environ.pop('ENGRAM_KEY_INJECT', '')
 if not os.path.exists(path):
     sys.exit(1)
 with open(path) as f:

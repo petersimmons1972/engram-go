@@ -13,11 +13,15 @@
 # Fix: 2026-05-06 — SC2259: heredoc was overriding the pipe, so Python
 # never received $raw. Now uses a temp file to pass the payload.
 
-set -euo pipefail
+set -uo pipefail
+# Deliberately omit -e: if mktemp fails (e.g. /tmp full), we want the Python
+# fallback to fire, not an early exit that silently breaks the Stop block.
+# The explicit `|| echo "ok"` guards on the Python call handle errors.
 
 raw=$(cat)
 
 _tmpfile=$(mktemp)
+trap 'rm -f "${_tmpfile:-}"' EXIT
 printf '%s' "$raw" > "$_tmpfile"
 
 verdict=$(python3 - "$_tmpfile" <<'PY' 2>/dev/null || echo "ok"

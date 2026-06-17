@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# ORPHANED — not registered in any settings.json (verified 2026-06-17, Article 041 audit).
+# Superseded by engram-health-check.sh which provides the same function with state
+# tracking, failure counting, and the shared disconnect-state short-circuit.
+# Do NOT re-register without first removing or adapting engram-health-check.sh to avoid
+# double-probing on every mcp__engram__* PreToolUse event.
+# Kept on disk for reference; safe to delete once confirmed unused.
 . ~/.claude/hooks/lib/timing.sh 2>/dev/null || true
 . ~/.claude/hooks/lib/timing-v2.sh 2>/dev/null || true
 # PreToolUse hook: fast connectivity check before any mcp__engram__* call.
