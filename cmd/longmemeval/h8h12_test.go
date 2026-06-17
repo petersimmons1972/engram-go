@@ -16,15 +16,17 @@ import (
 )
 
 type h8h12Capture struct {
-	mu      sync.Mutex
-	topKs   []int
-	prompts []string
+	mu        sync.Mutex
+	topKs     []int
+	prompts   []string
+	questions []string
 }
 
-func (c *h8h12Capture) addTopK(topK int) {
+func (c *h8h12Capture) addTopK(topK int, query string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.topKs = append(c.topKs, topK)
+	c.questions = append(c.questions, query)
 }
 
 func (c *h8h12Capture) addPrompt(prompt string) {
@@ -33,12 +35,14 @@ func (c *h8h12Capture) addPrompt(prompt string) {
 	c.prompts = append(c.prompts, prompt)
 }
 
-func (c *h8h12Capture) gotTopKs() []int {
+func (c *h8h12Capture) lastTopK(t *testing.T) int {
+	t.Helper()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]int, len(c.topKs))
-	copy(out, c.topKs)
-	return out
+	if len(c.topKs) == 0 {
+		t.Fatal("no topK captured")
+	}
+	return c.topKs[len(c.topKs)-1]
 }
 
 func (c *h8h12Capture) lastPrompt(t *testing.T) string {
@@ -51,32 +55,26 @@ func (c *h8h12Capture) lastPrompt(t *testing.T) string {
 	return c.prompts[len(c.prompts)-1]
 }
 
-func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item, recallIDs []string) *h8h12Capture {
+func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) *h8h12Capture {
 	t.Helper()
 
-	capture := &h8h12Capture{}
+	var capture h8h12Capture
 	url := newTestEngram(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
 			topK, _ := args["top_k"].(float64)
-			capture.addTopK(int(topK))
-			results := make([]map[string]any, 0, len(recallIDs))
-			for _, id := range recallIDs {
-				results = append(results, map[string]any{
-					"memory": map[string]any{"id": id},
-					"score":  0.9,
-				})
-			}
-			resp, _ := json.Marshal(map[string]any{"results": results})
+			query, _ := args["query"].(string)
+			capture.addTopK(int(topK), query)
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{{"memory": map[string]any{"id": "m1"}, "score": 0.9}},
+			})
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
 			}, nil
 		},
 		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			id, _ := args["id"].(string)
 			resp, _ := json.Marshal(map[string]any{
-				"memory": map[string]any{"content": fmt.Sprintf("Session date: 2024-05-10\nMemory %s", id)},
+				"memory": map[string]any{"content": "Session date: 2024-05-10\nCalled my sister."},
 			})
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
@@ -94,11 +92,16 @@ func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item, recallI
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode llm request: %v", err)
 		}
+		foundUserPrompt := false
 		for _, msg := range req.Messages {
 			if msg.Role == "user" {
 				capture.addPrompt(msg.Content)
+				foundUserPrompt = true
 				break
 			}
+		}
+		if !foundUserPrompt {
+			t.Fatal("llm request missing user prompt")
 		}
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"2"}}]}`)
 	}))
@@ -122,16 +125,44 @@ func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item, recallI
 	entry := runOne(ctx, &cfgCopy, c, item, longmemeval.IngestEntry{
 		QuestionID: item.QuestionID,
 		Project:    "lme-r-" + item.QuestionID,
-		Status:     "done",
 	})
 	if entry.Status != "done" {
 		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
 	}
 
-	return capture
+	return &capture
 }
 
-func TestExhaustiveAggregation_UsesSingleTopK500Recall(t *testing.T) {
+func TestExhaustiveAggregation_DisabledIsBaseline(t *testing.T) {
+	item := longmemeval.Item{
+		QuestionID:   "q-h8-disabled",
+		Question:     "How many times did I call my sister?",
+		QuestionType: "multi-session",
+		QuestionDate: "2024-06-01",
+	}
+	capture := runOneWithCapture(t, &Config{RecallTopK: 100}, item)
+	if got := capture.lastTopK(t); got != 100 {
+		t.Fatalf("memory_recall top_k = %d, want 100", got)
+	}
+}
+
+func TestExhaustiveAggregation_GateSkipsNonAgg(t *testing.T) {
+	item := longmemeval.Item{
+		QuestionID:   "q-h8-noop",
+		Question:     "When did I last call my sister?",
+		QuestionType: "single-session-user",
+		QuestionDate: "2024-06-01",
+	}
+	capture := runOneWithCapture(t, &Config{
+		RecallTopK:            100,
+		ExhaustiveAggregation: true,
+	}, item)
+	if got := capture.lastTopK(t); got != 100 {
+		t.Fatalf("memory_recall top_k = %d, want 100", got)
+	}
+}
+
+func TestExhaustiveAggregation_SetsTopK500(t *testing.T) {
 	item := longmemeval.Item{
 		QuestionID:   "q-h8-enabled",
 		Question:     "How many times did I call my sister?",
@@ -141,32 +172,60 @@ func TestExhaustiveAggregation_UsesSingleTopK500Recall(t *testing.T) {
 	capture := runOneWithCapture(t, &Config{
 		RecallTopK:            100,
 		ExhaustiveAggregation: true,
-	}, item, []string{"m1", "m2"})
-
-	got := capture.gotTopKs()
-	if len(got) != 1 || got[0] != 500 {
-		t.Fatalf("memory_recall topKs = %v, want [500]", got)
+	}, item)
+	if got := capture.lastTopK(t); got != 500 {
+		t.Fatalf("memory_recall top_k = %d, want 500", got)
 	}
 }
 
-func TestExhaustiveAggregation_UsesFullContextSweep(t *testing.T) {
+func TestEnumerateFirst_DisabledIsBaseline(t *testing.T) {
 	item := longmemeval.Item{
-		QuestionID:   "q-h8-context",
+		QuestionID:   "q-h12-disabled",
 		Question:     "How many times did I call my sister?",
 		QuestionType: "multi-session",
 		QuestionDate: "2024-06-01",
 	}
-	recallIDs := make([]string, 0, 20)
-	for i := 1; i <= 20; i++ {
-		recallIDs = append(recallIDs, fmt.Sprintf("m%02d", i))
+	capture := runOneWithCapture(t, &Config{RecallTopK: 100}, item)
+	want := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, []string{
+		"Session date: 2024-05-10\nCalled my sister.",
+	})
+	if got := capture.lastPrompt(t); got != want {
+		t.Fatal("enumerate-first disabled should preserve the baseline generation prompt")
+	}
+}
+
+func TestEnumerateFirst_PrefixPresent(t *testing.T) {
+	item := longmemeval.Item{
+		QuestionID:   "q-h12-enabled",
+		Question:     "How many times did I call my sister?",
+		QuestionType: "multi-session",
+		QuestionDate: "2024-06-01",
+	}
+	capture := runOneWithCapture(t, &Config{
+		RecallTopK:     100,
+		EnumerateFirst: true,
+	}, item)
+	if got := capture.lastPrompt(t); !strings.Contains(got, "First, list every relevant") {
+		t.Fatalf("prompt missing enumerate-first prefix:\n%s", got)
+	}
+}
+
+func TestH8H12_CombinedFlags(t *testing.T) {
+	item := longmemeval.Item{
+		QuestionID:   "q-h8h12",
+		Question:     "How many times did I call my sister?",
+		QuestionType: "multi-session",
+		QuestionDate: "2024-06-01",
 	}
 	capture := runOneWithCapture(t, &Config{
 		RecallTopK:            100,
 		ExhaustiveAggregation: true,
-	}, item, recallIDs)
-
-	prompt := capture.lastPrompt(t)
-	if !strings.Contains(prompt, "Memory m20") {
-		t.Fatalf("full-context aggregation sweep should include the tail of the recall set in the prompt:\n%s", prompt)
+		EnumerateFirst:        true,
+	}, item)
+	if got := capture.lastTopK(t); got != 500 {
+		t.Fatalf("memory_recall top_k = %d, want 500", got)
+	}
+	if got := capture.lastPrompt(t); !strings.Contains(got, "First, list every relevant") {
+		t.Fatalf("combined flags prompt missing enumerate-first prefix:\n%s", got)
 	}
 }
