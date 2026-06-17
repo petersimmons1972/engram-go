@@ -182,10 +182,18 @@ func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap ma
 }
 
 type scoreReportCounts struct {
-	Correct          int `json:"correct"`
-	PartiallyCorrect int `json:"partially_correct"`
-	Incorrect        int `json:"incorrect"`
-	Total            int `json:"total"`
+	Correct          int                  `json:"correct"`
+	PartiallyCorrect int                  `json:"partially_correct"`
+	Incorrect        int                  `json:"incorrect"`
+	Total            int                  `json:"total"`
+	Strict           scoreAccuracySummary `json:"strict"`
+	Lenient          scoreAccuracySummary `json:"lenient"`
+}
+
+type scoreAccuracySummary struct {
+	CreditedCorrect int     `json:"credited_correct"`
+	Total           int     `json:"total"`
+	Accuracy        float64 `json:"accuracy"`
 }
 
 func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
@@ -286,6 +294,11 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		}
 	}
 
+	overall.finalize()
+	for _, row := range byQType {
+		row.finalize()
+	}
+
 	judgedAt := cfg.Now
 	if judgedAt == nil {
 		judgedAt = func() time.Time { return time.Now().UTC() }
@@ -358,9 +371,34 @@ func writeScoreSummary(w io.Writer, mode string, report map[string]any, overall 
 	pct := func(n int) float64 { return float64(n) / float64(overall.Total) * 100 }
 	_, _ = fmt.Fprintf(w, "\n--- Score Report (run-id: %s) ---\n", report["run_id"])
 	_, _ = fmt.Fprintf(w, "Total scored:       %d\n", overall.Total)
+	_, _ = fmt.Fprintf(w, "Strict accuracy:    %d/%d (%.1f%%)\n", overall.Strict.CreditedCorrect, overall.Strict.Total, overall.Strict.Accuracy*100)
+	_, _ = fmt.Fprintf(w, "Lenient accuracy:   %d/%d (%.1f%%)\n", overall.Lenient.CreditedCorrect, overall.Lenient.Total, overall.Lenient.Accuracy*100)
 	_, _ = fmt.Fprintf(w, "Correct:            %d (%.1f%%)\n", overall.Correct, pct(overall.Correct))
 	_, _ = fmt.Fprintf(w, "Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
 	_, _ = fmt.Fprintf(w, "Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
+}
+
+func (c *scoreReportCounts) finalize() {
+	if c == nil {
+		return
+	}
+	c.Strict = scoreAccuracySummary{
+		CreditedCorrect: c.Correct,
+		Total:           c.Total,
+		Accuracy:        accuracyRatio(c.Correct, c.Total),
+	}
+	c.Lenient = scoreAccuracySummary{
+		CreditedCorrect: c.Correct + c.PartiallyCorrect,
+		Total:           c.Total,
+		Accuracy:        accuracyRatio(c.Correct+c.PartiallyCorrect, c.Total),
+	}
+}
+
+func accuracyRatio(creditedCorrect, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(creditedCorrect) / float64(total)
 }
 
 // normalizeLabel canonicalises a score label: trims surrounding whitespace

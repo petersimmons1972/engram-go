@@ -183,6 +183,46 @@ func TestWriteScoreReport_Basic(t *testing.T) {
 	}
 }
 
+func TestWriteScoreReport_IncludesStrictAndLenientAccuracy(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "accuracy-breakdown-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	report := readScoreReport(t, filepath.Join(dir, "score_report.json"))
+	overall := reportMap(t, report["overall"], "overall")
+
+	assertAccuracySummary(t, reportMap(t, overall["strict"], "overall.strict"), 1, 3, 1.0/3.0)
+	assertAccuracySummary(t, reportMap(t, overall["lenient"], "overall.lenient"), 2, 3, 2.0/3.0)
+}
+
+func TestWriteScoreReport_SingleSessionPreferenceLenientCountsPartialCredit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "ss-preference-lenient-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-preference", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-preference", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "single-session-preference", ScoreLabel: "INCORRECT", Status: "done"},
+		{QuestionID: "q4", QuestionType: "single-session-preference", ScoreLabel: "CORRECT", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	report := readScoreReport(t, filepath.Join(dir, "score_report.json"))
+	byType := reportMap(t, report["by_type"], "by_type")
+	row := reportMap(t, byType["single-session-preference"], "by_type.single-session-preference")
+
+	assertAccuracySummary(t, reportMap(t, row["strict"], "by_type.single-session-preference.strict"), 1, 4, 0.25)
+	assertAccuracySummary(t, reportMap(t, row["lenient"], "by_type.single-session-preference.lenient"), 3, 4, 0.75)
+}
+
 func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
 	const fixed = "2026-06-03T10:00:00Z"
 	cfg := &Config{
@@ -394,6 +434,45 @@ func TestNormalizeLabel(t *testing.T) {
 		if got != c.want {
 			t.Errorf("normalizeLabel(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func readScoreReport(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Base(path), err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse %s: %v", filepath.Base(path), err)
+	}
+	return report
+}
+
+func reportMap(t *testing.T, v any, name string) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("%s not a map: %T (%v)", name, v, v)
+	}
+	return m
+}
+
+func assertAccuracySummary(t *testing.T, got map[string]any, wantCredited, wantTotal int, wantAccuracy float64) {
+	t.Helper()
+	if credited := int(got["credited_correct"].(float64)); credited != wantCredited {
+		t.Fatalf("credited_correct = %d, want %d", credited, wantCredited)
+	}
+	if total := int(got["total"].(float64)); total != wantTotal {
+		t.Fatalf("total = %d, want %d", total, wantTotal)
+	}
+	accuracy, ok := got["accuracy"].(float64)
+	if !ok {
+		t.Fatalf("accuracy not a number: %T (%v)", got["accuracy"], got["accuracy"])
+	}
+	if diff := accuracy - wantAccuracy; diff < -1e-9 || diff > 1e-9 {
+		t.Fatalf("accuracy = %.12f, want %.12f", accuracy, wantAccuracy)
 	}
 }
 
