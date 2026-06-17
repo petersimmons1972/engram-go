@@ -111,34 +111,7 @@ func main() {
 
 // runServer starts the MCP server with server-specific flags.
 func runServer(args []string) error {
-	// Configure structured JSON logging when running in a container or when
-	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
-	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
-	logLevel := slog.LevelInfo
-	logLevelVar := &slog.LevelVar{}
-	logLevelVar.Set(logLevel)
-	logLevelErr := error(nil)
-	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
-		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
-			// Invalid level — keep INFO, but remember to log the issue after handler is set.
-			logLevelErr = err
-		}
-	}
-	logLevelVar.Set(logLevel)
-	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			AddSource: true,
-			Level:     logLevelVar,
-		})))
-	} else if logLevel != slog.LevelInfo {
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: logLevelVar,
-		})))
-	}
-	// Log warning about invalid log level after handler is initialized
-	if logLevelErr != nil {
-		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
-	}
+	logLevelVar := setupLogging()
 
 	// Keep server help explicit for wrapper-subcommand calls (`engram server --help`).
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
@@ -249,23 +222,7 @@ func runServer(args []string) error {
 	// /health endpoint and exit with the appropriate code. See issue #341.
 	// Must use *port flag (parsed above), not envInt("ENGRAM_PORT") — fixes #544.
 	if *healthcheckFlag {
-		hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		apiKeyForProbe := apiKey
-		// Read API key before it gets unset; only add auth header if key was set
-		req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", *port), nil)
-		if err != nil {
-			os.Exit(1)
-		}
-		if apiKeyForProbe != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKeyForProbe)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			os.Exit(1)
-		}
-		_ = resp.Body.Close()
-		os.Exit(0)
+		runHealthcheckProbe(*port, apiKey)
 	}
 
 	if *databaseURL == "" {
@@ -311,12 +268,9 @@ func runServer(args []string) error {
 	//
 	// We still parse + reject the URL if it isn't a valid http(s) URL — that's not SSRF, that's
 	// basic config sanity.
-	parsedRouterURL, err := url.ParseRequestURI(*routerURL)
-	if err != nil || (parsedRouterURL.Scheme != "http" && parsedRouterURL.Scheme != "https") {
-		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *routerURL)
-	}
-	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
-		return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
+	parsedRouterURL, err := validateEmbedURLs(*routerURL, embedURL)
+	if err != nil {
+		return err
 	}
 	safeRouterURL := *parsedRouterURL
 	safeRouterURL.User = nil
@@ -366,20 +320,7 @@ func runServer(args []string) error {
 	// The interval is set to the circuit OpenDuration so at most one tick
 	// fires per backoff window — we do not probe faster than the breaker
 	// is configured to allow demand-driven probes.
-	if liteLLMClient, ok := embedClient.(*embed.LiteLLMClient); ok {
-		liteLLMClient.StartBackgroundProbe(ctx, *embedCircuitOpenDuration)
-		slog.Info("embed circuit breaker background probe started",
-			"interval", *embedCircuitOpenDuration)
-	} else {
-		// If the embed client is ever wrapped or swapped, the background probe
-		// silently would not start and circuit-breaker recovery would again
-		// depend entirely on demand traffic — the exact 18-hour stuck-open
-		// failure #1000 fixes. Log loudly so this regression is never silent.
-		slog.Warn("embed circuit breaker background probe NOT started: "+
-			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
-			"circuit will depend on demand-path traffic only (#1000)",
-			"embed_client_type", fmt.Sprintf("%T", embedClient))
-	}
+	startEmbedBackgroundProbe(ctx, embedClient, *embedCircuitOpenDuration)
 
 	dsn := *databaseURL
 	routerURLVal := *routerURL
@@ -982,4 +923,95 @@ func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string
 		ids[i] = r.Memory.ID
 	}
 	return ids, nil
+}
+
+// setupLogging configures the default slog handler from ENGRAM_LOG_FORMAT and
+// ENGRAM_LOG_LEVEL, returning the LevelVar so the level can be adjusted at
+// runtime (e.g. via the SIGHUP config reload).
+func setupLogging() *slog.LevelVar {
+	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
+	logLevel := slog.LevelInfo
+	logLevelVar := &slog.LevelVar{}
+	logLevelVar.Set(logLevel)
+	logLevelErr := error(nil)
+	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
+		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
+			// Invalid level — keep INFO, but remember to log the issue after handler is set.
+			logLevelErr = err
+		}
+	}
+	logLevelVar.Set(logLevel)
+	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+			Level:     logLevelVar,
+		})))
+	} else if logLevel != slog.LevelInfo {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevelVar,
+		})))
+	}
+	// Log warning about invalid log level after handler is initialized
+	if logLevelErr != nil {
+		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
+	}
+	return logLevelVar
+}
+
+// runHealthcheckProbe implements --healthcheck: probe the local /health
+// endpoint and exit 0 (healthy) or 1 (unhealthy). For use as a distroless
+// Docker HEALTHCHECK CMD (no shell/wget in the image). See #341.
+func runHealthcheckProbe(port int, apiKey string) {
+	hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	apiKeyForProbe := apiKey
+	// Read API key before it gets unset; only add auth header if key was set
+	req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", port), nil)
+	if err != nil {
+		os.Exit(1)
+	}
+	if apiKeyForProbe != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKeyForProbe)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+	}
+	_ = resp.Body.Close()
+	os.Exit(0)
+}
+
+// validateEmbedURLs parses and sanity-checks the router and embed base URLs,
+// returning the parsed router URL for downstream logging. Config sanity
+// (scheme must be http/https), not SSRF protection — see the call-site note (#608).
+func validateEmbedURLs(routerURL, embedURL string) (*url.URL, error) {
+	parsedRouterURL, err := url.ParseRequestURI(routerURL)
+	if err != nil || (parsedRouterURL.Scheme != "http" && parsedRouterURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", routerURL)
+	}
+	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
+	}
+	return parsedRouterURL, nil
+}
+
+// startEmbedBackgroundProbe wires a background recovery probe so the embed
+// circuit breaker can recover from an Open state independently of query load
+// (#1000). Logs loudly if the client is not *embed.LiteLLMClient, since then
+// recovery would silently depend on demand traffic only.
+func startEmbedBackgroundProbe(ctx context.Context, embedClient embed.Client, interval time.Duration) {
+	if liteLLMClient, ok := embedClient.(*embed.LiteLLMClient); ok {
+		liteLLMClient.StartBackgroundProbe(ctx, interval)
+		slog.Info("embed circuit breaker background probe started",
+			"interval", interval)
+	} else {
+		// If the embed client is ever wrapped or swapped, the background probe
+		// silently would not start and circuit-breaker recovery would again
+		// depend entirely on demand traffic — the exact 18-hour stuck-open
+		// failure #1000 fixes. Log loudly so this regression is never silent.
+		slog.Warn("embed circuit breaker background probe NOT started: "+
+			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
+			"circuit will depend on demand-path traffic only (#1000)",
+			"embed_client_type", fmt.Sprintf("%T", embedClient))
+	}
 }
