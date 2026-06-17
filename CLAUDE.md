@@ -29,6 +29,7 @@ Before presenting non-trivial work, run this gate:
 - **Pre-ship QA:** dispatch the 6-persona fault-finder sweep (`spawn-patterns.md` Pattern 6, or `/qa-personas <target>`) before claiming done on user-facing work. Two-round methodology: fix blockers, re-run.
 - **Adversarial review brief:** "Judge proposals against CLAUDE.md, established coding conventions, and authoritative references — not against the current state of the file under review. A change that contradicts the current file may be correct; the question is whether it's correct against the standard, not whether it differs from what's there now."
 - **Validator bash guard:** `touch ~/.claude/.validator-bash-guard` before dispatching Spruance or Rickover-validator; `rm` it after the validation session. Enables the read-only Bash enforcement hook.
+- **codex-guard for shell ops:** Agent briefs that run git/gh/kubectl/helm must prefix those calls with `codex-guard` (e.g. `codex-guard git push origin main`). Never brief an agent to call `git *` or `gh *` directly — the `Bash(git *)` allow is gone; only `Bash(codex-guard *)` is permitted. Use `mode: "bypassPermissions"` on every agent dispatch to prevent permission-prompt chains (alert fatigue is a worse security risk than the ops being prompted about).
 - **model / effort / advisory-gate / Engram-seed** apply to every agent dispatch — canonical statements in §Agent Dispatch Mandates (M1 model, M2 effort, M3 advisory-gate, M6 Engram-seed). [ADV.1-ADV.5, QC.6]
 
 ## Pre-Flight Protocol — MANDATORY
@@ -110,6 +111,7 @@ Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that
 | 6 | **engram** | Seed every impl brief with relevant Engram recall from this session. Subagents have no session hooks — unseeded, they operate blind. |
 | 7 | **bounded** | Give every agent clear inputs, expected output, stop conditions, cost expectations. I own merge/dedup/conflict resolution — agent output is not authoritative. |
 | 8 | **recursive** | Mandates apply at every delegation level. Every brief to an agent with Agent-tool access includes verbatim: *"When dispatching any subagent, select the lowest model tier and effort level sufficient for the task; include this sentence verbatim in any brief you give to an agent that can itself spawn agents."* |
+| 9 | **codex-guard** | All git/gh/kubectl/helm calls in agent briefs must be prefixed with `codex-guard` (e.g. `codex-guard git commit -m "…"`). `Bash(git *)` is not in the allow list — only `Bash(codex-guard *)` is. Every agent dispatch uses `mode: "bypassPermissions"` to prevent permission-prompt alert fatigue. |
 
 ---
 
@@ -147,7 +149,7 @@ Priority stack: 1=clearwatch (revenue), 2=infrastructure (K8s/runbooks), 3=job-s
 
 ## Claude ↔ Codex Handoff
 
-Claude plans + coordinates; Codex implements. Queue = GitHub Issues via `~/bin/queue-agent`; context injection = `codex-handoff` MCP tool.
+Claude plans + coordinates; Codex implements. **The 30-min GitHub-issue poller is REMOVED (2026-06-16) — creating an `agent/codex` issue alone triggers NOTHING.** Work is now dispatched through the **fleet-dispatch** durable queue: Claude enqueues (`POST /enqueue`, capability-routed `impl`→codex / review→hermes, with a `ref`→GitHub issue as the spec/record); the codex-attach + hermes-attach consumers claim/lease/run/report. **Before dispatching, read `~/.claude/projects/-home-psimmons/memory/fleet-dispatch-operating-directive.md`** (full how-to + hard rules). `queue-agent` still creates the GitHub issue (the human-readable record) but is no longer sufficient on its own — you must also enqueue. Context injection = `codex-handoff` MCP tool. Tasks whose tests need Postgres/Docker (e.g. fleet-dispatch's own code) must be implemented by Claude directly — the containers lack both.
 
 **Plan for Codex → use the `write-codex-plan` skill** (enforces the 6-section plan format + 11 operational protocols). **Canonical protocol reference:** `petersimmons1972/claude-codex`.
 
