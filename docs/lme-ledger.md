@@ -126,3 +126,26 @@ NEXT TARGET: multi-session (27.7%, 47 items, 28 incorrect). Largest category by 
 widest gap below OVERALL. Moving 10 incorrect→correct = +7.4pp OVERALL.
 Leading hypothesis: context window management (reduce distractor chunks before synthesis).
 Recall is ~100%; loss is gold buried under distractors at generation time.
+
+## LEVER-9 SESSION-DIVERSITY N=2 — RETRIEVAL-METRICS GATE (2026-06-17) — NO-GO
+Generator-free A/B via retrieval-metrics subcommand. Baseline: stack-sonnet-prefenum-0616
+(locked 35.6%). Lever9: lever9-n2-0616 (same stack + ENGRAM_SESSION_DIVERSITY_N=2, PR #1121).
+
+Retrieval metrics delta (baseline → lever9-n2):
+
+| Category                  | GoldInCtx%  | GoldAll%    | NDCG@5      | AvgRank   |
+|---------------------------|-------------|-------------|-------------|-----------|
+| multi-session (n=47)      | 100→100     | 97.9→100.0  | 0.533→0.533 | 4.1→4.1   |
+| single-session-pref (n=30)| 96.7→100.0  | 96.7→100.0  | 0.315→0.315 | 41.5→38.5 |
+| temporal-reasoning (n=45) | 100→97.8    | 75.6→77.8   | 0.411→0.411 | 11.8→8.8  |
+| OVERALL (n=135)           | 99.3→99.3   | 90.4→92.6   | 0.438→0.438 | 15.6→14.2 |
+
+VERDICT: NO-GO. Multi-session NDCG@5 and AvgRank are flat (0.533, 4.1 unchanged).
+Session-diversity does not address the multi-session bottleneck because gold is already
+near the top of the ranking stack (AvgRank 4.1) — the retrieval layer is not the
+constraint. Temporal GoldInCtx regresses -2.2pp (1 item dropped from context). Preference
+gains (GoldInCtx +3.3pp, AvgRank -3.0) are real but not the target category.
+IMPLICATION: multi-session loss is a generation/synthesis problem, not a sampling problem.
+Gold is in context at rank 4.1; the model is not extracting it from noisy context.
+Next lever candidates: cross-encoder reranker (PR #1111, flag-gated, TEI sidecar not yet
+deployed) to push gold higher within context, or context-trim to reduce distractor load.

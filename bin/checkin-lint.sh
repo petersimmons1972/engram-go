@@ -58,7 +58,7 @@ while IFS= read -r hit; do
 # postgres://[^$][^{] — excludes $VAR and ${VAR} style env references; flags bare DSNs
 done < <(grep -rn \
   --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
-  --exclude-dir='.git' \
+  --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
   'postgres://[^$][^{]' . 2>/dev/null || true)
 [[ $p1_n -eq 0 ]] && pass_rule "P1.hardcoded-dsn" "no hardcoded postgres:// DSNs"
 
