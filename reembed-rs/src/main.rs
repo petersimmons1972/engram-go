@@ -190,7 +190,7 @@ fn increase_backoff(current_ms: u64) -> u64 {
 /// - SKIP LOCKED contention loss (attempted>0, written=0, failed=0): Reset — backend was
 ///   fine; another worker won the race. Do not penalize a healthy backend.
 /// - Partial or full progress (written > 0, failed == 0): Reset — backend healthy.
-fn next_backoff_ms(
+pub(crate) fn next_backoff_ms(
     outcome: &claim::ProcessSliceResult,
     current_backoff_ms: u64,
     min_backoff_ms: u64,
@@ -242,6 +242,15 @@ async fn run_worker(
                 if outcome.attempted == 0 {
                     let wait_ms = backoff_ms.load(Ordering::Acquire);
                     let next_ms = increase_backoff(wait_ms);
+                    // compare_exchange here vs store in the failure path below: intentional
+                    // asymmetry. In the idle path (no eligible chunks) multiple workers race to
+                    // grow the shared backoff counter — compare_exchange lets exactly one winner
+                    // commit the update while the rest silently retry their own load+grow cycle on
+                    // the next iteration. The failure path (failed > 0) uses store instead because
+                    // any worker observing embed errors should unconditionally impose its computed
+                    // backoff; a later store always wins (last writer wins), which is acceptable
+                    // since all workers converge on the same exponential curve regardless of
+                    // ordering.
                     let _ = backoff_ms.compare_exchange(
                         wait_ms,
                         next_ms.min(max_backoff_ms),
