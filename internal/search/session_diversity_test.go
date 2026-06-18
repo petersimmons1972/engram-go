@@ -35,7 +35,7 @@ func makeDivResultWithTag(tag string, score float64) types.SearchResult {
 func divSessionIDs(results []types.SearchResult) []string {
 	out := make([]string, len(results))
 	for i, r := range results {
-		out[i] = extractSessionID(r.Memory.Tags)
+		out[i] = ExtractSessionID(r.Memory.Tags)
 	}
 	return out
 }
@@ -78,7 +78,7 @@ func TestSessionDiversity_HappyPath_GoldInMinoritySession(t *testing.T) {
 	// s2:gold must appear in the result.
 	found := false
 	for _, r := range got {
-		if extractSessionID(r.Memory.Tags) == "s2" {
+		if ExtractSessionID(r.Memory.Tags) == "s2" {
 			found = true
 			break
 		}
@@ -89,7 +89,7 @@ func TestSessionDiversity_HappyPath_GoldInMinoritySession(t *testing.T) {
 	// No session contributes more than N=2 chunks.
 	count := map[string]int{}
 	for _, r := range got {
-		count[extractSessionID(r.Memory.Tags)]++
+		count[ExtractSessionID(r.Memory.Tags)]++
 	}
 	for sid, n := range count {
 		if n > 2 {
@@ -173,7 +173,7 @@ func TestSessionDiversity_TopK3_N2_TwoSessions(t *testing.T) {
 	}
 	count := map[string]int{}
 	for _, r := range got {
-		count[extractSessionID(r.Memory.Tags)]++
+		count[ExtractSessionID(r.Memory.Tags)]++
 	}
 	for sid, n := range count {
 		if n > 2 {

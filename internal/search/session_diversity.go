@@ -58,7 +58,7 @@ func applySessionDiversity(results []types.SearchResult, topK, N int) []types.Se
 		}
 		var sid string
 		if r.Memory != nil {
-			sid = extractSessionID(r.Memory.Tags)
+			sid = ExtractSessionID(r.Memory.Tags)
 		}
 		if sessionCount[sid] < N {
 			out = append(out, r)
@@ -73,7 +73,7 @@ func applySessionDiversity(results []types.SearchResult, topK, N int) []types.Se
 // distinct sessions. When all chunks share a session (or N == 0), the pass is a
 // no-op by definition and is skipped entirely to preserve baseline identity.
 //
-// "Distinct session" is determined by extractSessionID on each Memory's Tags slice.
+// "Distinct session" is determined by ExtractSessionID on each Memory's Tags slice.
 // Chunks with no sid: tag (or an empty sid: value) are grouped under the empty-string
 // session ID — they count as one distinct session together.
 func shouldApplySessionDiversity(results []types.SearchResult, N int) bool {
@@ -85,7 +85,7 @@ func shouldApplySessionDiversity(results []types.SearchResult, N int) bool {
 		if r.Memory == nil {
 			continue
 		}
-		seen[extractSessionID(r.Memory.Tags)] = struct{}{}
+		seen[ExtractSessionID(r.Memory.Tags)] = struct{}{}
 		if len(seen) >= 2 {
 			return true
 		}

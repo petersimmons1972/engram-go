@@ -64,8 +64,11 @@ func TestHandleMemoryStore_WritesRowAndEnqueuesLeaseWhenEmbedDown(t *testing.T) 
 	dsn := testDSNDecouple(t)
 	proj := uniqueProjectDecouple("embed-down")
 
-	// Create pool with a real database backend.
-	pool := NewTestPoolWithDSN(t, ctx, dsn, proj)
+	// Create pool with a transient-error embedder to correctly simulate the
+	// "embed down" scenario. The engine must store the memory and chunks with
+	// NULL embeddings regardless of whether the embedder is reachable.
+	pool := NewTestPoolWithDSNAndEmbedder(t, ctx, dsn, proj,
+		transientErrorEmbedder{dims: 1024, name: "noop"})
 
 	// Call handleMemoryStore with test content.
 	req := mcpgo.CallToolRequest{}

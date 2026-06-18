@@ -16,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // Client wraps the MCP Streamable HTTP client with retry logic for eval use.
@@ -272,6 +273,12 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 	return IDsFromScoredRecall(hits), nil
 }
 
+func (c *Client) RecallWithDateRangeResult(ctx context.Context, project, query string, topK int, since, before *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+	})
+}
+
 func (c *Client) RecallScored(ctx context.Context, project, query string, topK int) ([]ScoredMemoryID, error) {
 	return c.RecallScoredWithDateRange(ctx, project, query, topK, nil, nil)
 }
@@ -350,6 +357,9 @@ type RecallResult struct {
 	// Hits carries the scored recall results for callers that need score-based
 	// merging (e.g. H15 dual preference recall). IDsFromScoredRecall(Hits) == IDs.
 	Hits []ScoredMemoryID
+	// MemoryMap maps memory ID to session ID extracted from handle-mode tags.
+	// Populated when handle-mode recall returns tags with a "session:<id>" entry.
+	MemoryMap map[string]string
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -368,6 +378,13 @@ func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query st
 	return IDsFromScoredRecall(hits), nil
 }
 
+func (c *Client) RecallWithTemporalWindowResult(ctx context.Context, project, query string, topK int, questionText, questionDate string) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK,
+		temporalWindow: true, questionText: questionText, questionDate: questionDate,
+	})
+}
+
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
 func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
@@ -376,6 +393,13 @@ func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK
 		return nil, err
 	}
 	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithOptsResult(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost,
+	})
 }
 
 func (c *Client) RecallScoredWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]ScoredMemoryID, error) {
@@ -458,6 +482,13 @@ func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string
 		return nil, err
 	}
 	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithExactBoostResult(ctx context.Context, project, query string, topK int, since, before *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true,
+	})
 }
 
 func (c *Client) RecallScoredWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]ScoredMemoryID, error) {
@@ -545,14 +576,16 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 			Score float64 `json:"score"`
 		} `json:"results"`
 		Handles []struct {
-			ID    string  `json:"id"`
-			Score float64 `json:"score"`
+			ID    string   `json:"id"`
+			Score float64  `json:"score"`
+			Tags  []string `json:"tags"`
 		} `json:"handles"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
 		return RecallResult{}, fmt.Errorf("parse recall response: %w", err)
 	}
 	hits := make([]ScoredMemoryID, 0, len(resp.Results)+len(resp.Handles))
+	memoryMap := make(map[string]string, len(resp.Handles))
 	for _, r := range resp.Results {
 		if r.Memory.ID != "" {
 			hits = append(hits, ScoredMemoryID{ID: r.Memory.ID, Score: r.Score})
@@ -561,9 +594,12 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	for _, h := range resp.Handles {
 		if h.ID != "" {
 			hits = append(hits, ScoredMemoryID{ID: h.ID, Score: h.Score})
+			if len(h.Tags) > 0 {
+				memoryMap[h.ID] = search.ExtractSessionID(h.Tags)
+			}
 		}
 	}
-	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits}, nil
+	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.

@@ -58,3 +58,37 @@ func TestToHandles_NilMemorySkipped(t *testing.T) {
 	require.Len(t, handles, 1)
 	require.Equal(t, "y", handles[0].ID)
 }
+
+func TestToHandles_TagsPropagated(t *testing.T) {
+	results := []types.SearchResult{
+		{
+			Memory: &types.Memory{
+				ID:      "abc-1",
+				Project: "proj",
+				Tags:    []string{"session:s42", "foo:bar"},
+			},
+			Score: 0.85,
+		},
+	}
+
+	handles := search.ToHandles(results)
+	require.Len(t, handles, 1)
+	require.Equal(t, []string{"session:s42", "foo:bar"}, handles[0].Tags)
+}
+
+func TestToHandles_NilTagsOmitted(t *testing.T) {
+	results := []types.SearchResult{
+		{
+			Memory: &types.Memory{
+				ID:      "abc-1",
+				Project: "proj",
+				Tags:    nil,
+			},
+			Score: 0.85,
+		},
+	}
+
+	handles := search.ToHandles(results)
+	require.Len(t, handles, 1)
+	require.Empty(t, handles[0].Tags)
+}

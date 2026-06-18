@@ -211,6 +211,7 @@ func ToHandles(results []types.SearchResult) []types.Handle {
 			ID:          r.Memory.ID,
 			Project:     r.Memory.Project,
 			Summary:     sum,
+			Tags:        r.Memory.Tags,
 			Score:       r.Score,
 			StorageMode: r.Memory.StorageMode,
 			Bytes:       len(r.Memory.Content),
