@@ -22,15 +22,16 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-// extractSessionID scans tags for a "sid:<value>" entry and returns the value.
-// Returns "" if no sid: tag is present or the value after the prefix is empty.
-// Used by sessionNDCGRerank to group memories by their originating LME session.
-func extractSessionID(tags []string) string {
-	const prefix = "sid:"
-	for _, tag := range tags {
-		if strings.HasPrefix(tag, prefix) {
-			v := tag[len(prefix):]
-			return v // empty string if tag is exactly "sid:"
+// ExtractSessionID scans tags for a session tag and returns the session ID.
+// "sid:<value>" is the canonical prefix; "session:<value>" is accepted as a
+// compatibility alias for callers that use the longer form.
+func ExtractSessionID(tags []string) string {
+	for _, prefix := range []string{"sid:", "session:"} {
+		for _, tag := range tags {
+			if strings.HasPrefix(tag, prefix) {
+				v := tag[len(prefix):]
+				return v // empty string if tag is exactly the prefix
+			}
 		}
 	}
 	return ""
@@ -68,9 +69,9 @@ func sessionDCG(scores []float64) float64 {
 
 // sessionGroup is one LME session group produced during re-ranking.
 type sessionGroup struct {
-	sessionID  string              // "" for untagged (no sid: tag) memories
-	members    []types.SearchResult // results belonging to this session
-	dcgScore   float64             // aggregate DCG of chunk cosines
+	sessionID string               // "" for untagged (no sid: tag) memories
+	members   []types.SearchResult // results belonging to this session
+	dcgScore  float64              // aggregate DCG of chunk cosines
 }
 
 // sessionNDCGRerank re-ranks results by session-DCG aggregation (LEVER-8).
@@ -122,7 +123,7 @@ func sessionNDCGRerank(results []types.SearchResult, allChunkCosines map[string]
 	for _, r := range results {
 		var sid string
 		if r.Memory != nil {
-			sid = extractSessionID(r.Memory.Tags)
+			sid = ExtractSessionID(r.Memory.Tags)
 		}
 		// Use the memory's ID as a unique singleton key when no sid: tag is present.
 		// This ensures untagged memories each get their own group (no cross-memory
