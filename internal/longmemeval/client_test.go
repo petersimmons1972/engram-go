@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // newTestMCPServer builds a minimal MCP server with stubs for the Engram tools
@@ -215,6 +216,72 @@ func TestRecallScored_HandleMode(t *testing.T) {
 	}
 }
 
+func TestRecall_MemoryMapPopulated(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "mem-1", "score": 0.9, "tags": []string{"session:s42"}},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallWithOptsResult(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallWithOptsResult: %v", err)
+	}
+	if got := result.MemoryMap["mem-1"]; got != "s42" {
+		t.Fatalf("MemoryMap[mem-1] = %q, want %q", got, "s42")
+	}
+}
+
+func TestRecall_MemoryMapEmpty_NoTags(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "mem-1", "score": 0.9},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallWithOptsResult(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallWithOptsResult: %v", err)
+	}
+	if result.MemoryMap == nil {
+		t.Fatal("MemoryMap is nil, want non-nil empty map")
+	}
+	if len(result.MemoryMap) != 0 {
+		t.Fatalf("len(MemoryMap) = %d, want 0", len(result.MemoryMap))
+	}
+}
+
+func TestExtractSessionID_ExportedAccessible(t *testing.T) {
+	if got := search.ExtractSessionID([]string{"session:s99"}); got != "s99" {
+		t.Fatalf("ExtractSessionID([session:s99]) = %q, want %q", got, "s99")
+	}
+}
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
