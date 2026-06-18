@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -403,9 +404,16 @@ func (c *Client) RecallWithOptsResult(ctx context.Context, project, query string
 }
 
 func (c *Client) RecallScoredWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]ScoredMemoryID, error) {
+	diversityN := 0
+	if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			diversityN = n
+		}
+	}
 	return c.recallScoredWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
-		topicAnchorBoost: topicAnchorBoost,
+		topicAnchorBoost:  topicAnchorBoost,
+		sessionDiversityN: diversityN,
 	})
 }
 

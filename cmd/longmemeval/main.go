@@ -259,7 +259,6 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", false, "H15: opt-in second recall pass for inferred preference questions using a cleaned subject anchor and score-aware union (default off)")
 	// H-TAB: topic-anchor boost (LME experiment #3)
 	fs.BoolVar(&cfg.TopicAnchorBoost, "topic-anchor-boost", false, "H-TAB: server-side topic-anchor scoring boost — preference memories containing domain tokens from the query score 1.25× higher; targets multi-preference-session distraction (default off, composable with --dual-preference-recall)")
-	fs.IntVar(&cfg.SessionDiversityN, "session-diversity-n", envInt("ENGRAM_SESSION_DIVERSITY_N", 0), "per-session recall cap; 0 disables diversity sampling")
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)

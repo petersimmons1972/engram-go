@@ -312,6 +312,7 @@ func TestRecall_SetsRecordEventFalse(t *testing.T) {
 }
 
 func TestRecallWithOpts_SendsSessionDiversityN(t *testing.T) {
+	t.Setenv("ENGRAM_SESSION_DIVERSITY_N", "2")
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
