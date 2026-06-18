@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 func TestPrepareSampleFiltersIngestCheckpoint(t *testing.T) {
@@ -273,6 +274,109 @@ func TestAnalyzeSampleWithoutDataSummarizesScoreCheckpoint(t *testing.T) {
 	if summary.RetrievalMiss != 0 || summary.ContextPresentGenerationMiss != 0 {
 		t.Fatalf("gold-session failure clusters = retrieval_miss=%d generation_miss=%d, want zero without data",
 			summary.RetrievalMiss, summary.ContextPresentGenerationMiss)
+	}
+}
+
+func TestSessionDiagnostics_SingleDominantSession(t *testing.T) {
+	results := []types.SearchResult{
+		searchResultWithSession("m1", "s1"),
+		searchResultWithSession("m2", "s1"),
+		searchResultWithSession("m3", "s1"),
+		searchResultWithSession("m4", "s1"),
+		searchResultWithSession("m5", "s1"),
+		searchResultWithSession("m6", "s2"),
+	}
+
+	dominance, count := computeSessionDiagnostics(results)
+
+	if got, want := dominance, 5.0/6.0; got != want {
+		t.Fatalf("dominance = %v, want %v", got, want)
+	}
+	if count != 2 {
+		t.Fatalf("context session count = %d, want 2", count)
+	}
+}
+
+func TestSessionDiagnostics_EvenSplit(t *testing.T) {
+	results := []types.SearchResult{
+		searchResultWithSession("m1", "s1"),
+		searchResultWithSession("m2", "s1"),
+		searchResultWithSession("m3", "s1"),
+		searchResultWithSession("m4", "s2"),
+		searchResultWithSession("m5", "s2"),
+		searchResultWithSession("m6", "s2"),
+	}
+
+	dominance, count := computeSessionDiagnostics(results)
+
+	if dominance != 0.5 {
+		t.Fatalf("dominance = %v, want 0.5", dominance)
+	}
+	if count != 2 {
+		t.Fatalf("context session count = %d, want 2", count)
+	}
+}
+
+func TestSessionDiagnostics_EmptyResults(t *testing.T) {
+	dominance, count := computeSessionDiagnostics(nil)
+
+	if dominance != 0.0 {
+		t.Fatalf("dominance = %v, want 0.0", dominance)
+	}
+	if count != 0 {
+		t.Fatalf("context session count = %d, want 0", count)
+	}
+}
+
+func TestSessionDiagnostics_AllSameSession(t *testing.T) {
+	results := []types.SearchResult{
+		searchResultWithSession("m1", "s1"),
+		searchResultWithSession("m2", "s1"),
+		searchResultWithSession("m3", "s1"),
+		searchResultWithSession("m4", "s1"),
+	}
+
+	dominance, count := computeSessionDiagnostics(results)
+
+	if dominance != 1.0 {
+		t.Fatalf("dominance = %v, want 1.0", dominance)
+	}
+	if count != 1 {
+		t.Fatalf("context session count = %d, want 1", count)
+	}
+}
+
+func TestSessionDiagnostics_MissingSessionIDs(t *testing.T) {
+	results := []types.SearchResult{
+		searchResultWithSession("m1", "s1"),
+		searchResultWithSession("m2", ""),
+		searchResultWithSession("m3", ""),
+		searchResultWithSession("m4", ""),
+		searchResultWithSession("m5", "s2"),
+	}
+
+	dominance, count := computeSessionDiagnostics(results)
+
+	if dominance != 0.2 {
+		t.Fatalf("dominance = %v, want 0.2", dominance)
+	}
+	if count != 5 {
+		t.Fatalf("context session count = %d, want 5", count)
+	}
+}
+
+func searchResultWithSession(memoryID, sessionID string) types.SearchResult {
+	tags := []string{"source:test"}
+	if sessionID != "" {
+		tags = append(tags, "sid:"+sessionID)
+	} else {
+		tags = append(tags, "sid:")
+	}
+	return types.SearchResult{
+		Memory: &types.Memory{
+			ID:   memoryID,
+			Tags: tags,
+		},
 	}
 }
 

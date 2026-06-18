@@ -572,6 +572,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
 	dualPreferenceRecall := cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
+	var sessionDominanceRatio float64
+	var contextSessionCount int
 	if serverTemporalWindow {
 		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
@@ -601,6 +603,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				Error:      fmt.Sprintf("recall: %v", err),
 			}
 		}
+		sessionDominanceRatio, contextSessionCount = computeSessionDiagnostics(recallResult.Results)
 	}
 	secondaryContextIDs := temporalFallbackIDs
 	if cfg.RetrievalFusion && !serverTemporalWindow {
@@ -791,14 +794,17 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	return longmemeval.RunEntry{
-		QuestionID:    item.QuestionID,
-		Hypothesis:    hypothesis,
-		RetrievedIDs:  retrievedIDs,
-		Status:        "done",
-		AtomRetrieved: atomPreamble != "",
-		AtomInContext: atomContextBlock != "",
+		QuestionID:            item.QuestionID,
+		Hypothesis:            hypothesis,
+		RetrievedIDs:          retrievedIDs,
+		SessionDominanceRatio: sessionDominanceRatio,
+		ContextSessionCount:   contextSessionCount,
+		Status:                "done",
+		AtomRetrieved:         atomPreamble != "",
+		AtomInContext:         atomContextBlock != "",
 	}
 }
+
 
 func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {
 	seen := map[string]bool{}
