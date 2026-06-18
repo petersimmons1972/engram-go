@@ -282,6 +282,53 @@ func TestExtractSessionID_ExportedAccessible(t *testing.T) {
 		t.Fatalf("ExtractSessionID([session:s99]) = %q, want %q", got, "s99")
 	}
 }
+
+func TestRecallResultsWithOpts_FullModeIncludesTags(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "full" {
+				t.Fatalf("mode = %#v, want full", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{
+					{
+						"memory": map[string]any{
+							"id":   "mem-111",
+							"tags": []string{"sid:s1", "source:test"},
+						},
+						"score": 0.9,
+					},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	results, err := c.RecallResultsWithOpts(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallResultsWithOpts: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Memory == nil || results[0].Memory.ID != "mem-111" {
+		t.Fatalf("memory = %+v, want mem-111", results[0].Memory)
+	}
+	if got := results[0].Memory.Tags; len(got) != 2 || got[0] != "sid:s1" {
+		t.Fatalf("tags = %v, want sid:s1 present", got)
+	}
+}
+
+
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

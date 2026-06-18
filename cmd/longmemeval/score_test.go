@@ -296,6 +296,60 @@ func TestWriteOutputArtifactsArePrivate(t *testing.T) {
 	assertMode(t, filepath.Join(dir, "score_report.json"), 0o600)
 }
 
+func TestScoreReport_SessionDominanceAggregation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "session-dominance-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "temporal-reasoning", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q4", QuestionType: "temporal-reasoning", ScoreLabel: "CORRECT", Status: "error"},
+	}
+	runMap := map[string]longmemeval.RunEntry{
+		"q1": {QuestionID: "q1", SessionDominanceRatio: 1.0, ContextSessionCount: 1},
+		"q2": {QuestionID: "q2", SessionDominanceRatio: 0.5, ContextSessionCount: 2},
+		"q3": {QuestionID: "q3", SessionDominanceRatio: 0.25, ContextSessionCount: 4},
+		"q4": {QuestionID: "q4", SessionDominanceRatio: 0.99, ContextSessionCount: 9},
+	}
+
+	writeScoreReportWithRunMap(cfg, scores, runMap)
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+
+	overall := report["overall"].(map[string]any)
+	if got, want := overall["avg_session_dominance_ratio"].(float64), (1.0+0.5+0.25)/3.0; got != want {
+		t.Fatalf("overall avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := overall["avg_context_session_count"].(float64), (1.0+2.0+4.0)/3.0; got != want {
+		t.Fatalf("overall avg_context_session_count = %v, want %v", got, want)
+	}
+
+	byType := report["by_type"].(map[string]any)
+	single := byType["single-session-user"].(map[string]any)
+	if got, want := single["avg_session_dominance_ratio"].(float64), 0.75; got != want {
+		t.Fatalf("single-session-user avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := single["avg_context_session_count"].(float64), 1.5; got != want {
+		t.Fatalf("single-session-user avg_context_session_count = %v, want %v", got, want)
+	}
+
+	temporal := byType["temporal-reasoning"].(map[string]any)
+	if got, want := temporal["avg_session_dominance_ratio"].(float64), 0.25; got != want {
+		t.Fatalf("temporal-reasoning avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := temporal["avg_context_session_count"].(float64), 4.0; got != want {
+		t.Fatalf("temporal-reasoning avg_context_session_count = %v, want %v", got, want)
+	}
+}
+
 func TestWriteOutputArtifactsTightenExistingFiles(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{OutDir: dir, RunID: "private-artifacts-test"}

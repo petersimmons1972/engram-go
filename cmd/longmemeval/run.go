@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // preservedLog is a mutex-protected accumulator for project names that were
@@ -572,6 +573,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
 	dualPreferenceRecall := cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
+	var sessionDominanceRatio float64
+	var contextSessionCount int
 	if serverTemporalWindow {
 		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
@@ -601,6 +604,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				Error:      fmt.Sprintf("recall: %v", err),
 			}
 		}
+		sessionDominanceRatio, contextSessionCount = computeSessionDiagnostics(recallResult.Results)
 	}
 	secondaryContextIDs := temporalFallbackIDs
 	if cfg.RetrievalFusion && !serverTemporalWindow {
@@ -791,13 +795,57 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	return longmemeval.RunEntry{
-		QuestionID:    item.QuestionID,
-		Hypothesis:    hypothesis,
-		RetrievedIDs:  retrievedIDs,
-		Status:        "done",
-		AtomRetrieved: atomPreamble != "",
-		AtomInContext: atomContextBlock != "",
+		QuestionID:            item.QuestionID,
+		Hypothesis:            hypothesis,
+		RetrievedIDs:          retrievedIDs,
+		SessionDominanceRatio: sessionDominanceRatio,
+		ContextSessionCount:   contextSessionCount,
+		Status:                "done",
+		AtomRetrieved:         atomPreamble != "",
+		AtomInContext:         atomContextBlock != "",
 	}
+}
+
+func searchResultIDs(results []types.SearchResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.Memory != nil && result.Memory.ID != "" {
+			ids = append(ids, result.Memory.ID)
+		}
+	}
+	return ids
+}
+
+func unionSearchResults(primary, fallback []types.SearchResult) []types.SearchResult {
+	if len(fallback) == 0 {
+		return primary
+	}
+	seen := make(map[string]bool, len(primary)+len(fallback))
+	out := make([]types.SearchResult, 0, len(primary)+len(fallback))
+	for _, result := range primary {
+		key := searchResultKey(result)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, result)
+	}
+	for _, result := range fallback {
+		key := searchResultKey(result)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, result)
+	}
+	return out
+}
+
+func searchResultKey(result types.SearchResult) string {
+	if result.Memory == nil {
+		return ""
+	}
+	return result.Memory.ID
 }
 
 func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {

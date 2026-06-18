@@ -177,17 +177,22 @@ func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap ma
 	writeScoreReportWithCompleteness(
 		cfg,
 		scores,
+		runMap,
 		scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores),
 	)
 }
 
 type scoreReportCounts struct {
-	Correct          int                  `json:"correct"`
-	PartiallyCorrect int                  `json:"partially_correct"`
-	Incorrect        int                  `json:"incorrect"`
-	Total            int                  `json:"total"`
-	Strict           scoreAccuracySummary `json:"strict"`
-	Lenient          scoreAccuracySummary `json:"lenient"`
+	Correct                  int                  `json:"correct"`
+	PartiallyCorrect         int                  `json:"partially_correct"`
+	Incorrect                int                  `json:"incorrect"`
+	Total                    int                  `json:"total"`
+	Strict                   scoreAccuracySummary `json:"strict"`
+	Lenient                  scoreAccuracySummary `json:"lenient"`
+	AvgSessionDominanceRatio float64              `json:"avg_session_dominance_ratio"`
+	AvgContextSessionCount   float64              `json:"avg_context_session_count"`
+	sessionDominanceRatioSum float64              `json:"-"`
+	contextSessionCountSum   float64              `json:"-"`
 }
 
 type scoreAccuracySummary struct {
@@ -259,10 +264,14 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 }
 
 func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
-	writeScoreReportWithCompleteness(cfg, scores, scoreCompletenessFromScores(scores))
+	writeScoreReportWithRunMap(cfg, scores, nil)
 }
 
-func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEntry, completeness scoreCompleteness) {
+func writeScoreReportWithRunMap(cfg *Config, scores []longmemeval.ScoreEntry, runMap map[string]longmemeval.RunEntry) {
+	writeScoreReportWithCompleteness(cfg, scores, runMap, scoreCompletenessFromScores(scores))
+}
+
+func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEntry, runMap map[string]longmemeval.RunEntry, completeness scoreCompleteness) {
 	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
 	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
 	for _, s := range scores {
@@ -281,6 +290,7 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 			qbt = &scoreReportCounts{}
 			byQType[s.QuestionType] = qbt
 		}
+		run := runMap[s.QuestionID]
 		for _, bt := range []*scoreReportCounts{overall, qbt} {
 			bt.Total++
 			switch s.ScoreLabel {
@@ -291,7 +301,13 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 			default:
 				bt.Incorrect++
 			}
+			bt.sessionDominanceRatioSum += run.SessionDominanceRatio
+			bt.contextSessionCountSum += float64(run.ContextSessionCount)
 		}
+	}
+	finalizeScoreReportCounts(overall)
+	for _, counts := range byQType {
+		finalizeScoreReportCounts(counts)
 	}
 
 	overall.finalize()
@@ -346,6 +362,14 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 	log.Printf("wrote %s", path)
 
 	writeScoreSummary(cfg.Output, cfg.ScoreOutput, report, overall)
+}
+
+func finalizeScoreReportCounts(counts *scoreReportCounts) {
+	if counts == nil || counts.Total == 0 {
+		return
+	}
+	counts.AvgSessionDominanceRatio = counts.sessionDominanceRatioSum / float64(counts.Total)
+	counts.AvgContextSessionCount = counts.contextSessionCountSum / float64(counts.Total)
 }
 
 func writeScoreSummary(w io.Writer, mode string, report map[string]any, overall *scoreReportCounts) {

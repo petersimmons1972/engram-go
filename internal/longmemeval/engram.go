@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/search"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // Client wraps the MCP Streamable HTTP client with retry logic for eval use.
@@ -361,6 +362,10 @@ type RecallResult struct {
 	// MemoryMap maps memory ID to session ID extracted from handle-mode tags.
 	// Populated when handle-mode recall returns tags with a "session:<id>" entry.
 	MemoryMap map[string]string
+	// Results carries the full SearchResult objects when recall was issued in
+	// "full" mode. Populated by RecallResultsWith* wrappers for callers that
+	// need access to memory tags (e.g. session dominance diagnostics).
+	Results []types.SearchResult
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -384,6 +389,18 @@ func (c *Client) RecallWithTemporalWindowResult(ctx context.Context, project, qu
 		project: project, query: query, topK: topK,
 		temporalWindow: true, questionText: questionText, questionDate: questionDate,
 	})
+}
+
+func (c *Client) RecallResultsWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK,
+		temporalWindow: true, questionText: questionText, questionDate: questionDate,
+		mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
 }
 
 // RecallWithOpts calls memory_recall with additional server-side options.
@@ -428,11 +445,24 @@ func (c *Client) RecallWithAtomRecall(ctx context.Context, project, query string
 	})
 }
 
+func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost, mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project           string
 	query             string
 	topK              int
+	mode              string
 	since             *time.Time
 	before            *time.Time
 	temporalWindow    bool
@@ -507,6 +537,17 @@ func (c *Client) RecallScoredWithExactBoost(ctx context.Context, project, query 
 	})
 }
 
+func (c *Client) RecallResultsWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true, mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
 func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, error) {
 	args := map[string]any{
 		"query":   p.query,
@@ -516,11 +557,12 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 		// Benchmark retrieval must not mutate retrieval telemetry while
 		// measuring recall quality.
 		"record_event": false,
-		// Handle mode returns lightweight IDs + metadata instead of the
-		// full SearchResult graph. LongMemEval only needs ranked IDs, and
-		// this avoids oversized tool payloads on dense queries.
-		"mode": "handle",
 	}
+	mode := p.mode
+	if mode == "" {
+		mode = "handle"
+	}
+	args["mode"] = mode
 	if p.exactFactBoost {
 		args["exact_fact_boost"] = true
 	}
@@ -580,14 +622,9 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	//   handle: {"handles":[{"id":"...","score":...}, ...]}
 	// Parse both and prefer whichever is populated.
 	var resp struct {
-		AtomPreamble string `json:"atom_preamble"`
-		Results      []struct {
-			Memory struct {
-				ID string `json:"id"`
-			} `json:"memory"`
-			Score float64 `json:"score"`
-		} `json:"results"`
-		Handles []struct {
+		AtomPreamble string               `json:"atom_preamble"`
+		Results      []types.SearchResult `json:"results"`
+		Handles      []struct {
 			ID    string   `json:"id"`
 			Score float64  `json:"score"`
 			Tags  []string `json:"tags"`
@@ -599,7 +636,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	hits := make([]ScoredMemoryID, 0, len(resp.Results)+len(resp.Handles))
 	memoryMap := make(map[string]string, len(resp.Handles))
 	for _, r := range resp.Results {
-		if r.Memory.ID != "" {
+		if r.Memory != nil && r.Memory.ID != "" {
 			hits = append(hits, ScoredMemoryID{ID: r.Memory.ID, Score: r.Score})
 		}
 	}
@@ -611,7 +648,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 			}
 		}
 	}
-	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap}, nil
+	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap, Results: resp.Results}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
