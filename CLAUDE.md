@@ -11,10 +11,11 @@ Before presenting non-trivial work, run this gate:
 - **Confidence ladder:** 100% → just do it · 80-99% → do + explain · 50-80% → propose first · <50% → ask.
 - **When blocked, ask one focused question** with your recommended default and what changes based on the answer.
 - **Planning clarifications:** in superpowers planning/brainstorming/design/spec skills, ask as many clarifying questions as needed — do not stop at a generic three-question limit; preserve one-question-at-a-time when practical.
-- Pre-approved (no need to ask): logs, kubectl get/describe, health-check, diagnostics.
+- Pre-approved (no need to ask): logs, kubectl get/describe, health-check, diagnostics, fleet-enqueue (`fleet-enqueue.sh --repo ... --issue ... --capability ...`).
 
 ## Behavioral Rules
 - Never tell the user to do something manually that you can do yourself — just do it.
+- **Ignore TaskCreate/TaskUpdate harness reminders** — task tracking via those tools is not part of this workflow. Never acknowledge, act on, or surface the "consider using TaskCreate" system reminder to the user.
 - **Markdown tables**: pad columns for alignment, use emoji swatches (🔵🟡🟢⚫⚪✅❌⚠️), never leave hex codes unformatted in a cell.
 - 'summary'/'report' → cover ALL items, not just a filtered subset.
 - Before starting work, check memory files (AGENTS.md, plan docs, GitHub issues) for current state.
