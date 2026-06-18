@@ -141,7 +141,6 @@ type Config struct {
 	// Set via --session-ndcg-agg flag or ENGRAM_SESSION_NDCG_AGG=true env var.
 	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
 	SessionNDCGAgg bool
-
 	// SessionDiversityN is the LEVER-9 per-session chunk cap for recall results.
 	// When non-zero, recall results are post-processed to ensure no single session
 	// contributes more than N chunks to the returned topK. This surfaces minority-
