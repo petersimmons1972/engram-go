@@ -26,6 +26,12 @@ type preservedLog struct {
 	items []string
 }
 
+type contextBlock struct {
+	Content   string
+	SessionID string
+	Date      string
+}
+
 // add appends name to the log. Safe for concurrent use.
 func (pl *preservedLog) add(name string) {
 	pl.mu.Lock()
@@ -201,6 +207,45 @@ func parseLongMemEvalQuestionDate(questionDate string) (time.Time, bool) {
 func dateOnly(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func haystackDateBySessionID(item longmemeval.Item) map[string]string {
+	limit := len(item.HaystackSessionIDs)
+	if len(item.HaystackDates) < limit {
+		limit = len(item.HaystackDates)
+	}
+	out := make(map[string]string, limit)
+	for i := 0; i < limit; i++ {
+		sessionID := strings.TrimSpace(item.HaystackSessionIDs[i])
+		date := strings.TrimSpace(item.HaystackDates[i])
+		if sessionID == "" || date == "" {
+			continue
+		}
+		out[sessionID] = date
+	}
+	return out
+}
+
+func formatContextBlock(content, sessionID, date string) string {
+	parts := make([]string, 0, 2)
+	if sessionID != "" {
+		parts = append(parts, "Session: "+sessionID)
+	}
+	if date != "" {
+		parts = append(parts, "Date: "+date)
+	}
+	if len(parts) == 0 {
+		return content
+	}
+	return "[" + strings.Join(parts, " | ") + "]\n" + content
+}
+
+func formatContextBlocks(blocks []contextBlock) []string {
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		out = append(out, formatContextBlock(block.Content, block.SessionID, block.Date))
+	}
+	return out
 }
 
 // runRun executes the run stage. Returns the process exit code: 0 on success,
@@ -637,8 +682,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextLimit = len(retrievedIDs)
 	}
 	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
+	sessionDateByID := haystackDateBySessionID(item)
 	contextBlocks := make([]string, 0, contextLimit)
 	contentByID := make(map[string]string, contextLimit)
+	contextBlockByID := make(map[string]string, contextLimit)
 	for _, id := range contextIDs {
 		content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
 		if err != nil {
@@ -653,18 +700,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
 				content = content[:cfg.MaxBlockChars]
 			}
+			sessionID := ingest.MemoryMap[id]
+			block := formatContextBlock(content, sessionID, sessionDateByID[sessionID])
 			contentByID[id] = content
-			contextBlocks = append(contextBlocks, content)
-		}
-	}
-	// --max-block-chars: truncation already applied above at storage time.
-	// This loop is now a no-op but kept as a safety net for any path that
-	// populates contextBlocks without going through contentByID.
-	if cfg.MaxBlockChars > 0 {
-		for i, block := range contextBlocks {
-			if len(block) > cfg.MaxBlockChars {
-				contextBlocks[i] = block[:cfg.MaxBlockChars]
-			}
+			contextBlockByID[id] = block
+			contextBlocks = append(contextBlocks, block)
 		}
 	}
 
@@ -685,8 +725,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		ranked := rankIDsByExactSignals(contextIDs, item.Question, contentByID)
 		reordered := make([]string, 0, len(ranked))
 		for _, id := range ranked {
-			if c := contentByID[id]; c != "" {
-				reordered = append(reordered, c)
+			if block := contextBlockByID[id]; block != "" {
+				reordered = append(reordered, block)
 			}
 		}
 		if len(reordered) > 0 {
@@ -818,7 +858,7 @@ func orderContextEvidenceFirst(blocks []string, question string) []string {
 	out := make([]string, len(blocks))
 	copy(out, blocks)
 	sort.SliceStable(out, func(i, j int) bool {
-		return scoreExactSignals(out[i], question) > scoreExactSignals(out[j], question)
+		return scoreExactSignals(stripContextMetadataHeader(out[i]), question) > scoreExactSignals(stripContextMetadataHeader(out[j]), question)
 	})
 	return out
 }
@@ -897,11 +937,27 @@ func runEntryLogLine(entry longmemeval.RunEntry) string {
 
 // sessionDateRe matches the first "Session date: YYYY-MM-DD" line in a block.
 var sessionDateRe = regexp.MustCompile(`(?m)^Session date:\s*(\d{4}-\d{2}-\d{2})`)
+var contextMetadataDateRe = regexp.MustCompile(`(?m)^\[(?:Session:\s*[^|\]]+\s*\|\s*)?Date:\s*(\d{4}-\d{2}-\d{2})\]`)
+
+func stripContextMetadataHeader(block string) string {
+	header, rest, ok := strings.Cut(block, "\n")
+	if !ok {
+		return block
+	}
+	if strings.HasPrefix(header, "[") && strings.HasSuffix(header, "]") &&
+		(strings.Contains(header, "Session:") || strings.Contains(header, "Date:")) {
+		return rest
+	}
+	return block
+}
 
 // blockDate extracts the Session date from the first matching line of a memory
 // block. Returns time.Time{} (zero value / 1970) if no date is found.
 func blockDate(block string) time.Time {
-	m := sessionDateRe.FindStringSubmatch(block)
+	m := contextMetadataDateRe.FindStringSubmatch(block)
+	if m == nil {
+		m = sessionDateRe.FindStringSubmatch(block)
+	}
 	if m == nil {
 		return time.Time{}
 	}
