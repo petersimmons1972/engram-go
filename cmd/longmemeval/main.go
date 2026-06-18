@@ -82,7 +82,6 @@ type Config struct {
 
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
-
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
 

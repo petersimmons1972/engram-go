@@ -311,6 +311,36 @@ func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	}
 }
 
+func TestRecallWithOpts_SendsSessionDiversityN(t *testing.T) {
+	t.Setenv("ENGRAM_SESSION_DIVERSITY_N", "2")
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got, ok := args["session_diversity_n"].(float64); !ok || got != 2 {
+				t.Fatalf("session_diversity_n = %#v, want 2", args["session_diversity_n"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "h-aaa", "score": 0.8},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := c.RecallWithOpts(ctx, "proj", "query", 5, nil, nil, false); err != nil {
+		t.Fatalf("RecallWithOpts: %v", err)
+	}
+}
+
 // TestFetchContent_HappyPath verifies content fetching.
 func TestFetchContent_HappyPath(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){

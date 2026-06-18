@@ -130,7 +130,6 @@ type RecallOpts struct {
 	// ablatable: when false the code path is entirely bypassed and results are
 	// identical to the baseline. Default false. (LEVER-8)
 	SessionNDCGAgg bool
-
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for preference
 	// queries. When true and the query is preference-shaped, the engine fetches
 	// best-chunk embeddings for top candidates, computes a centroid of the top-10

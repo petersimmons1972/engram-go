@@ -458,6 +458,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
 	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
+	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN)
 	opts.TemporalWindowRecall = temporalWindowRecall
 	opts.QuestionText = questionText
 	opts.QuestionDate = questionDate
