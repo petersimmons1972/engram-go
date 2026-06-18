@@ -151,6 +151,57 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestContextMetadata_HeaderFormat(t *testing.T) {
+	got := formatContextBlock("user prefers Hyatt", "s42", "2024-03-18")
+	want := "[Session: s42 | Date: 2024-03-18]\nuser prefers Hyatt"
+	if got != want {
+		t.Fatalf("formatContextBlock() = %q, want %q", got, want)
+	}
+}
+
+func TestContextMetadata_EmptySessionID(t *testing.T) {
+	got := formatContextBlock("some text", "", "2024-01-01")
+	if !strings.Contains(got, "[Date: 2024-01-01]\nsome text") {
+		t.Fatalf("formatContextBlock() missing date-only header: %q", got)
+	}
+	if strings.Contains(got, "Session:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Session field: %q", got)
+	}
+}
+
+func TestContextMetadata_EmptyDate(t *testing.T) {
+	got := formatContextBlock("some text", "s1", "")
+	if !strings.Contains(got, "[Session: s1]\nsome text") {
+		t.Fatalf("formatContextBlock() missing session-only header: %q", got)
+	}
+	if strings.Contains(got, "Date:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Date field: %q", got)
+	}
+}
+
+func TestContextMetadata_BothEmpty(t *testing.T) {
+	got := formatContextBlock("some text", "", "")
+	if got != "some text" {
+		t.Fatalf("formatContextBlock() = %q, want raw chunk text", got)
+	}
+}
+
+func TestContextMetadata_MultipleResults(t *testing.T) {
+	got := formatContextBlocks([]contextBlock{
+		{SessionID: "s1", Date: "2024-01-01", Content: "first chunk"},
+		{SessionID: "s2", Date: "2024-02-02", Content: "second chunk"},
+		{SessionID: "s3", Date: "2024-03-03", Content: "third chunk"},
+	})
+	want := []string{
+		"[Session: s1 | Date: 2024-01-01]\nfirst chunk",
+		"[Session: s2 | Date: 2024-02-02]\nsecond chunk",
+		"[Session: s3 | Date: 2024-03-03]\nthird chunk",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("formatContextBlocks() = %#v, want %#v", got, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // R2-B1: runRun must return ExitCodeLockContention (75), not 2, on lock
 // contention. We test this via (a) a source-level structural guard that the
