@@ -236,7 +236,7 @@ func configOrDefaults(cfg Config) (maxDoc, rawMax int) {
 	if rawMax <= 0 {
 		rawMax = 50 * 1024 * 1024
 	}
-	return
+	return maxDoc, rawMax
 }
 
 // engineStorerAdapter lets a *search.SearchEngine satisfy memoryStorer without

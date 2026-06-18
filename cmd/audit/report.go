@@ -52,7 +52,7 @@ func extractTags(tags []string) (ptype, domain, sig string) {
 			}
 		}
 	}
-	return
+	return ptype, domain, sig
 }
 
 // truncate returns s truncated to n runes with a trailing "…" when truncated.

@@ -70,17 +70,17 @@ func seedClusterAndMemory(t *testing.T, ctx context.Context, backend db.Backend,
 	}))
 
 	m := &types.Memory{
-		ID:         memoryID,
-		Content:    content,
-		MemoryType: types.MemoryTypeContext,
-		Project:    project,
-		Tags:       []string{},
-		Importance: 2,
+		ID:          memoryID,
+		Content:     content,
+		MemoryType:  types.MemoryTypeContext,
+		Project:     project,
+		Tags:        []string{},
+		Importance:  2,
 		StorageMode: "focused",
 	}
 	require.NoError(t, backend.StoreMemory(ctx, m))
 	require.NoError(t, backend.SetMemoryClusterID(ctx, memoryID, clusterID))
-	return
+	return clusterID, memoryID
 }
 
 // ── T1: flag OFF ─────────────────────────────────────────────────────────────
