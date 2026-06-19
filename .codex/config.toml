@@ -1,7 +1,7 @@
-model = "gpt-5.3-codex-spark"
-model_reasoning_effort = "high"
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
 approval_policy = "never"
-sandbox_mode = "danger-full-access"
+sandbox_mode = "workspace-write"
 [projects."/home/psimmons"]
 trust_level = "trusted"
 
@@ -48,6 +48,9 @@ trust_level = "trusted"
 trust_level = "trusted"
 
 [projects."/home/psimmons/projects/claude-advisory-protocol"]
+trust_level = "trusted"
+
+[projects."/tmp/codex-sandbox-test"]
 trust_level = "trusted"
 
 [tui]

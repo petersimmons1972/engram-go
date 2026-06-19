@@ -6,7 +6,8 @@
     "CLAUDE_STATUS_INFO_MODE": "emoji",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
-    "ENGRAM_BASE_URL": "https://engram.petersimmons.com"
+    "ENGRAM_BASE_URL": "https://engram.petersimmons.com",
+    "CODEX_GITHUB_ALLOWED_REPOS": "petersimmons1972/engram-go,petersimmons1972/claude-codex,petersimmons1972/codex,petersimmons1972/fleet-dispatch,petersimmons1972/homelab-config,petersimmons1972/linkedin,petersimmons1972/substack,petersimmons1972/aifleet,petersimmons1972/substack-prompts,petersimmons1972/olla,petersimmons1972/agent-gateway,petersimmons1972/instinct,petersimmons1972/claude-advisory-protocol,petersimmons1972/clearwatch-research,petersimmons1972/factvault,petersimmons1972/harness-port,petersimmons1972/infisical-mcp-server,petersimmons1972/job-search-system,petersimmons1972/clearwatch,petersimmons1972/agw-testing,petersimmons1972/spark,petersimmons1972/www,petersimmons1972/proving-ground,petersimmons1972/homepage-k8s,petersimmons1972/resume-website,petersimmons1972/yourai,petersimmons1972/vllm-gb10,petersimmons1972/armies,petersimmons1972/archived-democratic-csi-truenas,petersimmons1972/challenge_coins,petersimmons1972/3dprint,petersimmons1972/security-program,petersimmons1972/character-study,petersimmons1972/writers,petersimmons1972/yourai-docs,petersimmons1972/claude-telemetry,petersimmons1972/locked-shields,petersimmons1972/auto-spicy-github,petersimmons1972/armies-go,petersimmons1972/engram,petersimmons1972/ai-cost-containment,petersimmons1972/camp-david,petersimmons1972/generals,petersimmons1972/family,petersimmons1972/karen,petersimmons1972/luck,petersimmons1972/quality-auditor,petersimmons1972/advice,petersimmons1972/security-intelligence-business,petersimmons1972/talos"
   },
   "permissions": {
     "allow": [
@@ -35,7 +36,7 @@
       "Skill(schedule)",
       "Skill(linkedin-content)",
       "Skill(update-config)",
-      "Bash(codex-guard *)",
+      "Bash(*)",
       "Bash(python3 *)",
       "Bash(just *)",
       "Bash(npm *)",
@@ -61,7 +62,6 @@
       "Bash(ssh codex.petersimmons.com:*)",
       "Bash(ssh hermes.petersimmons.com:*)",
       "Bash(cp /home/psimmons/.claude/agents/rickover-validator.md /home/psimmons/.worktrees/opus-47-migration/.claude/agents/rickover-validator.md)",
-
       "Bash(mkdir -p /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents)",
       "Bash(cp /home/psimmons/.claude/plugins/cache/superpowers-marketplace/superpowers/5.0.7/skills/dispatching-parallel-agents/SKILL.md /home/psimmons/.worktrees/opus-47-migration/.claude/skills/dispatching-parallel-agents/SKILL.md)",
       "Bash(rm .claude/agents/rickover-validator.md)",
@@ -69,10 +69,73 @@
       "mcp__security-program__list_plugins",
       "Bash(rm /home/psimmons/.git/index.lock)",
       "mcp__codex-tools__*",
+      "mcp__codex-tools__github_list_issues",
+      "mcp__codex-tools__github_get_issue",
+      "mcp__codex-tools__github_issue_comment",
+      "mcp__codex-tools__github_label_add",
+      "mcp__codex-tools__github_label_remove",
+      "mcp__codex-tools__github_list_prs",
+      "mcp__codex-tools__github_pr_checks",
+      "mcp__codex-tools__github_pr_create",
+      "mcp__codex-tools__github_pr_merge",
+      "mcp__codex-tools__queue_status",
+      "mcp__codex-tools__task_brief",
+      "mcp__codex-tools__inspect_repo",
+      "mcp__codex-tools__inspect_github",
+      "mcp__codex-tools__codex_capabilities",
+      "mcp__codex-tools__codex_handoff",
       "Write(/home/psimmons/.claude/plans/**)",
       "Edit(/home/psimmons/.claude.json)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(queue-agent *)",
+      "Bash(/home/psimmons/bin/queue-agent *)",
+      "Bash(TOKEN_FILE=/home/psimmons/.config/fleet-dispatch/token-impl *)",
+      "Bash(TOKEN_FILE=/home/psimmons/.config/fleet-dispatch/token-review *)",
+      "Bash(TOKEN_FILE=/home/psimmons/.config/fleet-dispatch/token-consult *)",
+      "Bash(/home/psimmons/projects/claude-codex/.claude/worktrees/phase1-hardening/scripts/fleet-enqueue.sh *)",
+      "Write(/home/psimmons/projects/engram-go/**)",
+      "Edit(/home/psimmons/projects/engram-go/**)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(ls *)",
+      "Bash(wc *)",
+      "Bash(stat *)",
+      "Bash(diff *)",
+      "Bash(difft *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(cut *)",
+      "Bash(tr *)",
+      "Bash(cd *)",
+      "Bash(mkdir *)",
+      "Bash(make *)",
+      "Bash(touch *)",
+      "Bash(rm *)",
+      "Bash(mv *)",
+      "Bash(cp *)",
+      "Bash(chmod *)",
+      "Bash(echo *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(awk *)",
+      "Bash(sed *)",
+      "Bash(find *)",
+      "Bash(which *)",
+      "Bash(printenv *)",
+      "Bash(export *)",
+      "Bash(source *)",
+      "Bash(ssh *)",
+      "Bash(git status)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git branch *)",
+      "Bash(git show *)",
+      "Bash(git stash list)",
+      "Bash(git worktree list)",
+      "Bash(git remote *)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -172,23 +235,6 @@
             "type": "command",
             "command": "~/bin/engram hook Stop",
             "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/telemetry-emit.sh",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/bin/engram hook UserPromptSubmit",
-            "timeout": 5,
-            "statusMessage": "Checking Engram auth"
           },
           {
             "type": "command",
@@ -318,7 +364,8 @@
     ]
   },
   "worktree": {
-    "baseRef": "head"
+    "baseRef": "head",
+    "bgIsolation": "none"
   },
   "statusLine": {
     "type": "command",

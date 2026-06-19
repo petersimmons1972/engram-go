@@ -1,16 +1,16 @@
 # Learning Index
 
-**Last Updated**: 2026-06-12T01:00:40Z
-**Session**: 20260611-210040
+**Last Updated**: 2026-06-18T20:53:37Z
+**Session**: 20260618-165337
 
 ## Recent Activity
 
-Last: 2026-06-11: chore: untrack bin/codex-poll — deploy-managed by petersimmons1972/codex (#121) (+26 more this week)
-**Uncommitted**: ⚠️  8 modified, 0 staged
+Last: 2026-06-18: chore(memory): log lesson — Codex ChatGPT auth auto-refreshes; no manual re-auth on access-token expiry (+58 more this week)
+**Uncommitted**: ⚠️  22 modified, 0 staged
 
 ## Infrastructure
 
-**Cluster/Services**: ✅ All 9 nodes ready | ⚠️  14 OK, 0 failed, 1 warnings | **Warnings**: None detected
+**Cluster/Services**: ✅ All 9 nodes ready | health-check failed to run | **Warnings**: None detected
 Health check: `~/bin/health-check.sh`
 **J-2**: J-2: All clear
 

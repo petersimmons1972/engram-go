@@ -172,3 +172,51 @@ Ran the Article 045/046 self-summary + compression audit on the 89-rule `CLAUDE.
 - **Check before you alarm.** Verify root cause with evidence before escalating: SMART was clean (not a dying disk — it was systemd sandbox EROFS); a gh 401 was keyring-context loss, not a dead token; a doctor "fail" was a cosmetic env-visibility check, not an outage. Almost raised a false "disk failing" alarm. (Engram homelab 019eb3b4-9cac)
 - **Pace to founder merge throughput.** Surfacing one green draft PR at a time and letting the founder merge beats piling up unmerged PRs (WIP inventory). Hold large phases for an explicit checkpoint. (Engram global 019eb3b4-7afa)
 - **Subagent quirk:** when queuing via a subagent, tell it explicitly to USE BASH for the heredoc + queue-agent — one agent wrongly refused, thinking the Write tool was blocked.
+
+## 2026-06-14 — Ask the endpoint, don't infer by observation
+
+Grepped a container filesystem to guess another agent's GitHub capabilities; founder: 'fail moment assuming by observation — directly ask the other endpoints.' Asking returned the truth (and my inference was wrong). Query the source of truth directly when it can answer.
+
+## 2026-06-14 — Don't converge early in multi-agent review
+
+Founder: 'don't agree too early, surface the differences, I want diverse opinions.' Three YES/YES sign-off rounds missed bugs a contrarian-persona reviewer caught immediately. Engineer dissent; ask 'what's overstated/what race remains', not 'do you agree'.
+
+## 2026-06-14 — Track all workstreams durably across sessions
+
+A task assigned in a prior session (plan Substack series) had zero record in this one and silently dropped until founder asked. Agent memory doesn't span sessions; persist every active workstream durably and restate at checkpoints; own continuity gaps as failures.
+
+## 2026-06-14 — Never use an LLM agent to poll/monitor — use a shell loop
+
+A monitoring agent re-invoked each poll replays its ENTIRE context (~125k tokens) every cycle. Watching a counter to 135 cost ~1M+ tokens. RULE: monitoring/waiting = cheap background bash until-loop (until [ cond ]; do sleep N; done) which costs ~0 tokens. Reserve LLM agents for work that needs judgment, not for watching state. When a long job needs supervised restart/stall-detection, the supervisor is a bash watchdog, never an agent that wakes and replays context.
+
+## 2026-06-14 — GPU embed role separation is a HARD policy — MI-50=live, W6800+7900XT=reembed
+
+Founder has stated 3+ times: MI-50 (precision:8007, bge-m3-live) serves Engram LIVE embed queries ONLY; W6800 (precision:8005) and 7900XT (leviathan) are reembed/batch ONLY. It kept getting LOST because it lived only in chat/volatile memory and was never (a) encoded in engram deployment env, (b) a CLAUDE.md hard rule, or (c) a deterministic check. ENGRAM_EMBED_URL must point directly at MI-50:8007, NOT through olla (olla load-balances live onto the wrong cards). Before ANY embed-routing change, run the GPU-role check. Recurring-policy-loss is itself the failure mode: a repeatedly-stated infra policy MUST be encoded in config + a verifier, never just remembered.
+
+## 2026-06-14 — Test vs prod migration-bootstrap divergence (FM-33 instance)
+
+A merged change added a migration file + dependent code; all tests passed because the test harness applies migrations from its OWN list, while the prod boot path (cmd/.../runMigrations) had a separate, unupdated list. Green tests certified nothing about prod (no column -> runtime failure). Fix: single shared migration list + a deterministic test asserting migrations/ dir == the boot list. Always hand-verify the prod boot/runtime path consumes a newly added artifact before deploying.
+
+## 2026-06-14 — Canary needs reachability+creds staged BEFORE the fire (FM-35/36)
+
+Firing a live end-to-end canary failed not on code but on access: the service name resolved only via a hosts-shim on one node (not the agent host); kubectl port-forward to the ClusterIP exits 144 (reaped by the agent harness); SSH-to-another-host to run it is correctly gated. Before attempting a live canary, stage reachability (portable DNS or an in-cluster one-shot runner) and credentials up front, and add a pre-fire reachability probe that fails fast with 'not reachable from here' instead of a confusing mid-enqueue dial error.
+
+## 2026-06-15 — Trust AI direct observations; challenge AI conclusions
+
+Calibrate trust by TYPE of claim. A direct observation (an agent reporting what it read in source/logs/output) is somewhat trustworthy — accept and act, do not re-derive it. A conclusion/assumption (a claim about how a system behaves) is what to challenge and verify, especially load-bearing premises. I over-verified Codex's direct read of the code (body not threaded into launch_coded_issue) the same way I rightly challenged the zero-context reviewer's behavioral premise (supervisord env inheritance). Re-confirming an observation wastes cycles; failing to verify a conclusion ships bugs.
+
+## 2026-06-15 — fleet-dispatch: codex obeys the prefetched GitHub issue BODY over the enqueue ref-prompt
+
+When a fleet-dispatch item runs codex, the harness prefetches the target GitHub issue body into the prompt, and codex treats THAT as the authoritative task definition — overriding a contradicting ref/enqueue prompt. A canary failed to produce its artifact for 3 runs because the target issue body still described the (old) design as analyze-only/no-mutation; the ref-prompt said create-the-file. codex followed the issue body. Fix: the issue body and the enqueue prompt must AGREE; for impl items the issue body must demand the artifact. Founder pinpointed it (previous prompts/limits steering codex), not a sandbox/credential block — codex had danger-full-access.
+
+## 2026-06-16 — Coordinator must filter low-level decisions, not escalate them
+
+During the credential-centralization campaign the founder corrected ~4 times (escalating frustration): stop routing trivial nondestructive decisions for approval; execute on sensible defaults; fan out parallel agents by default for independent work; escalate ONLY destructive/irreversible/prod/data-loss/cost/security-boundary calls. Quote: you are approved to touch all these secrets, that is the point of this plan. Asking permission per-command on already-authorized work is the failure mode for a coordinator persona.
+
+## 2026-06-16 — Subagent used customer project binary (agent-send) in homelab infra script
+
+When building homelab infrastructure scripts, subagents may reach for available binaries on the host without checking whether they belong to customer projects. The secret-sprawl-scan agent called agent-send (from the agent-gateway customer project) for alerting. Correct pattern: homelab cron alerting = exit code + cron mail + log file. Never depend on customer project binaries in homelab scripts. Review any subprocess calls in generated homelab scripts before accepting them.
+
+## 2026-06-18 — Codex ChatGPT auth auto-refreshes — do not flag re-auth on access-token expiry
+
+The Codex container uses ChatGPT device-flow auth (auth.json on the codex-auth volume) which holds a refresh token (tokens + last_refresh). The access_token short expiry (~6 days) auto-refreshes via the refresh token; an expired id_token is normal. Do NOT flag a manual interactive re-auth as a needed founder action based on access-token expiry — it is not required. Founder confirmed auth is already set up and working.
