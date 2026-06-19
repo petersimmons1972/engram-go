@@ -287,7 +287,7 @@
         ]
       },
       {
-        "matcher": "Write",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -326,12 +326,6 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/session-start-claude-codex-connect.sh",
-            "timeout": 12,
-            "statusMessage": "Connecting to claude-codex infrastructure"
-          },
-          {
-            "type": "command",
             "command": "~/bin/generate-session-context.py",
             "timeout": 15,
             "statusMessage": "Generating session context"
@@ -339,7 +333,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/sync-armies-xp.sh",
-            "timeout": 30,
+            "timeout": 5,
             "statusMessage": "Syncing armies XP from local profiles"
           },
           {

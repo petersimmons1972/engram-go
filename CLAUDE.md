@@ -32,6 +32,8 @@ Before presenting non-trivial work, run this gate:
 - **Validator bash guard:** `touch ~/.claude/.validator-bash-guard` before dispatching Spruance or Rickover-validator; `rm` it after the validation session. Enables the read-only Bash enforcement hook.
 - **codex-guard for shell ops:** Agent briefs that run git/gh/kubectl/helm must prefix those calls with `codex-guard` (e.g. `codex-guard git push origin main`). Never brief an agent to call `git *` or `gh *` directly — the `Bash(git *)` allow is gone; only `Bash(codex-guard *)` is permitted. Use `mode: "bypassPermissions"` on every agent dispatch to prevent permission-prompt chains (alert fatigue is a worse security risk than the ops being prompted about).
 - **model / effort / advisory-gate / Engram-seed** apply to every agent dispatch — canonical statements in §Agent Dispatch Mandates (M1 model, M2 effort, M3 advisory-gate, M6 Engram-seed). [ADV.1-ADV.5, QC.6]
+- **Background-by-default for chores:** Dispatch mechanical/janitorial tasks as background subagents (`run_in_background: true`) when the work is reversible/low-blast-radius AND its result does not gate the next user message — this keeps the session responsive. Stay foreground when the result gates the next decision, the task is risky/irreversible/destructive, or a surprise would likely need an immediate call from the user. Destructive ops ALWAYS run foreground, leaving room to stop and discuss the choice before it lands. Background chores use the cheapest sufficient tier (Haiku/Sonnet) — never Opus/Fable for janitorial work. On completion: surface a one-line 'done'; escalate loudly only on an error or a surprise finding.
+- **`//` as a separability marker:** Treat `//` in a user message as an explicit thought boundary. Evaluate each segment independently — fan out to parallel/background agents when segments are independent and actionable, sequence them when one gates another, answer inline when a segment is just an aside. Don't force a dispatch on every `//`; it is a cue to consider one, not a command to spawn.
 
 ## Pre-Flight Protocol — MANDATORY
 
@@ -100,7 +102,7 @@ Patterns and decision rules for `ast-grep`, `gron`, `yq`, `kubectl-neat`, `duckd
 
 ## Agent Dispatch Mandates — I CHECK ALL EIGHT BEFORE EVERY AGENT CALL [AP.1, AP.11, QC.6]
 
-Not guidelines. The PreToolUse:Agent hook echoes them at call time; I treat that output as a hard gate.
+Not guidelines. I treat these as a hard gate and self-check every item below before every agent call.
 
 | # | Mandate | My commitment |
 |---|---------|---------------|

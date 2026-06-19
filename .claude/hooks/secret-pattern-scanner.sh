@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse:Write — block writes containing API keys or token patterns.
+# PreToolUse:Edit|Write — block writes/edits containing API keys or token patterns.
 #
 # Why: CLAUDE.md security: "NEVER put a secret in a command line, code, CI log,
 # or GitHub issue/PR." This hook catches the case where a secret retrieved from
@@ -39,7 +39,9 @@ content=$(python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d.get('tool_input', {}).get('content', ''))
+    ti = d.get('tool_input', {})
+    # Write tool uses 'content'; Edit tool uses 'new_string'. Prefer content, fall back.
+    print(ti.get('content') or ti.get('new_string', ''))
 except Exception:
     print('')
 " <<< "$input" 2>/dev/null || true)
@@ -59,17 +61,21 @@ case "$filepath" in
     *.env.example|*.env.sample|*.env.template) exit 0 ;;
 esac
 
-# Layer 2: anchored pattern scan — pass content via stdin to avoid ARG_MAX issues.
-# sys.argv is capped at ~3.2MB on Linux; files near that limit cause execve E2BIG,
-# and `|| true` swallows the failure silently so the hook exits 0 unscanned. (FM-92)
-printf '%s' "$content" | python3 - <<'PYEOF' 2>/dev/null || true
-import sys
-import re
-import json
+# Layer 2: anchored pattern scan.
+# Content is passed via env var (_SECRET_SCANNER_CONTENT) to avoid two issues:
+# (a) ARG_MAX: sys.argv is capped at ~3.2MB on Linux; large files cause execve E2BIG.
+#     (FM-92)
+# (b) pipe+heredoc conflict: `printf '%s' "$content" | python3 - <<'PYEOF'` feeds the
+#     heredoc as the script source *and* as stdin simultaneously; bash resolves the
+#     conflict by letting the heredoc win, leaving sys.stdin empty. Env var avoids this.
+#     (FM-93)
+export _SECRET_SCANNER_CONTENT="$content"
+python3 - <<'PYEOF' 2>/dev/null || true
+import os, re, json
 
-content = sys.stdin.read()
+content = os.environ.get('_SECRET_SCANNER_CONTENT', '')
 if not content:
-    sys.exit(0)
+    raise SystemExit(0)
 
 # Also search a whitespace-collapsed version to catch secrets split across
 # line endings (e.g. a YAML block scalar that wraps mid-key). (FM-92)
@@ -107,7 +113,7 @@ if hits:
     )
     print(json.dumps({'decision': 'block', 'reason': reason}))
 
-sys.exit(0)
 PYEOF
+unset _SECRET_SCANNER_CONTENT
 
 exit 0
