@@ -29,9 +29,9 @@ for src in "$ARMIES_PROFILES"/*.md; do
   name=$(basename "$src")
 
   # Preserve permanent residents — only exist in .claude/agents, not managed by armies
-  # founder.md: founder identity file
   # opus-advisor.md: pre-decision strategic advisor (Opus-class, must survive sync overwrites)
-  if [[ "$name" == "founder.md" || "$name" == "opus-advisor.md" ]]; then
+  # (founder.md was archived to .claude/agents-archive/ — not a spawnable agent, not synced here)
+  if [[ "$name" == "opus-advisor.md" ]]; then
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
