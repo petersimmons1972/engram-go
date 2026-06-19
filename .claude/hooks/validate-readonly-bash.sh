@@ -89,9 +89,42 @@ if [[ "$BASE" == python* ]]; then
     exit 2
 fi
 
-# Allowlist: non-git/npm/python commands validators are permitted to run.
-# SECURITY: do NOT add curl, wget, nc, ssh, or any network-capable tool here.
+# node/nodejs: block inline eval forms and bare REPL — both grant arbitrary code
+# execution. Allow version queries and named script files.
+# SECURITY: do NOT add 'node' or 'nodejs' to ALLOWED below.
+if [[ "$BASE" == "node" || "$BASE" == "nodejs" ]]; then
+    # Bare REPL: 'node' with no further args
+    if [[ -z "$(echo "$CMD" | awk '{print $2}' | tr -d '\n')" ]]; then
+        echo "BLOCKED by validate-readonly-bash.sh: bare '$BASE' REPL is not permitted in validator sessions." >&2
+        exit 2
+    fi
+    # Inline eval flags: -e, --eval, -p, --print
+    if echo "$CMD" | grep -qE '(^|\s)(-e|--eval|-p|--print)(\s|$)'; then
+        echo "BLOCKED by validate-readonly-bash.sh: '$BASE' inline eval (-e/--eval/-p/--print) is not permitted in validator sessions." >&2
+        exit 2
+    fi
+    # Allow: node --version, node somescript.js, etc.
+    exit 0
+fi
+
+# find: block destructive action flags — -exec/-execdir/-ok/-okdir run arbitrary
+# commands; -delete/-fprint/-fprintf/-fls write to the filesystem.
+# SECURITY: do NOT add 'find' to ALLOWED below.
+if [[ "$BASE" == "find" ]]; then
+    if echo "$CMD" | grep -qE '(^|\s)(-exec|-execdir|-ok|-okdir|-delete|-fprint|-fprintf|-fls)(\s|$|\\)'; then
+        echo "BLOCKED by validate-readonly-bash.sh: 'find' with destructive flags (-exec/-delete/etc.) is not permitted in validator sessions." >&2
+        echo "Use 'fd' for safe file search." >&2
+        exit 2
+    fi
+    exit 0
+fi
+
+# Allowlist: non-git/npm/python/node/find commands validators are permitted to run.
+# SECURITY: do NOT add curl, wget, nc, ssh, xh, or any network-capable tool here.
 # Do NOT add python3/python — handled above with argument inspection.
+# Do NOT add node/nodejs — handled above (blocks -e/--eval/bare REPL).
+# Do NOT add find — handled above (blocks -exec/-delete/etc.).
+# Do NOT add sed, awk, duckdb — can write files or execute arbitrary code.
 ALLOWED=(
     pytest
     cat
@@ -100,7 +133,6 @@ ALLOWED=(
     grep
     rg
     ripgrep
-    find
     ls
     wc
     diff
@@ -111,7 +143,27 @@ ALLOWED=(
     type
     true
     false
-    node
+    fd
+    mlr
+    yq
+    gron
+    difft
+    pup
+    tokei
+    ast-grep
+    sg
+    stat
+    sort
+    uniq
+    cut
+    tr
+    column
+    basename
+    dirname
+    realpath
+    du
+    df
+    tree
 )
 
 for allowed in "${ALLOWED[@]}"; do
@@ -122,5 +174,5 @@ done
 
 # Block everything else
 echo "BLOCKED by validate-readonly-bash.sh: '$BASE' is not on the validator allowlist." >&2
-echo "Permitted commands: pytest, python3 -m pytest, npm test, git status/diff/log, cat, head, tail, grep, rg, find, ls" >&2
+echo "Permitted commands: pytest, python3 -m pytest, npm test, git status/diff/log, cat, grep, rg, fd, ls, jq, yq, mlr, stat, diff, difft, tokei, and standard text utilities. Note: find -exec/-delete and node -e/--eval are blocked." >&2
 exit 2

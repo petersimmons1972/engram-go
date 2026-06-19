@@ -61,4 +61,26 @@ if [[ "$branch" == "main" || "$branch" == "master" ]]; then
         "$branch" "$repo_root"
 fi
 
+# Non-blocking branch-change warning (folded in from branch-check-pre-tool.sh).
+# Compares the current branch against the branch recorded at session start.
+# Advisory only — never blocks, never exits non-zero, silently skips on any error.
+# Uses $branch and $repo_root already computed above; no additional git calls needed.
+(
+    set +e
+    session_branch_file="$HOME/.claude/session-branch"
+    [ -f "$session_branch_file" ] || exit 0
+    session_line=$(head -1 "$session_branch_file" 2>/dev/null) || exit 0
+    [ -n "$session_line" ] || exit 0
+    session_root="${session_line%%:*}"
+    session_branch="${session_line#*:}"
+    # Only warn when we are in the same repo root that started the session
+    [ -n "$session_root" ] || exit 0
+    [ "$repo_root" = "$session_root" ] || exit 0
+    [ -n "$session_branch" ] || exit 0
+    [ "$branch" != "$session_branch" ] || exit 0
+    printf '⚠️  Branch changed since session start (non-blocking):\n' >&2
+    printf '   started: %s\n' "$session_branch" >&2
+    printf '   now:     %s\n' "$branch" >&2
+) || true
+
 exit 0

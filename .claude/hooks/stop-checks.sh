@@ -13,18 +13,22 @@ CHANGED=$(git diff --name-only 2>/dev/null)
 echo "── changed ──────────────────────────────"
 git diff --stat 2>/dev/null
 
-# Debug artifacts in Python
-PY_HITS=$(git diff -- '*.py' 2>/dev/null | grep '^+' | grep -E '(print\(|pdb\.set_trace|breakpoint\(\)|import pdb)' | grep -v '^+++')
-if [ -n "$PY_HITS" ]; then
-    echo "── ⚠️  debug artifacts (Python) ─────────"
-    echo "$PY_HITS"
+# Debug artifacts in Python — only if a .py file changed
+if echo "$CHANGED" | grep -q '\.py$'; then
+    PY_HITS=$(git diff -- '*.py' 2>/dev/null | grep '^+' | grep -E '(print\(|pdb\.set_trace|breakpoint\(\)|import pdb)' | grep -v '^+++')
+    if [ -n "$PY_HITS" ]; then
+        echo "── ⚠️  debug artifacts (Python) ─────────"
+        echo "$PY_HITS"
+    fi
 fi
 
-# Console.log in JS/TS
-JS_HITS=$(git diff -- '*.ts' '*.tsx' '*.js' '*.jsx' 2>/dev/null | grep '^+' | grep 'console\.log' | grep -v '^+++')
-if [ -n "$JS_HITS" ]; then
-    echo "── ⚠️  console.log (JS/TS) ──────────────"
-    echo "$JS_HITS"
+# Console.log in JS/TS — only if a .js/.ts/.jsx/.tsx file changed
+if echo "$CHANGED" | grep -qE '\.(js|ts|jsx|tsx)$'; then
+    JS_HITS=$(git diff -- '*.ts' '*.tsx' '*.js' '*.jsx' 2>/dev/null | grep '^+' | grep 'console\.log' | grep -v '^+++')
+    if [ -n "$JS_HITS" ]; then
+        echo "── ⚠️  console.log (JS/TS) ──────────────"
+        echo "$JS_HITS"
+    fi
 fi
 
 exit 0

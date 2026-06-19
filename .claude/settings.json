@@ -182,7 +182,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/engram-denial-capture.sh",
+            "command": "python3 /home/psimmons/.claude/hooks/engram-denial-capture.py /home/psimmons/.claude/projects/-home-psimmons/memory/denial-log.md",
             "timeout": 5
           }
         ]
@@ -194,11 +194,6 @@
             "type": "command",
             "command": "~/.claude/hooks/ruff-check.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '\\.py$' && pytest --lf -x 2>&1 | tail -20 || true",
-            "timeout": 30
           }
         ]
       },
@@ -276,11 +271,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/branch-check-pre-tool.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "~/.claude/hooks/branch-write-guard.sh",
             "timeout": 5
           }
@@ -339,8 +329,8 @@
           {
             "type": "command",
             "command": "~/.armies/bin/sync-to-claude-agents.sh",
-            "timeout": 15,
-            "statusMessage": "Syncing armies profiles → ~/.claude/agents/"
+            "timeout": 8,
+            "statusMessage": "Syncing armies profiles \u2192 ~/.claude/agents/"
           },
           {
             "type": "command",

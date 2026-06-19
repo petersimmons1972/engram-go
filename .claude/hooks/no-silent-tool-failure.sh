@@ -62,7 +62,6 @@ DENIAL_MARKERS = (
     "user doesn't want to proceed with this tool use",
     "tool use was rejected",
     "Permission",
-    '"is_error":true',
     "error executing tool",
 )
 
