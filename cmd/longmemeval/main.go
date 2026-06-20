@@ -351,6 +351,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sefs.BoolVar(&cfg.ScorerThinking, "scorer-thinking", true, "enable chain-of-thought for scorers that support it (default true)")
+		sefs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "context window size used during run (for H-DIAG diagnostics; 0 = read from RUN_STATUS.json)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
 		}
