@@ -283,25 +283,26 @@ func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query st
 
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
-func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
+func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost, preferenceSessionRerank bool) ([]string, error) {
 	return c.recallWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
-		topicAnchorBoost: topicAnchorBoost,
+		topicAnchorBoost: topicAnchorBoost, preferenceSessionRerank: preferenceSessionRerank,
 	})
 }
 
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
-	project          string
-	query            string
-	topK             int
-	since            *time.Time
-	before           *time.Time
-	temporalWindow   bool
-	questionText     string
-	questionDate     string
-	exactFactBoost   bool
-	topicAnchorBoost bool
+	project                 string
+	query                   string
+	topK                    int
+	since                   *time.Time
+	before                  *time.Time
+	temporalWindow          bool
+	questionText            string
+	questionDate            string
+	exactFactBoost          bool
+	topicAnchorBoost        bool
+	preferenceSessionRerank bool
 }
 
 func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
@@ -336,10 +337,10 @@ type RecallOpts struct {
 
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.
 // Convenience wrapper for the longmemeval run command.
-func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
+func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time, preferenceSessionRerank bool) ([]string, error) {
 	return c.recallWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
-		exactFactBoost: true,
+		exactFactBoost: true, preferenceSessionRerank: preferenceSessionRerank,
 	})
 }
 
@@ -374,6 +375,9 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
 	if p.topicAnchorBoost {
 		args["topic_anchor_boost"] = true
+	}
+	if p.preferenceSessionRerank {
+		args["preference_session_rerank"] = true
 	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{

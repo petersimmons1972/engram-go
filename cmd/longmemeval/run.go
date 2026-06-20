@@ -472,15 +472,15 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
 		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
+			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.PreferenceSessionRerank)
 		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost, cfg.PreferenceSessionRerank)
 	}
 	recallDefault := func(query string, topK int) ([]string, error) {
 		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
+			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before, cfg.PreferenceSessionRerank)
 		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost, cfg.PreferenceSessionRerank)
 	}
 
 	// H-NEW-1: when --temporal-window-recall is set, hand temporal anchoring to the

@@ -83,6 +83,9 @@ type Config struct {
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
 
+	// H-HRR: hierarchical preference-session reranking (server-side, flag-gated)
+	PreferenceSessionRerank bool // rerank preference query candidates by on-topic session evidence (default off)
+
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
 
@@ -251,6 +254,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", true, "H15: run a second subject-anchor recall for preference questions and union both result sets (P0 default: on)")
 	// H-TAB: topic-anchor boost (LME experiment #3)
 	fs.BoolVar(&cfg.TopicAnchorBoost, "topic-anchor-boost", false, "H-TAB: server-side topic-anchor scoring boost — preference memories containing domain tokens from the query score 1.25× higher; targets multi-preference-session distraction (default off, composable with --dual-preference-recall)")
+	// H-HRR: hierarchical session reranking for preference queries.
+	fs.BoolVar(&cfg.PreferenceSessionRerank, "preference-session-rerank", false, "H-HRR: server-side preference-query session rerank — groups candidates by sid: tag and promotes sessions with on-topic preference evidence (default off)")
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
@@ -636,6 +641,7 @@ func applyRepairPreset(cfg *Config) error {
 		return nil
 	case "recall-repair":
 		cfg.DualPreferenceRecall = true
+		cfg.PreferenceSessionRerank = true
 		cfg.ExhaustiveAggregation = true
 		cfg.EnumerateFirst = true
 		cfg.TemporalPromptAug = true

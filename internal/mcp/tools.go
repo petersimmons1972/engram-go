@@ -148,6 +148,11 @@ type Config struct {
 	// buried under the user's dominant topic. Default false.
 	// Set via ENGRAM_PREFERENCE_MMR=1. (#H-NEW-2)
 	PreferenceMMR bool
+
+	// PreferenceSessionRerank enables H-HRR for preference-shaped recall queries.
+	// When true, RecallWithOpts groups candidates by sid: tag and reranks sessions
+	// by on-topic preference evidence. Default false.
+	PreferenceSessionRerank bool
 }
 
 // rateLimitRPS returns the configured RPS, or the default of 50 when unset.

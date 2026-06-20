@@ -81,6 +81,9 @@ func TestApplyRepairPresetRecallRepair(t *testing.T) {
 	if !cfg.ChronoSort {
 		t.Error("recall-repair preset should enable chronological context ordering")
 	}
+	if !cfg.PreferenceSessionRerank {
+		t.Error("recall-repair preset should enable preference session rerank")
+	}
 }
 
 func TestApplyRepairPresetDefaultBaselineNoop(t *testing.T) {
@@ -89,7 +92,7 @@ func TestApplyRepairPresetDefaultBaselineNoop(t *testing.T) {
 		t.Fatalf("applyRepairPreset default: %v", err)
 	}
 	if cfg.DualPreferenceRecall || cfg.ExhaustiveAggregation || cfg.EnumerateFirst ||
-		cfg.TemporalPromptAug || cfg.ChronoSort {
+		cfg.TemporalPromptAug || cfg.ChronoSort || cfg.PreferenceSessionRerank {
 		t.Fatalf("default config should leave repair switches off: %+v", cfg)
 	}
 }

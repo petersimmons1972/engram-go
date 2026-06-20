@@ -132,6 +132,11 @@ type RecallOpts struct {
 	// Default OFF (false). Ablatable: flag-off → baseline identical.
 	// Composable with DualPreferenceRecall (H15). Server-side only. (#H-NEW-2)
 	PreferenceMMR bool
+	// PreferenceSessionRerank enables H-HRR for preference-shaped queries. The
+	// engine groups candidates by sid: tag, scores sessions by on-topic
+	// preference evidence, then packs the best sessions before topK truncation.
+	// Default false; flag-off preserves baseline ordering.
+	PreferenceSessionRerank bool
 	// TemporalWindowRecall enables H-NEW-1 server-side two-pass date-windowed
 	// recall. When true and QuestionText resolves to a temporal window via
 	// ParseTemporalWindow(QuestionText, QuestionDate), Recall runs a second,
@@ -979,7 +984,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// TopicAnchorBoost is set and the query is preference-shaped. Done once
 	// outside the scoring loop so every candidate can be checked in O(1) space.
 	var topicAnchorTokens []string
-	if opts.TopicAnchorBoost && prefQuery {
+	if (opts.TopicAnchorBoost || opts.PreferenceSessionRerank) && prefQuery {
 		topicAnchorTokens = extractTopicAnchorTokens(query)
 	}
 
@@ -1232,6 +1237,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// rather than the preference-front-loaded merged order (Bug 2 fix).
 	if opts.PreferenceMMR && prefQuery && len(results) > 1 {
 		results = e.applyPreferenceMMR(ctx, results, topicPool)
+	}
+
+	// H-HRR: preference-specific hierarchical session reranking.
+	// Runs after preference-first selection so the topK candidate window still
+	// has preference coverage, then reorders that window by on-topic session
+	// evidence. With the flag off or no topic anchors, this is a strict no-op.
+	if opts.PreferenceSessionRerank && prefQuery && len(results) > 1 {
+		results = preferenceSessionRerank(results, topicAnchorTokens, true)
 	}
 
 	// Optional re-ranking: cap at topK candidates so the reranker only sees the
@@ -2046,11 +2059,12 @@ type MigrateParams struct {
 // A background reembed worker will repopulate embeddings after this call.
 //
 // Safety guards (applied in order, highest priority first):
-//  G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
-//  G2 — Same dimension without force: soft-refused (result["error"] set).
-//  G3 — dry_run: counts affected chunks without nulling.
-//       Large volume without confirm: soft-refused.
-//  G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
+//
+//	G1 — Same-canonical-identity: returns no-op with chunks_nulled=0.
+//	G2 — Same dimension without force: soft-refused (result["error"] set).
+//	G3 — dry_run: counts affected chunks without nulling.
+//	     Large volume without confirm: soft-refused.
+//	G4 — Canonical stamp: stores canonicalEmbedderName(NewModel) in meta.
 func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (map[string]any, error) {
 	newModel := p.NewModel
 

@@ -195,6 +195,7 @@ func runServer(args []string) error {
 
 	// LEVER-8: session-DCG aggregation re-ranking.
 	sessionNDCGAgg := fs.Bool("session-ndcg-agg", envBool("ENGRAM_SESSION_NDCG_AGG", false), "LEVER-8: group recall results by sid: tag and re-rank sessions by DCG of chunk cosines (default false; targets multi-session and temporal question types)")
+	preferenceSessionRerank := fs.Bool("preference-session-rerank", envBool("ENGRAM_PREFERENCE_SESSION_RERANK", false), "H-HRR: rerank preference-query results by on-topic session evidence (default false)")
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
@@ -518,17 +519,18 @@ func runServer(args []string) error {
 			}
 			return "closed"
 		},
-		DegradedErrorMode:      envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
-		PreferenceMMR:          envOr("ENGRAM_PREFERENCE_MMR", "") == "1" || envOr("ENGRAM_PREFERENCE_MMR", "") == "true",
-		SessionDB:              retentionBackend, // retentionBackend satisfies db.SessionRegistry
-		IngestQueue:            ingestQ,
-		RateLimitRPS:           *rateLimitRPS,
-		RateLimitBurst:         *rateLimitBurst,
-		RateLimitDisable:       *rateLimitDisable,
-		SessionRehydrateWindow: sessionRehydrateWindow,
-		EmbedRatePerSecond:     *embedRatePerSecond,
-		LogLevelVar:            logLevelVar,
-		SessionNDCGAgg:         *sessionNDCGAgg,
+		DegradedErrorMode:       envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
+		PreferenceMMR:           envOr("ENGRAM_PREFERENCE_MMR", "") == "1" || envOr("ENGRAM_PREFERENCE_MMR", "") == "true",
+		PreferenceSessionRerank: *preferenceSessionRerank,
+		SessionDB:               retentionBackend, // retentionBackend satisfies db.SessionRegistry
+		IngestQueue:             ingestQ,
+		RateLimitRPS:            *rateLimitRPS,
+		RateLimitBurst:          *rateLimitBurst,
+		RateLimitDisable:        *rateLimitDisable,
+		SessionRehydrateWindow:  sessionRehydrateWindow,
+		EmbedRatePerSecond:      *embedRatePerSecond,
+		LogLevelVar:             logLevelVar,
+		SessionNDCGAgg:          *sessionNDCGAgg,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {

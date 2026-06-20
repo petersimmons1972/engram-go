@@ -490,6 +490,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// H-NEW-2: propagate server-side PreferenceMMR flag into RecallOpts.
 	opts.PreferenceMMR = cfg.PreferenceMMR
 
+	// H-HRR: server config or per-call argument can enable preference-specific
+	// session reranking for this recall.
+	opts.PreferenceSessionRerank = cfg.PreferenceSessionRerank || getBool(args, "preference_session_rerank", false)
+
 	// LME Phase 3 — evidence-first packing (issue #938 improvement).
 	// Re-orders results so memories with verbatim identifier matches (URLs,
 	// phone numbers, quoted phrases) come first, improving LLM answer accuracy
