@@ -269,6 +269,12 @@
             "type": "command",
             "command": "~/.claude/hooks/validate-readonly-bash.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/codex-guard-bash-guard.sh",
+            "timeout": 10,
+            "statusMessage": "codex-guard: checking command safety"
           }
         ]
       },

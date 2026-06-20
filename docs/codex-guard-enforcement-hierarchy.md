@@ -1,141 +1,143 @@
 # codex-guard Enforcement Hierarchy
 
-**Status:** Live (Layers 1 + 4 active; Layers 2–3 planned)
+**Status:** Layer 1 LIVE (PreToolUse hook); Layer 2 LIVE (settings.json deny-list); Layers 3–4 PLANNED
 **Last updated:** 2026-06-20
-**Plan ref:** `~/.claude/plans/codex-guard-remote-fix.md` (Phase 3)
+**Prefix mandate:** RETIRED as of PR #135
 
 ---
 
-## Why this document exists
+## Why the prefix mandate was retired
 
-Three separate incidents had agents run `ssh host 'codex-guard git…'` — the binary
-does not exist on remote hosts, so the call fails with `command not found`. This was
-treated as a codex-guard enforcement failure. It was not. It was a documentation
-failure: the mandate "prefix git with codex-guard" was silently misread as "prefix
-the remote command," when the correct form is to prefix the local ssh call.
+The original mandate — "prefix every git/gh/kubectl/helm call with `codex-guard`" —
+was intended to interpose the binary on destructive commands. Three problems made it
+ineffective:
 
-The deeper problem: the mandate was also being treated as the **primary** enforcement
-gate. It is not. It is audit/best-effort (Layer 4). The real hard gates are below.
-This document retires that fiction and establishes the correct model.
+1. **Token cost with no enforcement value.** With `Bash(*)` wildcard-allowed in
+   settings.json, any command that omitted the prefix ran unchecked. The mandate was
+   advisory, not mechanical.
+
+2. **Bypassed when forgotten.** An agent that skipped the prefix encountered no error
+   and no block — the destructive command ran silently.
+
+3. **Remote-ssh confusion.** Three separate incidents had agents write
+   `ssh host 'codex-guard git…'` — the binary does not exist on remote hosts, so
+   the call failed with `command not found`. The correct form (`codex-guard ssh host
+   '<cmd>'`) was documented but not enforced.
+
+The replacement is a PreToolUse hook that intercepts **every Bash call automatically**
+with no per-command effort from agents or orchestrators.
 
 ---
 
-## Enforcement layers (strongest → audit)
+## Enforcement layers (strongest → weakest)
 
-### Layer 1 — Claude Code settings deny-list (HARD mechanical gate)
+### Layer 1 — PreToolUse hook: codex-guard (PRIMARY CLIENT GATE)
+
+**File:** `~/.claude/hooks/codex-guard-bash-guard.sh`
+**Registered in:** `~/.claude/settings.json` `hooks.PreToolUse` Bash matcher
+
+Every Bash command passes through the hook before execution. The hook:
+- Extracts `.tool_input.command` from the PreToolUse JSON
+- Runs `codex-guard --json "<command>"` (assessment-only, does not execute)
+- If `allowed == false`: emits `{"decision":"block","reason":"[codex-guard:<code>] <message>"}` to stdout and returns 0
+- If `allowed == true`: exits 0 (allow), no output
+- **FAIL-OPEN:** if codex-guard is missing, times out, or produces non-JSON output ->
+  the command is ALLOWED and the failure is appended to `~/.claude/codex-guard-hook.log`
+
+The hook is **automatic**. Agents write plain `git commit`, `kubectl apply`, etc.
+The hook guards them transparently.
+
+codex-guard blocks 6 destructive classes:
+- `destructive_git` -- `git push --force`, `git reset --hard`, history rewrites (detected inside `bash -c` / `ssh` payloads)
+- `dangerous_rm` -- `rm -rf` targeting absolute or HOME paths outside the ephemeral-build allowlist
+- `docker_data_destruction` -- `kubectl delete namespace`, `docker rm -v`, volume destruction
+- (additional classes per codex-guard v0.1.0 `--json` schema)
+
+**Status: ACTIVE**
+
+### Layer 2 — settings.json deny-list (MECHANICAL BACKSTOP)
 
 **File:** `~/.claude/settings.json` `permissions.deny`
 
-This is the only **hard mechanical gate** — Claude Code will refuse to run a matched
-command regardless of what any agent brief says.
+Claude Code refuses to run a matched command regardless of hook output. This covers
+the residual risk that the hook itself is bypassed (e.g. via settings corruption or a
+hook crash that returns non-zero instead of failing open).
 
-Current deny patterns cover: `git push --force`, `git reset --hard`, `git clean`,
-`kubectl delete` on production namespaces, destructive `docker` operations.
+Current deny patterns: `git push --force *`, `git push -f *`, `git reset --hard *`,
+`git clean -f *`, `rm -rf /`, `kubectl delete namespace *`, `kubectl delete pv *`,
+and related variants.
 
-**Status: ACTIVE. Must be tested.**
-Open work (Phase 1.5): build a red-team matrix confirming each deny pattern fires
-across all invocation paths (local git · `codex-guard ssh` · raw ssh · gh · kubectl).
-Verify the deny-list sees through quoting variations (`bash -lc`, `&&`-chains,
-`base64` pipelines, `git push -f` vs `--force`).
+**The KUBECTL entries are KEPT** -- they remain a necessary mechanical backstop for
+production namespace destruction, regardless of the hook.
 
-### Layer 2 — Git server hooks: pre-receive / pre-push (HARD at authority boundary)
+**Status: ACTIVE**
+
+### Layer 3 -- Git server hooks: pre-receive / pre-push (AUTHORITY BOUNDARY)
 
 **Scope:** petersimmons1972 GitHub repos + any self-hosted git servers
 
-Server-side hooks enforce force-push and history-rewrite protection at the point
-where the authority boundary actually is: the server. They are unbypassable by
-quoting tricks, shell escaping, or any client-side manipulation. They cover both
-human operators and automation agents with no per-host binary distribution.
+Server-side hooks enforce force-push and history-rewrite protection at the authority
+boundary: the server. They are unbypassable by any client-side mechanism. They cover
+both human operators and automation agents with no per-host binary distribution.
 
-**Status: PLANNED (Phase 2A, not yet implemented)**
+**Status: PLANNED (not yet implemented)**
 
 Recommended implementation: GitHub branch protection (required status checks, no
 admin bypass) + optional pre-receive hooks on self-hosted repos.
 
-### Layer 3 — SSH keys + ForceCommand (host-level policy on automation hosts)
+### Layer 4 -- SSH identity + ForceCommand (HOST-LEVEL POLICY)
 
 **Scope:** automation-only hosts (codex, grok, opencode nodes)
 
-SSH `ForceCommand` in `~/.ssh/authorized_keys` (or `sshd_config` match blocks)
-wraps every incoming SSH session in a command that:
-- logs every command string to an audit file
-- blocks destructive patterns (configurable blocklist)
-- exits non-zero on policy violation before the inner command runs
+SSH `ForceCommand` wraps every incoming SSH session in a wrapper that logs and
+optionally blocks destructive patterns at the host boundary. A compromised agent
+that bypasses local hooks cannot bypass ForceCommand on the remote host.
 
-This enforces policy at the host boundary, not the client. A compromised or
-misconfigured agent that bypasses codex-guard locally cannot bypass ForceCommand
-on the remote host.
+SSH keys authenticate who is connecting; ForceCommand constrains what they can do.
+Both are listed here for completeness.
 
-**Status: PLANNED (Phase 2B, not yet implemented)**
+**Status: PLANNED (not yet implemented)**
 
-### Layer 4 — codex-guard local binary (deterministic blocklist + audit log)
+---
 
-**Binary:** `codex-guard` (Rust, installed on the local Claude Code host only)
+## Fail-open log
 
-codex-guard maintains a local allowlist/blocklist and writes an audit log of every
-command it passes or blocks. It is **belt-and-suspenders**, not the primary gate.
-
-Key properties:
-- Deterministic: blocklist is static config, not heuristic
-- Audit log: every invocation recorded (command, timestamp, pass/block)
-- Policy-mandated: `Bash(*)` is wildcard-allowed in settings.json, so codex-guard
-  is enforced by mandate, not by settings. This means an agent that omits the prefix
-  passes silently — codex-guard cannot catch what it never sees.
-
-**The local-only constraint (the root cause of the 3 incidents):**
-
-codex-guard is installed on the local host only. When an agent writes
-`ssh host 'codex-guard git…'`, the remote shell cannot find the binary and the
-command fails. The correct form is to guard the ssh invocation locally:
+When the hook cannot assess a command (binary missing, timeout, non-JSON output),
+it appends a line to `~/.claude/codex-guard-hook.log`:
 
 ```
-# CORRECT — guard runs locally, inspects the inner command
-codex-guard ssh codex.petersimmons.com 'git push origin main'
-
-# WRONG — codex-guard is absent on the remote host → command not found
-ssh codex.petersimmons.com 'codex-guard git push origin main'
+2026-06-20T10:00:00Z MISS binary-not-found CMD=git\ push\ --force
+2026-06-20T10:00:01Z MISS timeout CMD=...
+2026-06-20T10:00:02Z MISS no-output exit=1 CMD=...
 ```
 
-**Audit log secret redaction (open work, Phase 1.5):**
-Command strings logged by codex-guard must redact tokens, env vars, kube/db
-credentials. Any command containing `$TOKEN`, `$KUBECONFIG`, or credential-shaped
-strings must be sanitized before the log write.
-
-### Layer 5 — SSH identity (authentication, not authorization)
-
-SSH keys authenticate **who** is connecting. They do not constrain **what** that
-identity can do once connected. This is a trust boundary, not a capability boundary.
-It is listed here for completeness; it is not a codex-guard enforcement layer.
+Monitor this file after any codex-guard binary update or PATH change.
 
 ---
 
-## Correct invocation reference
+## What agents write now
 
-| Scenario                              | Correct form                                              |
-|---------------------------------------|-----------------------------------------------------------|
-| Local git commit                      | `codex-guard git commit -m "…"`                          |
-| Local kubectl                         | `codex-guard kubectl rollout restart deploy/foo -n ns`   |
-| Remote git over ssh                   | `codex-guard ssh host 'git push origin main'`            |
-| Remote kubectl over ssh               | `codex-guard ssh host 'kubectl apply -f manifest.yaml'`  |
-| Local gh CLI                          | `codex-guard gh pr create …`                             |
-| Remote gh (e.g. on codex node)        | `codex-guard ssh codex.petersimmons.com 'gh pr view 42'` |
-| WRONG: codex-guard inside remote shell | `ssh host 'codex-guard git push …'` ← NEVER              |
+Agents write plain commands. No prefix required.
 
----
+```bash
+# Before (RETIRED mandate)
+codex-guard git commit -m "fix: foo"
+codex-guard kubectl rollout restart deploy/foo -n ns
 
-## Open Phase 1.5 work
+# After (current)
+git commit -m "fix: foo"
+kubectl rollout restart deploy/foo -n ns
+```
 
-- [ ] Red-team matrix: for each security property × each invocation path, confirm
-      which layer actually fires. The incidents proved we don't currently know.
-- [ ] Deny-list test harness: automated suite that exercises every deny pattern.
-- [ ] Audit-log secret redaction: codex-guard must not log raw credential strings.
+The hook intercepts both forms transparently.
 
 ---
 
-## Phase 2 work (planned, not committed)
+## Open work
 
-- [ ] 2A. Server-side git pre-receive/pre-push hooks (Layer 2)
-- [ ] 2B. SSH ForceCommand on automation hosts (Layer 3)
-- [ ] 2C. codex-guard ssh-aware mode: first-class `codex-guard ssh host '<cmd>'`
-      that re-inspects the inner command and fails closed on ambiguous destructive
-      patterns — making the wrong form syntactically impossible.
+- [ ] Red-team matrix: for each security property x each invocation path, confirm
+      which layer fires. Verify deny-list patterns vs quoting variations.
+- [ ] Audit-log secret redaction: codex-guard must not log raw credential strings
+      in its own output or the hook's miss log.
+- [ ] Layer 3: GitHub branch protection enforcement (no admin bypass).
+- [ ] Layer 4: SSH ForceCommand on automation hosts.
