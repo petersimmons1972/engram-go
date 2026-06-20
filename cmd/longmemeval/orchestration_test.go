@@ -243,6 +243,99 @@ func TestRunScore_WritesRunManifest(t *testing.T) {
 	}
 }
 
+func TestRunScore_RunManifestIncludesStructuredExperimentConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	cfg := &Config{
+		DataFile:              dataPath,
+		OutDir:                dir,
+		Workers:               1,
+		RunID:                 "manifest-config-run",
+		ContextTopKBump:       true,
+		ContextTopKOverride:   50,
+		RecallTopK:            100,
+		QueryParaphrasePasses: 3,
+		DualPreferenceRecall:  true,
+		TopicAnchorBoost:      true,
+		ExhaustiveAggregation: true,
+		EnumerateFirst:        true,
+		PreferenceEnumerate:   true,
+		SessionNDCGAgg:        true,
+		SessionDiversityN:     5,
+	}
+	if exit := runScore(cfg); exit != 0 {
+		t.Fatalf("runScore exit = %d, want 0", exit)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "run_manifest.json"))
+	if err != nil {
+		t.Fatalf("read run_manifest.json: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse run_manifest.json: %v", err)
+	}
+
+	policy, ok := manifest["context_topk_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("context_topk_policy = %v (%T), want object", manifest["context_topk_policy"], manifest["context_topk_policy"])
+	}
+	if got := int(policy["override"].(float64)); got != 50 {
+		t.Fatalf("context_topk_policy.override = %d, want 50", got)
+	}
+	if bumped, ok := policy["bump_all_to_15"].(bool); !ok || !bumped {
+		t.Fatalf("context_topk_policy.bump_all_to_15 = %v (%T), want true", policy["bump_all_to_15"], policy["bump_all_to_15"])
+	}
+	defaults, ok := policy["default_by_type"].(map[string]any)
+	if !ok {
+		t.Fatalf("context_topk_policy.default_by_type = %v (%T), want object", policy["default_by_type"], policy["default_by_type"])
+	}
+	if got := int(defaults["single-session-assist"].(float64)); got != 15 {
+		t.Fatalf("default_by_type.single-session-assist = %d, want 15", got)
+	}
+
+	flags, ok := manifest["hypothesis_flags"].(map[string]any)
+	if !ok {
+		t.Fatalf("hypothesis_flags = %v (%T), want object", manifest["hypothesis_flags"], manifest["hypothesis_flags"])
+	}
+	if got := int(flags["query_paraphrase_passes"].(float64)); got != 3 {
+		t.Fatalf("hypothesis_flags.query_paraphrase_passes = %d, want 3", got)
+	}
+	for key, want := range map[string]bool{
+		"dual_preference_recall": true,
+		"topic_anchor_boost":     true,
+		"exhaustive_aggregation": true,
+		"enumerate_first":        true,
+		"preference_enumerate":   true,
+		"session_ndcg_agg":       true,
+	} {
+		if got, ok := flags[key].(bool); !ok || got != want {
+			t.Fatalf("hypothesis_flags.%s = %v (%T), want %v", key, flags[key], flags[key], want)
+		}
+	}
+	if got := int(flags["session_diversity_n"].(float64)); got != 5 {
+		t.Fatalf("hypothesis_flags.session_diversity_n = %d, want 5", got)
+	}
+}
+
 func TestDispatchScoreWritesRunStatus(t *testing.T) {
 	dir := t.TempDir()
 
@@ -342,6 +435,90 @@ func TestDispatchScoreWritesRunStatus(t *testing.T) {
 	}
 	if status["lock_file"] == "" {
 		t.Fatalf("lock_file missing")
+	}
+}
+
+func TestDispatchScoreRunStatusIncludesStructuredExperimentConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{
+		"longmemeval",
+		"score",
+		"--data", dataPath,
+		"--out", dir,
+		"--workers", "1",
+		"--run-id", "status-config-run",
+		"--context-topk-bump",
+		"--context-topk", "100",
+		"--recall-topk", "250",
+		"--query-paraphrase-passes", "4",
+		"--dual-preference-recall",
+		"--topic-anchor-boost",
+		"--exhaustive-aggregation",
+		"--enumerate-first",
+		"--preference-enumerate",
+		"--score-output", "quiet",
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch exit = %d, want 0; stderr=%s", exit, stderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "RUN_STATUS.json"))
+	if err != nil {
+		t.Fatalf("read RUN_STATUS.json: %v", err)
+	}
+	var status map[string]any
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatalf("parse RUN_STATUS.json: %v", err)
+	}
+
+	policy, ok := status["context_topk_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("context_topk_policy = %v (%T), want object", status["context_topk_policy"], status["context_topk_policy"])
+	}
+	if got := int(policy["override"].(float64)); got != 100 {
+		t.Fatalf("context_topk_policy.override = %d, want 100", got)
+	}
+	if got := int(status["recall_topk"].(float64)); got != 250 {
+		t.Fatalf("recall_topk = %d, want 250", got)
+	}
+
+	flags, ok := status["hypothesis_flags"].(map[string]any)
+	if !ok {
+		t.Fatalf("hypothesis_flags = %v (%T), want object", status["hypothesis_flags"], status["hypothesis_flags"])
+	}
+	if got := int(flags["query_paraphrase_passes"].(float64)); got != 4 {
+		t.Fatalf("hypothesis_flags.query_paraphrase_passes = %d, want 4", got)
+	}
+	for key := range map[string]bool{
+		"dual_preference_recall": true,
+		"topic_anchor_boost":     true,
+		"exhaustive_aggregation": true,
+		"enumerate_first":        true,
+		"preference_enumerate":   true,
+	} {
+		if got, ok := flags[key].(bool); !ok || !got {
+			t.Fatalf("hypothesis_flags.%s = %v (%T), want true", key, flags[key], flags[key])
+		}
 	}
 }
 

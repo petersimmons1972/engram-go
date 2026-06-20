@@ -14,6 +14,15 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+var contextTopKQuestionTypes = []string{
+	"knowledge-update",
+	"multi-session",
+	"single-session-assist",
+	"single-session-user",
+	"single-session-preference",
+	"temporal-reasoning",
+}
+
 type scoreCompleteness struct {
 	ExpectedTotal       int
 	IngestDoneTotal     int
@@ -132,6 +141,8 @@ func writeRunManifest(
 		"llm_model":             cfg.LLMModel,
 		"scorer_url":            redactURL(cfg.ScorerURL),
 		"scorer_model":          cfg.ScorerModel,
+		"context_topk_policy":   contextTopKPolicy(cfg),
+		"hypothesis_flags":      hypothesisFlags(cfg),
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -185,6 +196,8 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		"cleanup_policy":        cfg.CleanupPolicy,
 		"recall_topk":           cfg.RecallTopK,
 		"context_topk":          cfg.ContextTopKOverride,
+		"context_topk_policy":   contextTopKPolicy(cfg),
+		"hypothesis_flags":      hypothesisFlags(cfg),
 		"route_snapshot": map[string]any{
 			"server_url":   redactURL(cfg.ServerURL),
 			"llm_url":      redactURL(cfg.LLMBaseURL),
@@ -208,6 +221,40 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		return
 	}
 	log.Printf("wrote %s", path)
+}
+
+func contextTopKPolicy(cfg *Config) map[string]any {
+	defaults := make(map[string]int, len(contextTopKQuestionTypes))
+	for _, questionType := range contextTopKQuestionTypes {
+		defaults[questionType] = longmemeval.ContextTopKForTypeWithBump(questionType, cfg.ContextTopKBump)
+	}
+	return map[string]any{
+		"override":                  cfg.ContextTopKOverride,
+		"bump_all_to_15":            cfg.ContextTopKBump,
+		"default_by_type":           defaults,
+		"aggregation_uses_full_ctx": cfg.ExhaustiveAggregation,
+	}
+}
+
+func hypothesisFlags(cfg *Config) map[string]any {
+	return map[string]any{
+		"inject_question_date":    cfg.InjectQuestionDate,
+		"temporal_window_recall":  cfg.TemporalWindowRecall,
+		"temporal_prompt_aug":     cfg.TemporalPromptAug,
+		"query_paraphrase_passes": cfg.QueryParaphrasePasses,
+		"dual_preference_recall":  cfg.DualPreferenceRecall,
+		"topic_anchor_boost":      cfg.TopicAnchorBoost,
+		"exhaustive_aggregation":  cfg.ExhaustiveAggregation,
+		"enumerate_first":         cfg.EnumerateFirst,
+		"preference_enumerate":    cfg.PreferenceEnumerate,
+		"retrieval_fusion":        cfg.RetrievalFusion,
+		"exact_signal_boost":      cfg.ExactSignalBoost,
+		"evidence_first_packed":   cfg.EvidenceFirstPacked,
+		"session_ndcg_agg":        cfg.SessionNDCGAgg,
+		"session_diversity_n":     cfg.SessionDiversityN,
+		"atom_mode":               cfg.AtomMode,
+		"atom_oracle":             cfg.AtomOracle,
+	}
 }
 
 func collectRunStatusSnapshot(cfg *Config) runStatusSnapshot {
