@@ -29,9 +29,10 @@ for src in "$ARMIES_PROFILES"/*.md; do
   name=$(basename "$src")
 
   # Preserve permanent residents — only exist in .claude/agents, not managed by armies
-  # opus-advisor.md: pre-decision strategic advisor (Opus-class, must survive sync overwrites)
+  # opus-advisor.md: pre-decision tactical advisor / decision-closer (Opus-class, must survive sync overwrites)
+  # strategic-advisor.md: Opus strategic reasoning partner for nuanced/multi-part problems (manually maintained)
   # (founder.md was archived to .claude/agents-archive/ — not a spawnable agent, not synced here)
-  if [[ "$name" == "opus-advisor.md" ]]; then
+  if [[ "$name" == "opus-advisor.md" || "$name" == "strategic-advisor.md" ]]; then
     SKIPPED=$((SKIPPED + 1))
     continue
   fi

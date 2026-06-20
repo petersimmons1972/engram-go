@@ -57,10 +57,10 @@ Execute each step only when its trigger fires; never outside it.
 |------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Haiku**  | Classification, formatting, retries, health checks, mechanical transforms, bulk judge/scoring                                                              |
 | **Sonnet** | Implementation, debugging, multi-file edits, code review, executing diagnosed fixes                                                                        |
-| **Opus**   | Architecture decisions, opus-advisor dispatches, reframing stuck diagnoses                                                                                 |
+| **Opus**   | Architecture decisions, advisor dispatches (Tactical or Strategic), reframing stuck diagnoses — **routing rule:** *decision to close → Tactical (`opus-advisor`); problem to think through → Strategic (`strategic-advisor`)* |
 | **Fable**  | Campaign-level strategy, coalition/multi-agent orchestration decisions, highest-stakes irreversible choices (main session or single advisor dispatch only)  |
 
-**Spawn Sonnet** (`subagent_type: "general-purpose"`, `model: "sonnet"`) to execute a diagnosed fix. **Spawn `opus-advisor`** for ADV.1–ADV.5 decisions — triggers and briefing format → `~/docs/advisory-protocol.md`.
+**Spawn Sonnet** (`subagent_type: "general-purpose"`, `model: "sonnet"`) to execute a diagnosed fix. **Spawn `opus-advisor` (Tactical Advisor)** for a single clear ADV.1–ADV.5 decision — returns one pick, no nuance. **Spawn `strategic-advisor` (Strategic Advisor)** for nuanced/multi-part/stuck/reframe/pre-mortem situations — works in back-and-forth, does NOT force a single pick. `strategic-advisor` runs at Opus and may escalate to a Fable-class tier on-demand if one returns (not automatic). Triggers and briefing format → `~/docs/advisory-protocol.md`.
 
 ## Engram Memory — MANDATORY [QC.6]
 

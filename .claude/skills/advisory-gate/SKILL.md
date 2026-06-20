@@ -33,7 +33,9 @@ A wrapper around the Advisory Protocol that enforces the ADV.1-ADV.5 check befor
    - **Lean** — current preference and source of uncertainty
    - **Context** — relevant file paths, constraints, prior attempts
 
-3. **Spawn `opus-advisor`:**
+3. **Route to the right advisor:**
+
+   **Single clear decision → Tactical Advisor (`opus-advisor`):** one pick, fixed 5-field block, no nuance.
    ```
    Agent(
      subagent_type: "opus-advisor",
@@ -41,7 +43,22 @@ A wrapper around the Advisory Protocol that enforces the ADV.1-ADV.5 check befor
    )
    ```
 
-4. **Wait for RECOMMENDATION.** Do not proceed to select an approach until the advisor returns. The RECOMMENDATION is the output — accept it or explicitly note why you're overriding it.
+   **Nuance branch → Strategic Advisor (`strategic-advisor`):** use when you can say any of the following:
+   - "I've gone back and forth and can't converge." (stuck)
+   - "There are 2+ decisions here and picking one changes the others." (interacting)
+   - "A single recommendation won't capture this — it isn't one choice." (multi-part)
+   - "I think I might be solving the wrong problem." (reframe)
+   - "This is irreversible / high-blast-radius and I want it stress-tested first." (pre-mortem)
+
+   ```
+   Agent(
+     subagent_type: "strategic-advisor",
+     prompt: "<your briefing>"
+   )
+   ```
+   Strategic Advisor works in back-and-forth (continue via SendMessage), returns a scaffold of moves with mode tags (`[EXPLORING]` / `[REFRAMING]` / `[SYNTHESIZING]`), and does NOT force a single pick.
+
+4. **Wait for output.** For Tactical: wait for RECOMMENDATION. For Strategic: engage in back-and-forth until the reasoning lands. Do not proceed to select an approach until the advisor has returned its assessment.
 
 5. **Continue the workflow** with the recommended approach.
 
