@@ -149,3 +149,34 @@ IMPLICATION: multi-session loss is a generation/synthesis problem, not a samplin
 Gold is in context at rank 4.1; the model is not extracting it from noisy context.
 Next lever candidates: cross-encoder reranker (PR #1111, flag-gated, TEI sidecar not yet
 deployed) to push gold higher within context, or context-trim to reduce distractor load.
+
+## WINNING CONFIG 2026-06-21 — coverage+synthesis = 42.2% (+6.7pp, paired-flip confirmed)
+
+THE NEW BASELINE. Run: covsynth-ctopk30-0621. Config = sonnet generator +
+--preference-enumerate + --enumerate-first (provenance/structured-recompute prompt, PR #1163)
++ **--context-topk 30**. Reranker OFF. 135-item v9-failures set, Nemotron judge.
+
+Two-step path to the win:
+1. enumerate-first ALONE (run enumerate-first-0621, context-topk per-type default): 34.1% =
+   NET-NEUTRAL vs 35.6%. Paired-flip aggregation net 0. Chain-breakpoint diagnostic showed WHY:
+   62% of aggregation failures are RETRIEVAL-stage (a gold constituent session missing from the
+   context window), which a synthesis-only prompt cannot reach.
+2. enumerate-first + context-topk 30 (this run): 42.2% = **+6.7pp / +9 items.** context-topk 30
+   pulls the missing constituent gold sessions into the window; enumerate-first then enumerates →
+   filters scope → dedups → sums them. The two halves only work TOGETHER.
+
+Per-type strict (new vs 35.6% baseline): multi-session 40.4% (+6), temporal 53.3% (+1),
+preference 30.0% (+1), ssu 40.0% (+1), ku 16.7% (+0), ssa 100% (+0).
+
+PAIRED-FLIP vs two stable baselines (the de-risking): ALL net +7 (12 wins/5 regressions, 18
+unstable); **AGGREGATION net +6 (7 wins/1 regression) — concentrated in the predicted slice**;
+non-agg net +1 (5/4 wash, leakage within tolerance). PASSES the acceptance gate
+(agg net ≥4 concentrated, non-agg regression ≤2-3, overall beats ±3.3pp noise).
+
+CAVEAT: single run; ±3.3pp noise remains. 3× replication recommended to lock the magnitude,
+but the paired-flip concentration already de-risks the direction. context-topk 30 is GLOBAL
+(taxes single-gold types slightly; net leakage +1, acceptable).
+
+NEXT: (a) replicate 3×; (b) try H8 --exhaustive-aggregation (topK=500 sweep, capped) as a
+smarter coverage lever than blunt context-topk 30 — but cap context for the Claude generator
+(500 blocks overflow 200k); (c) codify context-topk 30 as the aggregation-question default.
