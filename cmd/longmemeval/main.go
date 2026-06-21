@@ -221,7 +221,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
 	// Default stays empty so `--help` never prints a resolved secret
 	// (TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey). The ENGRAM_API_KEY env
-	// fallback is applied POST-parse below, letting the secret be supplied via the
+	// fallback is applied post-parse by applySharedDefaults → defaultAPIKey()
+	// (envOr("ENGRAM_API_KEY", …)), letting the secret be supplied via the
 	// environment without ever reaching argv / `ps` (security rule: no secret on argv).
 	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
@@ -505,11 +506,6 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return exit
 	}
 	applySharedDefaults(cfg, fs)
-	// Post-parse env fallback for the Engram API key: keeps the secret out of argv
-	// (no --api-key on the command line) and out of --help (default stays empty).
-	if cfg.APIKey == "" {
-		cfg.APIKey = os.Getenv("ENGRAM_API_KEY")
-	}
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
 	}

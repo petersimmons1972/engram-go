@@ -165,8 +165,6 @@ func IsAggregationQuestion(question string) bool {
 }
 
 // EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
-// prompts so the model enumerates evidence before synthesizing an answer.
-// EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
 // prompts. Each step targets a distinct failure mode observed on
 // full-coverage-but-wrong multi-session aggregation items (2026-06-21 diagnostic):
 // scope/temporal filtering (a9f6b44c counted a January item for a "March"
