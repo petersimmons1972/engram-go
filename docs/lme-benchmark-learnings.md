@@ -672,3 +672,20 @@ generalizes across backbones.
 **Routing note:** raised as possible learnings only — not yet scoped into the harness.
 Owner to triage which (EvoArena chain-metric + Para-Thinker judge-reconciliation are
 the highest-value, most LME-aligned candidates).
+
+### Triage outcome (2026-06-21, socialized codex/grok/hermes vs the aggregation-synthesis hypothesis)
+
+The dominant loss is aggregation synthesis (31/34 multi-session failures; gold in context,
+model enumerates right values but never sums / counts out-of-scope items). Mapped the papers
+to that hypothesis and socialized three-way:
+- **Para-Thinker++ (C) → ADOPTED into the generation lever** (not the judge, yet): enumerate-first
+  now requires per-item SOURCE provenance + explicit INCLUDE/EXCLUDE, i.e. trace reconciliation
+  at generation time. This is the highest-EV paper hook — it directly attacks scope errors.
+- **InterleaveThinker (A) → inline structured recompute only** (forced `SUM=`/`COUNT=` line);
+  second-pass critic / planner-critic deferred (confounds attribution). Step-wise scoring kept for
+  post-hoc failure-mode labelling.
+- **EvoArena (B) → chain-level used as DIAGNOSTIC decomposition, not a new acceptance metric**
+  (LME is binary; binary already = chain-level for aggregation). Patch/update-history memory for
+  knowledge-update DEFERRED (n=3, multi-week representation build).
+- Who-Pays-the-Price + SpatialClaw: not applicable to the current synthesis hypothesis.
+See `docs/lme-campaign/PLAN-2026-06-21.md` for the lever + run config + acceptance.
