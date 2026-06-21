@@ -205,7 +205,7 @@ func TestEnumerateFirst_PrefixPresent(t *testing.T) {
 		RecallTopK:     100,
 		EnumerateFirst: true,
 	}, item)
-	if got := capture.lastPrompt(t); !strings.Contains(got, "First, list every relevant") {
+	if got := capture.lastPrompt(t); !strings.Contains(got, longmemeval.EnumerateFirstPrefix()) {
 		t.Fatalf("prompt missing enumerate-first prefix:\n%s", got)
 	}
 }
@@ -225,7 +225,7 @@ func TestH8H12_CombinedFlags(t *testing.T) {
 	if got := capture.lastTopK(t); got != 500 {
 		t.Fatalf("memory_recall top_k = %d, want 500", got)
 	}
-	if got := capture.lastPrompt(t); !strings.Contains(got, "First, list every relevant") {
+	if got := capture.lastPrompt(t); !strings.Contains(got, longmemeval.EnumerateFirstPrefix()) {
 		t.Fatalf("combined flags prompt missing enumerate-first prefix:\n%s", got)
 	}
 }

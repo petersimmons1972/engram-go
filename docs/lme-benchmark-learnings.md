@@ -616,3 +616,59 @@ ON CONFLICT (project) DO NOTHING;
 **Document Version**: 1.0  
 **Last Updated**: May 2026  
 **Status**: Complete — Ready for future benchmark runs
+
+---
+
+## External Research — Papers to Build On (transmitted 2026-06-21)
+
+Five arXiv papers (June 2026) surfaced during the fleet-capability-eval work in
+`claude-codex`. Transmitted here as **possible learnings** for the LongMemEval
+harness and its judge (issue #1030). These are candidates, not commitments —
+each notes the concrete LME hook. Full digests + the fleet's analysis live in
+`claude-codex/docs/superpowers/results/2026-06-21-fleet-paper-conclusions.md`.
+
+### 1. EvoArena — evaluate in *evolving* environments + patch-based memory (arXiv:2606.13681)
+**Most relevant to LME.** Models environment change as sequences of progressive
+updates; static evals overstate capability (agents avg 39.6%). EvoMem records
+memory as **structured update histories** (patches), improving evidence capture;
++6.1% GAIA, +4.8% LoCoMo, +3.7% *chain-level* (consecutive evolving subtasks).
+- **LME hook:** LongMemEval already has a `knowledge-update` question type — EvoArena
+  is the rigorous version of exactly that. Consider (a) a **patch/update-history**
+  memory representation as an Engram retrieval mode to benchmark, and (b) a
+  **chain-level success** metric (all consecutive knowledge-update hops correct),
+  which is harder and more honest than per-question accuracy. Exposes whether
+  Engram preserves *complete evolving state* vs latest-value-only.
+
+### 2. Visual Para-Thinker++ — reconcile reasoning traces, don't vote labels (arXiv:2606.09290)
+Hallucination-resistance comes from a Summary stage that **reconciles full reasoning
+traces** rather than majority-voting final labels.
+- **LME hook:** the judge harness (#1030, "judge-attributed reports") should score
+  by reconciling the answer's reasoning trace against retrieved evidence, not by
+  final-string match alone — reduces judge false-negatives on correct-but-differently-
+  worded answers and judge false-positives on fluent-but-ungrounded ones. Pairs with
+  `docs/lme-judging.md`.
+
+### 3. Who Pays the Price? — stakeholder prompt-injection, outcome+process (arXiv:2606.13385)
+Harm is victim-dependent; score outcome AND process; failure modes: stealthy
+parasitism / misaligned disruption / compounded failure.
+- **LME hook:** a **memory-poisoning** robustness eval — plant adversarial content in
+  stored sessions and measure whether retrieval/answering obeys it (stealthy
+  parasitism: correct answer surfaced *and* injected instruction followed). Engram's
+  retrieval-miss/`failure_class` machinery could gain an `adversarial`/`poisoned` class.
+
+### 4. InterleaveThinker — planner+critic + step-wise scoring of long trajectories (arXiv:2606.13679)
+Step-wise signals guide 25+-call trajectories better than terminal grading.
+- **LME hook:** for multi-session / multi-hop questions, score per-hop retrieval
+  quality (did each hop surface the needed evidence?), not just the final answer — a
+  step-wise complement to end-to-end accuracy.
+
+### 5. SpatialClaw — code-as-action over a stateful kernel (arXiv:2606.13673)
+Training-free; agent writes executable cells against a stateful kernel of primitives;
+generalizes across backbones.
+- **LME hook:** lowest direct relevance, but a stateful query kernel (compose retrieval
+  + filter + aggregate primitives) is a candidate interface for multi-hop memory
+  questions where a single retrieval call underperforms.
+
+**Routing note:** raised as possible learnings only — not yet scoped into the harness.
+Owner to triage which (EvoArena chain-metric + Para-Thinker judge-reconciliation are
+the highest-value, most LME-aligned candidates).

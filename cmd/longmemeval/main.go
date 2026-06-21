@@ -219,7 +219,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
 	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
+	// Default stays empty so `--help` never prints a resolved secret
+	// (TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey). The ENGRAM_API_KEY env
+	// fallback is applied post-parse by applySharedDefaults → defaultAPIKey()
+	// (envOr("ENGRAM_API_KEY", …)), letting the secret be supplied via the
+	// environment without ever reaching argv / `ps` (security rule: no secret on argv).
+	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
 	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
 	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
