@@ -24,6 +24,45 @@ func TestIsAggregationQuestion_H8H12(t *testing.T) {
 	}
 }
 
+// TestIsAggregationQuestion_MonetaryTotals covers the two full-coverage-but-wrong
+// multi-session failures (2026-06-21 diagnostic) whose monetary "how much" phrasing
+// escaped the original detector, so the enumerate-first lever never fired on them:
+//   - 09ba9854: "How much will I save by taking the bus instead of a taxi?"
+//   - d851d5ba: "How much money did I raise for charity in total?"
+func TestIsAggregationQuestion_MonetaryTotals(t *testing.T) {
+	positives := []string{
+		"How much will I save by taking the bus from the airport to my hotel instead of a taxi?",
+		"How much money did I raise for charity in total?",
+		"What was the page count of the two novels I finished in January and March?",
+	}
+	for _, q := range positives {
+		if !longmemeval.IsAggregationQuestion(q) {
+			t.Errorf("IsAggregationQuestion(%q) = false, want true", q)
+		}
+	}
+	// Guard: a plain single-fact "how much does X cost" lookup must NOT trip the
+	// aggregation gate (no total/scope/list semantics).
+	if longmemeval.IsAggregationQuestion("How much does the new phone cost?") {
+		t.Fatal("IsAggregationQuestion matched a single-fact price lookup")
+	}
+}
+
+// TestEnumerateFirstPrefix_EnforcesAggregationSteps pins the four operations the
+// model botched on full-coverage multi-session aggregation items (2026-06-21):
+// scope/temporal filtering, type deduplication, abstention on absent values, and
+// an explicit final total. Wording may evolve; these are the load-bearing clauses.
+func TestEnumerateFirstPrefix_EnforcesAggregationSteps(t *testing.T) {
+	p := strings.ToLower(longmemeval.EnumerateFirstPrefix())
+	// Load-bearing clauses (wording may evolve): enumerate, source provenance,
+	// explicit exclude decision, distinct-once dedup, and a structured recompute.
+	for _, must := range []string{"enumerate", "source", "exclude", "once", "sum"} {
+		if !strings.Contains(p, must) {
+			t.Errorf("EnumerateFirstPrefix() missing enforcement clause %q; got:\n%s",
+				must, longmemeval.EnumerateFirstPrefix())
+		}
+	}
+}
+
 func TestRunOptsExhaustiveAggregation_DisabledIsBaseline(t *testing.T) {
 	ops := longmemeval.RunOpts{}
 	if got := ops.EffectiveRecallTopK("How many times did I call my sister?", 100); got != 100 {

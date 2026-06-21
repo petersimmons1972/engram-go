@@ -141,6 +141,15 @@ var aggregationRe = regexp.MustCompile(
 var temporalQuantityRe = regexp.MustCompile(
 	`(?i)\bhow many (days?|weeks?|months?|years?) (ago|before|after)\b`)
 
+// monetaryAggRe (2026-06-21) catches "how much" questions that require summing or
+// differencing values across sessions — "how much will I save", "how much did I
+// raise in total". The original aggregationRe only matched the literal "how much
+// total", so these full-coverage multi-session items (09ba9854, d851d5ba) never
+// triggered enumerate-first. A plain "how much does X cost" price lookup carries
+// none of these verbs and is intentionally NOT matched.
+var monetaryAggRe = regexp.MustCompile(
+	`(?i)\bhow much\b.*\b(save|saved|spend|spent|raised?|earn|earned|in total|altogether)\b`)
+
 // aggregationStripRe (H8) strips the counting interrogative phrase so that the
 // remaining tokens describe the object being counted.
 var aggregationStripRe = regexp.MustCompile(
@@ -152,13 +161,36 @@ func IsAggregationQuestion(question string) bool {
 	if temporalQuantityRe.MatchString(question) {
 		return false
 	}
-	return aggregationRe.MatchString(question)
+	return aggregationRe.MatchString(question) || monetaryAggRe.MatchString(question)
 }
 
 // EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
 // prompts so the model enumerates evidence before synthesizing an answer.
+// EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
+// prompts. Each step targets a distinct failure mode observed on
+// full-coverage-but-wrong multi-session aggregation items (2026-06-21 diagnostic):
+// scope/temporal filtering (a9f6b44c counted a January item for a "March"
+// question), type deduplication (c4a1ceb8 overcounted citrus types), and an
+// EXPLICIT final total (37f165cf / d851d5ba enumerated the right values but never
+// summed them).
+//
+// Per the three-way paper socialization (2026-06-21), this folds in Visual
+// Para-Thinker++ trace-reconciliation (each item carries SOURCE provenance + an
+// explicit INCLUDE/EXCLUDE decision so scope errors are visible before counting)
+// and a STRUCTURED forced recompute line (Grok's structured-output point: a literal
+// SUM=…/COUNT=… line, not prose "please verify") so the model answers only by
+// operating over the survivor list — not "from vibes". Deliberately a SINGLE
+// generation call: no second-pass critic (Paper A), no acceptance change (Paper B),
+// no judge redesign (Paper C). Abstention-on-absent-value (09ba9854) stays a
+// separate scoped lever (see PLAN-2026-06-21.md).
 func EnumerateFirstPrefix() string {
-	return "First, list every relevant event/fact from the context, numbered, and enumerate each distinct item only once. Then synthesize your answer from that list."
+	return strings.Join([]string{
+		"This is a counting or aggregation question. Do NOT answer from memory — build and then operate over an explicit list:",
+		"1. Enumerate every candidate item from the context, numbered. For each, note its source (the Session date or id), its value or identity, and mark it INCLUDE or EXCLUDE with a one-word reason (out-of-scope, duplicate, wrong-entity).",
+		"2. Keep only the INCLUDE items, counting each distinct item only once.",
+		"3. Recompute explicitly from the survivors on one line — e.g. SUM = 1000 + 500 + 250 + 2000 = 3750, or COUNT = 3.",
+		"4. Give that computed value as your final answer.",
+	}, "\n")
 }
 
 // ExtractAggregationAnchor (H8) strips the counting interrogative prefix and
