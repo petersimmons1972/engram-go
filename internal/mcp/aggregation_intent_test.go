@@ -19,10 +19,12 @@ func TestAggregationIntent_PositiveAndNegative(t *testing.T) {
 		}
 	}
 	negatives := []string{
-		"How much does the new phone cost?",  // single-fact price lookup
-		"Which laptop brand is my favorite?", // preference, not aggregation
-		"When did I last visit Paris?",       // factual recall
-		"What did I say about the project?",  // open recall
+		"How much does the new phone cost?",      // single-fact price lookup
+		"How much can I raise my bicycle seat?",  // bare "raise" must NOT fire (FM-76)
+		"How much does the total cost come to?",  // bare "total" must NOT fire (FM-76)
+		"Which laptop brand is my favorite?",     // preference, not aggregation
+		"When did I last visit Paris?",           // factual recall
+		"What did I say about the project?",      // open recall
 	}
 	for _, q := range negatives {
 		if aggregationIntent(q) {

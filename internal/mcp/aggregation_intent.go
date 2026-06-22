@@ -26,10 +26,13 @@ var aggregationCountRe = regexp.MustCompile(
 	`\b(how many(?: times)?|how often|total number of|sum of|count of|in total|altogether|number of (?:different|distinct))\b`)
 
 // aggregationMonetaryRe catches "how much" questions that require summing/differencing
-// values ("how much did I save/raise/spend in total"). A bare "how much does X cost"
-// price lookup carries none of these verbs and is intentionally NOT matched.
+// values ("how much did I save/spend in total", "how much have I raised"). The verbs are
+// kept narrow (FM-76 — a false fire is worse than a miss): bare "raise" is excluded
+// (matches "how much can I raise my seat?"), and bare "total" is excluded (matches "how
+// much does the total cost?"), so only the past-tense "raised" and the phrase "in total"
+// qualify. A "how much does X cost" price lookup carries none of these and is NOT matched.
 var aggregationMonetaryRe = regexp.MustCompile(
-	`\bhow much\b.*\b(save|saved|spend|spent|raised?|earn|earned|in total|total|altogether)\b`)
+	`\bhow much\b.*\b(save|saved|spend|spent|raised|earn|earned|in total|altogether)\b`)
 
 // aggregationTemporalExcludeRe excludes relative-time arithmetic ("how many days/weeks/
 // hours ago/before/after"), which is temporal reasoning, not aggregation.
