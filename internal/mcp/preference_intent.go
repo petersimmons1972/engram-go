@@ -49,12 +49,17 @@ func preferenceIntent(query string) bool {
 	return false
 }
 
-// attachSynthesisDirective adds the preference synthesis directive to a recall
-// response map when (and only when) the query shows preference intent. Additive and
-// optional — it never alters ranking, recall, or any existing response field, mirroring
-// the existing fetch_hint / feedback_hint pattern.
+// attachSynthesisDirective adds a client-side synthesis directive to a recall response
+// map based on the query's observable intent. Additive and optional — it never alters
+// ranking, recall, or any existing response field, mirroring the fetch_hint /
+// feedback_hint pattern. Preference intent takes precedence over aggregation intent when
+// a query reads as both, preserving the prior preference-only behaviour. At most one
+// directive is ever attached.
 func attachSynthesisDirective(out map[string]any, query string) {
-	if preferenceIntent(query) {
+	switch {
+	case preferenceIntent(query):
 		out["synthesis_directive"] = preferenceSynthesisDirective
+	case aggregationIntent(query):
+		out["synthesis_directive"] = aggregationSynthesisDirective
 	}
 }
