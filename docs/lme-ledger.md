@@ -180,3 +180,27 @@ but the paired-flip concentration already de-risks the direction. context-topk 3
 NEXT: (a) replicate 3×; (b) try H8 --exhaustive-aggregation (topK=500 sweep, capped) as a
 smarter coverage lever than blunt context-topk 30 — but cap context for the Claude generator
 (500 blocks overflow 200k); (c) codify context-topk 30 as the aggregation-question default.
+
+## NEXT-LEVER DECISION 2026-06-21 — STOP at +7pp (both free pre-checks failed)
+
+Socialized A/B/C three-way (codex/grok/hermes). Vote: H8-capped 2, synthesis-v2 1; unanimous
+"pre-check before any window, C is the floor." Ran BOTH free pre-checks:
+
+- H8-capped (A) — generator-free scored-pack simulation on the 13 retrieval-stage aggregation
+  misses (re-score sessions by keyword+numeric overlap, pack top-40): NAIVE 3/13, SCORED 4/13
+  full-gold recovery. GO threshold was >=9/13 => NO-GO. The rank-33-191 gold sits under DISTINCT
+  distractor sessions lexically/numerically similar to gold; re-scoring promotes distractors as
+  often as gold (helps some 159->5, hurts others 45->187). Window saved.
+- Synthesis-v2 (B) — free audit of the 13 synthesis-stage misses (gold IN window, still wrong):
+  the model ALREADY builds the enumerate->INCLUDE/EXCLUDE ledger AND has the explicit SUM= line,
+  and still off-by-ones / mis-sums (38vs37, 3vs2, 3vs4, botched totals). ~3 of the 13 aren't even
+  aggregation (temporal date-arith, abstention). A stricter ledger is incremental tightening vs
+  Sonnet's arithmetic reliability, not a new mechanism. Realistic yield ~+2-3 items.
+
+DECISION (Claude, founder cost-constraint "no double-spend without good reason"): STOP. Bank the
+reproducible +7pp (35.6% -> 42.6%, runs 42.2%/43.0%). Neither lever clears the window-spend bar.
+
+REMAINING OPEN ITEM (product, not benchmark): codify context-topk 30 for aggregation-intent
+recalls into the client-side synthesis directive (gate on lexical aggregation signal, NOT
+question_type/FM-77). This is a prod-behavior change → needs its own scoped decision, not a
+benchmark flag. Held as a separate follow-up.
