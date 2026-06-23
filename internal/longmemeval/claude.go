@@ -323,16 +323,30 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 		maxTokens = DefaultScorerMaxTokens
 	}
 	// Cap hypothesis length so the total request fits within the 65536-token context window.
-	// Budget: 65536 - maxTokens - 400 (prompt overhead) = tokens available for hypothesis.
+	// Budget: 65536 - maxTokens - overhead(question, referenceAnswer) = tokens available for hypothesis.
 	// Conservative chars-to-tokens ratio of 4 chars/token keeps us safely below the limit.
+	// CRITICAL: truncate from the END (tail) to preserve the graded answer when --enumerate-first
+	// is used (answer appears at end of hypothesis, not beginning). See callOAI line 217.
 	const scorerMaxModelLen = 65536
-	const scorerPromptOverheadTokens = 400
-	maxHypTokens := scorerMaxModelLen - maxTokens - scorerPromptOverheadTokens
+	// Compute actual overhead from question + referenceAnswer instead of fixed 400 const.
+	overheadPrompt := ScoringPrompt(question, referenceAnswer, "")
+	overheadChars := len(overheadPrompt)
+	overheadTokens := (overheadChars + 3) / 4 // round up: chars/4 = tokens (conservative estimate)
+	maxHypTokens := scorerMaxModelLen - maxTokens - overheadTokens
 	maxHypChars := maxHypTokens * 4
+	// Clamp to >= 0 to prevent slice-bounds panic when maxTokens > 65136.
+	if maxHypChars < 0 {
+		maxHypChars = 0
+	}
 	if len(hypothesis) > maxHypChars {
-		log.Printf("WARN: scorer hypothesis capped for question %q: %d->%d chars",
-			question[:min(len(question), 60)], len(hypothesis), maxHypChars)
-		hypothesis = hypothesis[:maxHypChars]
+		log.Printf("WARN: scorer hypothesis truncated for question %q: %d->%d chars (--scorer-max-tokens=%d)",
+			question[:min(len(question), 60)], len(hypothesis), maxHypChars, maxTokens)
+		// Keep the TAIL (end) — the graded answer is there, not at the beginning.
+		if maxHypChars > 0 {
+			hypothesis = hypothesis[len(hypothesis)-maxHypChars:]
+		} else {
+			hypothesis = ""
+		}
 	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	request := struct {

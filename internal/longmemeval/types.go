@@ -85,6 +85,10 @@ type ScoreEntry struct {
 	ScorerThinking bool `json:"scorer_thinking"`
 	// ScorerMaxTokens is the max_tokens value sent to the scoring request.
 	ScorerMaxTokens int `json:"scorer_max_tokens"`
+	// Truncated reports whether the hypothesis was truncated to fit the context window.
+	// When true, the graded answer is from a tail-truncated hypothesis (answers appear at end
+	// with --enumerate-first), so verdicts are reproducible from checkpoints.
+	Truncated bool `json:"truncated,omitempty"`
 	// JudgedAt is the timestamp when this row was produced (ISO-8601).
 	JudgedAt string `json:"judged_at,omitempty"`
 }
