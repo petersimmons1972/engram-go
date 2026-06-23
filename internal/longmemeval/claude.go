@@ -302,13 +302,14 @@ type ScoringOptions struct {
 }
 
 // DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
-// 2048 gives the model room to produce its label and a full explanation even
-// after reasoning tokens, preventing truncation from stripping the label.
-const DefaultScorerMaxTokens = 2048
+// 512 is ample: the judge emits one verdict word plus 1-2 sentences, and the
+// smaller budget leaves more headroom for long hypotheses within the 65536-token
+// context window (vLLM HTTP 400 fix).
+const DefaultScorerMaxTokens = 512
 
 // BuildScoringRequestBody returns an OAI request body for label classification.
-// maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
-// unless you have a specific reason to reduce it.
+// maxTokens controls the response budget; pass DefaultScorerMaxTokens (512)
+// unless you have a specific reason to change it.
 // options.ApplyThinking=false disables OAI chain-of-thought features for judges
 // that are slow or unsupported.
 // Exported so the test package can inspect the marshalled fields.
@@ -320,6 +321,18 @@ func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int, options ScoringOptions) ([]byte, error) {
 	if maxTokens <= 0 {
 		maxTokens = DefaultScorerMaxTokens
+	}
+	// Cap hypothesis length so the total request fits within the 65536-token context window.
+	// Budget: 65536 - maxTokens - 400 (prompt overhead) = tokens available for hypothesis.
+	// Conservative chars-to-tokens ratio of 4 chars/token keeps us safely below the limit.
+	const scorerMaxModelLen = 65536
+	const scorerPromptOverheadTokens = 400
+	maxHypTokens := scorerMaxModelLen - maxTokens - scorerPromptOverheadTokens
+	maxHypChars := maxHypTokens * 4
+	if len(hypothesis) > maxHypChars {
+		log.Printf("WARN: scorer hypothesis capped for question %q: %d->%d chars",
+			question[:min(len(question), 60)], len(hypothesis), maxHypChars)
+		hypothesis = hypothesis[:maxHypChars]
 	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	request := struct {
@@ -345,7 +358,7 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
 // (maxTokens, temperature=0) for efficient local-model scoring.
-// maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
+// maxTokens <= 0 uses DefaultScorerMaxTokens (512).
 func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int, options ScoringOptions) (ScoreResult, error) {
 	var lastErr error
 	backoffs := []time.Duration{250 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
