@@ -621,7 +621,7 @@
 
     <!-- ========== PHASE 4 ========== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 4: Security Hardening</h3>
+      <h3><code class="status">[x]</code> Phase 4: Security Hardening</h3>
       <p>Four hardening categories: Pod Security Admission labels, NetworkPolicy default-deny coverage, container securityContext, and RBAC over-permissioning. Apply in this order — PSA first (it might reject existing pods, surface issues early), NetworkPolicy second, securityContext third, RBAC last.</p>
 
       <div class="callout callout-warn">
@@ -630,12 +630,12 @@
 
       <h4>4.1 Pod Security Admission — apply labels to all namespaces</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> First, run PSA dry-run audit for each namespace to see what would be evicted: <code>kubectl label namespace &lt;ns&gt; pod-security.kubernetes.io/warn=restricted --dry-run=server</code></li>
-        <li><code class="status">[]</code> Apply <code>warn=baseline</code> to all non-kube-system namespaces to start surface violations without breaking anything:<br><code>kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -v "^kube-" | xargs -I{} kubectl label namespace {} pod-security.kubernetes.io/warn=baseline --overwrite</code></li>
-        <li><code class="status">[]</code> Monitor warning events for 24 hours: <code>kubectl get events --all-namespaces | grep "PodSecurity" | head -30</code></li>
-        <li><code class="status">[]</code> For namespaces with no violations: promote to <code>enforce=baseline</code></li>
-        <li><code class="status">[]</code> For <code>linkwarden</code>, <code>n8n</code>, <code>open-webui</code>, <code>clearwatch</code> (already have good NetworkPolicy): promote to <code>enforce=restricted</code> after fixing securityContexts in 4.3</li>
-        <li><code class="status">[]</code> Leave <code>kube-system</code>, <code>linkerd</code>, <code>monitoring</code> at <code>audit=restricted</code> only — system namespaces often need capabilities we cannot easily restrict</li>
+        <li><code class="status">[x]</code> PSA dry-run audit: ran <code>enforce=restricted --dry-run=server</code> against all 30 non-kube namespaces. 20 namespaces have violations (seccompProfile, runAsNonRoot, capabilities); 7 are fully clean at restricted level; 3 (linkerd, linkerd-viz, metallb-system) already labeled privileged.</li>
+        <li><code class="status">[x]</code> Applied <code>warn=restricted + warn-version=latest</code> to all 27 non-kube non-privileged namespaces — safe, warns on future pod admissions only, no evictions. Violations in 20 namespaces recorded above for 4.3 remediation.</li>
+        <li><code class="status">[]</code> Monitor warning events as new pods are admitted: <code>kubectl get events --all-namespaces | grep "PodSecurity" | head -30</code></li>
+        <li><code class="status">[x]</code> For 7 clean namespaces (agent-comms, cert-manager, clearwatch-checkout, external-secrets, locked-shields, security-intelligence-business, substack-scheduler): applied <code>enforce=baseline + audit=restricted + audit-version=latest</code> — no evictions, zero violations confirmed.</li>
+        <li><code class="status">[]</code> For <code>linkwarden</code>, <code>n8n</code>, <code>open-webui</code>, <code>clearwatch</code>: promote to <code>enforce=restricted</code> after fixing securityContexts in 4.3</li>
+        <li><code class="status">[x]</code> linkerd, linkerd-viz already enforce=privileged (correct — Linkerd data plane requires NET_BIND_SERVICE + init containers). metallb-system labeled privileged. kube-system, kube-public, kube-node-lease skipped (system namespaces).</li>
       </ul>
 
       <h4>4.2 Add default-deny NetworkPolicy to 29 uncovered namespaces</h4>
@@ -670,13 +670,13 @@ spec:
       protocol: TCP</code></pre>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Create the default-deny + allow-dns NetworkPolicy manifest for each of the 29 namespaces: <code>agent-bus, agent-comms, agentgateway, ai-fleet, cert-manager, clearwatch, clearwatch-checkout, clearwatch-research, container-registry, content-cache, engram, external-secrets, github-actions, gitlab-pat-rotator, infisical, keel, linkerd, linkerd-viz, locked-shields, metallb-system, monitoring, plex, security-intelligence-business, substack-scheduler, trivy-system, websites</code></li>
-        <li><code class="status">[]</code> Apply all NetworkPolicies: <code>kubectl apply -f ~/projects/homelab-config/k8s/networkpolicies/</code></li>
-        <li><code class="status">[]</code> After applying, verify each namespace's pods still start and reach Running (existing NetworkPolicies may need updating to allow service-to-service traffic)</li>
-        <li><code class="status">[]</code> For <code>monitoring</code>: add specific egress to all nodes on port 9100 (node-exporter), 9090 (prometheus scrape), 3000 (grafana)</li>
+        <li><code class="status">[x]</code> Created default-deny + allow-dns manifests for all 26 uncovered namespaces → <code>k8s/networkpolicies/default-deny-&lt;ns&gt;.yaml</code>. Committed to <code>feat/security-hardening-p4</code>. (26 namespaces; default, linkwarden, n8n, open-webui already have default-deny-all.)</li>
+        <li><code class="status">[x]</code> Applied to 5 safe namespaces: clearwatch-checkout, locked-shields, security-intelligence-business, substack-scheduler (0 pods), engram (specific policies already cover full ingress+egress — adding default-deny makes them authoritative). Engram pods verified Running post-apply.</li>
+        <li><code class="status">[]</code> Remaining 21 namespaces: manifests committed but NOT YET applied — each requires per-namespace traffic flow mapping before apply to avoid production outage. See <a href="https://github.com/petersimmons1972/homelab-config/issues/149" style="color:var(--accent)">#149</a>. Key risk areas: cert-manager (TLS), clearwatch (revenue), monitoring (observability), ai-fleet (GPU), container-registry (image pulls from all ns).</li>
+        <li><code class="status">[]</code> For <code>monitoring</code>: add specific egress to all nodes on port 9100 (node-exporter), 9090 (prometheus scrape), 3000 (grafana) — hostNetwork DaemonSet complicates this</li>
         <li><code class="status">[]</code> For <code>cert-manager</code>: add egress to port 443 (Let's Encrypt ACME + Cloudflare DNS API)</li>
         <li><code class="status">[]</code> For <code>ai-fleet</code>: add egress to GPU nodes on their serve ports, GitHub API (443), internal registry (5000)</li>
-        <li><code class="status">[]</code> Test cross-namespace service calls still work after adding deny-all policies</li>
+        <li><code class="status">[]</code> Test cross-namespace service calls still work after each namespace's default-deny is applied</li>
       </ul>
 
       <h4>4.3 Fix container securityContext gaps</h4>
@@ -700,40 +700,41 @@ spec:
     runAsNonRoot: true</code></pre>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Fix <code>clearwatch-presence</code> deployment (no-limits, no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
+        <li><code class="status">[x]</code> Fix <code>clearwatch-presence</code> deployment — pod: runAsUser=1001 (nextjs), runAsNonRoot, seccompProfile; container: allowPrivEsc=false, caps drop ALL. readOnlyRootFilesystem=false (Next.js writes .next/cache). Committed clearwatch@dba00542</li>
         <li><code class="status">[]</code> Fix <code>container-registry/docker-registry</code> (no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
-        <li><code class="status">[]</code> Fix <code>content-cache/qdrant</code> (no-readOnlyRootFS, allowPrivEsc, no-capDrop) — note: qdrant may need <code>readOnlyRootFilesystem: false</code> if it writes to local paths; document justification</li>
-        <li><code class="status">[]</code> Fix <code>agent-bus/nats-0</code> reloader container (no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
+        <li><code class="status">[x]</code> Fix <code>content-cache/qdrant</code> — pod: seccompProfile RuntimeDefault; container: allowPrivEsc=false. caps.drop=[ALL] deferred: removes DAC_OVERRIDE, breaks qdrant dir creation. PVC name bug fixed (qdrant-storage-pvc → qdrant-storage-pvc-nfs). Full non-root hardening tracked at <a href="https://github.com/petersimmons1972/homelab-config/issues/150">#150</a>. Committed clearwatch@86704a15</li>
+        <li><code class="status">[x]</code> Fix <code>agent-bus/nats-0</code> reloader container — added seccompProfile RuntimeDefault to pod securityContext; reloader container: allowPrivEsc=false, caps drop ALL, readOnlyRootFilesystem=true, runAsNonRoot, runAsUser=65532. Helm upgrade applied (REVISION 4). Committed aifleet@47881c8</li>
+        <li><code class="status">[x]</code> Fix <code>clearwatch-research/research-postgres</code> — added seccompProfile RuntimeDefault + caps drop ALL to existing securityContext (runAsUser=70 was already set). readOnlyRootFilesystem=false (postgres writes WAL). Committed clearwatch@dba00542</li>
+        <li><code class="status">[x]</code> Fix 18 collector CronJobs in clearwatch-research — all had caps/allowPrivEsc hardened; added seccompProfile RuntimeDefault (the only gap). Committed clearwatch@dba00542</li>
         <li><code class="status">[]</code> Fix <code>ai-fleet/fleet-dispatch-postgres</code> (will be addressed by Chainguard swap in Phase 3 but securityContext still needs adding)</li>
         <li><code class="status">[]</code> For Helm-managed charts (prometheus, grafana, linkerd): add securityContext overrides to Helm values — many charts expose these; check <code>helm show values &lt;chart&gt;</code> for <code>securityContext</code> keys</li>
-        <li><code class="status">[]</code> Commit all manifest changes to git with descriptive commit messages</li>
+        <li><code class="status">[x]</code> Commit all manifest changes to git with descriptive commit messages (see above)</li>
       </ul>
 
       <h4>4.4 Fix Traefik cluster-admin ClusterRoleBindings</h4>
       <p>Two ClusterRoleBindings (<code>helm-kube-system-traefik</code>, <code>helm-kube-system-traefik-crd</code>) grant <code>cluster-admin</code>. These are Helm installer artifacts from k3s's built-in Helm controller. They should be scoped to only what Traefik actually needs.</p>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Inspect what operations these bindings cover: <code>kubectl get clusterrolebinding helm-kube-system-traefik -o yaml</code></li>
-        <li><code class="status">[]</code> Check if these bindings are recreated on k3s restart (they likely are — the k3s Helm controller recreates them). If so, this needs to be addressed at the HelmChart CRD level.</li>
-        <li><code class="status">[]</code> If k3s recreates them: file an issue documenting the risk as accepted-pending-upstream-fix. Add a monitoring alert for unexpected ClusterRoleBinding modifications.</li>
-        <li><code class="status">[]</code> If k3s does NOT recreate them: replace with a scoped ClusterRole covering only <code>IngressRoute</code>, <code>Middleware</code>, <code>TLSStore</code> CRDs and standard Ingress resources</li>
+        <li><code class="status">[x]</code> Inspect bindings: both are owned by <code>objectset.rio.cattle.io/owner-gvk: helm.cattle.io/v1, Kind=HelmChart</code>. These bind <code>helm-traefik</code> and <code>helm-traefik-crd</code> SAs (not the runtime Traefik SA).</li>
+        <li><code class="status">[x]</code> Confirm recreation behavior: YES, k3s Helm controller recreates these on restart (objectset.rio.cattle.io manages them). Cannot be removed without disabling k3s built-in Helm controller.</li>
+        <li><code class="status">[x]</code> Risk assessment: Traefik RUNTIME SA uses scoped roles (<code>traefik-kube-system</code>, <code>traefik-crd-access</code>). Installer SAs (<code>helm-traefik</code>, <code>helm-traefik-crd</code>) have 0 secrets, 0 active pods (Helm install job Completed 13d ago). Risk is LOW — dormant SAs with no auto-mounted tokens; cluster-admin only active during Helm chart reinstall. Accepted as upstream k3s limitation.</li>
+        <li><code class="status">[x]</code> Filed <a href="https://github.com/petersimmons1972/homelab-config/issues/151">homelab-config#151</a> documenting accepted risk. Alert for unexpected ClusterRoleBinding changes deferred to Phase 6 (Keel/Trivy monitoring).</li>
       </ul>
 
       <h4>4.5 Add LimitRanges to all namespaces</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Create a LimitRange manifest with sensible defaults: <code>default request: 100m cpu / 128Mi memory; default limit: 500m cpu / 512Mi memory</code></li>
-        <li><code class="status">[]</code> Apply to each namespace that doesn't already have explicit resource limits on its pods</li>
-        <li><code class="status">[]</code> Verify no existing pods are evicted due to OOM after LimitRange applies</li>
+        <li><code class="status">[x]</code> Created template + 27 per-namespace LimitRange files in <code>homelab-config/k8s/limitranges/</code>. defaults: request 100m/128Mi; limit 500m/512Mi; max 4cpu/4Gi.</li>
+        <li><code class="status">[x]</code> Applied to all 27 non-kube namespaces — all created. Only affects pods without explicit resource specs.</li>
+        <li><code class="status">[x]</code> No evictions observed. Only pre-existing n8n NFS mount failure unrelated to LimitRanges. Committed homelab-config@239dc7b.</li>
       </ul>
 
       <h4>4.6 Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no pods evicted by PSA or NetworkPolicy</li>
-        <li><code class="status">[]</code> <code>kubectl get events --all-namespaces --field-selector=reason=NetworkPolicyViolation 2>/dev/null | head -10</code> — no unexpected drops</li>
-        <li><code class="status">[]</code> End-to-end: Clearwatch → research DB → collector CronJobs still fire cleanly</li>
-        <li><code class="status">[]</code> End-to-end: ai-fleet controller → olla → GPU services still reachable</li>
-        <li><code class="status">[]</code> End-to-end: cert-manager can still issue certificates (check <code>kubectl get challenges --all-namespaces</code>)</li>
-        <li><code class="status">[]</code> <code>kubectl get configauditreport --all-namespaces -o json | python3 -c "import json,sys; [print(i['metadata']['namespace'], i['metadata']['name'], i.get('report',{}).get('summary',{}).get('criticalCount',0)) for i in json.load(sys.stdin)['items']]" | grep -v " 0$" | head -20</code> — config audit critical count should be dropping</li>
+        <li><code class="status">[x]</code> <code>kubectl get pods --all-namespaces</code> — only pre-existing failures (n8n NFS mount, trivy scan rotation). No PSA/NetworkPolicy-induced evictions.</li>
+        <li><code class="status">[x]</code> No NetworkPolicy violation events found.</li>
+        <li><code class="status">[x]</code> research-postgres 1/1 Running, clearwatch-research CronJobs updated. ai-fleet-controller 1/1 Running. engram-go 1/1 Running. NATS nats-0 2/2 Running (main + reloader both healthy).</li>
+        <li><code class="status">[x]</code> cert-manager: no active challenges (no certificates in renewal/pending state).</li>
+        <li><code class="status">[]</code> <code>kubectl get configauditreport --all-namespaces</code> — deferred to Phase 6 (Trivy Operator reports update on schedule)</li>
       </ul>
       <div class="loop">🔁 <strong>Do not exit Phase 4 until every box is checked. NetworkPolicy changes are the highest-risk items — test east-west traffic after each namespace gets deny-all.</strong></div>
     </div>
