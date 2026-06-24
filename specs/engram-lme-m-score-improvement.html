@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan: Engram LME-M Score Improvement</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #21262d;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --heading: #e6edf3;
+    --accent: #58a6ff;
+    --accent-dim: #1f3a5f;
+    --success: #3fb950;
+    --success-dim: #122922;
+    --warning: #d29922;
+    --warning-dim: #2d2007;
+    --danger: #f85149;
+    --danger-dim: #2d0f0e;
+    --partial: #f0883e;
+    --partial-dim: #2d1a07;
+    --correct: #3fb950;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 0 1rem 4rem;
+  }
+
+  main { max-width: 900px; margin: 0 auto; }
+
+  h1 { font-size: 2rem; color: var(--heading); font-weight: 700; letter-spacing: -0.5px; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.35rem; color: var(--accent); font-weight: 600; margin: 2.5rem 0 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+  h3 { font-size: 1.1rem; color: var(--heading); font-weight: 600; margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 0.95rem; color: var(--heading); font-weight: 600; margin: 1.25rem 0 0.4rem; }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 2rem 0 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  details.meta { margin-top: 1rem; }
+  details.meta summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    user-select: none;
+  }
+  details.meta dl {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 0.2rem 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.82rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+  }
+  details.meta dt { color: var(--text-muted); font-weight: 500; }
+  details.meta dd { color: var(--text); font-family: var(--mono); word-break: break-all; }
+
+  section { margin: 0 0 1rem; }
+  p { margin: 0.5rem 0; }
+
+  figure {
+    margin: 1.5rem 0;
+    text-align: center;
+  }
+  figure img {
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  figcaption {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* Tag badges */
+  .tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 0.4rem;
+  }
+  .tag.existing { background: var(--accent-dim); color: var(--accent); }
+  .tag.new { background: var(--success-dim); color: var(--success); }
+
+  ul { padding-left: 1.4rem; }
+  ul li { margin: 0.2rem 0; }
+  section.files ul { list-style: none; padding: 0; }
+  section.files li {
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+
+  /* Phase blocks */
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .phase h3 { margin-top: 0; }
+
+  /* Checklist */
+  ul.checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+  }
+  ul.checklist li {
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  ul.checklist li:last-child { border-bottom: none; }
+
+  /* Status code badges */
+  code.status {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Loop reminder */
+  .loop {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--warning-dim);
+    border: 1px solid var(--warning);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: var(--warning);
+  }
+
+  /* Callout boxes */
+  .callout {
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+  }
+  .callout.info { background: var(--accent-dim); border-left: 3px solid var(--accent); }
+  .callout.success { background: var(--success-dim); border-left: 3px solid var(--success); }
+  .callout.warning { background: var(--warning-dim); border-left: 3px solid var(--warning); }
+  .callout.danger { background: var(--danger-dim); border-left: 3px solid var(--danger); }
+  .callout.partial { background: var(--partial-dim); border-left: 3px solid var(--partial); }
+
+  /* Code blocks */
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 0.75rem 0;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    color: var(--accent);
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    color: var(--text);
+  }
+
+  /* Score table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin: 0.75rem 0;
+  }
+  th {
+    background: var(--surface-2);
+    color: var(--heading);
+    font-weight: 600;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+  }
+  td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  .score-good { color: var(--success); font-weight: 600; }
+  .score-mid { color: var(--warning); font-weight: 600; }
+  .score-bad { color: var(--partial); font-weight: 600; }
+  .score-blocker { color: var(--danger); font-weight: 600; }
+
+  /* Questionables details */
+  #questionables details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+  }
+  #questionables details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--warning);
+    font-size: 0.92rem;
+  }
+  .qa-answer {
+    margin-top: 0.6rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+
+  /* Amendments */
+  #amendments details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+  }
+  #amendments details summary {
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }
+
+  /* Score progress bar */
+  .score-bar {
+    background: var(--surface-2);
+    border-radius: 4px;
+    height: 8px;
+    margin: 0.25rem 0;
+    overflow: hidden;
+  }
+  .score-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+
+  /* Phase gate label */
+  .gate-label {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    margin-left: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .gate-label.required { background: var(--danger-dim); color: var(--danger); }
+  .gate-label.optional { background: var(--accent-dim); color: var(--accent); }
+  .gate-label.conditional { background: var(--partial-dim); color: var(--partial); }
+
+  /* Confidence badge */
+  .conf {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+  }
+  .conf.high { background: var(--success-dim); color: var(--success); }
+  .conf.med { background: var(--warning-dim); color: var(--warning); }
+  .conf.low { background: var(--partial-dim); color: var(--partial); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== HEADER + METADATA ===== -->
+  <header>
+    <h1>Plan: Engram LME-M Score Improvement</h1>
+    <p style="color:var(--text-muted); margin-top:0.4rem; font-size:0.9rem;">
+      Improve weighted score from <strong style="color:var(--partial)">86.5%</strong> to
+      <strong style="color:var(--success)">≥92%</strong> on the 500-question LongMemEval-M benchmark
+      by fixing three specific failure categories.
+    </p>
+    <details class="meta">
+      <summary>Metadata</summary>
+      <dl>
+        <dt>created</dt>      <dd>2026-06-24T23:00:00Z</dd>
+        <dt>modified</dt>     <dd>2026-06-24T23:00:00Z</dd>
+        <dt>commits</dt>      <dd>—</dd>
+        <dt>agent name</dt>   <dd>nimitz</dd>
+        <dt>session id</dt>   <dd>bac29e6a-3f3a-4a05-b48a-116955fa4673</dd>
+        <dt>back refs</dt>    <dd>results/longmemeval-v9-qwen3-20260517/, internal/longmemeval/claude.go, internal/longmemeval/claude_additions.go</dd>
+        <dt>forward refs</dt> <dd>—</dd>
+      </dl>
+    </details>
+  </header>
+
+  <!-- Hero image -->
+  <figure>
+    <img src="engram-lme-m-score-improvement/hero.jpg" alt="LongMemEval benchmark score improvement — three failure clusters converging to a higher score">
+    <figcaption>Three failure clusters (preference, temporal, multi-session) mapped to targeted interventions. Current: 86.5%. Target: ≥92%.</figcaption>
+  </figure>
+
+  <!-- ===== PURPOSE ===== -->
+  <section id="purpose">
+    <h2>Purpose</h2>
+    <p>
+      The Engram memory system scored 86.5% on LongMemEval-M (500 questions, deduplicated, Qwen3-scored, run v9-qwen3-20260517).
+      135 of 500 questions received only partial credit. Zero questions were marked INCORRECT.
+      This plan drives those 135 partials toward full credit through four targeted interventions,
+      sequenced by cost-to-impact ratio — two prompt-level changes, one retrieval flag experiment,
+      and one temporal diagnosis — before considering any architectural investment.
+    </p>
+    <div class="callout info">
+      <strong>Zero INCORRECT is load-bearing context.</strong> The system hedges rather than confabulates.
+      All failures are surfacing failures, not correctness failures. The fix space is retrieval coverage
+      and post-retrieval reasoning — not synthesis accuracy.
+    </div>
+  </section>
+
+  <!-- ===== PROBLEM ===== -->
+  <section id="problem">
+    <h2>Problem</h2>
+    <p>
+      Three categories underperform. They have <strong>three different root causes</strong> and require
+      three different fixes. Conflating them as "improve retrieval" is the primary trap.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Questions</th>
+          <th>Correct</th>
+          <th>Partial</th>
+          <th>Weighted %</th>
+          <th>Root Cause</th>
+          <th>Fix Layer</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>knowledge-update</td>
+          <td>78</td>
+          <td>72</td>
+          <td>6</td>
+          <td class="score-good">96.2%</td>
+          <td>—</td>
+          <td>✅ Solved</td>
+        </tr>
+        <tr>
+          <td>single-session-assistant</td>
+          <td>56</td>
+          <td>56</td>
+          <td>0</td>
+          <td class="score-good">100%</td>
+          <td>—</td>
+          <td>✅ Solved</td>
+        </tr>
+        <tr>
+          <td>single-session-user</td>
+          <td>70</td>
+          <td>65</td>
+          <td>5</td>
+          <td class="score-good">96.4%</td>
+          <td>Specificity under-extraction</td>
+          <td>Prompt</td>
+        </tr>
+        <tr style="background:var(--danger-dim)">
+          <td><strong>single-session-pref</strong></td>
+          <td>30</td>
+          <td>0</td>
+          <td>30</td>
+          <td class="score-bad">50.0%</td>
+          <td>Synthesis ignores stated constraints</td>
+          <td>Prompt + Flag</td>
+        </tr>
+        <tr style="background:var(--partial-dim)">
+          <td><strong>temporal-reasoning</strong></td>
+          <td>133</td>
+          <td>88</td>
+          <td>45</td>
+          <td class="score-mid">83.1%</td>
+          <td>Retrieval miss or arithmetic fail despite date injection</td>
+          <td>Diagnosis → Fix</td>
+        </tr>
+        <tr style="background:var(--partial-dim)">
+          <td><strong>multi-session</strong></td>
+          <td>133</td>
+          <td>86</td>
+          <td>47</td>
+          <td class="score-mid">81.9%</td>
+          <td>Cross-session retrieval gap (paraphrase union already on)</td>
+          <td>Flags → Architecture</td>
+        </tr>
+        <tr style="background:var(--surface-2); font-weight:600;">
+          <td>TOTAL</td>
+          <td>500</td>
+          <td>367</td>
+          <td>135</td>
+          <td class="score-bad">86.5%</td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <strong>Key finding from code scout:</strong> <code>--query-paraphrase-passes=3</code> is the
+      <em>default</em> — the v9 run already ran with 3 paraphrase variants per query. The multi-session
+      gap survived 3 paraphrase passes, making it a harder retrieval problem than initially expected.
+      <code>--preference-enumerate</code> was <em>off</em> in the v9 run — the
+      <code>GenerationPromptPreferenceEnumerate</code> function exists and is more specific,
+      but was never applied to the v9 results.
+    </div>
+
+    <figure>
+      <img src="engram-lme-m-score-improvement/problem.jpg" alt="Three failure clusters diagram: preference, temporal, multi-session with current weighted scores">
+      <figcaption>Failure cluster map. The three weak categories (highlighted) hold 135 partial-credit answers and represent the entire remaining gap from 86.5% to 100%.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== SOLUTION ===== -->
+  <section id="solution">
+    <h2>Solution</h2>
+    <p>
+      Four interventions, sequenced cheapest-first, each with a measurable score delta before
+      proceeding to the next. A gate check precedes any code change: five manual traces per
+      failing category resolve key ambiguities that would otherwise cause us to build the
+      wrong thing.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>Intervention</th><th>Target Category</th><th>Type</th><th>Est. Gain</th><th>Confidence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>G1</td>
+          <td>Manual trace: 5 preference + 5 temporal partials</td>
+          <td>Preference, Temporal</td>
+          <td>Diagnostic</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>G2</td>
+          <td>Independent scorer check (20 questions via GPT-4o)</td>
+          <td>All</td>
+          <td>Validity gate</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr style="background:var(--success-dim)">
+          <td>I1</td>
+          <td>Enable <code>--preference-enumerate</code> + add constraint-honoring instruction to <code>GenerationPromptPreferenceEnumerate</code></td>
+          <td>single-session-pref</td>
+          <td>Prompt change + flag</td>
+          <td class="score-good">+10–15 pts</td>
+          <td><span class="conf high">HIGH</span></td>
+        </tr>
+        <tr style="background:var(--partial-dim)">
+          <td>I2</td>
+          <td>Enable <code>--recall-repair</code> preset + test <code>--temporal-prompt-aug</code></td>
+          <td>Temporal, Multi-session</td>
+          <td>Flag combination</td>
+          <td class="score-mid">+5–10 pts</td>
+          <td><span class="conf med">MED</span></td>
+        </tr>
+        <tr style="background:var(--partial-dim)">
+          <td>I3</td>
+          <td>Temporal partial root-cause fix (session date headers or arithmetic)</td>
+          <td>temporal-reasoning</td>
+          <td>Ingest or prompt</td>
+          <td class="score-mid">+5–10 pts</td>
+          <td><span class="conf med">MED</span></td>
+        </tr>
+        <tr style="background:var(--accent-dim)">
+          <td>I4</td>
+          <td><em>Conditional:</em> cross-session entity consolidation layer</td>
+          <td>multi-session</td>
+          <td>Architecture</td>
+          <td>+5–8 pts</td>
+          <td><span class="conf low">LOW</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><strong>Ceiling math</strong> if I1–I3 all convert half their target partials:</p>
+    <pre>Current: (367 + 0.5×135) / 500 = 86.5%
+I1 full: +15 pts → (367+30 + 0.5×105) / 500 = 91.9%
+I2+I3:   +12 pts → (367+30+24 + 0.5×81) / 500 = ≥94%</pre>
+
+    <figure>
+      <img src="engram-lme-m-score-improvement/solution.jpg" alt="Four-phase fix pipeline: gates then three targeted interventions converging to higher score">
+      <figcaption>Intervention sequence. Gates close ambiguity before code changes. I1 is the highest-leverage single fix (all 30 preference partials are potentially convertible).</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== RELEVANT FILES ===== -->
+  <section id="files" class="files">
+    <h2>Relevant Files</h2>
+
+    <h3>Existing Files</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>internal/longmemeval/claude.go</code> — Generation prompts for all question types; <code>GenerationPromptPreferenceEnumerate</code> (line 532) is the primary I1 target</li>
+      <li><span class="tag existing">existing</span> <code>internal/longmemeval/claude_additions.go</code> — <code>temporalGenerationPrompt</code> (line 279) and <code>temporalGenerationPromptWithAug</code> (line 361); temporal fix targets live here</li>
+      <li><span class="tag existing">existing</span> <code>cmd/longmemeval/main.go</code> — Config struct and CLI flag definitions; all feature flags (<code>PreferenceEnumerate</code>, <code>TemporalPromptAug</code>, <code>QueryParaphrasePasses</code>, <code>RecallRepair</code>, etc.) are declared here</li>
+      <li><span class="tag existing">existing</span> <code>cmd/longmemeval/run.go</code> — Pipeline orchestration; prompt-dispatch switch at line 757; recall pipeline with multi-query/rerank path</li>
+      <li><span class="tag existing">existing</span> <code>internal/search/engine.go</code> — Retrieval engine; <code>RecallWithOpts</code>, <code>DenseReranker</code> interface, paraphrase union logic</li>
+      <li><span class="tag existing">existing</span> <code>internal/types/types.go</code> — <code>MemoryTypePreference</code> constant; preference chunk tagging</li>
+      <li><span class="tag existing">existing</span> <code>results/longmemeval-v9-qwen3-20260517/checkpoint-score.jsonl</code> — Current scoring checkpoint; 630 raw entries, 500 unique question_ids (last-write-wins deduplication gives canonical result)</li>
+      <li><span class="tag existing">existing</span> <code>results/longmemeval-v9-qwen3-20260517/score_report.json</code> — <strong>Stale</strong> — generated May 18 before rescore-phase0; shows 566 entries; must be regenerated</li>
+      <li><span class="tag existing">existing</span> <code>testdata/longmemeval/longmemeval_m_cleaned.json</code> — 500 benchmark questions; source of truth for question types and gold answers</li>
+    </ul>
+
+    <h3>New Files</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>results/longmemeval-v10-preference-fix/</code> — Output directory for post-I1 rescore run</li>
+      <li><span class="tag new">new</span> <code>results/longmemeval-v11-recall-repair/</code> — Output directory for post-I2 flag experiment run</li>
+      <li><span class="tag new">new</span> <code>docs/lme-m-improvement-log.md</code> — Running record of experiment results and delta measurements (one entry per scoring run)</li>
+    </ul>
+  </section>
+
+  <!-- ===== IMPLEMENTATION PHASES ===== -->
+  <section id="phases">
+    <h2>Implementation Phases</h2>
+    <p><strong>IMPORTANT:</strong> Execute every phase and task step by step, in order, top to bottom.</p>
+    <p>Status markers: <code>[]</code> idle · <code>[wip]</code> in progress · <code>[x]</code> complete · <code>[f]</code> failed.</p>
+
+    <!-- ==================== PHASE 1 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 1: Validation Gates <span class="gate-label required">Required</span></h3>
+      <p>
+        Two of the three advisors flagged validity concerns that must be resolved before any
+        engineering. Building against a misdiagnosed failure wastes a scoring run and risks
+        over-engineering the wrong layer. Manual traces take an afternoon and collapse the
+        uncertainty.
+      </p>
+
+      <figure>
+        <img src="engram-lme-m-score-improvement/phase1-validation.jpg" alt="Manual trace methodology: checkpoint JSONL to session data to retrieved chunks to scorer explanation">
+        <figcaption>Validation gate methodology: trace 10 PARTIAL answers from checkpoint through to retrieved chunks. The preference chunk's presence/absence determines which fix to build.</figcaption>
+      </figure>
+
+      <h4>1.1. Pull 5 Preference PARTIAL Traces</h4>
+      <p>
+        The 0/30/0 preference split (all PARTIAL, zero CORRECT, zero INCORRECT) is too clean
+        to be pure system behavior. One of three things is true: (a) preference chunk retrieved
+        but synthesis ignores it — prompt fix; (b) preference chunk never surfaces — retrieval
+        fix; (c) gold answer expectation unachievable — benchmark artifact. These require
+        different responses.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Extract 5 single-session-preference PARTIAL entries from checkpoint-score.jsonl:<br>
+          <pre>cd ~/projects/engram-go
+python3 - &lt;&lt;'EOF'
+import json, collections
+entries = {}
+with open("results/longmemeval-v9-qwen3-20260517/checkpoint-score.jsonl") as f:
+    for line in f:
+        item = json.loads(line)
+        entries[item["question_id"]] = item
+prefs = [v for v in entries.values()
+         if v["question_type"]=="single-session-preference" and v["score_label"]=="PARTIALLY_CORRECT"]
+for p in prefs[:5]:
+    print(p["question_id"], "|", p["hypothesis"][:120], "|", p["explanation"][:120])
+EOF</pre>
+        </li>
+        <li><code class="status">[]</code>
+          For each of the 5 questions, retrieve the gold answer from <code>testdata/longmemeval/longmemeval_m_cleaned.json</code> and compare against the generated hypothesis.
+        </li>
+        <li><code class="status">[]</code>
+          Determine whether the generated answer:
+          (a) listed the preference constraint but recommended the excluded item anyway,
+          (b) listed the preference with the exclusion honored correctly (→ scorer mislabel),
+          (c) never mentioned the preference constraint at all (→ retrieval miss),
+          or (d) listed the wrong preference (→ wrong chunk surfaced).
+        </li>
+        <li><code class="status">[]</code>
+          Record the finding in <code>docs/lme-m-improvement-log.md</code>:
+          how many of 5 traces matched each scenario (a)/(b)/(c)/(d).
+        </li>
+      </ul>
+
+      <h4>1.2. Pull 5 Temporal PARTIAL Traces</h4>
+      <p>
+        The temporal baseline prompt (<code>temporalGenerationPrompt</code>) already injects
+        <code>questionDate</code> and has step-by-step subtraction instructions. Yet 45 questions
+        are partial. Understand why before touching the prompt.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Extract 5 temporal PARTIAL entries (similar Python snippet, filter by <code>temporal-reasoning</code>).
+        </li>
+        <li><code class="status">[]</code>
+          For each, check the hypothesis text: did it give a raw date instead of a duration?
+          Did it say "cannot be determined"? Did it give a wrong date calculation?
+        </li>
+        <li><code class="status">[]</code>
+          Identify the sub-failure mode distribution across the 5 traces:
+          (a) date returned instead of duration (model skipped arithmetic),
+          (b) retrieval miss ("not mentioned"),
+          (c) wrong calculation despite correct event date,
+          (d) event date not present in retrieved chunk text.
+        </li>
+        <li><code class="status">[]</code>
+          Record the distribution in <code>docs/lme-m-improvement-log.md</code>.
+        </li>
+      </ul>
+
+      <h4>1.3. Independent Scorer Validity Check</h4>
+      <p>
+        The Qwen3 scorer was calibrated on this system's outputs. The skeptical reviewer flagged
+        this as a blocker for trusting the INCORRECT=0 result. Run 20 questions through GPT-4o
+        with a generic judge prompt and compare INCORRECT counts. If INCORRECTs appear, the tuned
+        scorer is suppressing the true error distribution and the 86.5% headline needs a confidence
+        interval.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Select 20 questions: 5 preference PARTIAL, 5 temporal PARTIAL, 5 multi-session PARTIAL,
+          5 CORRECT from any category (as calibration control).
+        </li>
+        <li><code class="status">[]</code>
+          Score each against its gold answer using <code>claude --print --model claude-opus-4-5</code>
+          with the generic judge prompt:
+          <pre>SYSTEM: You are a strict answer-correctness judge. Given a question, a reference answer,
+and a system answer, classify as CORRECT (fully right), PARTIALLY_CORRECT (has the right
+idea but missing key specifics or honors some but not all constraints), or INCORRECT
+(wrong answer or confidently wrong assertion). Output the label on line 1, explanation on line 2.
+USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Count INCORRECT labels in the 15 PARTIAL responses. If ≥3 INCORRECT appear,
+          record "tuned scorer leniency confirmed" in the log and add a confidence caveat to
+          the 86.5% headline. If 0 INCORRECT, record "scorer validity confirmed."
+        </li>
+      </ul>
+
+      <h4>1.4. Testing Strategy</h4>
+      <p>Gates pass when: (a) trace finding is recorded with a clear scenario (a/b/c/d) for each type,
+         and (b) scorer validity result is documented.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>cat docs/lme-m-improvement-log.md</code> — confirms Phase 1 entries present with trace scenario tallies</li>
+        <li><code class="status">[]</code> Preference scenario (a) or (c) is dominant (≥3 of 5) — determines whether Phase 2 fix targets synthesis or retrieval</li>
+        <li><code class="status">[]</code> Temporal sub-failure mode is documented — determines Phase 4 fix path</li>
+      </ul>
+      <div class="loop">
+        🔁 Do not exit Phase 1 until every trace scenario is classified and the scorer validity check is recorded. Ambiguous traces must be manually resolved — do not proceed to Phase 2 on an unclear diagnosis.
+      </div>
+    </div>
+
+    <!-- ==================== PHASE 2 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 2: I1 — Preference Constraint Synthesis Fix</h3>
+      <p>
+        The highest-leverage single change in the plan. All 30 preference questions scored PARTIAL,
+        zero CORRECT. Two changes compose: (1) enable the existing <code>--preference-enumerate</code>
+        flag (which routes preference questions to the more specific prompt already written) and
+        (2) add explicit constraint-honoring language to that prompt. The flag was off in v9.
+      </p>
+      <div class="callout warning">
+        <strong>Gate:</strong> Only proceed to Phase 2 if Phase 1 trace analysis shows scenario (a)
+        [preference chunk retrieved but synthesis ignored it] is dominant for ≥3 of 5 traces.
+        If scenario (c) [retrieval miss] is dominant, fix retrieval first (Phase 3) before touching the prompt.
+        If scenario (b) [scorer mislabel], skip prompt changes and focus on the eval harness.
+      </div>
+
+      <figure>
+        <img src="engram-lme-m-score-improvement/phase2-preference.jpg" alt="Preference memory retrieval pipeline: preference chunks front-loaded but treated as flat context; new constraint-honoring instruction separates exclusions from facts">
+        <figcaption>The fix: preference chunks are already front-loaded (min(topK/2, 10) preference memories first). The synthesis prompt gains an explicit HARD EXCLUSION instruction so stated anti-preferences are honored as constraints, not just described.</figcaption>
+      </figure>
+
+      <h4>2.1. Strengthen <code>GenerationPromptPreferenceEnumerate</code></h4>
+      <p>
+        File: <code>internal/longmemeval/claude.go</code>, function <code>GenerationPromptPreferenceEnumerate</code>
+        (line 532). The current step 4 says "Include what the user would NOT prefer if the context
+        supports it" — this is descriptive, not constraining. Add a step 6 that explicitly
+        treats stated exclusions as hard filters.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Read the current function body at lines 532–548 before editing to confirm line numbers are unchanged.
+        </li>
+        <li><code class="status">[]</code>
+          Replace the closing backtick of the prompt string. Current instructions end with:
+          <pre>5. Only include preferences found in the memory context. Do not invent items not present in the context.</pre>
+          Add immediately after step 5:
+          <pre>6. HARD EXCLUSION RULE: If the user stated they do NOT want, have moved away from, dislike,
+   or want to avoid any specific brand, item, or option, that item is FORBIDDEN — it must
+   not appear in your answer as a suggestion, alternative, or even as a "you could also
+   consider" mention. Stated exclusions override all other considerations. Do not soften,
+   qualify, or omit stated exclusions from your response.</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Also update <code>GenerationPromptForType</code> for <code>single-session-preference</code>
+          (line 449): the baseline prompt says "include what they would NOT prefer if the context
+          supports it" — append the same HARD EXCLUSION RULE as a sixth sentence after the
+          "Be concise" line, so the non-enumerate path is also strengthened.
+        </li>
+        <li><code class="status">[]</code>
+          Write a unit test in <code>internal/longmemeval/claude_test.go</code> (TDD per CLAUDE.md):
+          construct a preference question context with a stated exclusion ("I've moved away from Adobe")
+          and a recommendation question, confirm the returned prompt contains "FORBIDDEN" and "HARD EXCLUSION"
+          in the correct function path.
+        </li>
+      </ul>
+
+      <h4>2.2. Enable <code>--preference-enumerate</code> in Scoring Run</h4>
+      <p>
+        Run a targeted rescore of only the 30 preference questions using the updated prompt and
+        the <code>--preference-enumerate</code> flag. This is faster than a full rescore and isolates
+        the delta to this change.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Build the updated binary: <code>cd ~/projects/engram-go && go build ./cmd/longmemeval/...</code>
+        </li>
+        <li><code class="status">[]</code>
+          Run targeted preference rescore (uses the memory-capped scope per lme-score skill):
+          <pre>cd ~/projects/engram-go && nohup systemd-run --user --scope \
+  --unit lme-pref-$(date +%s) \
+  -p MemoryMax=64G -p MemorySwapMax=8G \
+  ./longmemeval score-efficient \
+  --data testdata/longmemeval/longmemeval_m_cleaned.json \
+  --out results/longmemeval-v10-preference-fix \
+  --scorer-url http://192.168.0.138:30411/olla/openai/v1 \
+  --scorer-model inference \
+  --preference-enumerate \
+  --workers 4 \
+  >> results/longmemeval-v10-preference-fix/score-efficient.log 2>&1 &
+echo "scorer PID=$!"</pre>
+          <strong>Note:</strong> Run from the same checkpoint (v9) as baseline so only the
+          preference-category answers change. If the pipeline re-runs all 500, filter the
+          score_report diff to the single-session-preference category.
+        </li>
+        <li><code class="status">[]</code>
+          Monitor progress:
+          <pre>grep -oE '"score_label":"[^"]*"' \
+  results/longmemeval-v10-preference-fix/checkpoint-score.jsonl \
+  | sort | uniq -c</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Record delta in <code>docs/lme-m-improvement-log.md</code>:
+          preference CORRECT count before and after, weighted score delta.
+        </li>
+      </ul>
+
+      <h4>2.3. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/longmemeval/... -run TestPreferenceConstraint -v</code> — new unit test passes</li>
+        <li><code class="status">[]</code> Preference CORRECT count in v10 results ≥5 (≥5 of 30 converted from PARTIAL to CORRECT)</li>
+        <li><code class="status">[]</code> No regression in other categories (single-session-assistant, knowledge-update remain ≥96%)</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — full test suite green</li>
+      </ul>
+      <div class="loop">
+        🔁 Do not exit Phase 2 until the preference CORRECT count increases. If CORRECT count remains 0, the Phase 1 scenario classification was wrong — return to Phase 1 and re-examine the traces before patching further.
+      </div>
+    </div>
+
+    <!-- ==================== PHASE 3 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 3: I2 — Retrieval &amp; Temporal Flag Experiment</h3>
+      <p>
+        Test the compound flag combination that targets multi-session retrieval and temporal
+        reasoning. The <code>--recall-repair</code> preset bundles
+        <code>DualPreferenceRecall</code>, <code>ExhaustiveAggregation</code>,
+        <code>EnumerateFirst</code>, <code>TemporalPromptAug</code>, and <code>ChronoSort</code>.
+        Measure the delta on multi-session and temporal categories before committing to architecture.
+      </p>
+      <div class="callout info">
+        <strong>Key context:</strong> <code>--query-paraphrase-passes=3</code> was <em>already the default</em>
+        in the v9 run — 3 paraphrase variants per query were already executing. The multi-session
+        47 partials survived 3 paraphrase passes. This means the retrieval gap is not solely a
+        query-vocabulary problem; the relevant chunks may be present but ranked too low.
+      </div>
+
+      <figure>
+        <img src="engram-lme-m-score-improvement/phase3-retrieval.jpg" alt="Multi-query retrieval fan-out diagram showing paraphrase union, recall-repair preset, and reranker stages">
+        <figcaption>Retrieval flag experiment: compose <code>--recall-repair</code> with <code>--preference-enumerate</code> for a combined run. The reranker (if a cross-encoder model is available) reorders top-20 candidates before final top-k selection.</figcaption>
+      </figure>
+
+      <h4>3.1. Check DenseReranker Availability</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Determine if a cross-encoder reranker endpoint is available:
+          <pre>xh GET http://192.168.0.138:30411/olla/v1/models 2>/dev/null | jq '.data[].id' | grep -i rerank</pre>
+          If a reranker model is present, note its name for Phase 3 run flags.
+          If absent, skip DenseReranker in the scoring command.
+        </li>
+      </ul>
+
+      <h4>3.2. Combined Run: <code>--recall-repair</code> + <code>--preference-enumerate</code></h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Run with both flags composited against v10 baseline (which already has the preference
+          prompt fix from Phase 2):
+          <pre>cd ~/projects/engram-go && nohup systemd-run --user --scope \
+  --unit lme-recall-repair-$(date +%s) \
+  -p MemoryMax=64G -p MemorySwapMax=8G \
+  ./longmemeval score-efficient \
+  --data testdata/longmemeval/longmemeval_m_cleaned.json \
+  --out results/longmemeval-v11-recall-repair \
+  --scorer-url http://192.168.0.138:30411/olla/openai/v1 \
+  --scorer-model inference \
+  --preference-enumerate \
+  --recall-repair \
+  --workers 4 \
+  >> results/longmemeval-v11-recall-repair/score-efficient.log 2>&1 &</pre>
+        </li>
+        <li><code class="status">[]</code>
+          If DenseReranker is available, add <code>--dense-reranker &lt;model-name&gt;</code>
+          and run a separate v11b variant to isolate its contribution.
+        </li>
+        <li><code class="status">[]</code>
+          Compare multi-session and temporal-reasoning category scores between v9 baseline,
+          v10 (preference fix only), and v11 (full flag stack). Record in improvement log.
+        </li>
+      </ul>
+
+      <h4>3.3. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> multi-session weighted % in v11 &gt; v9 (improvement from 81.9%)</li>
+        <li><code class="status">[]</code> temporal-reasoning weighted % in v11 &gt; v9 (improvement from 83.1%)</li>
+        <li><code class="status">[]</code> Overall weighted score in v11 &gt; v10 (cumulative improvement)</li>
+        <li><code class="status">[]</code> Record per-category delta table in <code>docs/lme-m-improvement-log.md</code></li>
+      </ul>
+      <div class="loop">
+        🔁 If multi-session weighted % does not improve with <code>--recall-repair</code>, the cross-session gap is structural and requires the Phase 6 architectural fix. Do not spend more flag experiments — proceed to Phase 4 (temporal diagnosis) and flag Phase 6 for architecture planning.
+      </div>
+    </div>
+
+    <!-- ==================== PHASE 4 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 4: I3 — Temporal Partial Root-Cause Fix</h3>
+      <p>
+        The <code>temporalGenerationPrompt</code> already injects <code>questionDate</code> and
+        provides step-by-step subtraction instructions ("Compute elapsed time: {questionDate} minus
+        the Session date"). The 45 remaining partials happened despite this. Phase 1 traces
+        determine the dominant sub-failure mode; this phase applies the corresponding fix.
+      </p>
+
+      <figure>
+        <img src="engram-lme-m-score-improvement/phase4-temporal.jpg" alt="Temporal reasoning pipeline: question date injected, step-by-step subtraction, session date header in memory chunk; two failure points labeled">
+        <figcaption>The temporal pipeline already injects the question date. Failures are either missing session-date headers in retrieved chunks (storage-layer) or model arithmetic failure despite having both dates (prompt-layer).</figcaption>
+      </figure>
+
+      <h4>4.1. Path A — Session Date Headers Missing in Chunks</h4>
+      <p>
+        If Phase 1 temporal traces showed sub-failure (d) [event date absent from chunk text]:
+        the stored memory chunks for some sessions are missing the "Session date: YYYY-MM-DD"
+        header that <code>temporalGenerationPrompt</code> requires.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Inspect how session date is written into stored chunks at ingest time.
+          Search for where the "Session date:" header is prepended to chunk content:
+          <pre>rg "Session date" ~/projects/engram-go/internal/ --type go -n | head -20</pre>
+        </li>
+        <li><code class="status">[]</code>
+          If the header is added conditionally or only when a date field is non-empty,
+          identify the condition and ensure it applies to all stored memories.
+        </li>
+        <li><code class="status">[]</code>
+          Write a test that stores a memory with a known session date, retrieves it via
+          longmemeval recall, and asserts the chunk text contains "Session date: {date}".
+        </li>
+        <li><code class="status">[]</code>
+          If the fix requires re-ingesting existing benchmark data, evaluate whether the
+          longmemeval ingest pipeline can be re-run against the existing haystack sessions
+          without affecting live Engram projects.
+        </li>
+      </ul>
+
+      <h4>4.2. Path B — Model Arithmetic Fails Despite Date Injection</h4>
+      <p>
+        If Phase 1 temporal traces showed sub-failure (a) [date returned instead of duration]
+        or (c) [wrong calculation with correct dates]: the model has both dates but fails to
+        compute the delta. Use the deterministic date-difference approach.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Verify that <code>--temporal-prompt-aug</code> is already part of <code>--recall-repair</code>
+          preset (it is, per <code>applyRepairPreset</code> in main.go). If v11 already ran
+          with temporal-prompt-aug and temporal partials remain, the augmentation isn't enough.
+        </li>
+        <li><code class="status">[]</code>
+          Add a post-generation date-delta substitution step: after the generation model returns
+          its answer, detect if it contains an ISO date string (YYYY-MM-DD) that should be a
+          duration, compute the delta from <code>questionDate</code>, and substitute the computed
+          duration. This is a deterministic string rewrite — not another LLM call.
+          Pseudo-code:
+          <pre>if isTemporalQuestion && answer matches date-only pattern {
+    delta := questionDate.Sub(parsedDate)
+    answer = formatDelta(delta)  // "3 weeks", "21 days", "5 months"
+}</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Write unit tests for the date-delta formatter covering: days, weeks, months, edge
+          cases (same day, future date, zero delta).
+        </li>
+      </ul>
+
+      <h4>4.3. Apply Fix and Rescore Temporal Questions</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Build updated binary: <code>go build ./cmd/longmemeval/...</code>
+        </li>
+        <li><code class="status">[]</code>
+          Run targeted temporal rescore (filter to temporal-reasoning questions only for speed):
+          <pre>cd ~/projects/engram-go && nohup systemd-run --user --scope \
+  --unit lme-temporal-fix-$(date +%s) \
+  -p MemoryMax=64G -p MemorySwapMax=8G \
+  ./longmemeval score-efficient \
+  --data testdata/longmemeval/longmemeval_m_cleaned.json \
+  --out results/longmemeval-v12-temporal-fix \
+  --scorer-url http://192.168.0.138:30411/olla/openai/v1 \
+  --scorer-model inference \
+  --preference-enumerate \
+  --recall-repair \
+  --workers 4 \
+  >> results/longmemeval-v12-temporal-fix/score-efficient.log 2>&1 &</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Record temporal CORRECT count delta in improvement log.
+        </li>
+      </ul>
+
+      <h4>4.4. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — full test suite green</li>
+        <li><code class="status">[]</code> temporal-reasoning weighted % in v12 &gt; v11</li>
+        <li><code class="status">[]</code> No regression in single-session-assistant (must remain 100%)</li>
+      </ul>
+      <div class="loop">
+        🔁 If temporal weighted % does not improve after both paths are tried, file a GitHub issue with the trace data and move on. Temporal partials may represent genuine reasoning limits of the inference model, not engineering gaps.
+      </div>
+    </div>
+
+    <!-- ==================== PHASE 5 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 5: Full Rescore and Report Regeneration</h3>
+      <p>
+        The current <code>score_report.json</code> is stale — it was generated May 18 before
+        rescore-phase0, shows 566 entries (not 500), and does not reflect any improvements
+        from this plan. After Phases 2–4 produce a stable scoring run, regenerate the
+        canonical report.
+      </p>
+
+      <h4>5.1. Regenerate Normalized Score Report</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          After the final scoring run (v12 or whichever run incorporates all improvements),
+          regenerate the report using last-write-wins deduplication:
+          <pre>cd ~/projects/engram-go
+python3 - &lt;&lt;'EOF'
+import json, collections
+entries = {}
+with open("results/longmemeval-v12-temporal-fix/checkpoint-score.jsonl") as f:
+    for line in f:
+        item = json.loads(line)
+        entries[item["question_id"]] = item
+
+by_type = collections.defaultdict(lambda: {"correct":0,"partially_correct":0,"incorrect":0,"total":0})
+for item in entries.values():
+    t = item["question_type"]
+    label = item["score_label"].lower()
+    by_type[t][label] = by_type[t].get(label, 0) + 1
+    by_type[t]["total"] += 1
+
+total_c = sum(v["correct"] for v in by_type.values())
+total_p = sum(v.get("partially_correct",0) for v in by_type.values())
+total_i = sum(v.get("incorrect",0) for v in by_type.values())
+total = len(entries)
+weighted = (total_c + 0.5 * total_p) / total
+
+report = {
+    "by_type": dict(by_type),
+    "overall": {"correct": total_c, "partially_correct": total_p, "incorrect": total_i, "total": total},
+    "weighted_score": round(weighted, 4),
+    "run_id": "v12-final",
+    "total_scored": total,
+    "note": "Normalized: last-write-wins deduplication, 500 unique question_ids"
+}
+with open("results/longmemeval-v12-temporal-fix/score_report.json", "w") as f:
+    json.dump(report, f, indent=2)
+print(f"Weighted: {weighted:.1%} | Correct: {total_c} | Partial: {total_p} | Incorrect: {total_i}")
+EOF</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Compare final weighted score against 86.5% baseline. Record total delta in improvement log.
+        </li>
+        <li><code class="status">[]</code>
+          Update <code>docs/lme-m-improvement-log.md</code> with a summary table:
+          v9 baseline → v10 (preference fix) → v11 (recall-repair) → v12 (temporal fix)
+          with per-category deltas.
+        </li>
+      </ul>
+
+      <h4>5.2. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>score_report.json</code> shows exactly 500 total_scored</li>
+        <li><code class="status">[]</code> Weighted score ≥ 89% (minimum acceptable improvement from 86.5%)</li>
+        <li><code class="status">[]</code> No category has regressed below its v9 weighted score</li>
+        <li><code class="status">[]</code> <code>docs/lme-m-improvement-log.md</code> has entries for every scoring run</li>
+      </ul>
+      <div class="loop">
+        🔁 If final weighted score &lt; 89%, the plan has not achieved minimum acceptable improvement. Re-examine which category drove the shortfall and re-enter the appropriate phase.
+      </div>
+    </div>
+
+    <!-- ==================== PHASE 6 ==================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 6: (Conditional) Cross-Session Entity Consolidation <span class="gate-label conditional">Conditional</span></h3>
+      <p>
+        <strong>Only execute if:</strong> multi-session weighted score remains below 85% after Phase 3
+        (i.e., <code>--recall-repair</code> did not close the gap). This is the architecturally
+        expensive fix — it requires a new derived memory layer and changes how Engram ingests
+        conversations.
+      </p>
+      <div class="callout warning">
+        <strong>Decision gate:</strong> If Phase 3 improved multi-session weighted % to ≥85%, skip Phase 6.
+        The architectural investment is only justified if the retrieval gap survived both the v9
+        3-paraphrase-passes baseline AND the recall-repair preset. Estimate: 3–5 days of engineering.
+      </div>
+
+      <h4>6.1. Design: Entity/Fact Consolidation Layer</h4>
+      <p>
+        The root cause of cross-session retrieval failures is that stable user facts (current job,
+        location, long-term goals) exist as single chunks in old sessions and are outranked at
+        retrieval time by more recent, semantically similar content. The fix is a derived "user
+        fact summary" that is updated incrementally as sessions arrive and stored as a separate
+        high-priority retrieval target.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Design the entity extraction step: after each session ingest, run a lightweight
+          Haiku-class extraction pass to identify durable user facts
+          (role, employer, location, stated goals, long-term preferences). Store each fact as
+          a memory with type <code>MemoryTypeFact</code> and a <code>valid_from</code> timestamp.
+        </li>
+        <li><code class="status">[]</code>
+          Design the cross-session recall path: for multi-session-shaped queries, issue a
+          secondary retrieval pass specifically against <code>MemoryTypeFact</code> memories
+          and union the results with the standard recall.
+        </li>
+        <li><code class="status">[]</code>
+          File a GitHub issue with the design before implementation (per engram-go AI PR policy:
+          adversarial review required). Label it <code>ai-generated</code>.
+        </li>
+        <li><code class="status">[]</code>
+          Implement following TDD: write failing tests for entity extraction and cross-session
+          recall before writing production code. Coverage gate: ≥60% on new files.
+        </li>
+      </ul>
+
+      <h4>6.2. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> multi-session weighted % after Phase 6 &gt; post-Phase-3 score</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — full suite green, ≥55% statement coverage</li>
+        <li><code class="status">[]</code> Entity extraction does not add latency &gt;200ms to live recall (benchmark against empty-project baseline)</li>
+      </ul>
+      <div class="loop">
+        🔁 Phase 6 is only complete when multi-session weighted % exceeds the Phase 3 result. If it does not improve, the architectural approach was wrong — examine the entity extraction quality before changing the retrieval path.
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ===== GLOBAL VALIDATION ===== -->
+  <section id="validation">
+    <h2>Validation Commands</h2>
+    <p>Execute these commands to validate the entire plan is complete:</p>
+    <ul class="checklist">
+      <li><code class="status">[]</code>
+        <code>cat ~/projects/engram-go/results/longmemeval-v*/score_report.json | python3 -c "import json,sys; [print(d.get('weighted_score','?'), d.get('run_id','?')) for d in [json.load(open(f)) for f in __import__('glob').glob('results/longmemeval-v*/score_report.json')]]"</code>
+        — shows weighted score progression across all runs; final run must be ≥0.89
+      </li>
+      <li><code class="status">[]</code>
+        <code>cd ~/projects/engram-go && go test ./... -count=1 -race 2>&amp;1 | tail -5</code>
+        — full test suite passes with race detector
+      </li>
+      <li><code class="status">[]</code>
+        <code>cat ~/projects/engram-go/docs/lme-m-improvement-log.md</code>
+        — improvement log has entries for Phases 1, 2, 3, 4, 5 and a final comparison table
+      </li>
+      <li><code class="status">[]</code>
+        <code>python3 -c "import json; r=json.load(open('results/longmemeval-v12-temporal-fix/score_report.json')); assert r['total_scored']==500, r['total_scored']"</code>
+        — confirms 500-question normalized report (not the stale 566-entry version)
+      </li>
+      <li><code class="status">[]</code>
+        Phase 1 diagnostic findings recorded in improvement log with scenario classification
+        for preference and temporal traces
+      </li>
+      <li><code class="status">[]</code>
+        Phase 2 unit test for <code>GenerationPromptPreferenceEnumerate</code> constraint language passes:
+        <code>go test ./internal/longmemeval/... -run TestPreferenceConstraint -v</code>
+      </li>
+    </ul>
+    <div class="loop">
+      🔁 The plan is not complete until every box is checked. If a scoring run result does not meet the threshold, diagnose the gap before marking the phase complete.
+    </div>
+  </section>
+
+  <!-- ===== QUESTIONABLES ===== -->
+  <section id="questionables">
+    <h2>Questionables</h2>
+    <p style="color:var(--text-muted); font-size:0.85rem;">Open questions surfaced by three independent advisors. Resolve before committing engineering resources.</p>
+
+    <figure>
+      <img src="engram-lme-m-score-improvement/questionables.jpg" alt="Validity fork diagram: scorer calibration loop, benchmark mismatch, and 0/30/0 distribution as three open questions">
+      <figcaption>Three validity risks that must be checked before reading benchmark numbers as ground truth.</figcaption>
+    </figure>
+
+    <details>
+      <summary>Is the Qwen3 scorer calibrated on this system's outputs? (Skeptical reviewer — BLOCKER)</summary>
+      <p class="qa-answer">
+        The skeptic identified scorer calibration as the most serious validity threat: if the
+        Qwen3 scorer was calibrated on this system's hedging-style responses, it may have learned
+        to award PARTIAL to hedged non-answers regardless of whether the retrieved content was
+        relevant. This would make INCORRECT structurally unreachable and suppress the true error
+        distribution. Phase 1 (G2) resolves this with an independent GPT-4o scorer check.
+        If INCORRECTs appear in the independent run, the 86.5% headline needs a confidence
+        interval and the improvement plan should target the true score, not the hedging-tolerant
+        inflated score. If no INCORRECTs appear, scorer validity is confirmed.
+      </p>
+    </details>
+
+    <details>
+      <summary>Is LongMemEval-M appropriate for a retrieval-augmented system? (Skeptic — SERIOUS)</summary>
+      <p class="qa-answer">
+        LME-M was designed for context-window-based assistants, not retrieval-augmented systems.
+        Temporal-reasoning CORRECT answers at 83% may partly reflect metadata timestamp lookups
+        rather than semantic retrieval+reasoning. If temporal CORRECT answers are mostly metadata
+        lookups, the 83% temporal score is not comparable to LME-M baselines for context-window
+        systems. To check: sample 10 temporal CORRECT answers and inspect whether retrieval
+        was semantic (matching event description) or timestamp-based (filtering by date field).
+        This finding doesn't change what we build, but it affects how we characterize the score
+        externally.
+      </p>
+    </details>
+
+    <details>
+      <summary>Is the 0/30/0 preference split a scorer artifact? (Strategic advisor + Skeptic — SERIOUS)</summary>
+      <p class="qa-answer">
+        Both the strategic advisor (Opus) and the skeptical reviewer independently flagged the
+        0/30/0 preference distribution as too clean to be a pure system property. A rubric that
+        makes CORRECT unreachable (requires honoring an exact exclusion the model never sees)
+        and INCORRECT unreachable (real accessories always get partial credit) would produce
+        exactly this distribution regardless of system performance. The Phase 1 manual traces
+        directly test this: if 3+ of 5 traces show the model honored the preference constraint
+        and the scorer still returned PARTIAL, the fix is in the eval harness, not in Engram.
+        Strategic advisor's prior: 60% synthesis-constraint bug (real fix needed), 25%
+        query-formulation miss, 15% rubric mis-grading.
+      </p>
+    </details>
+
+    <details>
+      <summary>Does deduplication bias the question distribution? (Skeptic — SERIOUS)</summary>
+      <p class="qa-answer">
+        The checkpoint had 630 entries for 500 unique question_ids; 130 entries were duplicates
+        from rescore-phase0. The per-category counts in the normalized run should be compared
+        against the LongMemEval-M paper's published category distribution. If any category is
+        more than 20% underrepresented relative to the published benchmark, the surviving
+        question set may be biased toward easier questions in that category. Action: compare
+        the current category counts (78/56/70/133/133/30) against the published LME-M distribution.
+        If the counts match the published benchmark, deduplication was safe. If not, note the
+        deviation in the improvement log.
+      </p>
+    </details>
+  </section>
+
+  <!-- ===== NOTES ===== -->
+  <section id="notes">
+    <h2>Notes</h2>
+
+    <h3>Score Improvement Trajectory</h3>
+    <p>Expected score trajectory through the phases, assuming each intervention converts approximately half its target partials:</p>
+    <table>
+      <thead>
+        <tr><th>Run</th><th>Change</th><th>Preference</th><th>Temporal</th><th>Multi-session</th><th>Overall Weighted</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>v9 baseline</strong></td>
+          <td>—</td>
+          <td class="score-bad">50.0%</td>
+          <td class="score-mid">83.1%</td>
+          <td class="score-mid">81.9%</td>
+          <td class="score-bad"><strong>86.5%</strong></td>
+        </tr>
+        <tr>
+          <td>v10</td>
+          <td>I1: <code>--preference-enumerate</code> + constraint prompt</td>
+          <td>↑ ~65–75%?</td>
+          <td>83.1%</td>
+          <td>81.9%</td>
+          <td>~89–90%?</td>
+        </tr>
+        <tr>
+          <td>v11</td>
+          <td>I2: <code>--recall-repair</code></td>
+          <td>~65–75%</td>
+          <td>↑ ~87%?</td>
+          <td>↑ ~85%?</td>
+          <td>~91–92%?</td>
+        </tr>
+        <tr>
+          <td>v12</td>
+          <td>I3: temporal root-cause fix</td>
+          <td>~65–75%</td>
+          <td>↑ ~90%?</td>
+          <td>~85%</td>
+          <td class="score-good">~92–93%?</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color:var(--text-muted); font-size:0.85rem;">
+      ⚠️ These are projections based on converting ~half of each category's partials.
+      Actual deltas depend on Phase 1 trace findings and scorer behavior.
+      Record actual values in <code>docs/lme-m-improvement-log.md</code>.
+    </p>
+
+    <figure>
+      <img src="engram-lme-m-score-improvement/score-trajectory.jpg" alt="Score improvement trajectory chart: v9 baseline 86.5% through v12 target 92%+ showing per-run increments">
+      <figcaption>Expected score progression through each run. Each intervention targets a specific failure cluster. Final target: ≥92% weighted score on 500 normalized questions.</figcaption>
+    </figure>
+
+    <h3>What the Code Scout Found</h3>
+    <p>Three specific questions answered before writing a line of code:</p>
+
+    <div class="callout success">
+      <strong>Q1 — Question date injection:</strong> Already done.
+      <code>questionDate</code> appears in every generation prompt (twice per prompt).
+      <code>temporalGenerationPrompt</code> in <code>claude_additions.go:279</code> has explicit step-by-step
+      subtraction instructions. H2 ("date not injected") was misdiagnosed — the plumbing is there.
+    </div>
+
+    <div class="callout warning">
+      <strong>Q2 — Preference as flat context:</strong> Confirmed bug.
+      <code>MemoryTypePreference = "preference"</code> exists and preferences are front-loaded (up to
+      <code>min(topK/2, 10)</code> preference-typed memories first). But after assembly, all chunks
+      become a flat <code>[]string</code>. The synthesis prompt has no HARD EXCLUSION instruction.
+      The fix is in <code>GenerationPromptPreferenceEnumerate</code> (line 532) — add step 6.
+      <code>--preference-enumerate</code> was also <em>off by default</em> and not set in v9.
+    </div>
+
+    <div class="callout info">
+      <strong>Q3 — Retrieval architecture:</strong> Single-shot top-k=10 by default, but
+      <code>--query-paraphrase-passes=3</code> is the <em>default</em> (3 paraphrase passes were
+      already running in v9). Multi-session 47 partials survived 3 paraphrase passes. No hard
+      cross-session filter. <code>DenseReranker</code> and <code>Reranker</code> exist as
+      interfaces in the engine but require an external model and are not wired to a CLI flag
+      in <code>main.go</code>.
+    </div>
+
+    <h3>Advisor Consensus: Three Different Root Causes</h3>
+    <p>
+      All three advisors converged on the same structural insight: the three weak categories
+      have three different root causes, and treating them as "improve retrieval" is the
+      primary trap.
+    </p>
+    <ul>
+      <li><strong>Preference:</strong> Synthesis problem — retrieved chunks ignored as constraints.
+        <em>Not</em> a retrieval problem (preference chunks are front-loaded already).</li>
+      <li><strong>Temporal:</strong> Post-retrieval computation problem — date injection exists;
+        failure is in arithmetic execution or chunk header formatting.</li>
+      <li><strong>Multi-session:</strong> True retrieval coverage gap — the only category that
+        genuinely justifies architectural investment if flags don't close it.</li>
+    </ul>
+
+    <h3>Failure Modes to Watch</h3>
+    <ul>
+      <li><strong>Halsey error applied to methodology:</strong> Retaining the retrieval-improvement
+        approach for preference questions past the point where Phase 1 traces show it's a
+        synthesis problem. Build the wrong layer if traces are misread.</li>
+      <li><strong>Scorer calibration loop:</strong> Reporting score gains that are partly
+        scorer-leniency artifacts, not real system improvements. Phase 1 G2 is the control.</li>
+      <li><strong>Silent cap:</strong> If this plan bounds coverage (top-5 traces, 20 scorer
+        questions), document what was dropped — "manual trace of 5" is not "validated on all 30."</li>
+    </ul>
+
+    <h3>engram-go AI PR Policy</h3>
+    <p>
+      Per <code>engram-go/CLAUDE.md</code>: all AI-generated PRs must be labeled <code>ai-generated</code>
+      and pass three rounds of adversarial review (correctness, coverage ≥70% on new files,
+      structural). The preference prompt change is a low-risk string edit and may be reviewed
+      in one round. The Phase 6 entity consolidation layer is a new subsystem and requires
+      all three rounds. Coverage gate: 55% minimum global, 60% target on new files.
+    </p>
+
+  </section>
+
+  <!-- ===== AMENDMENTS ===== -->
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <p style="color:var(--text-muted); font-size:0.85rem;">Append-only running history of post-creation changes.</p>
+  </section>
+
+</main>
+</body>
+</html>
