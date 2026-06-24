@@ -734,6 +734,13 @@ spec:
         <li><code class="status">[x]</code> No NetworkPolicy violation events found.</li>
         <li><code class="status">[x]</code> research-postgres 1/1 Running, clearwatch-research CronJobs updated. ai-fleet-controller 1/1 Running. engram-go 1/1 Running. NATS nats-0 2/2 Running (main + reloader both healthy).</li>
         <li><code class="status">[x]</code> cert-manager: no active challenges (no certificates in renewal/pending state).</li>
+        <li><code class="status">[x]</code> Functional: <code>psql \dt</code> from research-postgres-0 — 27 tables returned as <code>research</code> user. Schema intact; pgvector extension accessible.</li>
+        <li><code class="status">[x]</code> Functional: <code>GET /collections</code> from qdrant-0 (port-forward) — <code>lesson_embeddings</code> + <code>section_embeddings</code> returned; <code>status: ok</code>. Existing data intact after PVC name fix.</li>
+        <li><code class="status">[x]</code> Functional: NATS TCP INFO handshake (port-forward 4222) — <code>version: 2.10.29</code>, <code>jetstream: true</code>, <code>auth_required: true</code>. Server healthy, JetStream active.</li>
+        <li><code class="status">[x]</code> Functional: clearwatch-presence full Next.js HTML response (port-forward svc:80 → container:3000) — page title "Clearwatch Research", all sections rendered.</li>
+        <li><code class="status">[x]</code> Functional: <code>collector-cisa-kev</code> CronJob manually triggered — completed 1/1 in 15s; fetched 1627 KEV entries, wrote to postgres, clean exit. seccompProfile RuntimeDefault did not break execution.</li>
+        <li><code class="status">[x]</code> Functional: NetworkPolicy DNS egress from <code>engram</code> namespace — <code>nslookup kubernetes.default.svc.cluster.local</code> resolved to 10.43.0.1. allow-dns policy working correctly.</li>
+        <li><code class="status">[x]</code> Functional: PSA warn mode active — test pod in engram namespace triggered PSA warning on admission (allowPrivilegeEscalation, capabilities, runAsNonRoot, seccompProfile). Webhook evaluating correctly.</li>
         <li><code class="status">[]</code> <code>kubectl get configauditreport --all-namespaces</code> — deferred to Phase 6 (Trivy Operator reports update on schedule)</li>
       </ul>
       <div class="loop">🔁 <strong>Do not exit Phase 4 until every box is checked. NetworkPolicy changes are the highest-risk items — test east-west traffic after each namespace gets deny-all.</strong></div>
@@ -940,6 +947,10 @@ kubectl uncordon worker134</code></pre>
     <h2>Amendments</h2>
     <p style="color:var(--muted); font-size:0.85rem;">Running history of changes made after the plan was first authored. Append-only.</p>
     <!-- future amendments appended here -->
+    <details>
+      <summary>2026-06-24T22:30Z — Phase 4 functional validation complete</summary>
+      <p>All Phase 4 changes verified with application-level functional tests (beyond pod Running/readiness probe). Tests executed: research-postgres SQL query (27 tables), qdrant /collections (2 collections intact), NATS TCP INFO handshake (jetstream: true), clearwatch-presence full Next.js page render, collector-cisa-kev CronJob manual trigger (1/1 complete in 15s), NetworkPolicy DNS egress from engram namespace (nslookup resolved), PSA warn mode admission webhook firing. All 7 tests passed. No service degradation from securityContext or NetworkPolicy changes.</p>
+    </details>
   </section>
 
 </main>
