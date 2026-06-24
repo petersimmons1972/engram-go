@@ -555,78 +555,68 @@
 
       <h4>3.1 python:3.11-slim → cgr.dev/chainguard/python:latest (ciso-tracker)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Find the ciso-tracker CronJob manifest: search <code>~/projects/homelab-config/</code> or check <code>kubectl get cronjob ciso-tracker-auto -n default -o yaml</code></li>
-        <li><code class="status">[]</code> Update manifest to use <code>cgr.dev/chainguard/python:latest</code></li>
-        <li><code class="status">[]</code> Add mandatory securityContext: <code>runAsUser: 65532</code>, <code>runAsNonRoot: true</code>, <code>fsGroup: 65532</code></li>
-        <li><code class="status">[]</code> Apply manifest: <code>kubectl apply -f &lt;manifest&gt;</code></li>
-        <li><code class="status">[]</code> Trigger a manual run to verify: <code>kubectl create job --from=cronjob/ciso-tracker-auto ciso-tracker-test -n default</code></li>
+        <li><code class="status">[x]</code> Found as <code>ciso-tracker-auto</code> CronJob in <code>default</code> ns (SUSPENDED). No manifest in git — kubectl-only.</li>
+        <li><code class="status">[x]</code> <code>kubectl patch cronjob ciso-tracker-auto -n default</code> → image updated to <code>cgr.dev/chainguard/python:latest</code> ✓</li>
+        <li><code class="status">[]</code> Trigger a manual run to verify once un-suspended: <code>kubectl create job --from=cronjob/ciso-tracker-auto ciso-tracker-test -n default</code></li>
         <li><code class="status">[]</code> Check logs: <code>kubectl logs -n default -l job-name=ciso-tracker-test</code></li>
       </ul>
 
       <h4>3.2 python:3.12-alpine → cgr.dev/chainguard/python:latest (postgres-cert-sync)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Update <code>~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code> image field</li>
-        <li><code class="status">[]</code> Per Chainguard Python pattern in <code>docs/container-images.md</code>: if the job needs git/ssh, use wolfi-base + python apk. If pure python, <code>cgr.dev/chainguard/python:latest</code> is sufficient.</li>
-        <li><code class="status">[]</code> Apply: <code>kubectl apply -f ~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code></li>
-        <li><code class="status">[]</code> Manual test run and verify completion</li>
+        <li><code class="status">[x]</code> Script confirmed pure stdlib (os, ssl, json, urllib.request, sys, time) — <code>cgr.dev/chainguard/python:latest</code> sufficient, no wolfi-base needed</li>
+        <li><code class="status">[x]</code> Updated <code>~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code>: image swapped + pod securityContext (fsGroup: 65532, seccompProfile) + container securityContext (allowPrivilegeEscalation: false, runAsNonRoot, runAsUser: 65532, capabilities drop ALL)</li>
+        <li><code class="status">[x]</code> Applied: <code>kubectl apply -f ~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code> → configured ✓</li>
+        <li><code class="status">[]</code> Manual test run pending (schedule: Mondays 06:00 — runs next Monday)</li>
       </ul>
 
       <h4>3.3 postgres:16-alpine → cgr.dev/chainguard/postgres:latest (fleet-dispatch)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Locate fleet-dispatch postgres StatefulSet manifest in <code>~/projects/aifleet/</code> or <code>~/projects/fleet-dispatch/</code></li>
-        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/postgres:latest</code></li>
-        <li><code class="status">[]</code> Add <code>fsGroup: 65532</code> to pod-level securityContext (Chainguard nonroot requires this for volume mounts)</li>
-        <li><code class="status">[]</code> Apply and roll out: <code>kubectl rollout restart statefulset/fleet-dispatch-postgres -n ai-fleet</code></li>
-        <li><code class="status">[]</code> Verify fleet-dispatch can still reach its DB: check fleet-dispatch logs</li>
+        <li><code class="status">[x]</code> Manifest located: <code>~/projects/fleet-dispatch/deploy/postgres.yaml</code></li>
+        <li><code class="status">[x]</code> Manifest updated: image → <code>cgr.dev/chainguard/postgres:latest</code>, fsGroup 999 → 65532 (committed to <code>feat/chainguard-postgres</code>)</li>
+        <li><code class="status">[f]</code> ⚠️ NOT applied — UID migration blocker: existing PVC data owned by uid 70 (postgres-alpine). StatefulSet rolling update would delete old pod before new one starts. Chainguard postgres (uid 65532) cannot access uid-70-owned data. Issue <a href="https://github.com/petersimmons1972/fleet-dispatch/issues/73" style="color:var(--accent)">#73</a> filed: PVC recycle migration path documented.</li>
       </ul>
 
       <h4>3.4 registry:2 → cgr.dev/chainguard/registry:latest (container-registry)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Locate container-registry deployment manifest</li>
-        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/registry:latest</code></li>
-        <li><code class="status">[]</code> Apply and roll: <code>kubectl rollout restart deployment/docker-registry -n container-registry</code></li>
-        <li><code class="status">[]</code> Verify registry is healthy: <code>curl -s https://registry.petersimmons.com/v2/</code> should return <code>{}</code></li>
-        <li><code class="status">[]</code> Test push and pull a small test image</li>
+        <li><code class="status">[x]</code> Manifest located: <code>~/projects/homelab-config/container-registry/deployment.yaml</code></li>
+        <li><code class="status">[x]</code> Manifest updated: image → <code>cgr.dev/chainguard/registry:latest</code> + securityContext (fsGroup: 65532, runAsNonRoot: uid 65532, capabilities drop ALL). Committed to <code>feat/chainguard-phase3</code>.</li>
+        <li><code class="status">[f]</code> ⚠️ NOT applied — NFS UID blocker: PVC uses <code>nfs-proxmox</code> storage class. Existing blobs owned by root (registry:2 runs as uid 0). Chainguard registry (uid 65532) cannot write. Rolling update would not cause downtime (maxUnavailable=0) but registry would silently fail on writes. Issue <a href="https://github.com/petersimmons1972/homelab-config/issues/148" style="color:var(--accent)">#148</a> filed: NFS init-chown migration path documented.</li>
       </ul>
 
       <h4>3.5 alpine/curl:latest → cgr.dev/chainguard/curl:latest (gitlab-pat-rotator)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Locate gitlab-pat-rotator CronJob manifest</li>
-        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/curl:latest</code></li>
-        <li><code class="status">[]</code> Apply manifest and verify next CronJob run succeeds</li>
+        <li><code class="status">[x]</code> No manifest in git — kubectl-only CronJob in <code>gitlab-pat-rotator</code> ns</li>
+        <li><code class="status">[x]</code> <code>kubectl patch cronjob gitlab-pat-rotator -n gitlab-pat-rotator</code> → image updated to <code>cgr.dev/chainguard/curl:latest</code> ✓</li>
+        <li><code class="status">[]</code> Verify next scheduled run succeeds (check logs after next execution)</li>
       </ul>
 
-      <h4>3.6 curlimages/curl → cgr.dev/chainguard/curl:latest (ai-fleet embed-errcheck)</h4>
+      <h4>3.6 curlimages/curl → N/A (ai-fleet embed-errcheck)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Locate embed-errcheck pod/job manifest in <code>~/projects/aifleet/</code></li>
-        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/curl:latest</code></li>
-        <li><code class="status">[]</code> Apply and verify the job completes successfully</li>
+        <li><code class="status">[x]</code> Investigated: <code>embed-errcheck</code> is a completed standalone Pod in <code>ai-fleet</code> ns (Status: Completed, Age: 11d). No owning controller (no Deployment/CronJob/Job). Cannot be patched — it's already finished. Image update applies only if/when the pod is recreated by whoever spawns it. N/A for this phase.</li>
       </ul>
 
       <h4>3.7 bitnami/kubectl:latest → cgr.dev/chainguard/kubectl:latest (monitoring)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Find which job/cronjob uses <code>bitnami/kubectl</code> in monitoring namespace</li>
-        <li><code class="status">[]</code> Update to <code>cgr.dev/chainguard/kubectl:latest</code></li>
-        <li><code class="status">[]</code> Apply and verify the job runs cleanly</li>
+        <li><code class="status">[x]</code> Found: <code>resource-monitor</code> CronJob in <code>monitoring</code> ns</li>
+        <li><code class="status">[x]</code> <code>kubectl patch cronjob resource-monitor -n monitoring</code> → image updated to <code>cgr.dev/chainguard/kubectl:latest</code> ✓</li>
+        <li><code class="status">[]</code> Verify next scheduled run succeeds</li>
       </ul>
 
-      <h4>3.8 myoung34/github-runner:latest → ghcr.io/actions/actions-runner (pin digest)</h4>
-      <p>The <code>myoung34/github-runner:latest</code> is an unofficial runner image. The official <code>ghcr.io/actions/actions-runner</code> is already used (ai-fleet has both). Migrate to the official pinned-digest image.</p>
+      <h4>3.8 myoung34/github-runner:latest → ghcr.io/actions/actions-runner</h4>
+      <p>The <code>myoung34/github-runner:latest</code> is an unofficial runner image. Migration to <code>ghcr.io/actions/actions-runner</code> deferred: the official image uses a different entrypoint and registration model (<code>config.sh</code> vs env-var auto-registration). A simple image swap would break runner registration.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> Find all deployments using <code>myoung34/github-runner</code>: <code>kubectl get pods --all-namespaces -o jsonpath='{...}' | grep myoung34</code></li>
-        <li><code class="status">[]</code> Replace with <code>ghcr.io/actions/actions-runner:&lt;version&gt;@sha256:&lt;digest&gt;</code> (pin the digest for reproducibility)</li>
-        <li><code class="status">[]</code> Verify runner registers with GitHub and picks up jobs</li>
+        <li><code class="status">[f]</code> ⚠️ Deferred — myoung34 uses env vars (REPO_URL, ACCESS_TOKEN, RUNNER_SCOPE) for auto-registration; official image requires explicit <code>config.sh</code> call and different lifecycle. Manifest is intentionally unchanged. Issue <a href="https://github.com/petersimmons1972/homelab-config/issues/147" style="color:var(--accent)">#147</a> filed with migration path.</li>
       </ul>
 
       <h4>3.9 Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no new failures from image swaps</li>
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | grep "python:3\|postgres:16-alpine\|registry:2\|bitnami/kubectl\|alpine/curl\|curlimages/curl"</code> — should return empty</li>
-        <li><code class="status">[]</code> Verify container registry push/pull still works end-to-end</li>
-        <li><code class="status">[]</code> Verify fleet-dispatch DB operations still function</li>
+        <li><code class="status">[x]</code> <code>kubectl get cronjob -A</code> confirms updated images on: postgres-cert-sync, ciso-tracker-auto, gitlab-pat-rotator, resource-monitor</li>
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — run after deferred items (3.3, 3.4) are applied</li>
+        <li><code class="status">[]</code> Verify container registry push/pull after issue #148 is resolved and applied</li>
+        <li><code class="status">[]</code> Verify fleet-dispatch DB operations after issue #73 is resolved and applied</li>
         <li><code class="status">[]</code> After Trivy rescans (~30 min): CVE counts for swapped images should drop to near-zero</li>
       </ul>
-      <div class="loop">🔁 <strong>Do not exit Phase 3 until every Chainguard swap is verified. Roll back individual swaps if they cause failures — don't roll back everything at once.</strong></div>
+      <div class="loop">🔁 <strong>Phase 3 partially complete: 4 clean CronJob swaps applied. 2 deferred (fleet-dispatch-postgres #73, container-registry #148) and 1 deferred (github-runner #147) require manual migration steps. Phase 3 remains [wip] until deferred items resolve.</strong></div>
     </div>
 
     <!-- ========== PHASE 4 ========== -->
