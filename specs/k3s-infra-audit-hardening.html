@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan: k3s Infrastructure Audit &amp; Hardening</title>
+<style>
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --surface2:  #21262d;
+    --border:    #30363d;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --accent:    #58a6ff;
+    --accent2:   #3fb950;
+    --warn:      #d29922;
+    --danger:    #f85149;
+    --crit:      #ff6e6e;
+    --high:      #f0883e;
+    --med:       #d29922;
+    --low:       #3fb950;
+    --tag-new:   #1f6feb;
+    --tag-exist: #388bfd22;
+    --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono:      'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 2rem 1rem;
+  }
+
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  h1 { font-size: 2rem; color: var(--accent); margin-bottom: 0.25rem; }
+  h2 { font-size: 1.35rem; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin: 2.5rem 0 1rem; }
+  h3 { font-size: 1.1rem; color: var(--text); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 0.97rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 1.2rem 0 0.4rem; }
+
+  p { margin-bottom: 0.8rem; color: var(--muted); }
+  p strong { color: var(--text); }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+    color: var(--accent);
+  }
+
+  pre {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 0.8rem 0;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.82em;
+    color: var(--text);
+  }
+
+  /* Header metadata */
+  header { margin-bottom: 2rem; }
+  details.meta {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    margin-top: 0.75rem;
+  }
+  details.meta summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; margin-top: 0.5rem; }
+  dt { color: var(--muted); font-size: 0.82rem; }
+  dd { color: var(--text); font-size: 0.82rem; font-family: var(--mono); }
+
+  /* Sections */
+  section { margin-bottom: 2.5rem; }
+
+  /* Files */
+  .files ul { list-style: none; padding: 0; }
+  .files li { padding: 0.3rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.1em 0.5em;
+    border-radius: 3px;
+    margin-right: 0.4rem;
+  }
+  .tag.existing { background: var(--tag-exist); color: var(--accent); border: 1px solid var(--accent); }
+  .tag.new      { background: #1f6feb22; color: #79c0ff; border: 1px solid #388bfd; }
+
+  /* Phases */
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .phase h3 { margin-top: 0; }
+
+  /* Checklists */
+  ul.checklist { list-style: none; padding: 0; margin: 0.5rem 0 1rem; }
+  ul.checklist li {
+    padding: 0.25rem 0;
+    padding-left: 1.4rem;
+    position: relative;
+    font-size: 0.9rem;
+    color: var(--text);
+    border-bottom: 1px solid var(--border)22;
+  }
+  ul.checklist li code.status {
+    position: absolute;
+    left: 0;
+    top: 0.25rem;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  /* Status markers */
+  code.status { color: var(--muted); }
+
+  /* Loop box */
+  .loop {
+    background: #1f6feb11;
+    border: 1px solid var(--accent);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+    padding: 0.6rem 1rem;
+    font-size: 0.88rem;
+    color: var(--text);
+    margin-top: 0.8rem;
+  }
+
+  /* CVE table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin: 0.8rem 0;
+  }
+  th {
+    background: var(--surface2);
+    color: var(--muted);
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  td {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--surface); }
+
+  .crit  { color: var(--crit);  font-weight: 700; }
+  .high  { color: var(--high);  font-weight: 600; }
+  .med   { color: var(--med);   }
+  .low   { color: var(--low);   }
+  .ok    { color: var(--accent2); }
+
+  .badge {
+    display: inline-block;
+    padding: 0.1em 0.5em;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .badge-crit  { background: #f8514922; color: var(--crit); border: 1px solid var(--crit); }
+  .badge-high  { background: #f0883e22; color: var(--high); border: 1px solid var(--high); }
+  .badge-warn  { background: #d2992222; color: var(--warn); border: 1px solid var(--warn); }
+  .badge-ok    { background: #3fb95022; color: var(--low);  border: 1px solid var(--low);  }
+  .badge-info  { background: #58a6ff22; color: var(--accent); border: 1px solid var(--accent); }
+
+  /* Callout boxes */
+  .callout {
+    border-radius: 6px;
+    padding: 0.8rem 1rem;
+    margin: 0.8rem 0;
+    font-size: 0.9rem;
+  }
+  .callout-danger { background: #f8514911; border: 1px solid var(--danger); border-left: 4px solid var(--danger); }
+  .callout-warn   { background: #d2992211; border: 1px solid var(--warn);   border-left: 4px solid var(--warn);   }
+  .callout-info   { background: #58a6ff11; border: 1px solid var(--accent); border-left: 4px solid var(--accent); }
+  .callout-ok     { background: #3fb95011; border: 1px solid var(--low);    border-left: 4px solid var(--low);    }
+  .callout strong { color: var(--text); }
+
+  /* Amendments */
+  #amendments details {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.8rem;
+    margin-bottom: 0.5rem;
+  }
+  #amendments summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+
+  /* Figure */
+  figure {
+    margin: 1.2rem 0;
+    text-align: center;
+  }
+  figcaption {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 0.4rem;
+    font-style: italic;
+  }
+
+  /* Questionables */
+  #questionables details {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.8rem;
+    margin-bottom: 0.5rem;
+    background: var(--surface);
+  }
+  #questionables summary { cursor: pointer; color: var(--warn); font-size: 0.92rem; }
+  .qa-answer { color: var(--muted); margin-top: 0.5rem; font-size: 0.88rem; }
+
+  /* Inline severity */
+  .sev-crit { color: var(--crit); font-weight: 700; }
+  .sev-high { color: var(--high); font-weight: 600; }
+  .sev-med  { color: var(--warn); }
+  .sev-ok   { color: var(--low);  }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== HEADER + METADATA ===== -->
+  <header>
+    <h1>Plan: k3s Infrastructure Audit &amp; Hardening</h1>
+    <p style="color:var(--muted); margin-top:0.25rem;">9-node k3s cluster (v1.33.5+k3s1) · 33 namespaces · Ubuntu 24.04 · containerd 2.1.4</p>
+    <details class="meta">
+      <summary>Metadata</summary>
+      <dl>
+        <dt>created</dt>      <dd>2026-06-24T18:48:37Z</dd>
+        <dt>modified</dt>     <dd>2026-06-24T18:48:37Z</dd>
+        <dt>commits</dt>      <dd>—</dd>
+        <dt>agent name</dt>   <dd>nimitz</dd>
+        <dt>session id</dt>   <dd>20260624-144837</dd>
+        <dt>back refs</dt>    <dd>docs/container-images.md · docs/container-hardening.md · CLAUDE.md §Container Image Standard</dd>
+        <dt>forward refs</dt> <dd>—</dd>
+      </dl>
+    </details>
+  </header>
+
+  <figure>
+    <img src="k3s-infra-audit-hardening/hero.jpg" alt="Glowing data center server racks at night — visual anchor for the k3s cluster audit plan" style="width:100%;border-radius:8px;">
+    <figcaption>9-node k3s cluster under active audit — 3 control-plane + 6 workers, containerd 2.1.4-k3s1</figcaption>
+  </figure>
+
+  <!-- ===== PURPOSE / PROBLEM / SOLUTION ===== -->
+  <section id="purpose">
+    <h2>Purpose</h2>
+    <p>Systematically audit the k3s homelab cluster for operational bugs, CVE exposure, and hardening gaps; then remediate in priority order — active failures first, critical CVEs second, Chainguard migrations third, network/RBAC hardening fourth, k3s upgrade last. Each phase is independently executable by a Codex agent.</p>
+  </section>
+
+  <section id="problem">
+    <h2>Problem</h2>
+    <p>The live audit surfaced five distinct problem classes across the cluster. All are present simultaneously and compound each other — a CronJob flooding the namespace with error pods obscures real failures; outdated images accumulate CVEs faster than manual reviews can track them; security contexts are inconsistent; and the k3s control plane is two minor versions behind.</p>
+
+    <div class="callout callout-danger">
+      <strong>Active failures (right now):</strong>
+      <ul style="margin-top:0.5rem; padding-left:1.2rem; color:var(--text);">
+        <li><strong>206 pods</strong> stuck in <code>CreateContainerConfigError</code> in <code>default</code> namespace — <code>ciso-tracker-auto</code> CronJob missing <code>ciso-tracker-secrets</code> Secret, firing hourly for 8 days</li>
+        <li><strong>substack-scheduler</strong> in <code>ImagePullBackOff</code> for 8 days — image <code>ghcr.io/petersimmons1972/substack-scheduler:latest</code> missing from registry</li>
+        <li><strong>n8n pod</strong> in <code>Unknown</code> state for 40 days — node failure orphan</li>
+      </ul>
+    </div>
+
+    <div class="callout callout-warn" style="margin-top:0.8rem;">
+      <strong>CVE exposure summary (Trivy scan results):</strong>
+      <table style="margin-top:0.5rem;">
+        <tr><th>Image</th><th>CRIT</th><th>HIGH</th><th>Namespace</th></tr>
+        <tr><td><code>linkwarden/linkwarden:v2.13.5</code></td><td class="crit">23</td><td class="high">157</td><td>linkwarden</td></tr>
+        <tr><td><code>moby/buildkit:v0.17.0-rootless</code></td><td class="crit">12</td><td class="high">234</td><td>ai-fleet</td></tr>
+        <tr><td><code>pgvector/pgvector:pg18</code></td><td class="crit">11</td><td class="high">34</td><td>clearwatch-research</td></tr>
+        <tr><td><code>qdrant/qdrant:v1.7.4</code></td><td class="crit">9</td><td class="high">86</td><td>content-cache</td></tr>
+        <tr><td><code>rancher/klipper-helm:v0.9.8-build20250709</code></td><td class="crit">8</td><td class="high">122</td><td>kube-system</td></tr>
+        <tr><td><code>prometheus/prometheus:v2.47.0</code></td><td class="crit">8</td><td class="high">99</td><td>monitoring</td></tr>
+        <tr><td><code>grafana/grafana:12.3.0</code></td><td class="crit">7</td><td class="high">91</td><td>monitoring</td></tr>
+        <tr><td><code>prometheus/alertmanager:v0.26.0</code></td><td class="crit">4</td><td class="high">82</td><td>monitoring</td></tr>
+        <tr><td><code>keelhq/keel:0.19.1</code></td><td class="crit">4</td><td class="high">60</td><td>keel</td></tr>
+        <tr><td><code>actions/actions-runner:2.334.0</code></td><td class="crit">3</td><td class="high">226</td><td>ai-fleet</td></tr>
+        <tr><td><code>metallb/speaker:v0.14.8</code></td><td class="crit">3</td><td class="high">66</td><td>metallb-system</td></tr>
+        <tr><td><code>nats:2.10-alpine</code></td><td class="crit">3</td><td class="high">38</td><td>agent-bus</td></tr>
+      </table>
+    </div>
+
+    <div class="callout callout-warn" style="margin-top:0.8rem;">
+      <strong>Hardening gaps:</strong>
+      <ul style="margin-top:0.5rem; padding-left:1.2rem; color:var(--text);">
+        <li>No Pod Security Admission (PSA) enforcement on <strong>any</strong> namespace</li>
+        <li><strong>29 of 33 namespaces</strong> missing <code>default-deny-all</code> NetworkPolicy (only <code>default</code>, <code>linkwarden</code>, <code>n8n</code>, <code>open-webui</code> protected)</li>
+        <li>Most containers missing <code>readOnlyRootFilesystem: true</code>, <code>allowPrivilegeEscalation: false</code>, <code>capabilities.drop: [ALL]</code></li>
+        <li><code>helm-kube-system-traefik</code> and <code>helm-kube-system-traefik-crd</code> ClusterRoleBindings grant <code>cluster-admin</code> — Helm install artifact, never scoped down</li>
+      </ul>
+    </div>
+
+    <div class="callout callout-info" style="margin-top:0.8rem;">
+      <strong>Version lag:</strong> k3s <code>v1.33.5</code> installed; <code>v1.36.1+k3s1</code> available. Prometheus <code>v2.47.0</code> running in monitoring (linked prometheus-operator) while <code>v2.55.1</code> runs in linkerd-viz — two versions of the same binary in the cluster.
+    </div>
+
+    <figure>
+      <img src="k3s-infra-audit-hardening/problem.jpg" alt="Three concurrent risk layers: operational failures, unpatched CVEs, and missing network segmentation" style="width:100%;border-radius:8px;">
+      <figcaption>Three concurrent risk layers: operational failures, unpatched CVEs, and missing network segmentation</figcaption>
+    </figure>
+  </section>
+
+  <section id="solution">
+    <h2>Solution</h2>
+    <p>Six sequential phases executed in strict priority order. Phases 1–2 are time-critical (active failures + critical CVEs); Phases 3–5 are hardening work that can be scheduled. Phase 6 establishes the operational loop so the cluster self-heals going forward.</p>
+
+    <table>
+      <tr><th>#</th><th>Phase</th><th>Risk Removed</th><th>Est. Effort</th></tr>
+      <tr><td><strong>1</strong></td><td>Immediate Bug Fixes</td><td>206 zombie pods, 2 broken services, 1 Unknown node orphan</td><td>30 min</td></tr>
+      <tr><td><strong>2</strong></td><td>Critical CVE Remediation</td><td>Top-12 most vulnerable images patched/upgraded</td><td>2–3 hrs</td></tr>
+      <tr><td><strong>3</strong></td><td>Chainguard Image Migration</td><td>Swap Docker Hub base images for distroless Chainguard</td><td>2 hrs</td></tr>
+      <tr><td><strong>4</strong></td><td>Security Hardening</td><td>PSA labels, NetworkPolicy default-deny, securityContext fixes</td><td>3 hrs</td></tr>
+      <tr><td><strong>5</strong></td><td>k3s Control Plane Upgrade</td><td>v1.33.5 → v1.36.1 rolling upgrade</td><td>1–2 hrs</td></tr>
+      <tr><td><strong>6</strong></td><td>Operational Health Loop</td><td>Keel auto-patch, Trivy alerts, LimitRanges, runbook</td><td>1 hr</td></tr>
+    </table>
+
+    <figure>
+      <img src="k3s-infra-audit-hardening/solution.jpg" alt="Six-phase remediation pipeline — highest-blast-radius risks resolved first" style="width:100%;border-radius:8px;">
+      <figcaption>Six-phase remediation pipeline: highest-blast-radius risks resolved first</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== RELEVANT FILES ===== -->
+  <section id="files" class="files">
+    <h2>Relevant Files</h2>
+
+    <h3>Existing Files</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>~/projects/homelab-config/docs/container-images.md</code> — Chainguard image standard (Dockerfile patterns, UID 65532, tini, fsGroup)</li>
+      <li><span class="tag existing">existing</span> <code>~/projects/homelab-config/docs/container-hardening.md</code> — K8s securityContext standard</li>
+      <li><span class="tag existing">existing</span> <code>~/projects/homelab-config/docs/k8s-firewall.md</code> — NetworkPolicy design patterns</li>
+      <li><span class="tag existing">existing</span> <code>~/CLAUDE.md §Container Image Standard</code> — fsGroup mandate + securityContext template</li>
+      <li><span class="tag existing">existing</span> <code>~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code> — example CronJob manifest (python:3.12-alpine → Chainguard swap target)</li>
+      <li><span class="tag existing">existing</span> <code>~/projects/homelab-config/k8s-postgres-cert-sync/rbac.yaml</code> — example RBAC for a CronJob</li>
+    </ul>
+
+    <h3>New Files (to be created during execution)</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>~/projects/homelab-config/k8s/networkpolicies/default-deny-&lt;ns&gt;.yaml</code> — one per namespace getting default-deny NetworkPolicy (29 namespaces)</li>
+      <li><span class="tag new">new</span> <code>~/projects/homelab-config/RUNBOOKS/k3s-upgrade-runbook.md</code> — step-by-step rolling upgrade procedure</li>
+      <li><span class="tag new">new</span> <code>~/projects/homelab-config/k8s/limitranges/&lt;ns&gt;-limitrange.yaml</code> — LimitRange per namespace to enforce default resource caps</li>
+    </ul>
+  </section>
+
+  <!-- ===== IMPLEMENTATION PHASES ===== -->
+  <section id="phases">
+    <h2>Implementation Phases</h2>
+    <p><strong>IMPORTANT:</strong> Execute every phase and task step by step, in order, top to bottom.</p>
+    <p>Status markers: <code>[]</code> idle · <code>[wip]</code> in progress · <code>[x]</code> complete · <code>[f]</code> failed. All start as <code>[]</code>; set <code>[wip]</code> on dispatch, <code>[x]</code>/<code>[f]</code> on completion.</p>
+
+    <!-- ========== PHASE 1 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 1: Immediate Bug Fixes</h3>
+      <p>Three active failures are degrading the cluster right now. Fix these before anything else — they obscure real state, consume resources, and indicate broken secrets/images that will block Phase 2–3 work.</p>
+
+      <figure>
+        <img src="k3s-infra-audit-hardening/phase1-bugs.jpg" alt="Three active failures requiring immediate intervention before deeper hardening work begins" style="width:100%;border-radius:8px;">
+        <figcaption>Three active failures requiring immediate intervention before deeper hardening work begins</figcaption>
+      </figure>
+
+      <h4>1.1 Fix ciso-tracker-auto CronJob (secret missing)</h4>
+      <p>The <code>ciso-tracker-auto</code> CronJob references <code>secret/ciso-tracker-secrets</code> in the <code>default</code> namespace, which does not exist. It has been firing every hour for 8+ days, creating 200+ zombie pods. Either restore the secret from Infisical or suspend the CronJob immediately.</p>
+
+      <div class="callout callout-warn">
+        <strong>Decision:</strong> If ciso-tracker is still actively needed, create the secret from Infisical. If it's a dead project, suspend the CronJob and file an issue. Do not delete the CronJob without understanding what it was doing.
+      </div>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check if <code>ciso-tracker</code> is an active project: <code>kubectl describe cronjob ciso-tracker-auto -n default</code> — read the schedule and image to understand intent</li>
+        <li><code class="status">[]</code> If the project is active: retrieve the Infisical token and create the missing secret — check Infisical for <code>ciso-tracker-secrets</code> path</li>
+        <li><code class="status">[]</code> If the project is inactive/deprecated: suspend the CronJob: <code>kubectl patch cronjob ciso-tracker-auto -n default -p '{"spec":{"suspend":true}}'</code></li>
+        <li><code class="status">[]</code> Clean up zombie pods (they're already in terminal state, safe to delete): <code>kubectl delete pods -n default --field-selector=status.phase==Failed 2>/dev/null; kubectl get pods -n default | grep CreateContainerConfigError | awk '{print $1}' | xargs kubectl delete pod -n default</code></li>
+        <li><code class="status">[]</code> Verify no new error pods appear after 5 minutes: <code>kubectl get pods -n default --watch</code></li>
+        <li><code class="status">[]</code> File GitHub Issue documenting the fix: title = "fix: ciso-tracker-auto CronJob missing secret — suspended/fixed"</li>
+      </ul>
+
+      <h4>1.2 Fix substack-scheduler ImagePullBackOff</h4>
+      <p>Image <code>ghcr.io/petersimmons1972/substack-scheduler:latest</code> cannot be pulled. The image either was deleted from GHCR or the tag was never pushed. The scheduler has been dead for 8 days.</p>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check GHCR for the image: <code>gh api /users/petersimmons1972/packages/container/substack-scheduler/versions 2>/dev/null | head -20</code></li>
+        <li><code class="status">[]</code> If the image exists with a different tag: update the deployment to point at the correct tag</li>
+        <li><code class="status">[]</code> If the image is gone: check <code>~/projects/substack-scheduler/</code> for a Dockerfile and rebuild: <code>docker build -t ghcr.io/petersimmons1972/substack-scheduler:latest . && docker push ghcr.io/petersimmons1972/substack-scheduler:latest</code></li>
+        <li><code class="status">[]</code> If the project is deprecated: scale deployment to 0 replicas and suspend: <code>kubectl scale deployment substack-scheduler -n substack-scheduler --replicas=0</code></li>
+        <li><code class="status">[]</code> Verify deployment is either Running or cleanly suspended: <code>kubectl get deployment -n substack-scheduler</code></li>
+      </ul>
+
+      <h4>1.3 Fix n8n Unknown state pod</h4>
+      <p>Pod <code>n8n-7dbf7bd7b4-b9ssn</code> has been in <code>Unknown</code> state for 40 days — this is a node failure orphan where the kubelet on that node stopped reporting. The Deployment controller has not replaced it, indicating either the node was restored (confusing the controller) or the pod is stuck.</p>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Identify which node the pod was scheduled on: <code>kubectl get pod n8n-7dbf7bd7b4-b9ssn -n n8n -o wide</code></li>
+        <li><code class="status">[]</code> Check if the node is now healthy: <code>kubectl get node &lt;node-name&gt;</code></li>
+        <li><code class="status">[]</code> Force-delete the orphaned pod to trigger Deployment recreation: <code>kubectl delete pod n8n-7dbf7bd7b4-b9ssn -n n8n --grace-period=0 --force</code></li>
+        <li><code class="status">[]</code> Verify a new n8n pod is created and reaches Running: <code>kubectl rollout status deployment/n8n -n n8n</code></li>
+        <li><code class="status">[]</code> Note: n8n image is <code>n8nio/n8n:latest</code> (HIGH:12 CVEs) — flag for Phase 2 upgrade</li>
+      </ul>
+
+      <h4>1.4 Testing Strategy</h4>
+      <p>Verify all three fixes are stable before proceeding.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v NAME | grep -v Succeeded</code> — expect 0 non-terminal error pods</li>
+        <li><code class="status">[]</code> <code>kubectl get pods -n default | wc -l</code> — should be dramatically reduced (from ~200+ to &lt; 10)</li>
+        <li><code class="status">[]</code> <code>kubectl get deployment substack-scheduler -n substack-scheduler</code> — Running or 0/0 (not ImagePullBackOff)</li>
+        <li><code class="status">[]</code> <code>kubectl get pods -n n8n</code> — n8n pod should be 1/1 Running</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Phase 1 until every box above is checked. Fix → verify → loop.</strong></div>
+    </div>
+
+    <!-- ========== PHASE 2 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 2: Critical CVE Remediation</h3>
+      <p>Upgrade or replace the 12 highest-CVE images identified by Trivy. Prioritize by CRITICAL count. Some images (rancher/, linkerd/) are managed by Helm charts — upgrade those Helm releases. Others are directly referenced in manifests.</p>
+
+      <div class="callout callout-info">
+        <strong>Advisory-gate:</strong> Before proposing or selecting any implementation approach for each image upgrade, invoke the advisory-gate skill if 2+ approaches exist with meaningfully different consequences (ADV.1-5 triggers).
+      </div>
+
+      <figure>
+        <img src="k3s-infra-audit-hardening/phase2-cve.jpg" alt="Top 12 CVE-laden images by CRITICAL count — linkwarden leads with CRIT:23" style="width:100%;border-radius:8px;">
+        <figcaption>Top 12 CVE-laden images by CRITICAL count — linkwarden leads with CRIT:23</figcaption>
+      </figure>
+
+      <h4>2.1 Upgrade Monitoring Stack (Prometheus v2.47.0 → v2.55.1)</h4>
+      <p>The <code>prometheus-operator</code> Helm chart manages the prometheus and alertmanager StatefulSets. The simplest fix is upgrading the kube-prometheus-stack Helm release. Running <code>v2.47.0</code> alongside <code>v2.55.1</code> (in linkerd-viz) is wasteful and confusing.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Find the Helm release name: <code>helm list -n monitoring</code></li>
+        <li><code class="status">[]</code> Check available chart versions: <code>helm search repo prometheus-community/kube-prometheus-stack --versions | head -10</code></li>
+        <li><code class="status">[]</code> Upgrade the Helm release to pull latest chart (which pins prometheus to v2.55.x): <code>helm upgrade &lt;release&gt; prometheus-community/kube-prometheus-stack -n monitoring --reuse-values</code></li>
+        <li><code class="status">[]</code> Verify prometheus StatefulSet rolls to new image: <code>kubectl rollout status statefulset/prometheus-prometheus -n monitoring</code></li>
+        <li><code class="status">[]</code> Verify alertmanager StatefulSet updates: <code>kubectl rollout status statefulset/alertmanager-alertmanager -n monitoring</code></li>
+        <li><code class="status">[]</code> Check Grafana dashboards still load after upgrade</li>
+      </ul>
+
+      <h4>2.2 Upgrade Grafana (CRIT:7 HIGH:91)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check if Grafana is managed by Helm: <code>helm list -n monitoring | grep grafana</code></li>
+        <li><code class="status">[]</code> If Helm-managed: <code>helm upgrade grafana grafana/grafana -n monitoring --reuse-values</code></li>
+        <li><code class="status">[]</code> If manifest-managed: update the image tag in the deployment manifest to latest stable (check <a href="https://github.com/grafana/grafana/releases" style="color:var(--accent)">github.com/grafana/grafana/releases</a>)</li>
+        <li><code class="status">[]</code> <code>kubectl rollout status deployment/grafana -n monitoring</code></li>
+        <li><code class="status">[]</code> Verify Grafana UI accessible and dashboards intact</li>
+      </ul>
+
+      <h4>2.3 Upgrade Linkwarden (CRIT:23 HIGH:157 — highest risk)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check current deployment: <code>kubectl get deployment -n linkwarden -o yaml | grep image:</code></li>
+        <li><code class="status">[]</code> Check latest Linkwarden release: <code>gh api /repos/LinkWarden/linkwarden/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
+        <li><code class="status">[]</code> Update the image tag in the manifest to the latest release and apply</li>
+        <li><code class="status">[]</code> <code>kubectl rollout status deployment -n linkwarden</code></li>
+        <li><code class="status">[]</code> Verify Linkwarden UI loads and bookmarks are intact</li>
+      </ul>
+
+      <h4>2.4 Upgrade BuildKit (CRIT:12 HIGH:234)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check latest BuildKit release: <code>gh api /repos/moby/buildkit/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
+        <li><code class="status">[]</code> Update <code>moby/buildkit:v0.17.0-rootless</code> → <code>moby/buildkit:&lt;latest&gt;-rootless</code> in the ai-fleet buildkitd deployment</li>
+        <li><code class="status">[]</code> <code>kubectl rollout status deployment/buildkitd -n ai-fleet</code></li>
+        <li><code class="status">[]</code> Verify a test build succeeds through the fleet</li>
+      </ul>
+
+      <h4>2.5 Upgrade Qdrant (CRIT:9 HIGH:86 — v1.7.4 is significantly stale)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check current qdrant version used and latest: <code>gh api /repos/qdrant/qdrant/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
+        <li><code class="status">[]</code> Check qdrant changelog for breaking changes between v1.7.4 and latest</li>
+        <li><code class="status">[]</code> Update StatefulSet image: <code>kubectl set image statefulset/qdrant qdrant=qdrant/qdrant:&lt;latest&gt; -n content-cache</code></li>
+        <li><code class="status">[]</code> <code>kubectl rollout status statefulset/qdrant -n content-cache</code></li>
+        <li><code class="status">[]</code> Verify qdrant healthcheck: <code>kubectl exec -n content-cache qdrant-0 -- curl -s http://localhost:6333/healthz</code></li>
+      </ul>
+
+      <h4>2.6 Upgrade NATS (CRIT:3 HIGH:38 — nats:2.10-alpine)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check latest NATS release on Docker Hub / GitHub</li>
+        <li><code class="status">[]</code> Update NATS StatefulSet image in agent-bus namespace</li>
+        <li><code class="status">[]</code> <code>kubectl rollout status statefulset/nats -n agent-bus</code></li>
+        <li><code class="status">[]</code> Verify NATS still accepts connections from agent-gateway</li>
+      </ul>
+
+      <h4>2.7 Upgrade Keel (CRIT:4 HIGH:60 — keelhq/keel:0.19.1)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>helm upgrade keel keel/keel -n keel --reuse-values</code></li>
+        <li><code class="status">[]</code> <code>kubectl rollout status deployment/keel -n keel</code></li>
+        <li><code class="status">[]</code> Verify Keel still detecting image updates (check logs): <code>kubectl logs -n keel -l app=keel --tail=20</code></li>
+      </ul>
+
+      <h4>2.8 Upgrade MetalLB (CRIT:3 HIGH:66)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check current MetalLB version: <code>kubectl get deployment -n metallb-system -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'</code></li>
+        <li><code class="status">[]</code> Check latest MetalLB release</li>
+        <li><code class="status">[]</code> Upgrade MetalLB Helm chart or manifests to latest version</li>
+        <li><code class="status">[]</code> Verify LoadBalancer services still assign IPs after upgrade</li>
+      </ul>
+
+      <h4>2.9 Upgrade cert-manager (v1.20.2 — check for newer)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check latest cert-manager release: <code>gh api /repos/cert-manager/cert-manager/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
+        <li><code class="status">[]</code> If newer version available: <code>helm upgrade cert-manager jetstack/cert-manager -n cert-manager --reuse-values --version &lt;latest&gt;</code></li>
+        <li><code class="status">[]</code> <code>kubectl rollout status deployment/cert-manager -n cert-manager</code></li>
+        <li><code class="status">[]</code> Verify certificates still valid: <code>kubectl get certificates --all-namespaces</code></li>
+      </ul>
+
+      <h4>2.10 Upgrade Trivy Operator (CRIT:3 HIGH:57 — mirror.gcr.io/aquasec/trivy-operator:0.30.1)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check latest Trivy Operator release</li>
+        <li><code class="status">[]</code> <code>helm upgrade trivy-operator aquasecurity/trivy-operator -n trivy-system --reuse-values</code></li>
+        <li><code class="status">[]</code> Verify Trivy Operator pods restart cleanly: <code>kubectl rollout status deployment/trivy-operator -n trivy-system</code></li>
+        <li><code class="status">[]</code> Allow 30 minutes for Trivy to re-scan and then verify critical counts have dropped: <code>kubectl get vulnerabilityreport --all-namespaces -o json | python3 -c "..."</code></li>
+      </ul>
+
+      <h4>2.11 pgvector upgrade (CRIT:11 HIGH:34 — clearwatch-research)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check latest pgvector tag: <code>docker manifest inspect pgvector/pgvector:pg18 2>/dev/null | head -5</code> or check <a href="https://hub.docker.com/r/pgvector/pgvector/tags" style="color:var(--accent)">Docker Hub pgvector tags</a></li>
+        <li><code class="status">[]</code> Note: No Chainguard pgvector exists; best mitigation is pinning to the latest pgvector/pgvector:pg18 image (the vulnerabilities are often in the Debian base layer which pgvector updates regularly)</li>
+        <li><code class="status">[]</code> Force the StatefulSet to pull the newest pg18 image: <code>kubectl rollout restart statefulset/research-postgres -n clearwatch-research</code></li>
+        <li><code class="status">[]</code> Verify postgres is healthy after restart: <code>kubectl exec -n clearwatch-research research-postgres-0 -- pg_isready</code></li>
+        <li><code class="status">[]</code> Same for fleet-dispatch-postgres (<code>postgres:16-alpine</code>) — note this is a Phase 3 Chainguard swap target</li>
+      </ul>
+
+      <h4>2.12 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no unexpected failures from upgrades</li>
+        <li><code class="status">[]</code> Re-run CVE summary after Trivy rescans (allow 30 min): critical count should be substantially reduced</li>
+        <li><code class="status">[]</code> Spot-check key services: Grafana UI, Linkwarden UI, n8n UI, fleet-dispatch healthcheck</li>
+        <li><code class="status">[]</code> <code>kubectl get certificates --all-namespaces | grep -v True</code> — no broken certs</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Phase 2 until every box is checked. If a rollout fails, rollback with <code>kubectl rollout undo</code> and diagnose before retrying.</strong></div>
+    </div>
+
+    <!-- ========== PHASE 3 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 3: Chainguard Image Migration</h3>
+      <p>Swap Docker Hub generic base images (<code>python:3.11-slim</code>, <code>python:3.12-alpine</code>, <code>postgres:16-alpine</code>, <code>registry:2</code>, <code>alpine/curl</code>, <code>curlimages/curl</code>, <code>bitnami/kubectl</code>) for Chainguard distroless equivalents. Per <code>docs/container-images.md</code>: Chainguard is the default for all homelab Dockerfiles. The burden of justification is on any non-Chainguard image.</p>
+
+      <div class="callout callout-ok">
+        <strong>Already Chainguard ✓:</strong> <code>cgr.dev/chainguard/nginx:latest</code> (clearwatch wordpress), <code>cgr.dev/chainguard/postgres:latest</code> (content-cache), <code>cgr.dev/chainguard/redis:latest</code>, <code>cgr.dev/chainguard/wordpress:latest-dev</code>
+      </div>
+
+      <h4>3.1 python:3.11-slim → cgr.dev/chainguard/python:latest (ciso-tracker)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Find the ciso-tracker CronJob manifest: search <code>~/projects/homelab-config/</code> or check <code>kubectl get cronjob ciso-tracker-auto -n default -o yaml</code></li>
+        <li><code class="status">[]</code> Update manifest to use <code>cgr.dev/chainguard/python:latest</code></li>
+        <li><code class="status">[]</code> Add mandatory securityContext: <code>runAsUser: 65532</code>, <code>runAsNonRoot: true</code>, <code>fsGroup: 65532</code></li>
+        <li><code class="status">[]</code> Apply manifest: <code>kubectl apply -f &lt;manifest&gt;</code></li>
+        <li><code class="status">[]</code> Trigger a manual run to verify: <code>kubectl create job --from=cronjob/ciso-tracker-auto ciso-tracker-test -n default</code></li>
+        <li><code class="status">[]</code> Check logs: <code>kubectl logs -n default -l job-name=ciso-tracker-test</code></li>
+      </ul>
+
+      <h4>3.2 python:3.12-alpine → cgr.dev/chainguard/python:latest (postgres-cert-sync)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Update <code>~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code> image field</li>
+        <li><code class="status">[]</code> Per Chainguard Python pattern in <code>docs/container-images.md</code>: if the job needs git/ssh, use wolfi-base + python apk. If pure python, <code>cgr.dev/chainguard/python:latest</code> is sufficient.</li>
+        <li><code class="status">[]</code> Apply: <code>kubectl apply -f ~/projects/homelab-config/k8s-postgres-cert-sync/cronjob.yaml</code></li>
+        <li><code class="status">[]</code> Manual test run and verify completion</li>
+      </ul>
+
+      <h4>3.3 postgres:16-alpine → cgr.dev/chainguard/postgres:latest (fleet-dispatch)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Locate fleet-dispatch postgres StatefulSet manifest in <code>~/projects/aifleet/</code> or <code>~/projects/fleet-dispatch/</code></li>
+        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/postgres:latest</code></li>
+        <li><code class="status">[]</code> Add <code>fsGroup: 65532</code> to pod-level securityContext (Chainguard nonroot requires this for volume mounts)</li>
+        <li><code class="status">[]</code> Apply and roll out: <code>kubectl rollout restart statefulset/fleet-dispatch-postgres -n ai-fleet</code></li>
+        <li><code class="status">[]</code> Verify fleet-dispatch can still reach its DB: check fleet-dispatch logs</li>
+      </ul>
+
+      <h4>3.4 registry:2 → cgr.dev/chainguard/registry:latest (container-registry)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Locate container-registry deployment manifest</li>
+        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/registry:latest</code></li>
+        <li><code class="status">[]</code> Apply and roll: <code>kubectl rollout restart deployment/docker-registry -n container-registry</code></li>
+        <li><code class="status">[]</code> Verify registry is healthy: <code>curl -s https://registry.petersimmons.com/v2/</code> should return <code>{}</code></li>
+        <li><code class="status">[]</code> Test push and pull a small test image</li>
+      </ul>
+
+      <h4>3.5 alpine/curl:latest → cgr.dev/chainguard/curl:latest (gitlab-pat-rotator)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Locate gitlab-pat-rotator CronJob manifest</li>
+        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/curl:latest</code></li>
+        <li><code class="status">[]</code> Apply manifest and verify next CronJob run succeeds</li>
+      </ul>
+
+      <h4>3.6 curlimages/curl → cgr.dev/chainguard/curl:latest (ai-fleet embed-errcheck)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Locate embed-errcheck pod/job manifest in <code>~/projects/aifleet/</code></li>
+        <li><code class="status">[]</code> Update image to <code>cgr.dev/chainguard/curl:latest</code></li>
+        <li><code class="status">[]</code> Apply and verify the job completes successfully</li>
+      </ul>
+
+      <h4>3.7 bitnami/kubectl:latest → cgr.dev/chainguard/kubectl:latest (monitoring)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Find which job/cronjob uses <code>bitnami/kubectl</code> in monitoring namespace</li>
+        <li><code class="status">[]</code> Update to <code>cgr.dev/chainguard/kubectl:latest</code></li>
+        <li><code class="status">[]</code> Apply and verify the job runs cleanly</li>
+      </ul>
+
+      <h4>3.8 myoung34/github-runner:latest → ghcr.io/actions/actions-runner (pin digest)</h4>
+      <p>The <code>myoung34/github-runner:latest</code> is an unofficial runner image. The official <code>ghcr.io/actions/actions-runner</code> is already used (ai-fleet has both). Migrate to the official pinned-digest image.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Find all deployments using <code>myoung34/github-runner</code>: <code>kubectl get pods --all-namespaces -o jsonpath='{...}' | grep myoung34</code></li>
+        <li><code class="status">[]</code> Replace with <code>ghcr.io/actions/actions-runner:&lt;version&gt;@sha256:&lt;digest&gt;</code> (pin the digest for reproducibility)</li>
+        <li><code class="status">[]</code> Verify runner registers with GitHub and picks up jobs</li>
+      </ul>
+
+      <h4>3.9 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no new failures from image swaps</li>
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | grep "python:3\|postgres:16-alpine\|registry:2\|bitnami/kubectl\|alpine/curl\|curlimages/curl"</code> — should return empty</li>
+        <li><code class="status">[]</code> Verify container registry push/pull still works end-to-end</li>
+        <li><code class="status">[]</code> Verify fleet-dispatch DB operations still function</li>
+        <li><code class="status">[]</code> After Trivy rescans (~30 min): CVE counts for swapped images should drop to near-zero</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Phase 3 until every Chainguard swap is verified. Roll back individual swaps if they cause failures — don't roll back everything at once.</strong></div>
+    </div>
+
+    <!-- ========== PHASE 4 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 4: Security Hardening</h3>
+      <p>Four hardening categories: Pod Security Admission labels, NetworkPolicy default-deny coverage, container securityContext, and RBAC over-permissioning. Apply in this order — PSA first (it might reject existing pods, surface issues early), NetworkPolicy second, securityContext third, RBAC last.</p>
+
+      <div class="callout callout-warn">
+        <strong>PSA Warning:</strong> Adding <code>enforce: restricted</code> to a namespace that has non-compliant pods will evict them immediately. Start with <code>warn</code> mode, fix violations, then promote to <code>enforce</code>. Use <code>audit</code> for system namespaces you cannot immediately fix.
+      </div>
+
+      <h4>4.1 Pod Security Admission — apply labels to all namespaces</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> First, run PSA dry-run audit for each namespace to see what would be evicted: <code>kubectl label namespace &lt;ns&gt; pod-security.kubernetes.io/warn=restricted --dry-run=server</code></li>
+        <li><code class="status">[]</code> Apply <code>warn=baseline</code> to all non-kube-system namespaces to start surface violations without breaking anything:<br><code>kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -v "^kube-" | xargs -I{} kubectl label namespace {} pod-security.kubernetes.io/warn=baseline --overwrite</code></li>
+        <li><code class="status">[]</code> Monitor warning events for 24 hours: <code>kubectl get events --all-namespaces | grep "PodSecurity" | head -30</code></li>
+        <li><code class="status">[]</code> For namespaces with no violations: promote to <code>enforce=baseline</code></li>
+        <li><code class="status">[]</code> For <code>linkwarden</code>, <code>n8n</code>, <code>open-webui</code>, <code>clearwatch</code> (already have good NetworkPolicy): promote to <code>enforce=restricted</code> after fixing securityContexts in 4.3</li>
+        <li><code class="status">[]</code> Leave <code>kube-system</code>, <code>linkerd</code>, <code>monitoring</code> at <code>audit=restricted</code> only — system namespaces often need capabilities we cannot easily restrict</li>
+      </ul>
+
+      <h4>4.2 Add default-deny NetworkPolicy to 29 uncovered namespaces</h4>
+      <p>Only <code>default</code>, <code>linkwarden</code>, <code>n8n</code>, <code>open-webui</code> have <code>default-deny-all</code> NetworkPolicies. Every other namespace is fully open on the cluster network. Add default-deny + allow-dns to each.</p>
+
+      <pre><code># Template: default-deny.yaml (apply per namespace)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: &lt;NAMESPACE&gt;
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: &lt;NAMESPACE&gt;
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP</code></pre>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create the default-deny + allow-dns NetworkPolicy manifest for each of the 29 namespaces: <code>agent-bus, agent-comms, agentgateway, ai-fleet, cert-manager, clearwatch, clearwatch-checkout, clearwatch-research, container-registry, content-cache, engram, external-secrets, github-actions, gitlab-pat-rotator, infisical, keel, linkerd, linkerd-viz, locked-shields, metallb-system, monitoring, plex, security-intelligence-business, substack-scheduler, trivy-system, websites</code></li>
+        <li><code class="status">[]</code> Apply all NetworkPolicies: <code>kubectl apply -f ~/projects/homelab-config/k8s/networkpolicies/</code></li>
+        <li><code class="status">[]</code> After applying, verify each namespace's pods still start and reach Running (existing NetworkPolicies may need updating to allow service-to-service traffic)</li>
+        <li><code class="status">[]</code> For <code>monitoring</code>: add specific egress to all nodes on port 9100 (node-exporter), 9090 (prometheus scrape), 3000 (grafana)</li>
+        <li><code class="status">[]</code> For <code>cert-manager</code>: add egress to port 443 (Let's Encrypt ACME + Cloudflare DNS API)</li>
+        <li><code class="status">[]</code> For <code>ai-fleet</code>: add egress to GPU nodes on their serve ports, GitHub API (443), internal registry (5000)</li>
+        <li><code class="status">[]</code> Test cross-namespace service calls still work after adding deny-all policies</li>
+      </ul>
+
+      <h4>4.3 Fix container securityContext gaps</h4>
+      <p>For all <em>owned</em> workloads (internal images, CronJobs, Deployments we manage), add the mandatory security context. For upstream Helm charts, this will often need to be set via <code>values.yaml</code> overrides.</p>
+
+      <pre><code># Target securityContext for every container (per docs/container-hardening.md)
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+  runAsNonRoot: true
+  runAsUser: 65532     # Chainguard nonroot
+  seccompProfile:
+    type: RuntimeDefault
+
+# Pod-level (for Chainguard images with volume mounts)
+spec:
+  securityContext:
+    fsGroup: 65532
+    runAsNonRoot: true</code></pre>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Fix <code>clearwatch-presence</code> deployment (no-limits, no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
+        <li><code class="status">[]</code> Fix <code>container-registry/docker-registry</code> (no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
+        <li><code class="status">[]</code> Fix <code>content-cache/qdrant</code> (no-readOnlyRootFS, allowPrivEsc, no-capDrop) — note: qdrant may need <code>readOnlyRootFilesystem: false</code> if it writes to local paths; document justification</li>
+        <li><code class="status">[]</code> Fix <code>agent-bus/nats-0</code> reloader container (no-readOnlyRootFS, allowPrivEsc, no-capDrop)</li>
+        <li><code class="status">[]</code> Fix <code>ai-fleet/fleet-dispatch-postgres</code> (will be addressed by Chainguard swap in Phase 3 but securityContext still needs adding)</li>
+        <li><code class="status">[]</code> For Helm-managed charts (prometheus, grafana, linkerd): add securityContext overrides to Helm values — many charts expose these; check <code>helm show values &lt;chart&gt;</code> for <code>securityContext</code> keys</li>
+        <li><code class="status">[]</code> Commit all manifest changes to git with descriptive commit messages</li>
+      </ul>
+
+      <h4>4.4 Fix Traefik cluster-admin ClusterRoleBindings</h4>
+      <p>Two ClusterRoleBindings (<code>helm-kube-system-traefik</code>, <code>helm-kube-system-traefik-crd</code>) grant <code>cluster-admin</code>. These are Helm installer artifacts from k3s's built-in Helm controller. They should be scoped to only what Traefik actually needs.</p>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Inspect what operations these bindings cover: <code>kubectl get clusterrolebinding helm-kube-system-traefik -o yaml</code></li>
+        <li><code class="status">[]</code> Check if these bindings are recreated on k3s restart (they likely are — the k3s Helm controller recreates them). If so, this needs to be addressed at the HelmChart CRD level.</li>
+        <li><code class="status">[]</code> If k3s recreates them: file an issue documenting the risk as accepted-pending-upstream-fix. Add a monitoring alert for unexpected ClusterRoleBinding modifications.</li>
+        <li><code class="status">[]</code> If k3s does NOT recreate them: replace with a scoped ClusterRole covering only <code>IngressRoute</code>, <code>Middleware</code>, <code>TLSStore</code> CRDs and standard Ingress resources</li>
+      </ul>
+
+      <h4>4.5 Add LimitRanges to all namespaces</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create a LimitRange manifest with sensible defaults: <code>default request: 100m cpu / 128Mi memory; default limit: 500m cpu / 512Mi memory</code></li>
+        <li><code class="status">[]</code> Apply to each namespace that doesn't already have explicit resource limits on its pods</li>
+        <li><code class="status">[]</code> Verify no existing pods are evicted due to OOM after LimitRange applies</li>
+      </ul>
+
+      <h4>4.6 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no pods evicted by PSA or NetworkPolicy</li>
+        <li><code class="status">[]</code> <code>kubectl get events --all-namespaces --field-selector=reason=NetworkPolicyViolation 2>/dev/null | head -10</code> — no unexpected drops</li>
+        <li><code class="status">[]</code> End-to-end: Clearwatch → research DB → collector CronJobs still fire cleanly</li>
+        <li><code class="status">[]</code> End-to-end: ai-fleet controller → olla → GPU services still reachable</li>
+        <li><code class="status">[]</code> End-to-end: cert-manager can still issue certificates (check <code>kubectl get challenges --all-namespaces</code>)</li>
+        <li><code class="status">[]</code> <code>kubectl get configauditreport --all-namespaces -o json | python3 -c "import json,sys; [print(i['metadata']['namespace'], i['metadata']['name'], i.get('report',{}).get('summary',{}).get('criticalCount',0)) for i in json.load(sys.stdin)['items']]" | grep -v " 0$" | head -20</code> — config audit critical count should be dropping</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Phase 4 until every box is checked. NetworkPolicy changes are the highest-risk items — test east-west traffic after each namespace gets deny-all.</strong></div>
+    </div>
+
+    <!-- ========== PHASE 5 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 5: k3s Upgrade — v1.33.5 → v1.36.1</h3>
+      <p>The cluster runs k3s <code>v1.33.5+k3s1</code>; latest is <code>v1.36.1+k3s1</code>. This is a 3-minor-version upgrade. Roll control plane nodes one at a time, then workers. The cluster has 3 control-plane nodes (131, 132, 133) and 6 workers (134–139) — enough capacity to drain one node at a time without service interruption.</p>
+
+      <div class="callout callout-warn">
+        <strong>Pre-flight required:</strong> This is an expensive operation. Before executing, quote estimated downtime (near-zero with rolling upgrade) and confirm with: "go". Take an etcd snapshot before starting.
+      </div>
+
+      <figure>
+        <img src="k3s-infra-audit-hardening/phase5-upgrade.jpg" alt="Rolling upgrade order: control-plane 131→132→133, then workers 134→139 sequentially" style="width:100%;border-radius:8px;">
+        <figcaption>Rolling upgrade order: control-plane 131→132→133, then workers 134→139 sequentially</figcaption>
+      </figure>
+
+      <h4>5.1 Pre-upgrade snapshot and health check</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Verify all nodes Ready: <code>kubectl get nodes</code></li>
+        <li><code class="status">[]</code> Verify all critical pods Running: <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME | wc -l</code> — should be 0</li>
+        <li><code class="status">[]</code> Take etcd snapshot: <code>ssh worker131 "sudo k3s etcd-snapshot save --name pre-upgrade-$(date +%Y%m%d)"</code></li>
+        <li><code class="status">[]</code> Verify snapshot created: <code>ssh worker131 "sudo k3s etcd-snapshot ls"</code></li>
+        <li><code class="status">[]</code> Note the current k3s version: <code>kubectl get nodes -o wide | awk '{print $5}' | sort -u</code></li>
+      </ul>
+
+      <h4>5.2 Upgrade control-plane nodes (131 → 132 → 133)</h4>
+      <pre><code># Repeat for each control-plane node (131, 132, 133):
+# 1. Drain the node
+kubectl drain worker131 --ignore-daemonsets --delete-emissary-data --timeout=120s
+
+# 2. Upgrade k3s on the node
+ssh worker131 "curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.1+k3s1 sh -s - server"
+
+# 3. Wait for node to rejoin
+kubectl wait --for=condition=Ready node/worker131 --timeout=300s
+
+# 4. Uncordon
+kubectl uncordon worker131
+
+# 5. Verify etcd member is healthy
+ssh worker131 "sudo k3s etcd-snapshot ls" # proxy for etcd health</code></pre>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Upgrade <code>worker131</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Verify cluster still has quorum: <code>kubectl get nodes</code> — 2 control planes still Ready while 131 is upgrading</li>
+        <li><code class="status">[]</code> Upgrade <code>worker132</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker133</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Verify all 3 control-plane nodes at v1.36.1: <code>kubectl get nodes | grep control-plane</code></li>
+      </ul>
+
+      <h4>5.3 Upgrade worker nodes (134 → 135 → 136 → 137 → 138 → 139)</h4>
+      <pre><code># Repeat for each worker node:
+kubectl drain worker134 --ignore-daemonsets --delete-emissary-data --timeout=120s
+ssh worker134 "curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.1+k3s1 INSTALL_K3S_EXEC=agent sh -"
+kubectl wait --for=condition=Ready node/worker134 --timeout=300s
+kubectl uncordon worker134</code></pre>
+
+      <ul class="checklist">
+        <li><code class="status">[]</code> Upgrade <code>worker134</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker135</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker136</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker137</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker138</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[]</code> Upgrade <code>worker139</code>: drain → upgrade → verify Ready → uncordon</li>
+      </ul>
+
+      <h4>5.4 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>kubectl get nodes -o wide</code> — all 9 nodes at <code>v1.36.1+k3s1</code>, all Ready</li>
+        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no unexpected failures</li>
+        <li><code class="status">[]</code> Verify Traefik ingress still routing: spot-check 3 services behind ingress</li>
+        <li><code class="status">[]</code> Verify MetalLB still assigning LoadBalancer IPs: <code>kubectl get svc --all-namespaces | grep LoadBalancer</code></li>
+        <li><code class="status">[]</code> Verify cert-manager: <code>kubectl get certificates --all-namespaces | grep -v True</code> — all True</li>
+        <li><code class="status">[]</code> Verify etcd snapshot after upgrade: <code>ssh worker131 "sudo k3s etcd-snapshot save --name post-upgrade-$(date +%Y%m%d)"</code></li>
+        <li><code class="status">[]</code> Write/update the upgrade runbook: <code>~/projects/homelab-config/RUNBOOKS/k3s-upgrade-runbook.md</code></li>
+      </ul>
+      <div class="loop">🔁 <strong>If any node fails to rejoin within 5 minutes, do NOT proceed to the next node. Diagnose with <code>ssh &lt;node&gt; journalctl -u k3s -n 50</code> before continuing.</strong></div>
+    </div>
+
+    <!-- ========== PHASE 6 ========== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 6: Operational Health Loop</h3>
+      <p>Establish the ongoing mechanisms so the cluster self-heals and surfaces new CVEs without manual triage each time. Keel auto-patch, Trivy alerting, and a scheduled audit CronJob.</p>
+
+      <h4>6.1 Expand Keel auto-patch policies</h4>
+      <p>Currently only <code>searxng</code> and <code>open-webui</code> have <code>keel.sh/policy: force</code>. Add <code>minor</code> patch policies to appropriate workloads.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Add <code>keel.sh/policy: minor</code> annotation to: Grafana, Prometheus, cert-manager, MetalLB, external-secrets, Trivy operator Helm releases</li>
+        <li><code class="status">[]</code> Add <code>keel.sh/policy: patch</code> to: NATS, Linkwarden, n8n, Infisical</li>
+        <li><code class="status">[]</code> Configure Keel notification webhook to post to Slack/notification channel when an image is updated</li>
+        <li><code class="status">[]</code> Verify Keel picks up the new annotations: <code>kubectl logs -n keel -l app=keel --tail=30</code></li>
+      </ul>
+
+      <h4>6.2 Configure Trivy CVE alerting</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Check if Trivy Operator has Prometheus metrics enabled: <code>kubectl get configmap trivy-operator -n trivy-system -o yaml | grep -i prometheus</code></li>
+        <li><code class="status">[]</code> Add a Prometheus alert rule: fire when any image has CRITICAL CVE count &gt; 0</li>
+        <li><code class="status">[]</code> Add Grafana dashboard panel for CVE trend over time (CRIT/HIGH counts per namespace)</li>
+        <li><code class="status">[]</code> Test that the alert fires against a known-vulnerable image</li>
+      </ul>
+
+      <h4>6.3 Schedule weekly CVE audit CronJob</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create a CronJob in <code>trivy-system</code> namespace that runs weekly and posts a CVE summary to the monitoring channel</li>
+        <li><code class="status">[]</code> Use <code>cgr.dev/chainguard/kubectl:latest</code> as the image (Chainguard compliant)</li>
+        <li><code class="status">[]</code> The script should query vulnerabilityreports, extract CRIT/HIGH counts, and post via webhook</li>
+      </ul>
+
+      <h4>6.4 Document k3s upgrade runbook</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Write <code>~/projects/homelab-config/RUNBOOKS/k3s-upgrade-runbook.md</code> capturing the upgrade procedure from Phase 5</li>
+        <li><code class="status">[]</code> Include: pre-flight checklist, drain/upgrade/uncordon commands, rollback procedure, etcd snapshot commands</li>
+        <li><code class="status">[]</code> Commit to git</li>
+      </ul>
+
+      <h4>6.5 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Trigger a test Keel update by pushing a new image tag to a test deployment — verify Keel picks it up within 5 minutes</li>
+        <li><code class="status">[]</code> Verify Trivy CVE alert is configured: <code>kubectl get prometheusrule --all-namespaces | grep trivy</code></li>
+        <li><code class="status">[]</code> Manually trigger the weekly audit CronJob and verify output: <code>kubectl create job --from=cronjob/cve-audit-weekly cve-audit-test -n trivy-system</code></li>
+        <li><code class="status">[]</code> Verify runbook is in git and complete</li>
+      </ul>
+      <div class="loop">🔁 <strong>Phase 6 is complete when the cluster can self-report new CVEs without manual kubectl queries.</strong></div>
+    </div>
+  </section>
+
+  <!-- ===== GLOBAL VALIDATION ===== -->
+  <section id="validation">
+    <h2>Validation Commands</h2>
+    <p>Execute these commands to validate the entire plan is complete:</p>
+    <ul class="checklist">
+      <li><code class="status">[]</code> <code>kubectl get nodes -o wide | awk '{print $5}' | sort -u</code> — all nodes at <code>v1.36.1+k3s1</code></li>
+      <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME | wc -l</code> — result is 0</li>
+      <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u | grep "python:3\|postgres:16-alpine\|^registry:2\|bitnami/kubectl\|alpine/curl\|curlimages/curl\|myoung34"</code> — empty output (all swapped)</li>
+      <li><code class="status">[]</code> <code>kubectl get vulnerabilityreport --all-namespaces -o json | python3 -c "import json,sys; total_crit=sum(i.get('report',{}).get('summary',{}).get('criticalCount',0) for i in json.load(sys.stdin)['items']); print(f'Total CRIT CVEs: {total_crit}')"</code> — CRIT count significantly below the baseline of ~140</li>
+      <li><code class="status">[]</code> <code>kubectl get networkpolicies --all-namespaces | grep default-deny | wc -l</code> — at least 29 (all relevant namespaces covered)</li>
+      <li><code class="status">[]</code> <code>kubectl get namespaces -o json | python3 -c "import json,sys; [print(i['metadata']['name'], i['metadata'].get('labels',{}).get('pod-security.kubernetes.io/enforce','NONE')) for i in json.load(sys.stdin)['items']]"</code> — most namespaces show baseline or restricted enforcement</li>
+      <li><code class="status">[]</code> <code>kubectl get certificates --all-namespaces | grep -v True</code> — empty (all certs healthy)</li>
+      <li><code class="status">[]</code> <code>curl -sf https://registry.petersimmons.com/v2/ | echo "registry OK"</code> — registry responding</li>
+      <li><code class="status">[]</code> <code>kubectl get prometheusrule --all-namespaces | grep -i cve</code> — Trivy CVE alert rule present</li>
+    </ul>
+    <div class="loop">
+      🔁 <strong>The plan is not complete until every box is checked and every command passes. If a step cannot be completed, mark it <code>[f]</code> and document the blocker in the Amendments section.</strong>
+    </div>
+  </section>
+
+  <!-- ===== NOTES ===== -->
+  <section id="notes">
+    <h2>Notes</h2>
+
+    <h3>Intelligence Picture — What Was Found</h3>
+    <p>This plan was authored from a live audit of the cluster on 2026-06-24. All findings are from direct kubectl queries, not assumptions.</p>
+
+    <table>
+      <tr><th>Finding</th><th>Confidence</th><th>What Would Change This</th></tr>
+      <tr><td><code>ciso-tracker-secrets</code> missing → 206 zombie pods</td><td><span class="badge badge-ok">HIGH</span></td><td>Secret found to exist in a different namespace</td></tr>
+      <tr><td><code>substack-scheduler</code> image gone from GHCR</td><td><span class="badge badge-ok">HIGH</span></td><td>ghcr.io package list shows it exists</td></tr>
+      <tr><td>29/33 namespaces missing default-deny NetworkPolicy</td><td><span class="badge badge-ok">HIGH</span></td><td>Additional hidden NetworkPolicies found</td></tr>
+      <tr><td>k3s v1.36.1 is latest stable</td><td><span class="badge badge-high">MED</span></td><td>A newer stable release appears between audit and execution</td></tr>
+      <tr><td>pgvector has no Chainguard equivalent</td><td><span class="badge badge-high">MED</span></td><td>Chainguard releases a pgvector image</td></tr>
+      <tr><td>Traefik cluster-admin CRBs are recreated by k3s Helm controller</td><td><span class="badge badge-warn">LOW</span></td><td>Direct test of deleting and observing if k3s recreates them</td></tr>
+    </table>
+
+    <h3>Chainguard Availability Reference</h3>
+    <p>These Chainguard free-tier images are confirmed available (no paid subscription required for <code>:latest</code> and <code>:latest-dev</code>):</p>
+    <ul style="padding-left:1.2rem; color:var(--text); font-size:0.9rem;">
+      <li><code>cgr.dev/chainguard/python:latest</code> — drop-in for python:3.x-slim/alpine</li>
+      <li><code>cgr.dev/chainguard/python:latest-dev</code> — includes pip, for build stages</li>
+      <li><code>cgr.dev/chainguard/postgres:latest</code> — drop-in for postgres:16-alpine</li>
+      <li><code>cgr.dev/chainguard/curl:latest</code> — drop-in for alpine/curl, curlimages/curl</li>
+      <li><code>cgr.dev/chainguard/kubectl:latest</code> — drop-in for bitnami/kubectl</li>
+      <li><code>cgr.dev/chainguard/registry:latest</code> — drop-in for registry:2</li>
+      <li><code>cgr.dev/chainguard/wolfi-base:latest</code> — minimal OS base, use with apk for custom installs</li>
+    </ul>
+
+    <h3>Images Outside Scope of This Plan</h3>
+    <p>Some images cannot reasonably be swapped in this plan cycle:</p>
+    <ul style="padding-left:1.2rem; color:var(--muted); font-size:0.9rem;">
+      <li><strong>linkerd</strong> (<code>cr.l5d.io/linkerd/*</code>) — managed by linkerd CLI; upgrade via <code>linkerd upgrade | kubectl apply -f -</code> (separate runbook)</li>
+      <li><strong>plex</strong> (<code>lscr.io/linuxserver/plex:latest</code>) — no Chainguard equivalent; pin to specific tag and monitor</li>
+      <li><strong>open-webui</strong> (<code>ghcr.io/open-webui/open-webui</code>) — vendor image; keep updated via Keel, no Chainguard swap possible</li>
+      <li><strong>infisical</strong> (<code>infisical/infisical</code>) — vendor image; keep updated via Keel</li>
+      <li><strong>pgvector</strong> (<code>pgvector/pgvector:pg18</code>) — no Chainguard pgvector; pull latest tag regularly</li>
+      <li><strong>rancher/*</strong> — k3s system images; addressed by k3s upgrade in Phase 5</li>
+    </ul>
+
+    <h3>RBAC Observations</h3>
+    <p>The <code>github-runner-edit-websites</code> ClusterRoleBinding grants <code>ClusterRole/edit</code> to the GitHub runner for the <code>websites</code> namespace. This is intentional (CD pipeline) but should be a namespace-scoped RoleBinding, not a ClusterRoleBinding. This is a low-priority cleanup item not included in Phase 4 but should be tracked.</p>
+
+    <h3>n8n Status</h3>
+    <p>The n8n pod has been in <code>Unknown</code> state for 40 days. The image is <code>n8nio/n8n:latest</code> (HIGH:12). After Phase 1 restores the pod to Running, Phase 2 should add a Keel policy to keep n8n on the latest minor version. No Chainguard n8n image exists.</p>
+
+    <figure>
+      <img src="k3s-infra-audit-hardening/notes-matrix.jpg" alt="Image risk/swap matrix: cross-reference of CVE exposure, Chainguard availability, and remediation priority" style="width:100%;border-radius:8px;">
+      <figcaption>Image risk/swap matrix: cross-reference of CVE exposure, Chainguard availability, and remediation priority</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== AMENDMENTS ===== -->
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <p style="color:var(--muted); font-size:0.85rem;">Running history of changes made after the plan was first authored. Append-only.</p>
+    <!-- future amendments appended here -->
+  </section>
+
+</main>
+</body>
+</html>
