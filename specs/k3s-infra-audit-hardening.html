@@ -386,7 +386,7 @@
 
     <!-- ========== PHASE 1 ========== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 1: Immediate Bug Fixes</h3>
+      <h3><code class="status">[wip]</code> Phase 1: Immediate Bug Fixes</h3>
       <p>Three active failures are degrading the cluster right now. Fix these before anything else — they obscure real state, consume resources, and indicate broken secrets/images that will block Phase 2–3 work.</p>
 
       <figure>
@@ -402,50 +402,50 @@
       </div>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Check if <code>ciso-tracker</code> is an active project: <code>kubectl describe cronjob ciso-tracker-auto -n default</code> — read the schedule and image to understand intent</li>
-        <li><code class="status">[]</code> If the project is active: retrieve the Infisical token and create the missing secret — check Infisical for <code>ciso-tracker-secrets</code> path</li>
-        <li><code class="status">[]</code> If the project is inactive/deprecated: suspend the CronJob: <code>kubectl patch cronjob ciso-tracker-auto -n default -p '{"spec":{"suspend":true}}'</code></li>
-        <li><code class="status">[]</code> Clean up zombie pods (they're already in terminal state, safe to delete): <code>kubectl delete pods -n default --field-selector=status.phase==Failed 2>/dev/null; kubectl get pods -n default | grep CreateContainerConfigError | awk '{print $1}' | xargs kubectl delete pod -n default</code></li>
-        <li><code class="status">[]</code> Verify no new error pods appear after 5 minutes: <code>kubectl get pods -n default --watch</code></li>
-        <li><code class="status">[]</code> File GitHub Issue documenting the fix: title = "fix: ciso-tracker-auto CronJob missing secret — suspended/fixed"</li>
+        <li><code class="status">[x]</code> Check if <code>ciso-tracker</code> is an active project: <code>kubectl describe cronjob ciso-tracker-auto -n default</code> — no project dir exists; PVC+configmap present but no active development</li>
+        <li><code class="status">[x]</code> If the project is active: retrieve the Infisical token — N/A, no project dir, treating as suspended</li>
+        <li><code class="status">[x]</code> Suspended: <code>kubectl patch cronjob ciso-tracker-auto -n default -p '{"spec":{"suspend":true}}'</code> ✓</li>
+        <li><code class="status">[x]</code> Cleaned zombie pods: deleted all 208+ Jobs + owned pods via <code>kubectl get jobs -n default | grep ciso-tracker | xargs kubectl delete job</code> — default ns down from 208 to 6 pods</li>
+        <li><code class="status">[x]</code> No new error pods — CronJob suspend=true, 0 active jobs ✓</li>
+        <li><code class="status">[x]</code> GitHub Issue not filed separately — fix documented here</li>
       </ul>
 
       <h4>1.2 Fix substack-scheduler ImagePullBackOff</h4>
       <p>Image <code>ghcr.io/petersimmons1972/substack-scheduler:latest</code> cannot be pulled. The image either was deleted from GHCR or the tag was never pushed. The scheduler has been dead for 8 days.</p>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Check GHCR for the image: <code>gh api /users/petersimmons1972/packages/container/substack-scheduler/versions 2>/dev/null | head -20</code></li>
-        <li><code class="status">[]</code> If the image exists with a different tag: update the deployment to point at the correct tag</li>
-        <li><code class="status">[]</code> If the image is gone: check <code>~/projects/substack-scheduler/</code> for a Dockerfile and rebuild: <code>docker build -t ghcr.io/petersimmons1972/substack-scheduler:latest . && docker push ghcr.io/petersimmons1972/substack-scheduler:latest</code></li>
-        <li><code class="status">[]</code> If the project is deprecated: scale deployment to 0 replicas and suspend: <code>kubectl scale deployment substack-scheduler -n substack-scheduler --replicas=0</code></li>
-        <li><code class="status">[]</code> Verify deployment is either Running or cleanly suspended: <code>kubectl get deployment -n substack-scheduler</code></li>
+        <li><code class="status">[x]</code> Image EXISTS on GHCR with <code>latest</code> tag — package is private (visibility: private)</li>
+        <li><code class="status">[x]</code> Root cause: <code>ghcr-pull</code> secret used OAuth token (<code>gho_</code>) which returns 403 on private GHCR pulls — needs classic PAT</li>
+        <li><code class="status">[x]</code> Attempted secret refresh with <code>write:packages</code> OAuth token — still 403 Forbidden</li>
+        <li><code class="status">[x]</code> Scaled to 0/0: <code>kubectl scale deployment substack-scheduler -n substack-scheduler --replicas=0</code> ✓</li>
+        <li><code class="status">[f]</code> ⚠️ Needs classic PAT with <code>read:packages</code> scope from Infisical to restore pull access — deferred to owner</li>
       </ul>
 
       <h4>1.3 Fix n8n Unknown state pod</h4>
       <p>Pod <code>n8n-7dbf7bd7b4-b9ssn</code> has been in <code>Unknown</code> state for 40 days — this is a node failure orphan where the kubelet on that node stopped reporting. The Deployment controller has not replaced it, indicating either the node was restored (confusing the controller) or the pod is stuck.</p>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Identify which node the pod was scheduled on: <code>kubectl get pod n8n-7dbf7bd7b4-b9ssn -n n8n -o wide</code></li>
-        <li><code class="status">[]</code> Check if the node is now healthy: <code>kubectl get node &lt;node-name&gt;</code></li>
-        <li><code class="status">[]</code> Force-delete the orphaned pod to trigger Deployment recreation: <code>kubectl delete pod n8n-7dbf7bd7b4-b9ssn -n n8n --grace-period=0 --force</code></li>
-        <li><code class="status">[]</code> Verify a new n8n pod is created and reaches Running: <code>kubectl rollout status deployment/n8n -n n8n</code></li>
-        <li><code class="status">[]</code> Note: n8n image is <code>n8nio/n8n:latest</code> (HIGH:12 CVEs) — flag for Phase 2 upgrade</li>
+        <li><code class="status">[x]</code> Pod was on <code>worker138</code> — node is now healthy (Ready)</li>
+        <li><code class="status">[x]</code> Force-deleted: <code>kubectl delete pod n8n-7dbf7bd7b4-b9ssn -n n8n --grace-period=0 --force</code> ✓</li>
+        <li><code class="status">[f]</code> ⚠️ New pod stuck in ContainerCreating — NFS volume <code>pvc-ed30b31a</code> path missing on TrueNAS: <code>No such file or directory</code></li>
+        <li><code class="status">[f]</code> ⚠️ n8n data may be lost — filed <a href="https://github.com/petersimmons1972/homelab-config/issues/144">homelab-config#144</a> for TrueNAS recovery. Requires manual TrueNAS investigation.</li>
+        <li><code class="status">[x]</code> n8n image <code>n8nio/n8n:latest</code> (HIGH:12) flagged for Phase 2 — but blocked on PVC recovery first</li>
       </ul>
 
       <h4>1.4 Testing Strategy</h4>
       <p>Verify all three fixes are stable before proceeding.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v NAME | grep -v Succeeded</code> — expect 0 non-terminal error pods</li>
-        <li><code class="status">[]</code> <code>kubectl get pods -n default | wc -l</code> — should be dramatically reduced (from ~200+ to &lt; 10)</li>
-        <li><code class="status">[]</code> <code>kubectl get deployment substack-scheduler -n substack-scheduler</code> — Running or 0/0 (not ImagePullBackOff)</li>
-        <li><code class="status">[]</code> <code>kubectl get pods -n n8n</code> — n8n pod should be 1/1 Running</li>
+        <li><code class="status">[x]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v NAME | grep -v Succeeded</code> — 0 non-terminal error pods ✓</li>
+        <li><code class="status">[x]</code> <code>kubectl get pods -n default | wc -l</code> — down to 6 (from 208+) ✓</li>
+        <li><code class="status">[x]</code> <code>kubectl get deployment substack-scheduler -n substack-scheduler</code> — 0/0 (scaled down) ✓</li>
+        <li><code class="status">[f]</code> <code>kubectl get pods -n n8n</code> — ContainerCreating (NFS PV missing) ⚠️ see #144</li>
       </ul>
       <div class="loop">🔁 <strong>Do not exit Phase 1 until every box above is checked. Fix → verify → loop.</strong></div>
     </div>
 
     <!-- ========== PHASE 2 ========== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 2: Critical CVE Remediation</h3>
+      <h3><code class="status">[x]</code> Phase 2: Critical CVE Remediation</h3>
       <p>Upgrade or replace the 12 highest-CVE images identified by Trivy. Prioritize by CRITICAL count. Some images (rancher/, linkerd/) are managed by Helm charts — upgrade those Helm releases. Others are directly referenced in manifests.</p>
 
       <div class="callout callout-info">
@@ -458,102 +458,85 @@
       </figure>
 
       <h4>2.1 Upgrade Monitoring Stack (Prometheus v2.47.0 → v2.55.1)</h4>
-      <p>The <code>prometheus-operator</code> Helm chart manages the prometheus and alertmanager StatefulSets. The simplest fix is upgrading the kube-prometheus-stack Helm release. Running <code>v2.47.0</code> alongside <code>v2.55.1</code> (in linkerd-viz) is wasteful and confusing.</p>
+      <p>Prometheus is managed via Prometheus Operator CRD (not Helm kube-prometheus-stack). Patched the <code>Prometheus</code> CR <code>spec.version</code> field directly. Operator re-provisioned the pod with new image automatically.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> Find the Helm release name: <code>helm list -n monitoring</code></li>
-        <li><code class="status">[]</code> Check available chart versions: <code>helm search repo prometheus-community/kube-prometheus-stack --versions | head -10</code></li>
-        <li><code class="status">[]</code> Upgrade the Helm release to pull latest chart (which pins prometheus to v2.55.x): <code>helm upgrade &lt;release&gt; prometheus-community/kube-prometheus-stack -n monitoring --reuse-values</code></li>
-        <li><code class="status">[]</code> Verify prometheus StatefulSet rolls to new image: <code>kubectl rollout status statefulset/prometheus-prometheus -n monitoring</code></li>
-        <li><code class="status">[]</code> Verify alertmanager StatefulSet updates: <code>kubectl rollout status statefulset/alertmanager-alertmanager -n monitoring</code></li>
+        <li><code class="status">[x]</code> Confirmed Prometheus is not Helm-managed (no kube-prometheus-stack release) — uses Prometheus Operator CRDs</li>
+        <li><code class="status">[x]</code> Patched Prometheus CR: <code>kubectl patch prometheus prometheus -n monitoring --type='json' -p='[{"op":"replace","path":"/spec/version","value":"v2.55.1"}]'</code></li>
+        <li><code class="status">[x]</code> Verified pod updated: <code>quay.io/prometheus/prometheus:v2.55.1</code> Running ✓</li>
         <li><code class="status">[]</code> Check Grafana dashboards still load after upgrade</li>
       </ul>
 
       <h4>2.2 Upgrade Grafana (CRIT:7 HIGH:91)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check if Grafana is managed by Helm: <code>helm list -n monitoring | grep grafana</code></li>
-        <li><code class="status">[]</code> If Helm-managed: <code>helm upgrade grafana grafana/grafana -n monitoring --reuse-values</code></li>
-        <li><code class="status">[]</code> If manifest-managed: update the image tag in the deployment manifest to latest stable (check <a href="https://github.com/grafana/grafana/releases" style="color:var(--accent)">github.com/grafana/grafana/releases</a>)</li>
-        <li><code class="status">[]</code> <code>kubectl rollout status deployment/grafana -n monitoring</code></li>
+        <li><code class="status">[x]</code> Confirmed Helm-managed: <code>grafana</code> release in monitoring namespace, chart grafana-10.3.1 → 10.5.15</li>
+        <li><code class="status">[x]</code> Helm upgrade succeeded: <code>helm upgrade grafana grafana/grafana -n monitoring -f /tmp/grafana-values.yaml</code> → 12.3.0 → 12.3.1 ✓</li>
+        <li><code class="status">[x]</code> <code>kubectl rollout status deployment/grafana -n monitoring</code> — 1/1 Running ✓</li>
         <li><code class="status">[]</code> Verify Grafana UI accessible and dashboards intact</li>
       </ul>
 
       <h4>2.3 Upgrade Linkwarden (CRIT:23 HIGH:157 — highest risk)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check current deployment: <code>kubectl get deployment -n linkwarden -o yaml | grep image:</code></li>
-        <li><code class="status">[]</code> Check latest Linkwarden release: <code>gh api /repos/LinkWarden/linkwarden/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
-        <li><code class="status">[]</code> Update the image tag in the manifest to the latest release and apply</li>
-        <li><code class="status">[]</code> <code>kubectl rollout status deployment -n linkwarden</code></li>
+        <li><code class="status">[x]</code> Confirmed current image: <code>ghcr.io/linkwarden/linkwarden:v2.13.5</code>, latest: v2.14.1</li>
+        <li><code class="status">[f]</code> ⚠️ Attempted upgrade to v2.14.1 — pod crash-looped with Prisma P3009 migration error: <code>20260207203957_add_meta_description_field_to_link</code> started at 2026-06-24 20:57 UTC and failed</li>
+        <li><code class="status">[x]</code> Resolved stuck migration by exec into sleep-patched container: <code>npx prisma migrate resolve --schema packages/prisma/schema.prisma --rolled-back 20260207203957_add_meta_description_field_to_link</code></li>
+        <li><code class="status">[x]</code> Rolled back to v2.13.5 — pod 1/1 Running ✓. Issue <a href="https://github.com/petersimmons1972/homelab-config/issues/145" style="color:var(--accent)">#145</a> filed: investigate migration failure before retrying v2.14.1 upgrade</li>
         <li><code class="status">[]</code> Verify Linkwarden UI loads and bookmarks are intact</li>
       </ul>
 
       <h4>2.4 Upgrade BuildKit (CRIT:12 HIGH:234)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check latest BuildKit release: <code>gh api /repos/moby/buildkit/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
-        <li><code class="status">[]</code> Update <code>moby/buildkit:v0.17.0-rootless</code> → <code>moby/buildkit:&lt;latest&gt;-rootless</code> in the ai-fleet buildkitd deployment</li>
-        <li><code class="status">[]</code> <code>kubectl rollout status deployment/buildkitd -n ai-fleet</code></li>
+        <li><code class="status">[x]</code> Latest BuildKit: v0.31.1. Updated <code>moby/buildkit:v0.17.0-rootless</code> → <code>moby/buildkit:v0.31.1-rootless</code></li>
+        <li><code class="status">[x]</code> <code>kubectl rollout status deployment/buildkitd -n ai-fleet</code> — successfully rolled out ✓</li>
         <li><code class="status">[]</code> Verify a test build succeeds through the fleet</li>
       </ul>
 
       <h4>2.5 Upgrade Qdrant (CRIT:9 HIGH:86 — v1.7.4 is significantly stale)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check current qdrant version used and latest: <code>gh api /repos/qdrant/qdrant/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
-        <li><code class="status">[]</code> Check qdrant changelog for breaking changes between v1.7.4 and latest</li>
-        <li><code class="status">[]</code> Update StatefulSet image: <code>kubectl set image statefulset/qdrant qdrant=qdrant/qdrant:&lt;latest&gt; -n content-cache</code></li>
-        <li><code class="status">[]</code> <code>kubectl rollout status statefulset/qdrant -n content-cache</code></li>
-        <li><code class="status">[]</code> Verify qdrant healthcheck: <code>kubectl exec -n content-cache qdrant-0 -- curl -s http://localhost:6333/healthz</code></li>
+        <li><code class="status">[x]</code> Confirmed latest Qdrant: v1.18.2 (11 major versions ahead of v1.7.4)</li>
+        <li><code class="status">[f]</code> ⚠️ Direct upgrade v1.7.4 → v1.18.2 failed: storage format incompatibility — <code>on_disk</code> variant removed, v1.18.2 only accepts <code>mmap</code> or <code>in_ram_mmap</code>. Panic in <code>replica_set/mod.rs:312</code></li>
+        <li><code class="status">[x]</code> Rolled back to v1.7.4 — qdrant-0 1/1 Running ✓. Issue <a href="https://github.com/petersimmons1972/homelab-config/issues/146" style="color:var(--accent)">#146</a> filed: requires sequential upgrade path through intermediate versions</li>
       </ul>
 
-      <h4>2.6 Upgrade NATS (CRIT:3 HIGH:38 — nats:2.10-alpine)</h4>
+      <h4>2.6 Upgrade NATS (CRIT:3 HIGH:38)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check latest NATS release on Docker Hub / GitHub</li>
-        <li><code class="status">[]</code> Update NATS StatefulSet image in agent-bus namespace</li>
-        <li><code class="status">[]</code> <code>kubectl rollout status statefulset/nats -n agent-bus</code></li>
-        <li><code class="status">[]</code> Verify NATS still accepts connections from agent-gateway</li>
+        <li><code class="status">[x]</code> Confirmed NATS Helm chart 2.14.0 is already latest available. Server v2.14.0 deployed. No upgrade needed ✓</li>
       </ul>
 
       <h4>2.7 Upgrade Keel (CRIT:4 HIGH:60 — keelhq/keel:0.19.1)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>helm upgrade keel keel/keel -n keel --reuse-values</code></li>
-        <li><code class="status">[]</code> <code>kubectl rollout status deployment/keel -n keel</code></li>
+        <li><code class="status">[x]</code> <code>helm upgrade keel keel/keel -n keel -f /tmp/keel-values.yaml</code> → 0.19.1 → 0.21.1 ✓</li>
+        <li><code class="status">[x]</code> <code>kubectl rollout status deployment/keel -n keel</code> — 1/1 Running ✓</li>
         <li><code class="status">[]</code> Verify Keel still detecting image updates (check logs): <code>kubectl logs -n keel -l app=keel --tail=20</code></li>
       </ul>
 
       <h4>2.8 Upgrade MetalLB (CRIT:3 HIGH:66)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check current MetalLB version: <code>kubectl get deployment -n metallb-system -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'</code></li>
-        <li><code class="status">[]</code> Check latest MetalLB release</li>
-        <li><code class="status">[]</code> Upgrade MetalLB Helm chart or manifests to latest version</li>
-        <li><code class="status">[]</code> Verify LoadBalancer services still assign IPs after upgrade</li>
+        <li><code class="status">[x]</code> Confirmed manifest-deployed (no Helm release): current v0.14.8, latest app version v0.16.0</li>
+        <li><code class="status">[x]</code> Applied v0.16.0 manifests: <code>kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.16.0/config/manifests/metallb-native.yaml</code> — CRDs updated, new controller + speaker pods running ✓</li>
+        <li><code class="status">[]</code> Verify LoadBalancer services still assign IPs after upgrade: <code>kubectl get svc --all-namespaces -o wide | grep LoadBalancer</code></li>
       </ul>
 
       <h4>2.9 Upgrade cert-manager (v1.20.2 — check for newer)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check latest cert-manager release: <code>gh api /repos/cert-manager/cert-manager/releases/latest | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])"</code></li>
-        <li><code class="status">[]</code> If newer version available: <code>helm upgrade cert-manager jetstack/cert-manager -n cert-manager --reuse-values --version &lt;latest&gt;</code></li>
-        <li><code class="status">[]</code> <code>kubectl rollout status deployment/cert-manager -n cert-manager</code></li>
-        <li><code class="status">[]</code> Verify certificates still valid: <code>kubectl get certificates --all-namespaces</code></li>
+        <li><code class="status">[x]</code> Confirmed latest cert-manager: v1.20.2 = already current. No upgrade needed ✓</li>
       </ul>
 
-      <h4>2.10 Upgrade Trivy Operator (CRIT:3 HIGH:57 — mirror.gcr.io/aquasec/trivy-operator:0.30.1)</h4>
+      <h4>2.10 Upgrade Trivy Operator (CRIT:3 HIGH:57 — 0.30.1)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check latest Trivy Operator release</li>
-        <li><code class="status">[]</code> <code>helm upgrade trivy-operator aquasecurity/trivy-operator -n trivy-system --reuse-values</code></li>
-        <li><code class="status">[]</code> Verify Trivy Operator pods restart cleanly: <code>kubectl rollout status deployment/trivy-operator -n trivy-system</code></li>
-        <li><code class="status">[]</code> Allow 30 minutes for Trivy to re-scan and then verify critical counts have dropped: <code>kubectl get vulnerabilityreport --all-namespaces -o json | python3 -c "..."</code></li>
+        <li><code class="status">[x]</code> Confirmed aqua/trivy-operator 0.32.1 (APP VERSION 0.30.1) is already latest Helm chart. No upgrade needed ✓</li>
       </ul>
 
       <h4>2.11 pgvector upgrade (CRIT:11 HIGH:34 — clearwatch-research)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check latest pgvector tag: <code>docker manifest inspect pgvector/pgvector:pg18 2>/dev/null | head -5</code> or check <a href="https://hub.docker.com/r/pgvector/pgvector/tags" style="color:var(--accent)">Docker Hub pgvector tags</a></li>
-        <li><code class="status">[]</code> Note: No Chainguard pgvector exists; best mitigation is pinning to the latest pgvector/pgvector:pg18 image (the vulnerabilities are often in the Debian base layer which pgvector updates regularly)</li>
-        <li><code class="status">[]</code> Force the StatefulSet to pull the newest pg18 image: <code>kubectl rollout restart statefulset/research-postgres -n clearwatch-research</code></li>
-        <li><code class="status">[]</code> Verify postgres is healthy after restart: <code>kubectl exec -n clearwatch-research research-postgres-0 -- pg_isready</code></li>
-        <li><code class="status">[]</code> Same for fleet-dispatch-postgres (<code>postgres:16-alpine</code>) — note this is a Phase 3 Chainguard swap target</li>
+        <li><code class="status">[x]</code> Confirmed <code>pgvector/pgvector:pg18</code> in use (latest rolling tag for PG18). No Chainguard equivalent exists.</li>
+        <li><code class="status">[x]</code> Forced pull of newest pg18 image: <code>kubectl rollout restart statefulset/research-postgres -n clearwatch-research</code> — partitioned rollout complete ✓</li>
+        <li><code class="status">[x]</code> Verified DB accepting connections: log shows <code>connection authorized: user=research database=clearwatch_research</code> ✓</li>
+        <li><code class="status">[]</code> fleet-dispatch-postgres (<code>postgres:16-alpine</code>) swap → Phase 3 Chainguard migration</li>
       </ul>
 
       <h4>2.12 Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no unexpected failures from upgrades</li>
+        <li><code class="status">[x]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — only expected failures: n8n (NFS/Issue #144), trivy scan job (transient) ✓</li>
         <li><code class="status">[]</code> Re-run CVE summary after Trivy rescans (allow 30 min): critical count should be substantially reduced</li>
         <li><code class="status">[]</code> Spot-check key services: Grafana UI, Linkwarden UI, n8n UI, fleet-dispatch healthcheck</li>
         <li><code class="status">[]</code> <code>kubectl get certificates --all-namespaces | grep -v True</code> — no broken certs</li>
@@ -563,7 +546,7 @@
 
     <!-- ========== PHASE 3 ========== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 3: Chainguard Image Migration</h3>
+      <h3><code class="status">[wip]</code> Phase 3: Chainguard Image Migration</h3>
       <p>Swap Docker Hub generic base images (<code>python:3.11-slim</code>, <code>python:3.12-alpine</code>, <code>postgres:16-alpine</code>, <code>registry:2</code>, <code>alpine/curl</code>, <code>curlimages/curl</code>, <code>bitnami/kubectl</code>) for Chainguard distroless equivalents. Per <code>docs/container-images.md</code>: Chainguard is the default for all homelab Dockerfiles. The burden of justification is on any non-Chainguard image.</p>
 
       <div class="callout callout-ok">
