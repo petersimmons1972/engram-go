@@ -438,6 +438,17 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+// hardExclusionRule is the canonical HARD EXCLUSION RULE text for preference generation.
+// Every code path that generates answers for single-session-preference questions must
+// include this text so that explicitly stated anti-preferences are treated as hard
+// constraints rather than merely described. Defined once so the two prompt paths
+// (GenerationPromptForType and GenerationPromptPreferenceEnumerate) stay in sync.
+//
+// The text intentionally uses a broad verb set ("dislike, avoid, have moved away from,
+// or do not want") to cover the most common natural-language phrasings. Callers that
+// extend or modify the exclusion behaviour must update this single constant.
+const hardExclusionRule = `HARD EXCLUSION RULE: Any item, brand, model, or option the user has explicitly stated they dislike, avoid, have moved away from, or do not want is FORBIDDEN. It must not appear anywhere in your answer — not as a suggestion, not as an alternative, not as a passing mention. Exclusions are hard constraints that override all other considerations.`
+
 // GenerationPromptForType builds a generation prompt tailored to the question type.
 // For single-session-preference questions the model is instructed to describe the
 // user's preferences rather than answer the question directly — answering directly
@@ -459,7 +470,7 @@ Question (asked on %s): %s
 
 Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.
 
-HARD EXCLUSION RULE: If the user stated they do NOT want, have moved away from, dislike, or want to avoid any specific brand, item, model, or option, that item is FORBIDDEN — it must not appear in your answer as a suggestion, alternative, or even a passing mention. Stated exclusions override all other considerations.`, questionDate, ctx, questionDate, question)
+`+hardExclusionRule, questionDate, ctx, questionDate, question)
 	}
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
@@ -500,6 +511,13 @@ func GenerationPromptForTypeWithDateInjection(question, questionType, questionDa
 // prepends an enumerate-first instruction when enumerateFirst is true and the
 // question matches the aggregation heuristic. For non-aggregation questions the
 // flag is a no-op so other question types are unaffected.
+//
+// "single-session-preference" is explicitly excluded from the enumerate-first
+// augmentation (even when enumerateFirst is true) because preference questions are
+// handled by GenerationPromptForTypePreferenceEnumerate which routes them to
+// GenerationPromptPreferenceEnumerate — a dedicated enumerate path that already
+// carries its own enumeration instructions and the hardExclusionRule. Applying the
+// generic enumerate-first prefix on top would double-augment those prompts.
 func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
 	prompt := GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 	if enumerateFirst && questionType != "temporal-reasoning" && questionType != "single-session-preference" && IsAggregationQuestion(question) {
@@ -548,7 +566,7 @@ Instructions:
 3. Start your response with "The user prefers:" followed by the enumerated list.
 4. Include what the user would NOT prefer if the context supports it.
 5. Only include preferences found in the memory context. Do not invent items not present in the context.
-6. HARD EXCLUSION RULE: Any item, brand, model, or option the user has explicitly stated they dislike, avoid, have moved away from, or do not want is FORBIDDEN. It must not appear anywhere in your answer — not as a suggestion, not as an alternative, not as a passing mention. Exclusions are hard constraints that override all other considerations.`, questionDate, ctx, questionDate, question)
+6. `+hardExclusionRule, questionDate, ctx, questionDate, question)
 }
 
 // GenerationPromptEnumerateFirst (H12) returns a generation prompt that

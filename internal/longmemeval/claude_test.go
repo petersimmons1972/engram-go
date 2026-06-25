@@ -854,4 +854,60 @@ func TestPreferenceConstraint_HardExclusionInBasePreferencePrompt(t *testing.T) 
 	if !strings.Contains(lowerPrompt, "forbidden") {
 		t.Errorf("base preference prompt must use the word 'forbidden' for exclusions; prompt:\n%s", prompt)
 	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("base preference prompt must state that exclusions override other considerations; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionPreservedThroughTemporalAug verifies that
+// GenerationPromptForTypeWithTemporalAug (the H-M5+H-M1 augmentation wrapper) passes
+// the HARD EXCLUSION RULE through to the output when the question type is
+// "single-session-preference". The temporal-aug flag is a no-op for preference
+// questions and the function delegates to GenerationPromptForType — this test confirms
+// that delegation chain preserves the exclusion rule rather than silently dropping it.
+func TestPreferenceConstraint_HardExclusionPreservedThroughTemporalAug(t *testing.T) {
+	question := "Which phone brand does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-03-15\nUser: I switched from Samsung to iPhone and I'm never going back to Android.",
+	}
+	// temporalPromptAug=true is passed but should be a no-op for preference type.
+	prompt := longmemeval.GenerationPromptForTypeWithTemporalAug(question, "single-session-preference", "2024-06-01", contextBlocks, true)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("temporal-aug wrapper must preserve HARD EXCLUSION RULE for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("temporal-aug wrapper must preserve 'forbidden' keyword for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("temporal-aug wrapper must preserve 'override' keyword for preference type; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionPreservedThroughDateInjection verifies that
+// GenerationPromptForTypeWithDateInjection (the H16 date-injection wrapper) passes the
+// HARD EXCLUSION RULE through to the output when the question type is
+// "single-session-preference". The date-injection flag is a no-op for preference
+// questions; this test confirms the delegation chain preserves the exclusion rule.
+func TestPreferenceConstraint_HardExclusionPreservedThroughDateInjection(t *testing.T) {
+	question := "What coffee brand does the user drink?"
+	contextBlocks := []string{
+		"Session date: 2024-02-20\nUser: I only drink Onyx Coffee. I tried Blue Bottle once and I won't do that again.",
+	}
+	// injectQuestionDate=true is passed but should be a no-op for preference type.
+	prompt := longmemeval.GenerationPromptForTypeWithDateInjection(question, "single-session-preference", "2024-06-01", contextBlocks, true)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("date-injection wrapper must preserve HARD EXCLUSION RULE for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("date-injection wrapper must preserve 'forbidden' keyword for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("date-injection wrapper must preserve 'override' keyword for preference type; prompt:\n%s", prompt)
+	}
 }
