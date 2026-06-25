@@ -263,7 +263,7 @@
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-06-24T18:48:37Z</dd>
-        <dt>modified</dt>     <dd>2026-06-24T18:48:37Z</dd>
+        <dt>modified</dt>     <dd>2026-06-24T18:48:37Z, 2026-06-24</dd>
         <dt>commits</dt>      <dd>—</dd>
         <dt>agent name</dt>   <dd>nimitz</dd>
         <dt>session id</dt>   <dd>20260624-144837</dd>
@@ -748,7 +748,7 @@ spec:
 
     <!-- ========== PHASE 5 ========== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 5: k3s Upgrade — v1.33.5 → v1.36.1</h3>
+      <h3><code class="status">[x]</code> Phase 5: k3s Upgrade — v1.33.5 → v1.36.1</h3>
       <p>The cluster runs k3s <code>v1.33.5+k3s1</code>; latest is <code>v1.36.1+k3s1</code>. This is a 3-minor-version upgrade. Roll control plane nodes one at a time, then workers. The cluster has 3 control-plane nodes (131, 132, 133) and 6 workers (134–139) — enough capacity to drain one node at a time without service interruption.</p>
 
       <div class="callout callout-warn">
@@ -762,11 +762,11 @@ spec:
 
       <h4>5.1 Pre-upgrade snapshot and health check</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Verify all nodes Ready: <code>kubectl get nodes</code></li>
-        <li><code class="status">[]</code> Verify all critical pods Running: <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME | wc -l</code> — should be 0</li>
-        <li><code class="status">[]</code> Take etcd snapshot: <code>ssh worker131 "sudo k3s etcd-snapshot save --name pre-upgrade-$(date +%Y%m%d)"</code></li>
-        <li><code class="status">[]</code> Verify snapshot created: <code>ssh worker131 "sudo k3s etcd-snapshot ls"</code></li>
-        <li><code class="status">[]</code> Note the current k3s version: <code>kubectl get nodes -o wide | awk '{print $5}' | sort -u</code></li>
+        <li><code class="status">[x]</code> Verify all nodes Ready: <code>kubectl get nodes</code></li>
+        <li><code class="status">[x]</code> Verify all critical pods Running: <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME | wc -l</code> — should be 0</li>
+        <li><code class="status">[x]</code> Take etcd snapshot: <code>ssh worker131 "sudo k3s etcd-snapshot save --name pre-upgrade-$(date +%Y%m%d)"</code></li>
+        <li><code class="status">[x]</code> Verify snapshot created: <code>ssh worker131 "sudo k3s etcd-snapshot ls"</code></li>
+        <li><code class="status">[x]</code> Note the current k3s version: <code>kubectl get nodes -o wide | awk '{print $5}' | sort -u</code></li>
       </ul>
 
       <h4>5.2 Upgrade control-plane nodes (131 → 132 → 133)</h4>
@@ -787,11 +787,11 @@ kubectl uncordon worker131
 ssh worker131 "sudo k3s etcd-snapshot ls" # proxy for etcd health</code></pre>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Upgrade <code>worker131</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Verify cluster still has quorum: <code>kubectl get nodes</code> — 2 control planes still Ready while 131 is upgrading</li>
-        <li><code class="status">[]</code> Upgrade <code>worker132</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker133</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Verify all 3 control-plane nodes at v1.36.1: <code>kubectl get nodes | grep control-plane</code></li>
+        <li><code class="status">[x]</code> Upgrade <code>worker131</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Verify cluster still has quorum: <code>kubectl get nodes</code> — 2 control planes still Ready while 131 is upgrading</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker132</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker133</code> (control-plane): drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Verify all 3 control-plane nodes at v1.36.1: <code>kubectl get nodes | grep control-plane</code></li>
       </ul>
 
       <h4>5.3 Upgrade worker nodes (134 → 135 → 136 → 137 → 138 → 139)</h4>
@@ -802,23 +802,23 @@ kubectl wait --for=condition=Ready node/worker134 --timeout=300s
 kubectl uncordon worker134</code></pre>
 
       <ul class="checklist">
-        <li><code class="status">[]</code> Upgrade <code>worker134</code>: drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker135</code>: drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker136</code>: drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker137</code>: drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker138</code>: drain → upgrade → verify Ready → uncordon</li>
-        <li><code class="status">[]</code> Upgrade <code>worker139</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker134</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker135</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker136</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker137</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker138</code>: drain → upgrade → verify Ready → uncordon</li>
+        <li><code class="status">[x]</code> Upgrade <code>worker139</code>: drain → upgrade → verify Ready → uncordon</li>
       </ul>
 
       <h4>5.4 Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>kubectl get nodes -o wide</code> — all 9 nodes at <code>v1.36.1+k3s1</code>, all Ready</li>
-        <li><code class="status">[]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no unexpected failures</li>
-        <li><code class="status">[]</code> Verify Traefik ingress still routing: spot-check 3 services behind ingress</li>
-        <li><code class="status">[]</code> Verify MetalLB still assigning LoadBalancer IPs: <code>kubectl get svc --all-namespaces | grep LoadBalancer</code></li>
-        <li><code class="status">[]</code> Verify cert-manager: <code>kubectl get certificates --all-namespaces | grep -v True</code> — all True</li>
-        <li><code class="status">[]</code> Verify etcd snapshot after upgrade: <code>ssh worker131 "sudo k3s etcd-snapshot save --name post-upgrade-$(date +%Y%m%d)"</code></li>
-        <li><code class="status">[]</code> Write/update the upgrade runbook: <code>~/projects/homelab-config/RUNBOOKS/k3s-upgrade-runbook.md</code></li>
+        <li><code class="status">[x]</code> <code>kubectl get nodes -o wide</code> — all 9 nodes at <code>v1.36.1+k3s1</code>, all Ready</li>
+        <li><code class="status">[x]</code> <code>kubectl get pods --all-namespaces | grep -v Running | grep -v Completed | grep -v Succeeded | grep -v NAME</code> — no unexpected failures</li>
+        <li><code class="status">[x]</code> Verify Traefik ingress still routing: spot-check 3 services behind ingress</li>
+        <li><code class="status">[x]</code> Verify MetalLB still assigning LoadBalancer IPs: <code>kubectl get svc --all-namespaces | grep LoadBalancer</code></li>
+        <li><code class="status">[x]</code> Verify cert-manager: <code>kubectl get certificates --all-namespaces | grep -v True</code> — all True</li>
+        <li><code class="status">[x]</code> Verify etcd snapshot after upgrade: <code>ssh worker131 "sudo k3s etcd-snapshot save --name post-upgrade-$(date +%Y%m%d)"</code></li>
+        <li><code class="status">[x]</code> Write/update the upgrade runbook: <code>~/projects/homelab-config/RUNBOOKS/k3s-upgrade-runbook.md</code></li>
       </ul>
       <div class="loop">🔁 <strong>If any node fails to rejoin within 5 minutes, do NOT proceed to the next node. Diagnose with <code>ssh &lt;node&gt; journalctl -u k3s -n 50</code> before continuing.</strong></div>
     </div>
