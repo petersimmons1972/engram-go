@@ -329,7 +329,7 @@
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-06-24T23:00:00Z</dd>
-        <dt>modified</dt>     <dd>2026-06-24T23:00:00Z, 2026-06-25T03:05Z</dd>
+        <dt>modified</dt>     <dd>2026-06-24T23:00:00Z, 2026-06-25T03:05Z, 2026-06-25T03:30Z</dd>
         <dt>commits</dt>      <dd>—</dd>
         <dt>agent name</dt>   <dd>nimitz</dd>
         <dt>session id</dt>   <dd>bac29e6a-3f3a-4a05-b48a-116955fa4673</dd>
@@ -804,73 +804,112 @@ USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
 
     <!-- ==================== PHASE 3 ==================== -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 3: I2 — Retrieval &amp; Temporal Flag Experiment</h3>
+      <h3><code class="status">[]</code> Phase 3: I2 — Retrieval Rank &amp; Visible-Gold Diagnostic</h3>
       <p>
-        Test the compound flag combination that targets multi-session retrieval and temporal
-        reasoning. The <code>--recall-repair</code> preset bundles
-        <code>DualPreferenceRecall</code>, <code>ExhaustiveAggregation</code>,
-        <code>EnumerateFirst</code>, <code>TemporalPromptAug</code>, and <code>ChronoSort</code>.
-        Measure the delta on multi-session and temporal categories before committing to architecture.
+        H-DIAG (#1161) established that ss-preference gold visibility at topK=15 is only 40%
+        (avg gold rank 39.6). The primary bottleneck is ranking, not vocabulary. This phase
+        fixes candidate coverage and ranking before any further generation tightening.
+        <strong>Do not bundle all --recall-repair components at once</strong> — a bundled run
+        that wins or loses tells you nothing about which component drove the result.
       </p>
       <div class="callout info">
-        <strong>Key context:</strong> <code>--query-paraphrase-passes=3</code> was <em>already the default</em>
-        in the v9 run — 3 paraphrase variants per query were already executing. The multi-session
-        47 partials survived 3 paraphrase passes. This means the retrieval gap is not solely a
-        query-vocabulary problem; the relevant chunks may be present but ranked too low.
+        <strong>Failure layer model (from Hermes consult, 2026-06-25):</strong>
+        #1106 and H-DIAG are not contradictory — they are layered.
+        H-DIAG's 40% gold visibility is the <em>primary</em> ceiling: generation cannot rescue the 60%
+        of cases where the evidence is absent. #1106's generation specificity problem
+        (right category, wrong entity) is the <em>secondary</em> ceiling operating inside the
+        visible-gold subset. Fix retrieval first; then tighten specificity on the repaired base.
+      </div>
+      <div class="callout warning">
+        <strong>Over-bundling risk:</strong> <code>--recall-repair</code> bundles
+        <code>DualPreferenceRecall</code>, <code>ExhaustiveAggregation</code>,
+        <code>EnumerateFirst</code>, <code>TemporalPromptAug</code>, and <code>ChronoSort</code>.
+        <code>TemporalPromptAug</code> and <code>ChronoSort</code> target temporal categories,
+        not ss-preference — including them for a preference diagnostic adds noise without
+        contributing signal. Test retrieval/packing components first, then add generation
+        decorations as a separate step.
       </div>
 
       <figure>
         <img src="engram-lme-m-score-improvement/phase3-retrieval.jpg" alt="Multi-query retrieval fan-out diagram showing paraphrase union, recall-repair preset, and reranker stages">
-        <figcaption>Retrieval flag experiment: compose <code>--recall-repair</code> with <code>--preference-enumerate</code> for a combined run. The reranker (if a cross-encoder model is available) reorders top-20 candidates before final top-k selection.</figcaption>
+        <figcaption>Retrieval rank is the primary bottleneck: gold visibility 40% at topK=15, avg rank 39.6. topK=50 expected to recover ~75–80% visibility (H-CLX extrapolation from #1161). Fix ranking before tightening generation specificity.</figcaption>
       </figure>
 
-      <h4>3.1. Check DenseReranker Availability</h4>
+      <h4>3.1. Visible-Gold-But-Wrong Audit (diagnostic first)</h4>
+      <p>
+        Before any run, classify every ss-preference miss in the existing checkpoint
+        into exactly one failure category. This closes the #1106 vs H-DIAG ambiguity
+        at the instance level rather than the aggregate level.
+      </p>
       <ul class="checklist">
         <li><code class="status">[]</code>
-          Determine if a cross-encoder reranker endpoint is available:
-          <pre>xh GET http://192.168.0.138:30411/olla/v1/models 2>/dev/null | jq '.data[].id' | grep -i rerank</pre>
-          If a reranker model is present, note its name for Phase 3 run flags.
-          If absent, skip DenseReranker in the scoring command.
+          For each ss-preference PARTIAL/INCORRECT, determine which failure applies:
+          <ol>
+            <li>Gold not retrieved (gold rank &gt; topK)</li>
+            <li>Gold retrieved but not packed into prompt (rank ≤ topK but missing from context)</li>
+            <li>Gold packed but synthesis ignored it (gold present, model output diverged)</li>
+            <li>Gold packed but wrong entity selected (right category, wrong specific item — #1106 pattern)</li>
+            <li>Scorer / format mismatch (answer correct but label wrong)</li>
+          </ol>
+          Use <code>score_diag.jsonl</code> (from H-DIAG, #1160) for gold rank data.
+          Record tally: which category is largest?
+        </li>
+        <li><code class="status">[]</code>
+          If category 1 (gold not retrieved) ≥ 50% → retrieval rank fix is the right next step (confirms Phase 3 plan).
+          If category 4 (wrong entity) ≥ 50% → two-stage answering fix is higher leverage (see Notes).
         </li>
       </ul>
 
-      <h4>3.2. Combined Run: <code>--recall-repair</code> + <code>--preference-enumerate</code></h4>
+      <h4>3.2. Check DenseReranker Availability</h4>
       <ul class="checklist">
         <li><code class="status">[]</code>
-          Run with both flags composited against v10 baseline (which already has the preference
-          prompt fix from Phase 2):
+          <pre>xh GET http://192.168.0.138:30411/olla/v1/models 2>/dev/null | jq '.data[].id' | grep -i rerank</pre>
+          If a reranker model is present, note its name.
+          If absent, topK expansion is the primary lever.
+        </li>
+      </ul>
+
+      <h4>3.3. Retrieval-Only Run: <code>DualPreferenceRecall</code> + <code>ExhaustiveAggregation</code> (isolated)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code>
+          Run with retrieval/packing components only — no generation decorations
+          (<strong>not</strong> <code>--recall-repair</code> which bundles temporal components):
           <pre>cd ~/projects/engram-go && nohup systemd-run --user --scope \
-  --unit lme-recall-repair-$(date +%s) \
+  --unit lme-retrieval-fix-$(date +%s) \
   -p MemoryMax=64G -p MemorySwapMax=8G \
   ./longmemeval score-efficient \
   --data testdata/longmemeval/longmemeval_m_cleaned.json \
-  --out results/longmemeval-v11-recall-repair \
+  --out results/longmemeval-v11-retrieval-fix \
   --scorer-url http://192.168.0.138:30411/olla/openai/v1 \
   --scorer-model inference \
   --preference-enumerate \
-  --recall-repair \
+  --dual-preference-recall \
+  --exhaustive-aggregation \
   --workers 4 \
-  >> results/longmemeval-v11-recall-repair/score-efficient.log 2>&1 &</pre>
+  >> results/longmemeval-v11-retrieval-fix/score-efficient.log 2>&1 &</pre>
+          If those flags don't exist individually, use <code>--recall-repair</code> and note
+          the temporal components as confounders to track separately.
         </li>
         <li><code class="status">[]</code>
-          If DenseReranker is available, add <code>--dense-reranker &lt;model-name&gt;</code>
-          and run a separate v11b variant to isolate its contribution.
+          Compare ss-preference gold visibility and category score vs v10 baseline.
+          Record delta in improvement log.
         </li>
         <li><code class="status">[]</code>
-          Compare multi-session and temporal-reasoning category scores between v9 baseline,
-          v10 (preference fix only), and v11 (full flag stack). Record in improvement log.
+          If gold visibility improves but ss-preference score doesn't improve proportionally,
+          the remaining gap is category 4 (wrong entity) — proceed to two-stage answering fix (see Notes).
         </li>
       </ul>
 
-      <h4>3.3. Testing Strategy</h4>
+      <h4>3.4. Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> multi-session weighted % in v11 &gt; v9 (improvement from 81.9%)</li>
-        <li><code class="status">[]</code> temporal-reasoning weighted % in v11 &gt; v9 (improvement from 83.1%)</li>
-        <li><code class="status">[]</code> Overall weighted score in v11 &gt; v10 (cumulative improvement)</li>
-        <li><code class="status">[]</code> Record per-category delta table in <code>docs/lme-m-improvement-log.md</code></li>
+        <li><code class="status">[]</code> Visible-gold-but-wrong audit tally recorded before any run</li>
+        <li><code class="status">[]</code> ss-preference gold visibility in v11 &gt; 40% (the topK=15 baseline)</li>
+        <li><code class="status">[]</code> ss-preference score in v11 &gt; 20.0% (the h-sd-n5-sonnet baseline from #1161)</li>
+        <li><code class="status">[]</code> Per-category delta table recorded in <code>docs/lme-m-improvement-log.md</code></li>
       </ul>
       <div class="loop">
-        🔁 If multi-session weighted % does not improve with <code>--recall-repair</code>, the cross-session gap is structural and requires the Phase 6 architectural fix. Do not spend more flag experiments — proceed to Phase 4 (temporal diagnosis) and flag Phase 6 for architecture planning.
+        🔁 If retrieval fix does not improve ss-preference score: the dominant failure mode is category 4 (wrong entity despite gold present). Switch to two-stage answering approach (Notes section) rather than further retrieval experiments.
+        If multi-session and temporal categories also don't improve: flag Phase 6 architectural fix.
       </div>
     </div>
 
@@ -1313,6 +1352,31 @@ EOF</pre>
         genuinely justifies architectural investment if flags don't close it.</li>
     </ul>
 
+    <h3>Two-Stage Answering for ss-Preference (Alternative to Generation Prompt Tightening)</h3>
+    <p>
+      Surfaced by Hermes consult (2026-06-25, engram-go#1161). If the visible-gold-but-wrong audit
+      (Phase 3.1) shows that category 4 (right category, wrong specific entity) is dominant,
+      the correct fix is <strong>two-stage answering</strong>, not retrieval or paraphrase tuning.
+    </p>
+    <p>The approach:</p>
+    <ol>
+      <li>In a first-pass prompt: enumerate all specific entities mentioned in the context (brand names, model numbers, product identifiers — not categories).</li>
+      <li>In a second-pass prompt: identify which enumerated entity is explicitly preferred (or excluded). Mark stated exclusions as FORBIDDEN.</li>
+      <li>Output exactly the entity name, not a category description.</li>
+    </ol>
+    <p>
+      This directly operationalizes #1106's diagnosis: the model currently outputs "photography accessories"
+      (the category) instead of "Sony-compatible flash" (the specific entity). Two-stage answering
+      forces enumeration before selection, preventing the category-level shortcut.
+    </p>
+    <div class="callout info">
+      <strong>When to pursue this:</strong> Only after Phase 3 retrieval fix is run.
+      If Phase 3 improves gold visibility but ss-preference score doesn't rise proportionally,
+      category 4 is the residual failure. Two-stage answering is the targeted fix for that residual.
+      Do not introduce it before retrieval is repaired — applying specificity forcing when gold is
+      absent converts hedged partials into definitive wrongs (the H1 lesson).
+    </div>
+
     <h3>Failure Modes to Watch</h3>
     <ul>
       <li><strong>Halsey error applied to methodology:</strong> Retaining the retrieval-improvement
@@ -1339,6 +1403,50 @@ EOF</pre>
   <section id="amendments">
     <h2>Amendments</h2>
     <p style="color:var(--text-muted); font-size:0.85rem;">Append-only running history of post-creation changes.</p>
+
+    <details>
+      <summary>2026-06-25T03:30Z — Phase 3 restructured: Hermes consult via fleet dispatch (engram-go#1161)</summary>
+      <p>
+        Consulted Hermes via fleet-dispatch consult lane (attached to issue #1161 — most recent LME results).
+        Key findings integrated:
+      </p>
+      <ul>
+        <li>
+          <strong>#1106 and H-DIAG are layered, not contradictory.</strong>
+          H-DIAG's 40% gold visibility is the primary ceiling (retrieval rank).
+          #1106's "right category, wrong entity" failure is the secondary ceiling (generation specificity)
+          operating within the visible-gold subset. Fix retrieval first; then specificity.
+        </li>
+        <li>
+          <strong>H1 lenient regression (−16.6 pts) confirmed as expected:</strong>
+          Tighter prompt + missing gold → definitive wrong answers.
+          This is not evidence against retrieval being dominant — it is evidence that
+          specificity tightening is dangerous before retrieval is repaired.
+        </li>
+        <li>
+          <strong>Over-bundling risk called out:</strong>
+          <code>--recall-repair</code> bundles 5 components including temporal-specific ones
+          (<code>TemporalPromptAug</code>, <code>ChronoSort</code>) that don't target ss-preference.
+          Phase 3 restructured to run retrieval/packing components in isolation first.
+        </li>
+        <li>
+          <strong>New diagnostic step added (Phase 3.1):</strong>
+          Visible-gold-but-wrong audit — classify every ss-preference miss into 5 failure categories
+          using <code>score_diag.jsonl</code>. Determines whether Phase 3 retrieval fix or
+          two-stage answering is the higher-leverage next step.
+        </li>
+        <li>
+          <strong>Two-stage answering alternative added to Notes:</strong>
+          Enumerate specific entities first, then select the preferred one. Directly addresses
+          #1106's "right category, wrong entity" pattern. Gate: only after retrieval fix confirms
+          gold is present but wrong entity is still being selected.
+        </li>
+      </ul>
+      <p>
+        <strong>Phase 3 gate updated:</strong> v11 target now based on #1161's current best
+        (ss-preference 20.0% at topK=15) rather than v9 baseline, since fleet has already run further.
+      </p>
+    </details>
 
     <details>
       <summary>2026-06-25T03:00Z — Phase 1 closed empirically by H1/H2 mini-tests; Phase 2 complete (PR #1172)</summary>
