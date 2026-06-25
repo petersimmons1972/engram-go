@@ -809,3 +809,49 @@ func TestPreferenceEnumeratePrompt_FallsThrough_WhenNonPreferenceType(t *testing
 		t.Errorf("preference-enumerate with non-preference type must return same prompt as GenerationPromptForType; got diff")
 	}
 }
+
+// TestPreferenceConstraint_HardExclusionInEnumeratePrompt verifies that the
+// preference-enumerate prompt contains the HARD EXCLUSION RULE instruction.
+// This guards that stated anti-preferences are treated as hard constraints,
+// not merely described — the fix for the 0/30 preference CORRECT score in v9.
+func TestPreferenceConstraint_HardExclusionInEnumeratePrompt(t *testing.T) {
+	question := "What laptop brand should I buy?"
+	contextBlocks := []string{
+		"Session date: 2024-05-01\nUser: I love Framework laptops. I've completely moved away from Dell — I don't want anything to do with them anymore.",
+	}
+	prompt := longmemeval.GenerationPromptPreferenceEnumerate(question, "2024-06-01", contextBlocks)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	// Must contain the exclusion instruction keywords.
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must contain HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must use the word 'forbidden' for exclusions; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must state that exclusions override other considerations; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionInBasePreferencePrompt verifies that
+// the base single-session-preference prompt (non-enumerate path) also carries
+// the HARD EXCLUSION RULE — so the constraint is enforced regardless of whether
+// --preference-enumerate is set.
+func TestPreferenceConstraint_HardExclusionInBasePreferencePrompt(t *testing.T) {
+	question := "What gym equipment does the user want?"
+	contextBlocks := []string{
+		"Session date: 2024-04-10\nUser: I want a Concept2 rower. I absolutely hate treadmills — never want one.",
+	}
+	prompt := longmemeval.GenerationPromptForType(question, "single-session-preference", "2024-06-01", contextBlocks)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("base preference prompt must contain HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("base preference prompt must use the word 'forbidden' for exclusions; prompt:\n%s", prompt)
+	}
+}

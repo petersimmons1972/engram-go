@@ -457,7 +457,9 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`, questionDate, ctx, questionDate, question)
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.
+
+HARD EXCLUSION RULE: If the user stated they do NOT want, have moved away from, dislike, or want to avoid any specific brand, item, model, or option, that item is FORBIDDEN — it must not appear in your answer as a suggestion, alternative, or even a passing mention. Stated exclusions override all other considerations.`, questionDate, ctx, questionDate, question)
 	}
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
@@ -545,7 +547,8 @@ Instructions:
 2. List each one explicitly — do not summarise or generalise. For example: name the specific product, brand, feature, or location rather than saying "functional accessories" or "a pool".
 3. Start your response with "The user prefers:" followed by the enumerated list.
 4. Include what the user would NOT prefer if the context supports it.
-5. Only include preferences found in the memory context. Do not invent items not present in the context.`, questionDate, ctx, questionDate, question)
+5. Only include preferences found in the memory context. Do not invent items not present in the context.
+6. HARD EXCLUSION RULE: Any item, brand, model, or option the user has explicitly stated they dislike, avoid, have moved away from, or do not want is FORBIDDEN. It must not appear anywhere in your answer — not as a suggestion, not as an alternative, not as a passing mention. Exclusions are hard constraints that override all other considerations.`, questionDate, ctx, questionDate, question)
 }
 
 // GenerationPromptEnumerateFirst (H12) returns a generation prompt that
