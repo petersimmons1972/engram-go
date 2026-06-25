@@ -743,10 +743,55 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 	}
 }
 
+// TestGenerationPromptForTypeEnumerate_PreferenceType_SkipsEnumerateFirst guards
+// the guard condition on line 523 of claude.go: "single-session-preference" is
+// explicitly excluded from the generic enumerate-first augmentation even when
+// enumerateFirst=true, because preference questions route to the dedicated
+// preference-enumerate path (GenerationPromptPreferenceEnumerate) which carries
+// its own enumeration instructions and the hardExclusionRule.
+//
+// This test verifies two things:
+//  (a) the enumerate-first prefix is NOT injected (guard fires correctly)
+//  (b) the HARD EXCLUSION RULE keywords ARE present (base preference prompt returned)
+func TestGenerationPromptForTypeEnumerate_PreferenceType_SkipsEnumerateFirst(t *testing.T) {
+	question := "What headphone brand does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-01-15\nUser: I love Sony WH-1000XM5. I tried Bose QC45 once and I'm done with Bose forever.",
+	}
+	// enumerateFirst=true but questionType="single-session-preference" — guard must fire.
+	prompt := longmemeval.GenerationPromptForTypeEnumerate(
+		question, "single-session-preference", "2024-06-01",
+		contextBlocks,
+		true,
+	)
+	lowerPrompt := strings.ToLower(prompt)
+
+	// (a) enumerate-first prefix must NOT be injected for preference questions.
+	enumerateFirstHints := []string{"step 1", "list each event", "then sum", "then total", "then count", "enumerate first"}
+	for _, hint := range enumerateFirstHints {
+		if strings.Contains(lowerPrompt, hint) {
+			t.Errorf("GenerationPromptForTypeEnumerate must NOT inject enumerate-first prefix for single-session-preference; found %q in prompt:\n%s", hint, prompt)
+		}
+	}
+
+	// (b) HARD EXCLUSION RULE must be present (base preference prompt was returned).
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must return base preference prompt with HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must include 'forbidden' keyword; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must include 'override' keyword; prompt:\n%s", prompt)
+	}
+}
+
 // TestPreferenceEnumeratePrompt_SelectedForPreferenceType verifies that
 // GenerationPromptForTypePreferenceEnumerate selects the preference-enumerate
 // prompt when preferenceEnumerate=true AND question_type is
 // "single-session-preference". Guards H-PE flag routing.
+// Also verifies the HARD EXCLUSION RULE is present in the routed output,
+// confirming the delegation chain preserves the constraint.
 func TestPreferenceEnumeratePrompt_SelectedForPreferenceType(t *testing.T) {
 	question := "What kind of car accessories does the user prefer?"
 	contextBlocks := []string{
@@ -757,9 +802,10 @@ func TestPreferenceEnumeratePrompt_SelectedForPreferenceType(t *testing.T) {
 		contextBlocks,
 		true,
 	)
+	lowerPrompt := strings.ToLower(prompt)
+
 	// The preference-enumerate prompt must contain enumeration instruction keywords.
 	enumerationHints := []string{"list", "each", "specific", "enumerate", "every"}
-	lowerPrompt := strings.ToLower(prompt)
 	found := false
 	for _, hint := range enumerationHints {
 		if strings.Contains(lowerPrompt, hint) {
@@ -769,6 +815,18 @@ func TestPreferenceEnumeratePrompt_SelectedForPreferenceType(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("preference-enumerate prompt must contain an enumeration instruction; got:\n%s", prompt)
+	}
+
+	// The HARD EXCLUSION RULE must also be present — the wrapper routes to
+	// GenerationPromptPreferenceEnumerate which carries hardExclusionRule.
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("preference-enumerate wrapper must include HARD EXCLUSION RULE; got:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("preference-enumerate wrapper must include 'forbidden' keyword; got:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("preference-enumerate wrapper must include 'override' keyword; got:\n%s", prompt)
 	}
 }
 
