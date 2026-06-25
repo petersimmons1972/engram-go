@@ -703,12 +703,18 @@ USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
       <p>Gates pass when: (a) trace finding is recorded with a clear scenario (a/b/c/d) for each type,
          and (b) scorer validity result is documented.</p>
       <ul class="checklist">
-        <li><code class="status">[x]</code> Preference scenario (c) [retrieval miss] confirmed dominant — Phase 3 retrieval fix is the required next step after Phase 2 prompt improvements</li>
-        <li><code class="status">[x]</code> Temporal sub-failure: <code>--inject-question-date</code> confirmed effective (+8.9 strict pts); ships in v10</li>
+        <li><code class="status">[x]</code> Preference root cause = <strong>ranking dilution</strong> (not scenario (c) retrieval miss as initially labeled).
+          H1 mini-test at <code>recall_topk=100</code> confirmed gold is retrieved in 100% of cases
+          but buried: INCORRECT cases avg gold rank 63.5 vs CORRECT cases avg rank 11.7.
+          At production <code>context_topk=15</code>, gold rank ~40–45 exceeds the window (H-DIAG #1161 gold_visible_rate=0.40).
+          Fix = push gold rank below the topK threshold, not expand retrieval corpus.</li>
+        <li><code class="status">[x]</code> Temporal sub-failure: <code>--inject-question-date</code> confirmed effective (+8.9pp strict, +6.7pp lenient on 30Q mini-test).
+          ⚠️ Statistical caveat: +8.9pp = 3 questions on n=30, within noise floor.
+          Validate on full 133 temporal questions before committing as a production win.</li>
         <li><code class="status">[x]</code> Scorer validity confirmed — INCORRECT labels appear normally when prompt generates definitive answers</li>
       </ul>
       <div class="loop">
-        🔁 Phase 1 closed via H1/H2 mini-test evidence (2026-06-25). Preference failure mode = retrieval miss (scenario c). Temporal fix confirmed. Scorer valid.
+        ✅ Phase 1 closed via H1/H2 mini-test evidence (2026-06-25). Preference root cause = ranking dilution (gold rank avg 63.5 for INCORRECT, 11.7 for CORRECT at topk=100). Temporal fix pending full-set validation. Scorer valid.
       </div>
     </div>
 
@@ -805,29 +811,45 @@ USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
     <!-- ==================== PHASE 3 ==================== -->
     <div class="phase">
       <h3><code class="status">[]</code> Phase 3: I2 — Retrieval Rank &amp; Visible-Gold Diagnostic</h3>
+      <div class="callout warning">
+        <strong>Primary metric (governs all phase comparisons):</strong>
+        weighted score = <code>(correct + 0.5 × partial) / total</code>.
+        Report this alongside raw correct/partial/incorrect counts. Do not compare runs on strict-only
+        or lenient-only — the weighted score is the single authoritative number.
+      </div>
       <p>
-        H-DIAG (#1161) established that ss-preference gold visibility at topK=15 is only 40%
-        (avg gold rank 39.6). The primary bottleneck is ranking, not vocabulary. This phase
-        fixes candidate coverage and ranking before any further generation tightening.
-        <strong>Do not bundle all --recall-repair components at once</strong> — a bundled run
-        that wins or loses tells you nothing about which component drove the result.
+        <strong>Confirmed diagnosis (2026-06-25, score_diag.jsonl):</strong>
+        This is a <em>ranking dilution</em> problem, not a retrieval miss problem.
+        At <code>recall_topk=100</code>, gold is retrieved in 100% of ss-preference questions —
+        but buried: CORRECT cases avg gold rank 11.7; INCORRECT cases avg gold rank 63.5.
+        At production <code>context_topk=15</code>, gold rank ~40–45 exceeds the window
+        (H-DIAG #1161: gold_visible_rate=0.40). The fix is to push gold rank below the topK
+        threshold — either by shrinking the noise (better ranking) or by confirming the minimum
+        topK that captures gold without flooding the context window.
       </p>
+      <div class="callout warning">
+        <strong>⚠️ Do NOT run <code>--recall-repair</code> as the first Phase 3 experiment.</strong>
+        <code>--recall-repair</code> bundles DualPreferenceRecall, ExhaustiveAggregation,
+        ExhaustiveAggregation, EnumerateFirst, TemporalPromptAug, and ChronoSort.
+        For a ranking dilution problem, adding MORE candidates worsens the distractor-to-gold ratio
+        by introducing more noise at ranks below 63. The correct first step is a cheap topK sweep
+        to find the minimum context window that captures gold without flooding it.
+        Prior art: <code>phase3-h1-topk200</code> (June 13, 32/120 scored, 76 run_errors — incomplete
+        but confirms topK tuning has been attempted; this phase resumes that work correctly).
+      </div>
       <div class="callout info">
         <strong>Failure layer model (from Hermes consult, 2026-06-25):</strong>
         #1106 and H-DIAG are not contradictory — they are layered.
-        H-DIAG's 40% gold visibility is the <em>primary</em> ceiling: generation cannot rescue the 60%
-        of cases where the evidence is absent. #1106's generation specificity problem
-        (right category, wrong entity) is the <em>secondary</em> ceiling operating inside the
-        visible-gold subset. Fix retrieval first; then tighten specificity on the repaired base.
+        H-DIAG's 40% gold visibility at topK=15 is the <em>primary</em> ceiling; generation cannot
+        rescue cases where evidence is absent. #1106's generation specificity problem
+        (right category, wrong entity) is the <em>secondary</em> ceiling inside the visible-gold subset.
+        Fix ranking first; then tighten specificity on the repaired base.
       </div>
       <div class="callout warning">
-        <strong>Over-bundling risk:</strong> <code>--recall-repair</code> bundles
-        <code>DualPreferenceRecall</code>, <code>ExhaustiveAggregation</code>,
-        <code>EnumerateFirst</code>, <code>TemporalPromptAug</code>, and <code>ChronoSort</code>.
-        <code>TemporalPromptAug</code> and <code>ChronoSort</code> target temporal categories,
-        not ss-preference — including them for a preference diagnostic adds noise without
-        contributing signal. Test retrieval/packing components first, then add generation
-        decorations as a separate step.
+        <strong>v10 baseline gap:</strong> A full 500Q v10 run has not been completed.
+        Phase 3 runs (v11, v12) must be compared against a completed v10 baseline to measure
+        the full improvement delta. Completing the v10 baseline is a prerequisite before
+        claiming Phase 3 results as production improvements.
       </div>
 
       <figure>
@@ -835,28 +857,44 @@ USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
         <figcaption>Retrieval rank is the primary bottleneck: gold visibility 40% at topK=15, avg rank 39.6. topK=50 expected to recover ~75–80% visibility (H-CLX extrapolation from #1161). Fix ranking before tightening generation specificity.</figcaption>
       </figure>
 
-      <h4>3.1. Visible-Gold-But-Wrong Audit (diagnostic first)</h4>
+      <h4>3.1. TopK Sweep — Find the Minimum Effective Context Window (primary experiment)</h4>
       <p>
-        Before any run, classify every ss-preference miss in the existing checkpoint
-        into exactly one failure category. This closes the #1106 vs H-DIAG ambiguity
-        at the instance level rather than the aggregate level.
+        The H1 mini-test established gold rank distribution at topk=100.
+        The cheap next step is to sweep context_topk upward from the production value (15)
+        to find where gold_visible_rate reaches ≥90% without flooding the window.
+        This is a re-scoring exercise on the existing H1 checkpoint — no new inference needed.
       </p>
       <ul class="checklist">
         <li><code class="status">[]</code>
-          For each ss-preference PARTIAL/INCORRECT, determine which failure applies:
-          <ol>
-            <li>Gold not retrieved (gold rank &gt; topK)</li>
-            <li>Gold retrieved but not packed into prompt (rank ≤ topK but missing from context)</li>
-            <li>Gold packed but synthesis ignored it (gold present, model output diverged)</li>
-            <li>Gold packed but wrong entity selected (right category, wrong specific item — #1106 pattern)</li>
-            <li>Scorer / format mismatch (answer correct but label wrong)</li>
-          </ol>
-          Use <code>score_diag.jsonl</code> (from H-DIAG, #1160) for gold rank data.
-          Record tally: which category is largest?
+          For each topK value in [15, 20, 30, 50, 75], count how many of the 30 H1 questions
+          would have gold visible (gold rank ≤ topK). Use the per-question rank data from
+          <code>results/lme-h1-pref-mini-20260625/score_diag.jsonl</code>:
+          <pre>python3 - &lt;&lt;'EOF'
+import json, collections
+rows = [json.loads(l) for l in open(
+    'results/lme-h1-pref-mini-20260625/score_diag.jsonl')]
+for topk in [15, 20, 30, 50, 75, 100]:
+    visible = sum(1 for r in rows if r.get('retrieved_gold_rank', 999) &lt;= topk)
+    print(f"topK={topk:3d}  gold_visible={visible}/{len(rows)}  ({100*visible/len(rows):.0f}%)")
+EOF</pre>
+          Record the minimum topK at which gold_visible_rate ≥ 90% (i.e. ≥27/30).
         </li>
         <li><code class="status">[]</code>
-          If category 1 (gold not retrieved) ≥ 50% → retrieval rank fix is the right next step (confirms Phase 3 plan).
-          If category 4 (wrong entity) ≥ 50% → two-stage answering fix is higher leverage (see Notes).
+          If min-effective topK is ≤ 50: update production <code>context_topk</code> to that value
+          and run v11 with the new window. This is the cheapest possible fix.
+          If min-effective topK is &gt; 50: ranking improvement is required before topK expansion
+          helps — proceed to 3.2 (DenseReranker).
+        </li>
+        <li><code class="status">[]</code>
+          Classify every ss-preference PARTIAL/INCORRECT from H1 into one failure category
+          (to confirm whether remaining failures after topK fix are category-4 wrong-entity):
+          <ol>
+            <li>Gold rank &gt; context_topk (ranking dilution — primary; expected to dominate at topK=15)</li>
+            <li>Gold rank ≤ context_topk but answer wrong entity (right category, wrong specific item — #1106 pattern)</li>
+            <li>Gold packed but synthesis ignored it (model output diverged from evidence)</li>
+            <li>Scorer / format mismatch (answer correct but label wrong)</li>
+          </ol>
+          At topk=100, category 1 is eliminated — use the H1 score_diag.jsonl to tally categories 2–4.
         </li>
       </ul>
 
@@ -869,47 +907,63 @@ USER: Question: {q}\nReference: {ref}\nSystem answer: {hyp}</pre>
         </li>
       </ul>
 
-      <h4>3.3. Retrieval-Only Run: <code>DualPreferenceRecall</code> + <code>ExhaustiveAggregation</code> (isolated)</h4>
+      <h4>3.3. v11 Run — TopK Expansion + <code>--preference-enumerate</code> + <code>--inject-question-date</code></h4>
+      <p>
+        Run with context_topk set to the minimum effective value from step 3.1.
+        Include <code>--preference-enumerate</code> (already merged, PR #1172) and
+        <code>--inject-question-date</code> (confirmed in H2; ensure it is present in every v11+ run).
+        Do NOT add <code>--recall-repair</code>, <code>--dual-preference-recall</code>, or
+        <code>--exhaustive-aggregation</code> — they increase candidate volume and worsen
+        the distractor-to-gold ratio for a ranking dilution problem.
+      </p>
       <ul class="checklist">
         <li><code class="status">[]</code>
-          Run with retrieval/packing components only — no generation decorations
-          (<strong>not</strong> <code>--recall-repair</code> which bundles temporal components):
+          Determine the <code>--context-topk</code> flag name in the binary:
+          <pre>./longmemeval all --help 2>&amp;1 | grep -i topk</pre>
+        </li>
+        <li><code class="status">[]</code>
+          Run v11 with the expanded context window (substitute N from step 3.1):
           <pre>cd ~/projects/engram-go && nohup systemd-run --user --scope \
-  --unit lme-retrieval-fix-$(date +%s) \
+  --unit lme-v11-topk-$(date +%s) \
   -p MemoryMax=64G -p MemorySwapMax=8G \
-  ./longmemeval score-efficient \
+  ./longmemeval all \
   --data testdata/longmemeval/longmemeval_m_cleaned.json \
-  --out results/longmemeval-v11-retrieval-fix \
-  --scorer-url http://192.168.0.138:30411/olla/openai/v1 \
-  --scorer-model inference \
+  --out results/longmemeval-v11-topk-N \
+  --url http://localhost:8788/mcp \
+  --generation-model sonnet \
+  --context-topk N \
   --preference-enumerate \
-  --dual-preference-recall \
-  --exhaustive-aggregation \
+  --inject-question-date \
   --workers 4 \
-  >> results/longmemeval-v11-retrieval-fix/score-efficient.log 2>&1 &</pre>
-          If those flags don't exist individually, use <code>--recall-repair</code> and note
-          the temporal components as confounders to track separately.
+  >> results/longmemeval-v11-topk-N/run.log 2>&amp;1 &
+echo "PID=$!"</pre>
         </li>
         <li><code class="status">[]</code>
-          Compare ss-preference gold visibility and category score vs v10 baseline.
-          Record delta in improvement log.
+          Score with <code>lme-score</code> skill after run completes.
+          Compare weighted score, ss-preference score, and gold_visible_rate vs v10 baseline.
+          Record delta in <code>docs/lme-m-improvement-log.md</code>.
         </li>
         <li><code class="status">[]</code>
-          If gold visibility improves but ss-preference score doesn't improve proportionally,
-          the remaining gap is category 4 (wrong entity) — proceed to two-stage answering fix (see Notes).
+          If ss-preference score improves proportionally with gold_visible_rate: topK expansion is
+          the fix; ship in v10 config.
+          If gold visibility improves but score doesn't: remaining failures are category 2–4
+          (wrong entity despite gold present) — proceed to two-stage answering fix (see Notes).
         </li>
       </ul>
 
       <h4>3.4. Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Visible-gold-but-wrong audit tally recorded before any run</li>
-        <li><code class="status">[]</code> ss-preference gold visibility in v11 &gt; 40% (the topK=15 baseline)</li>
-        <li><code class="status">[]</code> ss-preference score in v11 &gt; 20.0% (the h-sd-n5-sonnet baseline from #1161)</li>
+        <li><code class="status">[]</code> TopK sweep table recorded (step 3.1 script output) — minimum effective topK identified</li>
+        <li><code class="status">[]</code> ss-preference gold visibility in v11 ≥ 90% (up from 40% at topK=15)</li>
+        <li><code class="status">[]</code> Weighted score <code>(correct + 0.5 × partial) / total</code> for ss-preference in v11 &gt; 0.167 (20.0% strict baseline)</li>
+        <li><code class="status">[]</code> v11 weighted score compared against completed v10 baseline (not mini-test)</li>
         <li><code class="status">[]</code> Per-category delta table recorded in <code>docs/lme-m-improvement-log.md</code></li>
+        <li><code class="status">[]</code> <code>--inject-question-date</code> present in v11 run command (confirmed at launch)</li>
       </ul>
       <div class="loop">
-        🔁 If retrieval fix does not improve ss-preference score: the dominant failure mode is category 4 (wrong entity despite gold present). Switch to two-stage answering approach (Notes section) rather than further retrieval experiments.
-        If multi-session and temporal categories also don't improve: flag Phase 6 architectural fix.
+        🔁 If topK expansion improves gold visibility but ss-preference score stays flat: remaining failures are category 2–4 (wrong entity, synthesis failure). Switch to DenseReranker experiment (step 3.2) and/or two-stage answering (Notes section).
+        If DenseReranker improves gold rank to ≤15 without topK expansion: reranker is the primary lever — proceed to reranker deployment.
+        If multi-session and temporal categories don't improve: flag for Phase 4/6.
       </div>
     </div>
 
@@ -1446,6 +1500,32 @@ EOF</pre>
         <strong>Phase 3 gate updated:</strong> v11 target now based on #1161's current best
         (ss-preference 20.0% at topK=15) rather than v9 baseline, since fleet has already run further.
       </p>
+    </details>
+
+    <details>
+      <summary>2026-06-25T04:00Z — Diagnosis corrected: ranking dilution, not retrieval miss; Phase 3 plan rewritten accordingly</summary>
+      <p>
+        <strong>Root cause correction (verified from score_diag.jsonl):</strong>
+        The prior amendment (03:30Z) and Phase 1.4 item incorrectly labeled the dominant failure mode
+        as "scenario (c) retrieval miss." The H1 mini-test data shows the opposite:
+        at <code>recall_topk=100</code>, gold is retrieved in 100% of ss-preference questions
+        (<code>gold_not_retrieved_rate=0</code>). The actual problem is <strong>ranking dilution</strong>:
+        gold is present but buried — INCORRECT cases avg gold rank 63.5 vs CORRECT cases avg rank 11.7.
+        At production <code>context_topk=15</code>, gold rank ~40–45 exceeds the window, which is
+        why H-DIAG reports only 40% gold visibility. The fix is to push gold rank below the topK
+        threshold, not to increase retrieval corpus size.
+      </p>
+      <ul>
+        <li>Phase 1.4 item corrected: no longer says "retrieval miss confirmed dominant."</li>
+        <li>Phase 3 intro: replaces "bottleneck is ranking" (vague) with the confirmed data (gold rank 63.5 INCORRECT, 11.7 CORRECT).</li>
+        <li>Phase 3 step 3.1 redesigned: topK sweep first (cheapest test — re-score H1 diag data offline, no new inference needed) to find minimum effective context window.</li>
+        <li>Phase 3 step 3.3 redesigned: v11 run uses the topK expansion + <code>--preference-enumerate</code> + <code>--inject-question-date</code>; removes <code>--recall-repair</code> / <code>--dual-preference-recall</code> / <code>--exhaustive-aggregation</code> (wrong direction for ranking dilution).</li>
+        <li>Primary metric declared: weighted score <code>(correct + 0.5 × partial) / total</code> governs all phase comparisons.</li>
+        <li>v10 baseline gap documented as a prerequisite callout in Phase 3.</li>
+        <li>H2 statistical caveat added: +8.9pp = 3 questions on n=30, within noise; full 133-question validation required.</li>
+        <li><code>--inject-question-date</code> added to v11 run command (was missing from previous Phase 3 draft).</li>
+        <li>Prior art referenced: <code>phase3-h1-topk200</code> (June 13, incomplete; shows topK tuning history).</li>
+      </ul>
     </details>
 
     <details>
