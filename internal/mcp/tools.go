@@ -181,13 +181,10 @@ func (c Config) rateLimitBurst() int {
 // backendFetcher is the narrow interface required by execFetch.
 // Satisfied by db.Backend; declared separately so tests can inject a stub.
 type backendFetcher interface {
-	// GetMemoryByID retrieves a memory by its ID without project filtering.
-	// This is intentional: memory IDs are globally unique UUIDs, and fetch
-	// must work regardless of which project the caller's pool is scoped to.
-	// Using the project-filtered GetMemory here was the root cause of #634,
-	// where memory_recall (project="global") returned handles that
-	// memory_fetch (project="default") could not resolve.
-	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByIDInProject retrieves a memory by ID scoped to the caller's
+	// declared project. The unscoped GetMemoryByID remains available on
+	// db.Backend for internal cross-project reads such as EnrichWithConflicts.
+	GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error)
 	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
 }
 

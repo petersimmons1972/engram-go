@@ -185,6 +185,10 @@ func (s *stubBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory,
 	return nil, nil
 }
 
+func (s *stubBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
