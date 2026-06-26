@@ -1,0 +1,40 @@
+{
+  "slices": [
+    {
+      "name": "lme-s-pref30",
+      "file": "lme-s-pref30.json",
+      "question_type": "single-session-preference",
+      "n": 30,
+      "source": "longmemeval_s.json",
+      "seed": null,
+      "note": "All 30 ss-pref items; no sampling needed"
+    },
+    {
+      "name": "lme-s-user30",
+      "file": "lme-s-user30.json",
+      "question_type": "single-session-user",
+      "n": 30,
+      "source": "longmemeval_s.json",
+      "seed": 42,
+      "note": "30 of 70 ss-user items; random.seed(42)"
+    },
+    {
+      "name": "lme-s-multi30",
+      "file": "lme-s-multi30.json",
+      "question_type": "multi-session",
+      "n": 30,
+      "source": "longmemeval_s.json",
+      "seed": 42,
+      "note": "30 of 133 multi-session items"
+    },
+    {
+      "name": "lme-s-temporal30",
+      "file": "lme-s-temporal30.json",
+      "question_type": "temporal-reasoning",
+      "n": 30,
+      "source": "longmemeval_s.json",
+      "seed": 42,
+      "note": "30 of 133 temporal-reasoning items"
+    }
+  ]
+}

@@ -30,6 +30,8 @@ cov.out
 .claude/
 testdata/longmemeval/*.json
 results/
+# Track the benchmark registry but ignore raw run artifacts
+!results/benchmark-registry.jsonl
 .serena/
 .mcp.json
 
