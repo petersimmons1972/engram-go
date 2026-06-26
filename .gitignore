@@ -29,6 +29,9 @@ cov.out
 *.pre-migration-backup
 .claude/
 testdata/longmemeval/*.json
+# Track benchmark slices and manifest (exclude raw session data matched by pattern above)
+!testdata/longmemeval/lme-s-*.json
+!testdata/longmemeval/MANIFEST.json
 results/
 # Track the benchmark registry but ignore raw run artifacts
 !results/benchmark-registry.jsonl
