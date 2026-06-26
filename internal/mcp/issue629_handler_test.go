@@ -88,7 +88,7 @@ func TestIssue629_EpisodeHandlersAndAdminHandlers(t *testing.T) {
 
 	res, err = handleMemoryProjects(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj"}}})
 	require.NoError(t, err)
-	require.Equal(t, float64(2), decodeToolResult(t, res)["count"])
+	require.Equal(t, float64(1), decodeToolResult(t, res)["count"])
 
 	res, err = handleMemoryStatus(context.Background(), pool, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{Arguments: map[string]any{"project": "proj"}}})
 	require.NoError(t, err)

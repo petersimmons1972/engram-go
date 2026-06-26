@@ -18,7 +18,10 @@ type fakeFetcher struct {
 	chunkErr error
 }
 
-func (f *fakeFetcher) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
+func (f *fakeFetcher) GetMemoryByIDInProject(_ context.Context, _ string, project string) (*types.Memory, error) {
+	if f.mem != nil && f.mem.Project != "" && f.mem.Project != project {
+		return nil, nil
+	}
 	return f.mem, f.memErr
 }
 
