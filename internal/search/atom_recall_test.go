@@ -150,6 +150,76 @@ func TestFormatAtomsAsContext_NoTrailingGarbage(t *testing.T) {
 	assert.True(t, strings.HasSuffix(result, "\n"), "should end with newline")
 }
 
+// ── FormatAtomsAsContext with preference-entity fields (#1181) ────────────────
+
+// makeTestAtomWithEntity builds an atom with Polarity/Entity/Domain set.
+func makeTestAtomWithEntity(id, polarity, entity, domain, statement string) atom.Atom {
+	return atom.Atom{
+		ID:        id,
+		Type:      atom.TypePreference,
+		Subject:   "the user",
+		Predicate: "prefers",
+		Value:     entity,
+		Statement: statement,
+		Scope:     atom.ScopeGlobal,
+		Confidence: 0.9,
+		Polarity:  polarity,
+		Entity:    entity,
+		Domain:    domain,
+	}
+}
+
+// TestFormatAtomsAsContext_LikeEntityRendered verifies that a "like" atom with
+// an entity surfaces [LIKES: <entity>] in the formatted output.
+func TestFormatAtomsAsContext_LikeEntityRendered(t *testing.T) {
+	atoms := []atom.Atom{
+		makeTestAtomWithEntity("a1", "like", "dark chocolate", "food",
+			"The user prefers dark chocolate over milk chocolate."),
+	}
+	result := search.FormatAtomsAsContext(atoms)
+	assert.Contains(t, result, "[LIKES: dark chocolate]",
+		"like-polarity entity must appear as [LIKES: <entity>]")
+	assert.Contains(t, result, "The user prefers dark chocolate over milk chocolate.")
+}
+
+// TestFormatAtomsAsContext_DislikeEntityRendered verifies [AVOIDS: <entity>] for dislike.
+func TestFormatAtomsAsContext_DislikeEntityRendered(t *testing.T) {
+	atoms := []atom.Atom{
+		makeTestAtomWithEntity("a1", "dislike", "cilantro", "food",
+			"The user dislikes cilantro."),
+	}
+	result := search.FormatAtomsAsContext(atoms)
+	assert.Contains(t, result, "[AVOIDS: cilantro]",
+		"dislike-polarity entity must appear as [AVOIDS: <entity>]")
+	assert.Contains(t, result, "The user dislikes cilantro.")
+}
+
+// TestFormatAtomsAsContext_NoEntityFallsBack verifies the old "[type] Statement"
+// format is used when Entity is empty (back-compat).
+func TestFormatAtomsAsContext_NoEntityFallsBack(t *testing.T) {
+	atoms := []atom.Atom{
+		makeTestAtom("a1", atom.TypePreference, "The user prefers tea.", 0.9),
+	}
+	result := search.FormatAtomsAsContext(atoms)
+	assert.Contains(t, result, "[preference]",
+		"atoms without Entity must fall back to [type] format")
+	assert.NotContains(t, result, "[LIKES:", "no entity = no LIKES: tag")
+	assert.NotContains(t, result, "[AVOIDS:", "no entity = no AVOIDS: tag")
+}
+
+// TestFormatAtomsAsContext_EntityWithEmptyPolarity verifies graceful handling
+// when Entity is set but Polarity is empty (edge case: model omits polarity).
+func TestFormatAtomsAsContext_EntityWithEmptyPolarity(t *testing.T) {
+	atoms := []atom.Atom{
+		makeTestAtomWithEntity("a1", "", "oolong tea", "food", "The user likes oolong tea."),
+	}
+	result := search.FormatAtomsAsContext(atoms)
+	// Should fall back to [preference] format since polarity is empty.
+	assert.Contains(t, result, "[preference]",
+		"empty polarity must use fallback format even if entity is set")
+	assert.Contains(t, result, "The user likes oolong tea.")
+}
+
 func TestRecallPreferenceAtoms_LatestAndColdStart(t *testing.T) {
 	observedAt := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
 	backend := &stubAtomBackend{

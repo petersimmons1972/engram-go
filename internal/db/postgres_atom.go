@@ -36,16 +36,19 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 		INSERT INTO atoms (
 			id, project, atom_type, subject, predicate, value,
 			statement, scope, valid_from, valid_to, confidence,
-			provenance_memory_id, provenance_span, supersedes, observed_at, created_at
+			provenance_memory_id, provenance_span, supersedes, observed_at, created_at,
+			polarity, entity, domain
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16
+			$12, $13, $14, $15, $16,
+			$17, $18, $19
 		) ON CONFLICT (id) DO NOTHING`,
 		a.ID, a.Project, a.Type, a.Subject, a.Predicate, a.Value,
 		a.Statement, a.Scope, a.ValidFrom, a.ValidTo, a.Confidence,
 		nullableString(a.ProvenanceMemoryID), nullableString(a.ProvenanceSpan),
 		nullableString(a.Supersedes), a.ObservedAt, a.CreatedAt,
+		nullableString(a.Polarity), nullableString(a.Entity), nullableString(a.Domain),
 	)
 	return err
 }
@@ -108,7 +111,8 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 		SELECT id, project, atom_type, subject, predicate, value,
 		       statement, scope, valid_from, valid_to, observed_at, confidence,
 		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-		       COALESCE(supersedes,''), created_at
+		       COALESCE(supersedes,''), created_at,
+		       COALESCE(polarity,''), COALESCE(entity,''), COALESCE(domain,'')
 		FROM atoms`
 	if opts.LatestOnly {
 		selectClause = `
@@ -116,7 +120,8 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 		       id, project, atom_type, subject, predicate, value,
 		       statement, scope, valid_from, valid_to, observed_at, confidence,
 		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-		       COALESCE(supersedes,''), created_at
+		       COALESCE(supersedes,''), created_at,
+		       COALESCE(polarity,''), COALESCE(entity,''), COALESCE(domain,'')
 		FROM atoms`
 	}
 
@@ -245,6 +250,7 @@ func scanAtomRows(rows interface{ Close() }) ([]atom.Atom, error) {
 			&a.Statement, &a.Scope, &a.ValidFrom, &a.ValidTo, &a.ObservedAt, &a.Confidence,
 			&a.ProvenanceMemoryID, &a.ProvenanceSpan,
 			&a.Supersedes, &a.CreatedAt,
+			&a.Polarity, &a.Entity, &a.Domain,
 		); err != nil {
 			return nil, err
 		}

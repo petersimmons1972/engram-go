@@ -51,8 +51,16 @@ func RecallAtoms(ctx context.Context, backend AtomBackend, project string, opts 
 }
 
 // FormatAtomsAsContext formats a slice of atoms into a labeled string suitable
-// for injection into a generation prompt (--atom-mode). Each atom is rendered
-// as a single line: "[TYPE] Statement (confidence: N)".
+// for injection into a generation prompt (--atom-mode).
+//
+// When an atom carries a specific Entity and a Polarity, the entity name is
+// surfaced explicitly so the generator can reproduce it verbatim (FM-PG fix,
+// #1181/#1183):
+//   - like    → "[preference] Statement [LIKES: <entity>]"
+//   - dislike → "[preference] Statement [AVOIDS: <entity>]"
+//
+// Atoms without Entity/Polarity fall back to the previous format:
+//   "[TYPE] Statement"
 func FormatAtomsAsContext(atoms []atom.Atom) string {
 	if len(atoms) == 0 {
 		return ""
@@ -64,6 +72,18 @@ func FormatAtomsAsContext(atoms []atom.Atom) string {
 		b = append(b, a.Type...)
 		b = append(b, "] "...)
 		b = append(b, a.Statement...)
+		if a.Entity != "" && a.Polarity != "" {
+			switch a.Polarity {
+			case "like":
+				b = append(b, " [LIKES: "...)
+				b = append(b, a.Entity...)
+				b = append(b, ']')
+			case "dislike":
+				b = append(b, " [AVOIDS: "...)
+				b = append(b, a.Entity...)
+				b = append(b, ']')
+			}
+		}
 		b = append(b, '\n')
 	}
 	return string(b)

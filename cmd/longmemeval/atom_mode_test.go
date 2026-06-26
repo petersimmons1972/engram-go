@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -137,5 +138,111 @@ func assertTHelper(t *testing.T, ok bool, msg string) {
 	t.Helper()
 	if !ok {
 		t.Error(msg)
+	}
+}
+
+// ── atom-cache JSON round-trip (#1181) ────────────────────────────────────────
+
+// TestAtomCache_RoundTrip_PreferenceEntityFields verifies that Polarity/Entity/Domain
+// survive a write→read cycle through the --atom-cache-dir JSON files used by
+// atom-build and atom-mode. The eval path reads atoms from cache without touching
+// the DB, so the fields MUST round-trip correctly.
+func TestAtomCache_RoundTrip_PreferenceEntityFields(t *testing.T) {
+	dir := t.TempDir()
+
+	original := []atom.Atom{
+		{
+			ID:        "a1",
+			Type:      atom.TypePreference,
+			Subject:   "the user",
+			Predicate: "prefers",
+			Value:     "dark chocolate",
+			Statement: "The user prefers dark chocolate over milk chocolate.",
+			Scope:     atom.ScopeGlobal,
+			Confidence: 0.9,
+			Polarity:  "like",
+			Entity:    "dark chocolate",
+			Domain:    "food",
+		},
+		{
+			ID:        "a2",
+			Type:      atom.TypePreference,
+			Subject:   "the user",
+			Predicate: "dislikes",
+			Value:     "cilantro",
+			Statement: "The user dislikes cilantro.",
+			Scope:     atom.ScopeGlobal,
+			Confidence: 0.88,
+			Polarity:  "dislike",
+			Entity:    "cilantro",
+			Domain:    "food",
+		},
+		{
+			// Legacy atom without entity fields — must still round-trip cleanly.
+			ID:        "a3",
+			Type:      atom.TypePreference,
+			Subject:   "the user",
+			Predicate: "prefers",
+			Value:     "tea",
+			Statement: "The user prefers tea.",
+			Scope:     atom.ScopeGlobal,
+			Confidence: 0.85,
+		},
+	}
+
+	// Write via writeAtomCacheFile (same function used by atom-build).
+	if err := writeAtomCacheFile(dir, "test-project", original); err != nil {
+		t.Fatalf("writeAtomCacheFile: %v", err)
+	}
+
+	// Verify the file was created.
+	cachePath := filepath.Join(dir, "test-project.json")
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("cache file not created: %v", err)
+	}
+
+	// Read back via readAtomCache (same function used by atom-mode fallback).
+	got, err := readAtomCache(dir, "test-project", atom.TypePreference, 0)
+	if err != nil {
+		t.Fatalf("readAtomCache: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 atoms, got %d", len(got))
+	}
+
+	// Verify like-polarity atom round-trips.
+	if got[0].Polarity != "like" {
+		t.Errorf("atom[0].Polarity: want %q, got %q", "like", got[0].Polarity)
+	}
+	if got[0].Entity != "dark chocolate" {
+		t.Errorf("atom[0].Entity: want %q, got %q", "dark chocolate", got[0].Entity)
+	}
+	if got[0].Domain != "food" {
+		t.Errorf("atom[0].Domain: want %q, got %q", "food", got[0].Domain)
+	}
+
+	// Verify dislike-polarity atom round-trips.
+	if got[1].Polarity != "dislike" {
+		t.Errorf("atom[1].Polarity: want %q, got %q", "dislike", got[1].Polarity)
+	}
+	if got[1].Entity != "cilantro" {
+		t.Errorf("atom[1].Entity: want %q, got %q", "cilantro", got[1].Entity)
+	}
+
+	// Verify legacy atom (no entity fields) round-trips cleanly.
+	if got[2].Polarity != "" {
+		t.Errorf("atom[2].Polarity: want empty, got %q", got[2].Polarity)
+	}
+	if got[2].Entity != "" {
+		t.Errorf("atom[2].Entity: want empty, got %q", got[2].Entity)
+	}
+
+	// Verify FormatAtomsAsContext surfaces the entity names correctly.
+	formatted := search.FormatAtomsAsContext(got)
+	if !strings.Contains(formatted, "[LIKES: dark chocolate]") {
+		t.Error("formatted output must contain [LIKES: dark chocolate]")
+	}
+	if !strings.Contains(formatted, "[AVOIDS: cilantro]") {
+		t.Error("formatted output must contain [AVOIDS: cilantro]")
 	}
 }

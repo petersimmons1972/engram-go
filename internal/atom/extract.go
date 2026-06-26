@@ -66,6 +66,9 @@ Return ONLY a JSON array of atom objects — no prose, no markdown fences — in
     "statement": "<canonical NL sentence, e.g. 'Alice prefers dark chocolate over milk chocolate.'>",
     "scope":     "<global | session:<id> | entity:<id>>",
     "confidence": <0.0–1.0>,
+    "polarity":  "<like|dislike|> — for preference atoms only; empty string for all other types",
+    "entity":    "<VERBATIM noun phrase naming the specific item from the text, e.g. 'dark chocolate', 'cilantro', 'The Godfather'; empty string for non-preference atoms or when no named entity is present>",
+    "domain":    "<broad category: food|media|activity|travel|music|book|sport|tech|other; empty string for non-preference atoms>",
     "source_span": "<optional verbatim quote or char range>"
   }
 ]
@@ -79,6 +82,9 @@ Rules:
 - statement must be a complete, standalone sentence (no pronouns requiring external context).
 - confidence should reflect how explicit the preference is (explicit "I love X" → 0.9+; hedged "maybe X" → 0.5).
 - scope: use "global" unless there is a clear session or entity anchor.
+- polarity: set to "like" for positive preferences ("I love X", "I prefer X", "my favourite is X"), "dislike" for negative ("I hate X", "I don't like X", "I avoid X"), or "" when inapplicable.
+- entity: copy the VERBATIM noun phrase from the text. NEVER invent or infer an entity name not explicitly present in the text. If no named entity is stated, use "".
+- domain: classify the entity into one of: food, media, activity, travel, music, book, sport, tech, other. Use "" for non-preference atoms.
 - If nothing can be extracted, return an empty array: [].
 - Do NOT invent atoms that are not supported by the text.`
 
@@ -91,7 +97,11 @@ type atomResponse struct {
 	Statement  string  `json:"statement"`
 	Scope      string  `json:"scope"`
 	Confidence float64 `json:"confidence"`
-	SourceSpan string  `json:"source_span"`
+	// Preference-entity fields (#1181): polarity, entity (VERBATIM), domain.
+	Polarity   string `json:"polarity"`
+	Entity     string `json:"entity"`
+	Domain     string `json:"domain"`
+	SourceSpan string `json:"source_span"`
 }
 
 // Extract calls Claude and parses the JSON result into Atom slices.
@@ -130,6 +140,9 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]At
 			Statement:      r.Statement,
 			Scope:          r.Scope,
 			Confidence:     r.Confidence,
+			Polarity:       r.Polarity,
+			Entity:         r.Entity,
+			Domain:         r.Domain,
 			ProvenanceSpan: r.SourceSpan,
 		}
 		if a.Scope == "" {

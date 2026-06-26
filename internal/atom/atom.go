@@ -53,6 +53,14 @@ type Atom struct {
 	// Confidence in [0,1] range; defaults to 1.0 when not specified.
 	Confidence float64 `json:"confidence"`
 
+	// Preference-entity fields (issue #1181) — optional, back-compat with existing atoms.
+	// Polarity is "like", "dislike", or "" when not applicable.
+	// Entity is the VERBATIM named item copied from session text (never invented/inferred).
+	// Domain is the broad category, e.g. food|media|activity|travel.
+	Polarity string `json:"polarity,omitempty"`
+	Entity   string `json:"entity,omitempty"`
+	Domain   string `json:"domain,omitempty"`
+
 	// Provenance links back to the source memory.
 	ProvenanceMemoryID string `json:"provenance_memory_id,omitempty"`
 	ProvenanceSpan     string `json:"provenance_span,omitempty"` // e.g. "chars:120-180"
