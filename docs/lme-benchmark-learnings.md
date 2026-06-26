@@ -689,3 +689,45 @@ to that hypothesis and socialized three-way:
   knowledge-update DEFERRED (n=3, multi-week representation build).
 - Who-Pays-the-Price + SpatialClaw: not applicable to the current synthesis hypothesis.
 See `docs/lme-campaign/PLAN-2026-06-21.md` for the lever + run config + acceptance.
+
+---
+
+## Session 2026-06-26 — ss-preference root cause, #1185/#1181, and methodology failure modes
+
+**Backend:** Qwen3-32B BF16 on Spark/oblivion (`max_model_len=40960`) for generation; Mistral-Small-24B on W6800 (`max_model_len=16384`) for bulk judging/extraction; Olla as router (model `inference`→Spark, `fast-inference`→W6800). Scorer = Olla `inference` (same Spark GPU).
+
+### WHAT WORKS (validated)
+
+| Finding | Evidence | Confidence |
+|---------|----------|------------|
+| **ss-pref baseline = 50.0% strict** (Qwen3-32B, native per-type topk=15, no truncation) | 15/30; fits 40960 natively (single-session-preference contexts are small) | HIGH |
+| **Every generation lever HURTS ss-pref** | topk20 43.3%, H-PG(`--preference-ground`) 40%, H-PE(`--preference-enumerate`) 30%, H-QF(`--preference-quote-first`) 30%, thinking 13.3% | HIGH |
+| **The 50% ceiling is REAL, not a scorer artifact** | Taxonomy audit of frozen outputs (independent Mistral judge): **0/60 scorer-undercounts** | HIGH |
+| **#1185 fix: `NewRestClient` base-URL normalization** | Fresh ingest now returns `status=done` (sessions=48); was 30/30 errors | HIGH |
+| **#1181 extraction populates entities** | atom-build produced 462 atoms, **313 with verbatim `entity`, 333 with `polarity`** (new schema works) | HIGH |
+| **Phase 5 ingest works post-#1185** | user/multi/temporal all ingested 30/30 | HIGH |
+
+### FAILURE MODES / METHODOLOGY LESSONS (the durable part)
+
+1. **FM-PG — ss-pref specific-detail confabulation (#1183).** The generator surfaces the correct preference *category* but invents named specifics (brands/titles/ingredients) absent from retrieved context. **Confabulation SCALES with retrieval breadth**: hallucination 13/30 at topk8 → 16/30 at topk20. This is *why* every material-adding lever hurts. **Not prompt-suppressible** (3 grounding levers all scored below baseline; anti-hallucination instructions ironically *raised* confabulation via priming). Fix is structural → #1181, NOT prompting.
+
+2. **Context overflow on big-context types (Spark 40960 wall).** single-session-user / multi-session / temporal-reasoning OVERFLOW at native per-type topk → HTTP 400 on most items (user 15/30, multi 21/30, temporal 26/30 errored). Only single-session-preference fits natively. **Any cross-type gap profile on a 40960 backend must cap context per-type.**
+
+3. **Truncation damage (`--max-block-chars` too aggressive).** Setting `--max-block-chars 2500` to force-fit made all items run (0 overflow) but **gutted accuracy**: user30 strict went 87% → **21.4%**. Chopping every block to 2500 chars cuts the answer-bearing detail. **Lesson: truncation to fit is NOT free; a suspiciously low score on an easy type implicates the truncation, not the model.**
+
+4. **Biased-subset trap.** Scoring only the items that *fit* (the overflow survivors) overstates accuracy — those are the smaller-context, easier items. The biased user/multi numbers (87%/89%) looked great but were unrepresentative. **Always report scored-total vs N; a denominator < N means silent item loss.**
+
+5. **Spark exclusive-backend-lock collisions (exit 75, EX_TEMPFAIL).** `longmemeval run` takes an exclusive lock on the backend URL. Overlapping background jobs (an orchestrator that fell through to its own run when its child was killed) starved a second run → 0/0 garbage. **Happened twice.** Lesson: **ONE Spark `run` at a time; verify-free-before-launch; an orchestrator killed mid-flight may fall through to its next stage.**
+
+6. **atom-build at-scale extraction is expensive + timeout-prone.** Full extraction = ~1500 LLM calls (30 Q × ~50 sessions). Per-call deadline is hardcoded (no flag). Spark Qwen3 timed out heavily; Mistral/W6800 faster but still 19 timeouts / only 4-of-30 projects covered. **Eval-time synchronous bulk extraction is the wrong vehicle — use the production async atom worker (now unblocked by the #1185 fix) for #1181's at-scale validation.**
+
+7. **`/quick-store` wrong-path returns a bare number (#1192).** POSTing to `/mcp/quick-store` returned a bare JSON number with a 2xx-ish status — the worst response: looks fine at HTTP, undecodable at the client (`cannot unmarshal number into struct{OK;ID;Error}`). Filed #1192 to return structured errors for wrong-path/non-object responses.
+
+8. **Misdiagnosis lesson: capture the live response before blaming a deployed service.** I initially diagnosed #1185 as a *stale Engram server* and nearly redeployed the container. The deployed `/quick-store` was actually healthy (`{ok,id}`); the bug was a one-line client URL miss (`RestClient` kept the `/mcp` suffix → POSTed to `/mcp/quick-store`). **Always capture the actual response from the exact URL the failing client uses, before attributing failure to infra or restarting anything.**
+
+9. **Watcher readiness false-positive (format mismatch).** A Phase 5 auto-runner grepped the *checkpoint JSONL* for `status=error` (the *log* format) instead of `"status":"error"` (the JSON format), so it never matched → false "unblocked" → ran against still-broken ingest → 0/0. **Lesson: gate readiness on a positive success signal (`"status":"done"`), not absence-of-a-wrong-format-error-string.**
+
+### Open methodology question
+A *fair* cross-type gap profile on Spark's 40960 requires per-type context capping that fits without gutting. `--max-block-chars 2500` was too aggressive; the committed retry is `--context-topk 8 --max-block-chars 8000` (fewer blocks, each a full session). Numbers from that run, with the config noted, are the defensible profile — distinct from the ss-pref baseline's *native* config. Cross-type comparison on a 40960 backend is inherently config-constrained; a larger-context backend removes the confound.
+
+See issues #1183 (FM-PG), #1185 (RestClient URL fix), #1192 (cleanup), #1181 (structural fix + impl map).
