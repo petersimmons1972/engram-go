@@ -141,6 +141,18 @@ type Config struct {
 	// Set via --session-ndcg-agg flag or ENGRAM_SESSION_NDCG_AGG=true env var.
 	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
 	SessionNDCGAgg bool
+	// SessionDiversityN is the LEVER-9 per-session chunk cap for recall results.
+	// When non-zero, recall results are post-processed to ensure no single session
+	// contributes more than N chunks to the returned topK. This surfaces minority-
+	// session gold chunks buried under a dominant session's higher-scoring chunks.
+	//
+	// Note: RecallWithOpts reads ENGRAM_SESSION_DIVERSITY_N directly as a fallback
+	// when this field is zero, so the env var alone is sufficient for server-wide
+	// activation without wiring through the MCP handler. This field is provided for
+	// future per-request override support.
+	//
+	// Default 0 = off (baseline-safe). (LEVER-9, issue #1121)
+	SessionDiversityN int
 
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for
 	// preference-shaped recall queries. When true, RecallWithOpts applies an
@@ -169,13 +181,10 @@ func (c Config) rateLimitBurst() int {
 // backendFetcher is the narrow interface required by execFetch.
 // Satisfied by db.Backend; declared separately so tests can inject a stub.
 type backendFetcher interface {
-	// GetMemoryByID retrieves a memory by its ID without project filtering.
-	// This is intentional: memory IDs are globally unique UUIDs, and fetch
-	// must work regardless of which project the caller's pool is scoped to.
-	// Using the project-filtered GetMemory here was the root cause of #634,
-	// where memory_recall (project="global") returned handles that
-	// memory_fetch (project="default") could not resolve.
-	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByIDInProject retrieves a memory by ID scoped to the caller's
+	// declared project. The unscoped GetMemoryByID remains available on
+	// db.Backend for internal cross-project reads such as EnrichWithConflicts.
+	GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error)
 	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
 }
 

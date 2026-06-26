@@ -3,8 +3,10 @@ package search
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/db"
 )
 
 // AtomRecallOpts controls atom-level retrieval.
@@ -21,6 +23,7 @@ type AtomRecallOpts struct {
 // cycle in tests).
 type AtomBackend interface {
 	GetActiveAtoms(ctx context.Context, project string, atomType string) ([]atom.Atom, error)
+	GetActiveAtomsFiltered(ctx context.Context, project string, opts db.AtomQueryOpts) ([]atom.Atom, error)
 }
 
 // RecallAtoms returns active atoms for the project, filtered by opts.AtomType
@@ -64,4 +67,36 @@ func FormatAtomsAsContext(atoms []atom.Atom) string {
 		b = append(b, '\n')
 	}
 	return string(b)
+}
+
+// RecallPreferenceAtoms returns the latest active preference atoms as a prompt-ready preamble.
+// Cold-start safe: when no atoms exist it returns "", nil.
+func RecallPreferenceAtoms(ctx context.Context, backend AtomBackend, project, query string, asOf *time.Time) (string, error) {
+	_ = query
+	atoms, err := backend.GetActiveAtomsFiltered(ctx, project, db.AtomQueryOpts{
+		AtomType:   atom.TypePreference,
+		AsOf:       asOf,
+		LatestOnly: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(atoms) == 0 {
+		return "", nil
+	}
+	sort.SliceStable(atoms, func(i, j int) bool {
+		switch {
+		case atoms[i].ObservedAt == nil && atoms[j].ObservedAt == nil:
+			return atoms[i].Confidence > atoms[j].Confidence
+		case atoms[i].ObservedAt == nil:
+			return false
+		case atoms[j].ObservedAt == nil:
+			return true
+		case atoms[i].ObservedAt.Equal(*atoms[j].ObservedAt):
+			return atoms[i].Confidence > atoms[j].Confidence
+		default:
+			return atoms[i].ObservedAt.After(*atoms[j].ObservedAt)
+		}
+	})
+	return FormatAtomsAsContext(atoms), nil
 }

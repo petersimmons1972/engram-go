@@ -7,10 +7,15 @@ import (
 	"strings"
 )
 
+const exhaustiveAggregationTopK = 500
+
 // preferenceStripRe strips the opening recommendation verb phrase from a question.
 // e.g. "Can you recommend a hotel for Miami?" → "a hotel for Miami?".
 var preferenceStripRe = regexp.MustCompile(
 	`(?i)^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me) `)
+
+var inferredPreferenceQuestionRe = regexp.MustCompile(
+	`(?i)(^(can you |could you |would you )?(recommend|suggest|advise|give me|tell me)\b|\bfavorite\b|\bfavourite\b|\bwhat\b.*\b(do|would)\s+i\s+(like|love|enjoy|prefer|avoid)\b|\bwhich\b.*\b(do|would)\s+i\s+(like|love|enjoy|prefer|avoid)\b)`)
 
 // PreferenceRecallQuery rewrites a preference question into a recall query
 // targeting sessions where the user expressed preferences, not sessions that
@@ -34,10 +39,16 @@ func PreferenceRecallQuery(question string) string {
 var preferenceStopWords = map[string]bool{
 	"a": true, "an": true, "the": true, "for": true, "on": true,
 	"in": true, "of": true, "to": true, "and": true, "or": true,
+	"about": true, "with": true, "at": true, "by": true, "from": true,
+	"near": true, "around": true, "into": true, "through": true,
 	"i": true, "me": true, "my": true, "you": true, "your": true,
 	"do": true, "is": true, "are": true, "some": true, "any": true,
 	"can": true, "could": true, "would": true, "should": true,
 	"what": true, "which": true, "how": true, "when": true, "where": true,
+	"recommend": true, "suggest": true, "advise": true,
+	"like": true, "likes": true, "love": true, "loves": true,
+	"enjoy": true, "enjoys": true, "prefer": true, "prefers": true,
+	"favorite": true, "favourite": true, "avoid": true, "avoids": true,
 }
 
 // ExtractSubjectAnchor (H15) builds a domain-specific recall query from the
@@ -67,20 +78,77 @@ func ExtractSubjectAnchor(question string) string {
 	return strings.Join(keep, " ")
 }
 
-// PreferenceSubjectAnchorQuery keeps the H15 domain anchor while preserving the
-// preference signal required for extracted-preference memories to be eligible.
+// PreferenceSubjectAnchorQuery returns the cleaned subject noun phrase only.
+// The primary preference recall carries the preference signal; the anchor pass
+// is intentionally lexical so BM25 can target the subject domain precisely.
 func PreferenceSubjectAnchorQuery(question string) string {
 	anchor := ExtractSubjectAnchor(question)
 	if strings.TrimSpace(anchor) == "" {
 		anchor = question
 	}
-	return "user preference " + anchor + " like dislike use avoid"
+	return anchor
 }
 
-// aggregationRe (H8) matches count-shaped questions that require
-// population-level retrieval rather than a single top-scoring session.
+// IsInferredPreferenceQuestion reports whether the raw user question is asking
+// for a recommendation or preference-oriented answer. This is used to gate the
+// opt-in dual-preference recall path so non-preference questions keep the
+// single-call baseline even when their dataset label is noisy.
+func IsInferredPreferenceQuestion(question string) bool {
+	return inferredPreferenceQuestionRe.MatchString(strings.TrimSpace(question))
+}
+
+// RunOpts carries opt-in H8/H12 switches that alter recall depth and prompt
+// construction without changing the default benchmark path.
+type RunOpts struct {
+	ExhaustiveAggregation bool
+	EnumerateFirst        bool
+}
+
+// EffectiveRecallTopK returns the topK value that should be used for the
+// question. H8 is opt-in and only affects aggregation-shaped questions.
+func (o RunOpts) EffectiveRecallTopK(question string, baseline int) int {
+	if o.ExhaustiveAggregation && IsAggregationQuestion(question) {
+		return exhaustiveAggregationTopK
+	}
+	return baseline
+}
+
+// UseFullAggregationContext reports whether the full recalled result set should
+// be swept into the generation context for this question.
+func (o RunOpts) UseFullAggregationContext(question string) bool {
+	return o.ExhaustiveAggregation && IsAggregationQuestion(question)
+}
+
+// ApplyEnumerateFirst prepends the H12 instruction to an existing prompt when
+// the flag is enabled for an aggregation-shaped question.
+func (o RunOpts) ApplyEnumerateFirst(prompt, question, questionType string) string {
+	if !o.EnumerateFirst || !IsAggregationQuestion(question) {
+		return prompt
+	}
+	if questionType == "temporal-reasoning" || questionType == "single-session-preference" {
+		return prompt
+	}
+	return prependPromptPrefix(EnumerateFirstPrefix(), prompt)
+}
+
+// aggregationRe (H8) matches exhaustive retrieval questions that need all
+// matching sessions, including list/every-time phrasing.
 var aggregationRe = regexp.MustCompile(
-	`(?i)\b(how many|how often|how much total|total number of|sum of|count of)\b`)
+	`(?i)\b(how many(?: times)?|how often|how much total|total number of|sum of|count of|list (?:all|every|everything)|every time|all occasions?)\b`)
+
+// temporalQuantityRe excludes relative-time arithmetic questions like
+// "how many days ago", which are temporal reasoning rather than aggregation.
+var temporalQuantityRe = regexp.MustCompile(
+	`(?i)\bhow many (days?|weeks?|months?|years?) (ago|before|after)\b`)
+
+// monetaryAggRe (2026-06-21) catches "how much" questions that require summing or
+// differencing values across sessions — "how much will I save", "how much did I
+// raise in total". The original aggregationRe only matched the literal "how much
+// total", so these full-coverage multi-session items (09ba9854, d851d5ba) never
+// triggered enumerate-first. A plain "how much does X cost" price lookup carries
+// none of these verbs and is intentionally NOT matched.
+var monetaryAggRe = regexp.MustCompile(
+	`(?i)\bhow much\b.*\b(save|saved|spend|spent|raised?|earn|earned|in total|altogether)\b`)
 
 // aggregationStripRe (H8) strips the counting interrogative phrase so that the
 // remaining tokens describe the object being counted.
@@ -90,7 +158,37 @@ var aggregationStripRe = regexp.MustCompile(
 // IsAggregationQuestion (H8) returns true when the question matches the
 // aggregation pattern that requires exhaustive population recall.
 func IsAggregationQuestion(question string) bool {
-	return aggregationRe.MatchString(question)
+	if temporalQuantityRe.MatchString(question) {
+		return false
+	}
+	return aggregationRe.MatchString(question) || monetaryAggRe.MatchString(question)
+}
+
+// EnumerateFirstPrefix returns the H12 instruction prepended to aggregation
+// prompts. Each step targets a distinct failure mode observed on
+// full-coverage-but-wrong multi-session aggregation items (2026-06-21 diagnostic):
+// scope/temporal filtering (a9f6b44c counted a January item for a "March"
+// question), type deduplication (c4a1ceb8 overcounted citrus types), and an
+// EXPLICIT final total (37f165cf / d851d5ba enumerated the right values but never
+// summed them).
+//
+// Per the three-way paper socialization (2026-06-21), this folds in Visual
+// Para-Thinker++ trace-reconciliation (each item carries SOURCE provenance + an
+// explicit INCLUDE/EXCLUDE decision so scope errors are visible before counting)
+// and a STRUCTURED forced recompute line (Grok's structured-output point: a literal
+// SUM=…/COUNT=… line, not prose "please verify") so the model answers only by
+// operating over the survivor list — not "from vibes". Deliberately a SINGLE
+// generation call: no second-pass critic (Paper A), no acceptance change (Paper B),
+// no judge redesign (Paper C). Abstention-on-absent-value (09ba9854) stays a
+// separate scoped lever (see PLAN-2026-06-21.md).
+func EnumerateFirstPrefix() string {
+	return strings.Join([]string{
+		"This is a counting or aggregation question. Do NOT answer from memory — build and then operate over an explicit list:",
+		"1. Enumerate every candidate item from the context, numbered. For each, note its source (the Session date or id), its value or identity, and mark it INCLUDE or EXCLUDE with a one-word reason (out-of-scope, duplicate, wrong-entity).",
+		"2. Keep only the INCLUDE items, counting each distinct item only once.",
+		"3. Recompute explicitly from the survivors on one line — e.g. SUM = 1000 + 500 + 250 + 2000 = 3750, or COUNT = 3.",
+		"4. Give that computed value as your final answer.",
+	}, "\n")
 }
 
 // ExtractAggregationAnchor (H8) strips the counting interrogative prefix and
@@ -114,6 +212,19 @@ func ExtractAggregationAnchor(question string) string {
 		return stripped
 	}
 	return strings.Join(keep, " ")
+}
+
+func prependPromptPrefix(prefix, prompt string) string {
+	prefix = strings.TrimSpace(prefix)
+	prompt = strings.TrimSpace(prompt)
+	switch {
+	case prefix == "":
+		return prompt
+	case prompt == "":
+		return prefix
+	default:
+		return prefix + "\n\n" + prompt
+	}
 }
 
 // UnionMemoryIDs (H8/H15) merges primary and secondary ID slices, preserving

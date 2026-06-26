@@ -742,3 +742,230 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 		}
 	}
 }
+
+// TestGenerationPromptForTypeEnumerate_PreferenceType_SkipsEnumerateFirst guards
+// the guard condition on line 523 of claude.go: "single-session-preference" is
+// explicitly excluded from the generic enumerate-first augmentation even when
+// enumerateFirst=true, because preference questions route to the dedicated
+// preference-enumerate path (GenerationPromptPreferenceEnumerate) which carries
+// its own enumeration instructions and the hardExclusionRule.
+//
+// This test verifies two things:
+//  (a) the enumerate-first prefix is NOT injected (guard fires correctly)
+//  (b) the HARD EXCLUSION RULE keywords ARE present (base preference prompt returned)
+func TestGenerationPromptForTypeEnumerate_PreferenceType_SkipsEnumerateFirst(t *testing.T) {
+	question := "What headphone brand does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-01-15\nUser: I love Sony WH-1000XM5. I tried Bose QC45 once and I'm done with Bose forever.",
+	}
+	// enumerateFirst=true but questionType="single-session-preference" — guard must fire.
+	prompt := longmemeval.GenerationPromptForTypeEnumerate(
+		question, "single-session-preference", "2024-06-01",
+		contextBlocks,
+		true,
+	)
+	lowerPrompt := strings.ToLower(prompt)
+
+	// (a) enumerate-first prefix must NOT be injected for preference questions.
+	enumerateFirstHints := []string{"step 1", "list each event", "then sum", "then total", "then count", "enumerate first"}
+	for _, hint := range enumerateFirstHints {
+		if strings.Contains(lowerPrompt, hint) {
+			t.Errorf("GenerationPromptForTypeEnumerate must NOT inject enumerate-first prefix for single-session-preference; found %q in prompt:\n%s", hint, prompt)
+		}
+	}
+
+	// (b) HARD EXCLUSION RULE must be present (base preference prompt was returned).
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must return base preference prompt with HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must include 'forbidden' keyword; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("GenerationPromptForTypeEnumerate with preference type must include 'override' keyword; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceEnumeratePrompt_SelectedForPreferenceType verifies that
+// GenerationPromptForTypePreferenceEnumerate selects the preference-enumerate
+// prompt when preferenceEnumerate=true AND question_type is
+// "single-session-preference". Guards H-PE flag routing.
+// Also verifies the HARD EXCLUSION RULE is present in the routed output,
+// confirming the delegation chain preserves the constraint.
+func TestPreferenceEnumeratePrompt_SelectedForPreferenceType(t *testing.T) {
+	question := "What kind of car accessories does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-02-10\nUser: I really want a Thule roof rack, a WeatherTech floor mat, and a Garmin dash cam.",
+	}
+	prompt := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-preference", "2024-06-01",
+		contextBlocks,
+		true,
+	)
+	lowerPrompt := strings.ToLower(prompt)
+
+	// The preference-enumerate prompt must contain enumeration instruction keywords.
+	enumerationHints := []string{"list", "each", "specific", "enumerate", "every"}
+	found := false
+	for _, hint := range enumerationHints {
+		if strings.Contains(lowerPrompt, hint) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("preference-enumerate prompt must contain an enumeration instruction; got:\n%s", prompt)
+	}
+
+	// The HARD EXCLUSION RULE must also be present — the wrapper routes to
+	// GenerationPromptPreferenceEnumerate which carries hardExclusionRule.
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("preference-enumerate wrapper must include HARD EXCLUSION RULE; got:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("preference-enumerate wrapper must include 'forbidden' keyword; got:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("preference-enumerate wrapper must include 'override' keyword; got:\n%s", prompt)
+	}
+}
+
+// TestPreferenceEnumeratePrompt_FallsThrough_WhenFlagOff verifies that
+// GenerationPromptForTypePreferenceEnumerate falls through to the standard
+// preference prompt when preferenceEnumerate=false.
+func TestPreferenceEnumeratePrompt_FallsThrough_WhenFlagOff(t *testing.T) {
+	question := "What hotel features does the user want?"
+	contextBlocks := []string{
+		"Session date: 2024-03-01\nUser: I want a hotel with a rooftop pool.",
+	}
+	standardPrompt := longmemeval.GenerationPromptForType(
+		question, "single-session-preference", "2024-06-01", contextBlocks,
+	)
+	enumPromptFlagOff := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-preference", "2024-06-01", contextBlocks,
+		false,
+	)
+	if standardPrompt != enumPromptFlagOff {
+		t.Errorf("preference-enumerate with flag=false must return same prompt as GenerationPromptForType; got diff")
+	}
+}
+
+// TestPreferenceEnumeratePrompt_FallsThrough_WhenNonPreferenceType verifies
+// that GenerationPromptForTypePreferenceEnumerate does NOT activate for
+// non-preference question types even when the flag is true.
+func TestPreferenceEnumeratePrompt_FallsThrough_WhenNonPreferenceType(t *testing.T) {
+	question := "What restaurant did I visit last?"
+	contextBlocks := []string{"Session date: 2024-04-01\nUser: Went to The French Laundry."}
+	standardPrompt := longmemeval.GenerationPromptForType(
+		question, "single-session-user", "2024-06-01", contextBlocks,
+	)
+	enumPromptWrongType := longmemeval.GenerationPromptForTypePreferenceEnumerate(
+		question, "single-session-user", "2024-06-01", contextBlocks,
+		true,
+	)
+	if standardPrompt != enumPromptWrongType {
+		t.Errorf("preference-enumerate with non-preference type must return same prompt as GenerationPromptForType; got diff")
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionInEnumeratePrompt verifies that the
+// preference-enumerate prompt contains the HARD EXCLUSION RULE instruction.
+// This guards that stated anti-preferences are treated as hard constraints,
+// not merely described — the fix for the 0/30 preference CORRECT score in v9.
+func TestPreferenceConstraint_HardExclusionInEnumeratePrompt(t *testing.T) {
+	question := "What laptop brand should I buy?"
+	contextBlocks := []string{
+		"Session date: 2024-05-01\nUser: I love Framework laptops. I've completely moved away from Dell — I don't want anything to do with them anymore.",
+	}
+	prompt := longmemeval.GenerationPromptPreferenceEnumerate(question, "2024-06-01", contextBlocks)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	// Must contain the exclusion instruction keywords.
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must contain HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must use the word 'forbidden' for exclusions; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("GenerationPromptPreferenceEnumerate must state that exclusions override other considerations; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionInBasePreferencePrompt verifies that
+// the base single-session-preference prompt (non-enumerate path) also carries
+// the HARD EXCLUSION RULE — so the constraint is enforced regardless of whether
+// --preference-enumerate is set.
+func TestPreferenceConstraint_HardExclusionInBasePreferencePrompt(t *testing.T) {
+	question := "What gym equipment does the user want?"
+	contextBlocks := []string{
+		"Session date: 2024-04-10\nUser: I want a Concept2 rower. I absolutely hate treadmills — never want one.",
+	}
+	prompt := longmemeval.GenerationPromptForType(question, "single-session-preference", "2024-06-01", contextBlocks)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("base preference prompt must contain HARD EXCLUSION RULE; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("base preference prompt must use the word 'forbidden' for exclusions; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("base preference prompt must state that exclusions override other considerations; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionPreservedThroughTemporalAug verifies that
+// GenerationPromptForTypeWithTemporalAug (the H-M5+H-M1 augmentation wrapper) passes
+// the HARD EXCLUSION RULE through to the output when the question type is
+// "single-session-preference". The temporal-aug flag is a no-op for preference
+// questions and the function delegates to GenerationPromptForType — this test confirms
+// that delegation chain preserves the exclusion rule rather than silently dropping it.
+func TestPreferenceConstraint_HardExclusionPreservedThroughTemporalAug(t *testing.T) {
+	question := "Which phone brand does the user prefer?"
+	contextBlocks := []string{
+		"Session date: 2024-03-15\nUser: I switched from Samsung to iPhone and I'm never going back to Android.",
+	}
+	// temporalPromptAug=true is passed but should be a no-op for preference type.
+	prompt := longmemeval.GenerationPromptForTypeWithTemporalAug(question, "single-session-preference", "2024-06-01", contextBlocks, true)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("temporal-aug wrapper must preserve HARD EXCLUSION RULE for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("temporal-aug wrapper must preserve 'forbidden' keyword for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("temporal-aug wrapper must preserve 'override' keyword for preference type; prompt:\n%s", prompt)
+	}
+}
+
+// TestPreferenceConstraint_HardExclusionPreservedThroughDateInjection verifies that
+// GenerationPromptForTypeWithDateInjection (the H16 date-injection wrapper) passes the
+// HARD EXCLUSION RULE through to the output when the question type is
+// "single-session-preference". The date-injection flag is a no-op for preference
+// questions; this test confirms the delegation chain preserves the exclusion rule.
+func TestPreferenceConstraint_HardExclusionPreservedThroughDateInjection(t *testing.T) {
+	question := "What coffee brand does the user drink?"
+	contextBlocks := []string{
+		"Session date: 2024-02-20\nUser: I only drink Onyx Coffee. I tried Blue Bottle once and I won't do that again.",
+	}
+	// injectQuestionDate=true is passed but should be a no-op for preference type.
+	prompt := longmemeval.GenerationPromptForTypeWithDateInjection(question, "single-session-preference", "2024-06-01", contextBlocks, true)
+
+	lowerPrompt := strings.ToLower(prompt)
+
+	if !strings.Contains(lowerPrompt, "hard exclusion") {
+		t.Errorf("date-injection wrapper must preserve HARD EXCLUSION RULE for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "forbidden") {
+		t.Errorf("date-injection wrapper must preserve 'forbidden' keyword for preference type; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(lowerPrompt, "override") {
+		t.Errorf("date-injection wrapper must preserve 'override' keyword for preference type; prompt:\n%s", prompt)
+	}
+}

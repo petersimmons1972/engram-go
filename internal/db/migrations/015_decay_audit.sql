@@ -1,7 +1,7 @@
 -- Decay audit system: canonical query registry and retrieval snapshots.
 -- Used to monitor ranking drift over time as embedders and weights change.
 
-CREATE TABLE audit_canonical_queries (
+CREATE TABLE IF NOT EXISTS audit_canonical_queries (
     id          TEXT PRIMARY KEY,
     project     TEXT NOT NULL,
     query       TEXT NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE audit_canonical_queries (
 
 CREATE INDEX idx_audit_queries_project ON audit_canonical_queries(project);
 
-CREATE TABLE audit_snapshots (
+CREATE TABLE IF NOT EXISTS audit_snapshots (
     id               TEXT PRIMARY KEY,
     query_id         TEXT NOT NULL REFERENCES audit_canonical_queries(id),
     project          TEXT NOT NULL,

@@ -155,6 +155,35 @@ func (b *PostgresBackend) GetMemoryByID(ctx context.Context, id string) (*types.
 	return m, nil
 }
 
+// GetMemoryByIDInProject retrieves a memory by ID scoped to the given project.
+// Returns nil, nil if not found.
+func (b *PostgresBackend) GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error) {
+	row, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", id, project)
+	if err != nil {
+		return nil, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Integrity check
+	if m.ContentHash != nil {
+		expected := ContentHash(m.Content)
+		if *m.ContentHash != expected {
+			slog.Warn("INTEGRITY: content_hash mismatch",
+				"id", m.ID,
+				"stored", (*m.ContentHash)[:8],
+				"expected", expected[:8],
+			)
+		}
+	}
+	return m, nil
+}
+
 func (b *PostgresBackend) GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error) {
 	if len(ids) == 0 {
 		return nil, nil

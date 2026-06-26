@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +26,30 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 	"github.com/stretchr/testify/require"
 )
+
+type atomEnqueueBackend struct {
+	storeCapableBackend
+	mu          sync.Mutex
+	enqueuedIDs []string
+}
+
+func (b *atomEnqueueBackend) EnqueueAtomExtractionJob(_ context.Context, memoryID, _ string) error {
+	b.mu.Lock()
+	b.enqueuedIDs = append(b.enqueuedIDs, memoryID)
+	b.mu.Unlock()
+	return nil
+}
+
+func newAtomEnqueuePool(t *testing.T, back *atomEnqueueBackend) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, back, noopEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
+}
 
 // ── #762: memory_store_batch drops valid_from ─────────────────────────────────
 
@@ -237,6 +262,47 @@ func TestMemoryStoreDocument_PersistsValidFromAndEpisode(t *testing.T) {
 		"ValidFrom must equal 2024-03-20 UTC, got %s", m.ValidFrom)
 
 	require.Equal(t, episodeID, m.EpisodeID, "EpisodeID must be propagated — see issue #763")
+}
+
+func TestStoreEnqueuesAtomJobWhenEnabled(t *testing.T) {
+	t.Run("single store", func(t *testing.T) {
+		back := &atomEnqueueBackend{}
+		pool := newAtomEnqueuePool(t, back)
+
+		t.Setenv("ENGRAM_ATOM_EXTRACTION_ENABLED", "true")
+		req := mcpgo.CallToolRequest{}
+		req.Params.Arguments = map[string]any{
+			"project": "test",
+			"content": "I prefer mint tea.",
+		}
+
+		res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.False(t, res.IsError)
+		require.Len(t, back.enqueuedIDs, 1, "store must enqueue exactly one atom extraction job when enabled")
+	})
+
+	t.Run("batch store gated off by default", func(t *testing.T) {
+		back := &atomEnqueueBackend{}
+		pool := newAtomEnqueuePool(t, back)
+		_ = os.Unsetenv("ENGRAM_ATOM_EXTRACTION_ENABLED")
+
+		req := mcpgo.CallToolRequest{}
+		req.Params.Arguments = map[string]any{
+			"project": "test",
+			"memories": []any{
+				map[string]any{"content": "I prefer tea."},
+				map[string]any{"content": "I prefer coffee."},
+			},
+		}
+
+		res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.False(t, res.IsError)
+		require.Empty(t, back.enqueuedIDs, "atom extraction must stay disabled by default")
+	})
 }
 
 // ── #789: handleMemoryCorrect silently clamps importance; should validate ────────

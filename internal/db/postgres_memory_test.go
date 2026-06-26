@@ -124,3 +124,30 @@ func TestMergeMemoriesAtomic_ConcurrentSameWinner(t *testing.T) {
 	}
 	require.True(t, versionedContents[intermediate], "the winner state from the earlier merge must be versioned before the later merge")
 }
+
+func TestGetMemoryByIDInProject_SameProject(t *testing.T) {
+	proj := uniqueProject("get-mem-proj-same")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	mem := storeMemory(t, b, proj, "same-project scoped memory")
+
+	retrieved, err := b.GetMemoryByIDInProject(ctx, mem.ID, proj)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved, "GetMemoryByIDInProject must return the memory in the matching project")
+	require.Equal(t, mem.ID, retrieved.ID)
+	require.Equal(t, mem.Content, retrieved.Content)
+}
+
+func TestGetMemoryByIDInProject_CrossProjectRejected(t *testing.T) {
+	projA := uniqueProject("get-mem-proj-cross-a")
+	projB := uniqueProject("get-mem-proj-cross-b")
+	bA := newTestBackend(t, projA)
+	ctx := context.Background()
+
+	memA := storeMemory(t, bA, projA, "cross-project scoped memory")
+
+	retrieved, err := bA.GetMemoryByIDInProject(ctx, memA.ID, projB)
+	require.NoError(t, err)
+	require.Nil(t, retrieved, "GetMemoryByIDInProject must not return a memory from another project")
+}

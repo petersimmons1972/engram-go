@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // newTestMCPServer builds a minimal MCP server with stubs for the Engram tools
@@ -179,6 +180,155 @@ func TestRecall_HandleMode(t *testing.T) {
 	}
 }
 
+func TestRecallScored_HandleMode(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "h-aaa", "score": 0.8},
+					{"id": "h-bbb", "score": 0.6},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	got, err := c.RecallScored(ctx, "proj", "query", 5)
+	if err != nil {
+		t.Fatalf("RecallScored handle mode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("RecallScored handle mode len = %d, want 2", len(got))
+	}
+	if got[0].ID != "h-aaa" || got[0].Score != 0.8 {
+		t.Fatalf("RecallScored handle mode first = %+v, want id=h-aaa score=0.8", got[0])
+	}
+	if got[1].ID != "h-bbb" || got[1].Score != 0.6 {
+		t.Fatalf("RecallScored handle mode second = %+v, want id=h-bbb score=0.6", got[1])
+	}
+}
+
+func TestRecall_MemoryMapPopulated(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "mem-1", "score": 0.9, "tags": []string{"session:s42"}},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallWithOptsResult(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallWithOptsResult: %v", err)
+	}
+	if got := result.MemoryMap["mem-1"]; got != "s42" {
+		t.Fatalf("MemoryMap[mem-1] = %q, want %q", got, "s42")
+	}
+}
+
+func TestRecall_MemoryMapEmpty_NoTags(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "mem-1", "score": 0.9},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallWithOptsResult(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallWithOptsResult: %v", err)
+	}
+	if result.MemoryMap == nil {
+		t.Fatal("MemoryMap is nil, want non-nil empty map")
+	}
+	if len(result.MemoryMap) != 0 {
+		t.Fatalf("len(MemoryMap) = %d, want 0", len(result.MemoryMap))
+	}
+}
+
+func TestExtractSessionID_ExportedAccessible(t *testing.T) {
+	if got := search.ExtractSessionID([]string{"session:s99"}); got != "s99" {
+		t.Fatalf("ExtractSessionID([session:s99]) = %q, want %q", got, "s99")
+	}
+}
+
+func TestRecallResultsWithOpts_FullModeIncludesTags(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "full" {
+				t.Fatalf("mode = %#v, want full", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{
+					{
+						"memory": map[string]any{
+							"id":   "mem-111",
+							"tags": []string{"sid:s1", "source:test"},
+						},
+						"score": 0.9,
+					},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	results, err := c.RecallResultsWithOpts(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallResultsWithOpts: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Memory == nil || results[0].Memory.ID != "mem-111" {
+		t.Fatalf("memory = %+v, want mem-111", results[0].Memory)
+	}
+	if got := results[0].Memory.Tags; len(got) != 2 || got[0] != "sid:s1" {
+		t.Fatalf("tags = %v, want sid:s1 present", got)
+	}
+}
+
+
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -205,6 +355,36 @@ func TestRecall_SetsRecordEventFalse(t *testing.T) {
 
 	if _, err := c.Recall(ctx, "proj", "query", 5); err != nil {
 		t.Fatalf("Recall: %v", err)
+	}
+}
+
+func TestRecallWithOpts_SendsSessionDiversityN(t *testing.T) {
+	t.Setenv("ENGRAM_SESSION_DIVERSITY_N", "2")
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got, ok := args["session_diversity_n"].(float64); !ok || got != 2 {
+				t.Fatalf("session_diversity_n = %#v, want 2", args["session_diversity_n"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "h-aaa", "score": 0.8},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := c.RecallWithOpts(ctx, "proj", "query", 5, nil, nil, false); err != nil {
+		t.Fatalf("RecallWithOpts: %v", err)
 	}
 }
 

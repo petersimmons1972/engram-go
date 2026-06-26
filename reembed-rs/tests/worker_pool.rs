@@ -457,6 +457,98 @@ async fn graceful_shutdown_drains_inflight() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verify that the Grow branch of `next_backoff_ms` fires at the minimum interesting
+/// boundary: a single-item slice where attempted=1, failed=1.
+///
+/// This is the smallest possible failed slice — one attempt, zero written, one failure.
+/// The Grow branch requires `failed > 0`, so {attempted:1, failed:1} must produce a
+/// result strictly greater than current_backoff_ms (100). Were the boundary off-by-one
+/// (e.g. failed must be > 1 to grow), this test would catch it.
+#[test]
+fn test_next_backoff_single_failure_boundary() {
+    let outcome = app::claim::ProcessSliceResult { attempted: 1, written: 0, failed: 1 };
+    let result = app::next_backoff_ms(&outcome, 100, 50, 30_000);
+    assert!(
+        result > 100,
+        "single failure at minimum slice size must take the Grow branch: got {result}, expected > 100"
+    );
+}
+
+/// Exercise the backoff-sleep path in `run_worker`: the embed server returns HTTP 500
+/// for the first few requests, then recovers. The worker must back off (backoff_ms grows
+/// above the interval floor) and eventually complete all rows once the server recovers.
+///
+/// Uses `wiremock` priority mounts so the 500 mock is exhausted after N calls and the
+/// success mock takes over. `min_backoff_ms` is driven by `cfg.interval` (10 ms here),
+/// so the sleep delay is negligible in CI.
+#[tokio::test]
+async fn test_run_worker_backoff_sleep_path() -> anyhow::Result<()> {
+    let base_url = match std::env::var("TEST_DATABASE_URL") {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let ctx = setup_schema(&base_url).await?;
+    // Insert a small number of rows — enough that the worker makes at least one
+    // successful call after the failure responses are exhausted.
+    insert_rows(&ctx, 4).await?;
+
+    let server = MockServer::start().await;
+
+    // First 3 requests → 500; priority 1 (lower number = higher priority in wiremock).
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(3)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+
+    // All subsequent requests → 200 with a valid embedding body.
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(response_template(Duration::from_millis(2)))
+        .with_priority(5)
+        .mount(&server)
+        .await;
+
+    // Use a short interval (10 ms) so backoff sleeps are negligible but still observable.
+    let mut cfg = test_config(
+        &scoped_database_url(&base_url, &ctx.schema),
+        &server.uri(),
+        1,
+        4,
+    );
+    // interval drives min_backoff_ms inside run_worker; keep it short so the test is fast.
+    cfg.interval = Duration::from_millis(10);
+
+    let shutdown = CancellationToken::new();
+    let task = tokio::spawn(run_with_shutdown(cfg, shutdown.clone()));
+
+    // Wait up to 6 s for all 4 rows to be embedded — the server recovers after 3 failures.
+    wait_processed(&ctx, 4, Duration::from_secs(6)).await?;
+    shutdown.cancel();
+    task.await??;
+
+    // All rows must be embedded — the worker must have recovered after the 500 storm.
+    assert_eq!(count_embedded(&ctx).await?, 4, "worker must complete all rows after server recovers");
+
+    // The mock server must have received more than 4 requests: at least 3 failures + 1 success
+    // (possibly 2 if batch_size=4 covers all rows in one shot). Either way, more than 4 total
+    // requests confirms the retry loop executed.
+    let total_requests = server
+        .received_requests()
+        .await
+        .map(|r| r.len())
+        .unwrap_or(0);
+    assert!(
+        total_requests >= 4,
+        "expected at least 4 requests (3 failures + at least 1 success); got {total_requests}"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn startup_probe_gates_workers() -> anyhow::Result<()> {
     let base_url = match std::env::var("TEST_DATABASE_URL") {

@@ -318,6 +318,8 @@ All Engram configuration is via environment variables (not CLI flags — secrets
 | `ENGRAM_CLAUDE_SUMMARIZE` | `false` | Use Claude instead of Ollama for summarization |
 | `ENGRAM_CLAUDE_CONSOLIDATE` | `false` | Use Claude for near-duplicate detection in consolidation |
 | `ENGRAM_CLAUDE_RERANK` | `false` | Enable Claude re-ranking of recall results |
+| `ENGRAM_CROSS_ENCODER_RERANK` | `false` | Enable cross-encoder reranking on the top dense hits before hybrid fusion |
+| `ENGRAM_CROSS_ENCODER_URL` | *(empty)* | Full TEI-compatible `/rerank` endpoint used by the cross-encoder reranker |
 | `ENGRAM_DECAY_INTERVAL` | `8h` | How often the importance decay worker runs |
 | `ENGRAM_AUDIT_INTERVAL` | `168h` | How often the decay audit worker snapshots canonical queries |
 | `ENGRAM_WEIGHT_INTERVAL` | `168h` | How often the adaptive weight tuner checks failure-class aggregates |

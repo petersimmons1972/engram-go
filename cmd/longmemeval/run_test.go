@@ -151,6 +151,57 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestContextMetadata_HeaderFormat(t *testing.T) {
+	got := formatContextBlock("user prefers Hyatt", "s42", "2024-03-18")
+	want := "[Session: s42 | Date: 2024-03-18]\nuser prefers Hyatt"
+	if got != want {
+		t.Fatalf("formatContextBlock() = %q, want %q", got, want)
+	}
+}
+
+func TestContextMetadata_EmptySessionID(t *testing.T) {
+	got := formatContextBlock("some text", "", "2024-01-01")
+	if !strings.Contains(got, "[Date: 2024-01-01]\nsome text") {
+		t.Fatalf("formatContextBlock() missing date-only header: %q", got)
+	}
+	if strings.Contains(got, "Session:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Session field: %q", got)
+	}
+}
+
+func TestContextMetadata_EmptyDate(t *testing.T) {
+	got := formatContextBlock("some text", "s1", "")
+	if !strings.Contains(got, "[Session: s1]\nsome text") {
+		t.Fatalf("formatContextBlock() missing session-only header: %q", got)
+	}
+	if strings.Contains(got, "Date:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Date field: %q", got)
+	}
+}
+
+func TestContextMetadata_BothEmpty(t *testing.T) {
+	got := formatContextBlock("some text", "", "")
+	if got != "some text" {
+		t.Fatalf("formatContextBlock() = %q, want raw chunk text", got)
+	}
+}
+
+func TestContextMetadata_MultipleResults(t *testing.T) {
+	got := formatContextBlocks([]contextBlock{
+		{SessionID: "s1", Date: "2024-01-01", Content: "first chunk"},
+		{SessionID: "s2", Date: "2024-02-02", Content: "second chunk"},
+		{SessionID: "s3", Date: "2024-03-03", Content: "third chunk"},
+	})
+	want := []string{
+		"[Session: s1 | Date: 2024-01-01]\nfirst chunk",
+		"[Session: s2 | Date: 2024-02-02]\nsecond chunk",
+		"[Session: s3 | Date: 2024-03-03]\nthird chunk",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("formatContextBlocks() = %#v, want %#v", got, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // R2-B1: runRun must return ExitCodeLockContention (75), not 2, on lock
 // contention. We test this via (a) a source-level structural guard that the
@@ -319,6 +370,16 @@ func TestQueryParaphrasePassesFlag_DefaultThree(t *testing.T) {
 	// Phase 0 (P0): default changed 0→3. The flag registration must use default 3.
 	if !strings.Contains(string(src), `"query-paraphrase-passes", 3`) {
 		t.Error("main.go: --query-paraphrase-passes P0 default must be 3; update the flag registration or this test")
+	}
+}
+
+func TestDualPreferenceRecallFlag_DefaultOff(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(src), `"dual-preference-recall", false`) {
+		t.Error("main.go: --dual-preference-recall must be opt-in (default false)")
 	}
 }
 
@@ -757,13 +818,13 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	since := time.Date(2023, 5, 8, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2023, 5, 11, 0, 0, 0, 0, time.UTC)
 	var calls []string
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		if callSince != nil || callBefore != nil {
 			calls = append(calls, "filtered")
-			return []string{"dated-a", "dated-b"}, nil
+			return longmemeval.RecallResult{IDs: []string{"dated-a", "dated-b"}}, nil
 		}
 		calls = append(calls, "unfiltered")
-		return []string{"undated-answer", "dated-a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"undated-answer", "dated-a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("recent concert", 10, &since, &before, recall)
@@ -773,7 +834,7 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	if got, want := strings.Join(calls, ","), "filtered,unfiltered"; got != want {
 		t.Fatalf("calls = %s, want %s", got, want)
 	}
-	if got, want := strings.Join(retrieved, ","), "dated-a,dated-b,undated-answer"; got != want {
+	if got, want := strings.Join(retrieved.IDs, ","), "dated-a,dated-b,undated-answer"; got != want {
 		t.Fatalf("retrieved = %s, want %s", got, want)
 	}
 	if got, want := strings.Join(secondary, ","), "undated-answer,dated-a"; got != want {
@@ -783,12 +844,12 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 
 func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T) {
 	var calls int
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		calls++
 		if callSince != nil || callBefore != nil {
 			t.Fatal("non-temporal recall should not pass date bounds")
 		}
-		return []string{"a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("plain query", 10, nil, nil, recall)
@@ -798,7 +859,7 @@ func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
-	if got := strings.Join(retrieved, ","); got != "a" {
+	if got := strings.Join(retrieved.IDs, ","); got != "a" {
 		t.Fatalf("retrieved = %s, want a", got)
 	}
 	if len(secondary) != 0 {
