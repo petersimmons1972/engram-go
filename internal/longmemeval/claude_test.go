@@ -475,6 +475,43 @@ func TestGenerationPrompt_PreferenceType_DescribesPreference(t *testing.T) {
 	}
 }
 
+func TestGenerationPrompt_PreferenceGround_RequiresGroundedSpecifics(t *testing.T) {
+	prompt := longmemeval.GenerationPromptForTypePreferenceGround(
+		"Can you recommend some resources where I can learn more about video editing?",
+		"single-session-preference",
+		"2024-03-15",
+		[]string{"Session date: 2024-03-10\nUser asked about advanced Adobe Premiere Pro color grading settings."},
+		true,
+	)
+	lower := strings.ToLower(prompt)
+	for _, want := range []string{
+		"do not add any specific",
+		"not explicitly present",
+		"prefer a short grounded answer",
+		"adobe premiere pro",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("grounded preference prompt must contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestGenerationPrompt_PreferenceGround_DefaultsToStandardPreferencePrompt(t *testing.T) {
+	question := "What kind of restaurant would I like?"
+	context := []string{"Session date: 2024-03-10\nUser said they like quiet ramen spots."}
+	got := longmemeval.GenerationPromptForTypePreferenceGround(
+		question,
+		"single-session-preference",
+		"2024-03-15",
+		context,
+		false,
+	)
+	want := longmemeval.GenerationPromptForType(question, "single-session-preference", "2024-03-15", context)
+	if got != want {
+		t.Errorf("grounding flag off should preserve standard preference prompt\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
 func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
 	// Non-preference types must still use the original generic prompt.
 	prompt := longmemeval.GenerationPromptForType(

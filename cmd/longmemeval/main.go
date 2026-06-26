@@ -90,6 +90,9 @@ type Config struct {
 
 	// H-PE: preference-enumerate generation prompt
 	PreferenceEnumerate bool // inject exhaustive named-item enumeration instruction for single-session-preference questions (default off)
+
+	// H-PG: grounded preference generation for ss-preference.
+	PreferenceGround bool // forbid unsupported specific additions in preference answers (default off)
 	// Retrieval-fusion flags for issue #938.
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
@@ -270,6 +273,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.EnumerateFirst, "enumerate-first", false, "H12: inject enumerate-then-total generation instruction for aggregation questions (default off)")
 	// H-PE: preference-enumerate generation prompt
 	fs.BoolVar(&cfg.PreferenceEnumerate, "preference-enumerate", false, "H-PE: inject exhaustive named-item enumeration instruction for single-session-preference questions; lists every specific item/brand/attribute from context rather than abstractly summarising (default off)")
+	// H-PG: grounded preference generation (issue #1183)
+	fs.BoolVar(&cfg.PreferenceGround, "preference-ground", false, "H-PG: for single-session-preference answers, forbid specific brands/titles/cuisines/ingredients/genres unless they appear explicitly in retrieved context; prefer a short grounded answer over padded specifics (default off)")
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")

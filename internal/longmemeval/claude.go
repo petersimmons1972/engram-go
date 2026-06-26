@@ -534,6 +534,37 @@ func GenerationPromptForTypeWithDateInjection(question, questionType, questionDa
 	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 }
 
+// GenerationPromptForTypePreferenceGround (H-PG, issue #1183) is like
+// GenerationPromptForType but, when preferenceGround is true for
+// single-session-preference questions, it injects a grounding rule that forbids
+// specific named items absent from the retrieved context. The intent is to
+// suppress ss-preference confabulation by preferring a short grounded answer
+// over padded near-miss specifics.
+func GenerationPromptForTypePreferenceGround(question, questionType, questionDate string, contextBlocks []string, preferenceGround bool) string {
+	if !preferenceGround || questionType != "single-session-preference" {
+		return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+	}
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer...".
+
+GROUNDING RULE:
+- Use only preferences and specific named items that are explicitly present in the retrieved context above.
+- Do not add any specific brand, title, cuisine, ingredient, genre, package, service, or other named item that is not explicitly present in the context.
+- If the context supports only a general preference category, answer at that general level rather than inventing examples.
+- Mention what the user would NOT prefer only if the context explicitly supports it.
+- Prefer a short grounded answer over a padded one.`, questionDate, ctx, questionDate, question)
+}
+
+
 // GenerationPromptForTypeEnumerate (H12) is like GenerationPromptForType but
 // prepends an enumerate-first instruction when enumerateFirst is true and the
 // question matches the aggregation heuristic. For non-aggregation questions the
