@@ -739,7 +739,7 @@ type RestClient struct {
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
 func NewRestClient(baseURL, token string) *RestClient {
 	return &RestClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseServerURL(baseURL),
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
