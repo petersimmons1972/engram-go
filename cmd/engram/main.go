@@ -16,12 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/config"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/embedgateway"
+	"github.com/petersimmons1972/engram/internal/embedmodel"
 	"github.com/petersimmons1972/engram/internal/entity"
 	"github.com/petersimmons1972/engram/internal/ingestqueue"
 	internalmcp "github.com/petersimmons1972/engram/internal/mcp"
@@ -35,6 +37,19 @@ import (
 
 // Version is injected at build time via -ldflags "-X main.Version=$(git describe --tags --always)".
 var Version = "dev"
+
+var newLiteLLMEmbedClient = func(baseURL, model, apiKey string, targetDims int, cbCfg embed.CircuitConfig) embed.Client {
+	return embed.NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey, targetDims, cbCfg)
+}
+
+func reembedModelFromEnv() string {
+	return envOr("ENGRAM_REEMBED_MODEL", embedmodel.ReembedAlias)
+}
+
+func newEmbedClients(embedURL, liveModel, reembedModel, apiKey string, targetDims int, cbCfg embed.CircuitConfig) (embed.Client, embed.Client) {
+	return newLiteLLMEmbedClient(embedURL, liveModel, apiKey, targetDims, cbCfg),
+		newLiteLLMEmbedClient(embedURL, reembedModel, apiKey, targetDims, cbCfg)
+}
 
 func main() {
 	// Subcommand dispatch for the hook daemon and its shim client (#396).
@@ -96,34 +111,7 @@ func main() {
 
 // runServer starts the MCP server with server-specific flags.
 func runServer(args []string) error {
-	// Configure structured JSON logging when running in a container or when
-	// ENGRAM_LOG_FORMAT=json. Auto-detects container by checking TERM absence.
-	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
-	logLevel := slog.LevelInfo
-	logLevelVar := &slog.LevelVar{}
-	logLevelVar.Set(logLevel)
-	logLevelErr := error(nil)
-	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
-		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
-			// Invalid level — keep INFO, but remember to log the issue after handler is set.
-			logLevelErr = err
-		}
-	}
-	logLevelVar.Set(logLevel)
-	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			AddSource: true,
-			Level:     logLevelVar,
-		})))
-	} else if logLevel != slog.LevelInfo {
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: logLevelVar,
-		})))
-	}
-	// Log warning about invalid log level after handler is initialized
-	if logLevelErr != nil {
-		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
-	}
+	logLevelVar := setupLogging()
 
 	// Keep server help explicit for wrapper-subcommand calls (`engram server --help`).
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
@@ -140,6 +128,7 @@ func runServer(args []string) error {
 	// embed backend is different from the generation backend (e.g. direct llama.cpp).
 	embedURL := envOr("ENGRAM_EMBED_URL", routerURLFromEnv("http://litellm:4000", slog.Default()))
 	embedModel := fs.String("model", envOr("ENGRAM_EMBED_MODEL", envOr("ENGRAM_OLLAMA_MODEL", "")), "Embedding model (required; set ENGRAM_EMBED_MODEL or --model)")
+	reembedModel := reembedModelFromEnv()
 	embedDims := fs.Int("embed-dims", envInt("ENGRAM_EMBED_DIMENSIONS", 0), "MRL truncation target for embedding model (0 = native output)")
 	summarizeModel := fs.String("summarize-model", envOr("ENGRAM_SUMMARIZE_MODEL", "llama3.2"), "Summarization model")
 	summarizeEnabled := fs.Bool("summarize", envBool("ENGRAM_SUMMARIZE_ENABLED", true), "Enable background summarization")
@@ -195,6 +184,7 @@ func runServer(args []string) error {
 
 	// LEVER-8: session-DCG aggregation re-ranking.
 	sessionNDCGAgg := fs.Bool("session-ndcg-agg", envBool("ENGRAM_SESSION_NDCG_AGG", false), "LEVER-8: group recall results by sid: tag and re-rank sessions by DCG of chunk cosines (default false; targets multi-session and temporal question types)")
+	sessionDiversityN := fs.Int("session-diversity-n", envInt("ENGRAM_SESSION_DIVERSITY_N", 0), "LEVER-9: cap per-session chunk contribution to N in recall results (0 = off; targets multi-session flooding; RecallWithOpts also reads this env var directly)")
 
 	healthcheckFlag := fs.Bool("healthcheck", false, "probe /health and exit 0 (healthy) or 1 (unhealthy) — for use as Docker HEALTHCHECK CMD")
 
@@ -232,23 +222,7 @@ func runServer(args []string) error {
 	// /health endpoint and exit with the appropriate code. See issue #341.
 	// Must use *port flag (parsed above), not envInt("ENGRAM_PORT") — fixes #544.
 	if *healthcheckFlag {
-		hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		apiKeyForProbe := apiKey
-		// Read API key before it gets unset; only add auth header if key was set
-		req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", *port), nil)
-		if err != nil {
-			os.Exit(1)
-		}
-		if apiKeyForProbe != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKeyForProbe)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			os.Exit(1)
-		}
-		_ = resp.Body.Close()
-		os.Exit(0)
+		runHealthcheckProbe(*port, apiKey)
 	}
 
 	if *databaseURL == "" {
@@ -294,12 +268,9 @@ func runServer(args []string) error {
 	//
 	// We still parse + reject the URL if it isn't a valid http(s) URL — that's not SSRF, that's
 	// basic config sanity.
-	parsedRouterURL, err := url.ParseRequestURI(*routerURL)
-	if err != nil || (parsedRouterURL.Scheme != "http" && parsedRouterURL.Scheme != "https") {
-		return fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", *routerURL)
-	}
-	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
-		return fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
+	parsedRouterURL, err := validateEmbedURLs(*routerURL, embedURL)
+	if err != nil {
+		return err
 	}
 	safeRouterURL := *parsedRouterURL
 	safeRouterURL.User = nil
@@ -319,7 +290,7 @@ func runServer(args []string) error {
 		BackoffMultiplier: *embedCircuitBackoffMultiplier,
 		BackoffCap:        *embedCircuitBackoffCap,
 	}
-	embedClient := embed.Client(embed.NewLiteLLMClientNoProbeWithCircuitBreaker(embedURL, *embedModel, litellmAPIKey, *embedDims, cbCfg))
+	embedClient, reembedClient := newEmbedClients(embedURL, *embedModel, reembedModel, litellmAPIKey, *embedDims, cbCfg)
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	probeVec, probeModelID, probeErr := embedClient.EmbedWithModel(probeCtx, "startup probe")
 	probeCancel()
@@ -349,20 +320,7 @@ func runServer(args []string) error {
 	// The interval is set to the circuit OpenDuration so at most one tick
 	// fires per backoff window — we do not probe faster than the breaker
 	// is configured to allow demand-driven probes.
-	if liteLLMClient, ok := embedClient.(*embed.LiteLLMClient); ok {
-		liteLLMClient.StartBackgroundProbe(ctx, *embedCircuitOpenDuration)
-		slog.Info("embed circuit breaker background probe started",
-			"interval", *embedCircuitOpenDuration)
-	} else {
-		// If the embed client is ever wrapped or swapped, the background probe
-		// silently would not start and circuit-breaker recovery would again
-		// depend entirely on demand traffic — the exact 18-hour stuck-open
-		// failure #1000 fixes. Log loudly so this regression is never silent.
-		slog.Warn("embed circuit breaker background probe NOT started: "+
-			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
-			"circuit will depend on demand-path traffic only (#1000)",
-			"embed_client_type", fmt.Sprintf("%T", embedClient))
-	}
+	startEmbedBackgroundProbe(ctx, embedClient, *embedCircuitOpenDuration)
 
 	dsn := *databaseURL
 	routerURLVal := *routerURL
@@ -414,7 +372,7 @@ func runServer(args []string) error {
 			return fmt.Errorf("embed gateway pool: %w", err)
 		}
 		defer gatewayPool.Close()
-		modelEmbedder, ok := embedClient.(embedgateway.Embedder)
+		modelEmbedder, ok := reembedClient.(embedgateway.Embedder)
 		if !ok {
 			return fmt.Errorf("embed gateway requires an embedder that reports response model IDs")
 		}
@@ -431,7 +389,7 @@ func runServer(args []string) error {
 		reembedInterval := envDuration("ENGRAM_REEMBED_INTERVAL", 10*time.Second)
 		// ENGRAM_REEMBED_BATCH_SIZE=0 disables the GlobalReembedder in this process.
 		// Use this when a dedicated engram-reembed container owns all embedding work.
-		globalReembedder = reembed.NewGlobalReembedder(pgxPool, embedClient, reembedBatchSize, reembedInterval)
+		globalReembedder = reembed.NewGlobalReembedder(pgxPool, reembedClient, reembedBatchSize, reembedInterval)
 		if reembedBatchSize > 0 {
 			globalReembedder.Start(ctx)
 			slog.Info("global reembedder started", "batch_size", reembedBatchSize, "interval", reembedInterval)
@@ -454,6 +412,7 @@ func runServer(args []string) error {
 			return nil, fmt.Errorf("postgres backend for project %q: %w", project, err)
 		}
 		engine := search.New(serverCtx, backend, embedClient, project, routerURLVal, sumModel, sumEnabled, claudeCompleter, *decayInterval, *embedDims)
+		engine.SetReembedEmbedder(reembedClient)
 		engine.SetEmbedRecallTimeout(*embedRecallTimeoutMS)
 		if embedGateway != nil {
 			engine.SetEmbedGateway(embedGateway)
@@ -529,6 +488,7 @@ func runServer(args []string) error {
 		EmbedRatePerSecond:     *embedRatePerSecond,
 		LogLevelVar:            logLevelVar,
 		SessionNDCGAgg:         *sessionNDCGAgg,
+		SessionDiversityN:      *sessionDiversityN,
 	}
 	// Default EpisodeTTL to 24 h; set ENGRAM_EPISODE_TTL=0 to disable the sweeper.
 	if cfg.EpisodeTTL == 0 {
@@ -622,6 +582,26 @@ func runServer(args []string) error {
 				slog.Debug("entity extraction worker shutdown complete", "project", proj)
 			}()
 			slog.Info("entity extraction worker started", "project", proj)
+		}
+	}
+
+	if cc != nil && envBool("ENGRAM_ATOM_EXTRACTION_ENABLED", false) {
+		atomBackend, err := db.NewPostgresBackendWithPool(ctx, "_atoms", pgxPool)
+		if err != nil {
+			slog.Warn("atom worker: could not open backend", "err", err)
+		} else {
+			adapter := &atomDBAdapter{backend: atomBackend}
+			extractor := atom.NewClaudeExtractor(cc)
+			w := atom.NewWorker(adapter, extractor, atom.WorkerConfig{
+				Projects: []string{""},
+			})
+			workersWg.Add(1)
+			go func() {
+				defer workersWg.Done()
+				w.Run(ctx)
+				slog.Debug("atom extraction worker shutdown complete")
+			}()
+			slog.Info("atom extraction worker started", "scope", "all-projects")
 		}
 	}
 
@@ -879,6 +859,34 @@ func (a *entityDBAdapter) UpsertEntity(ctx context.Context, e *entity.Entity) (s
 	return a.backend.UpsertEntity(ctx, e)
 }
 
+type atomDBAdapter struct {
+	backend *db.PostgresBackend
+}
+
+func (a *atomDBAdapter) ClaimAtomExtractionJobs(ctx context.Context, project string, limit int) ([]atom.ExtractionJob, error) {
+	return a.backend.ClaimAtomExtractionJobs(ctx, project, limit)
+}
+
+func (a *atomDBAdapter) CompleteAtomExtractionJob(ctx context.Context, jobID string, err error) error {
+	return a.backend.CompleteAtomExtractionJob(ctx, jobID, err)
+}
+
+func (a *atomDBAdapter) GetMemory(ctx context.Context, id string) (*types.Memory, error) {
+	return a.backend.GetMemory(ctx, id)
+}
+
+func (a *atomDBAdapter) GetActiveAtoms(ctx context.Context, project string, atomType string) ([]atom.Atom, error) {
+	return a.backend.GetActiveAtoms(ctx, project, atomType)
+}
+
+func (a *atomDBAdapter) InsertAtom(ctx context.Context, at *atom.Atom) error {
+	return a.backend.InsertAtom(ctx, at)
+}
+
+func (a *atomDBAdapter) RetireAtom(ctx context.Context, atomID string, validTo time.Time) error {
+	return a.backend.RetireAtom(ctx, atomID, validTo)
+}
+
 // auditRecallerAdapter adapts the engine pool to the audit.Recaller interface.
 type auditRecallerAdapter struct {
 	pool *internalmcp.EnginePool
@@ -915,4 +923,95 @@ func (a *auditRecallerAdapter) Recall(ctx context.Context, project, query string
 		ids[i] = r.Memory.ID
 	}
 	return ids, nil
+}
+
+// setupLogging configures the default slog handler from ENGRAM_LOG_FORMAT and
+// ENGRAM_LOG_LEVEL, returning the LevelVar so the level can be adjusted at
+// runtime (e.g. via the SIGHUP config reload).
+func setupLogging() *slog.LevelVar {
+	logFormat := os.Getenv("ENGRAM_LOG_FORMAT")
+	logLevel := slog.LevelInfo
+	logLevelVar := &slog.LevelVar{}
+	logLevelVar.Set(logLevel)
+	logLevelErr := error(nil)
+	if lvl := os.Getenv("ENGRAM_LOG_LEVEL"); lvl != "" {
+		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
+			// Invalid level — keep INFO, but remember to log the issue after handler is set.
+			logLevelErr = err
+		}
+	}
+	logLevelVar.Set(logLevel)
+	if logFormat == "json" || (logFormat == "" && os.Getenv("TERM") == "") {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+			Level:     logLevelVar,
+		})))
+	} else if logLevel != slog.LevelInfo {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevelVar,
+		})))
+	}
+	// Log warning about invalid log level after handler is initialized
+	if logLevelErr != nil {
+		slog.Warn("invalid ENGRAM_LOG_LEVEL value", "value", os.Getenv("ENGRAM_LOG_LEVEL"), "error", logLevelErr, "using", "INFO")
+	}
+	return logLevelVar
+}
+
+// runHealthcheckProbe implements --healthcheck: probe the local /health
+// endpoint and exit 0 (healthy) or 1 (unhealthy). For use as a distroless
+// Docker HEALTHCHECK CMD (no shell/wget in the image). See #341.
+func runHealthcheckProbe(port int, apiKey string) {
+	hcCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	apiKeyForProbe := apiKey
+	// Read API key before it gets unset; only add auth header if key was set
+	req, err := http.NewRequestWithContext(hcCtx, http.MethodGet, fmt.Sprintf("http://localhost:%d/health", port), nil)
+	if err != nil {
+		os.Exit(1)
+	}
+	if apiKeyForProbe != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKeyForProbe)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+	}
+	_ = resp.Body.Close()
+	os.Exit(0)
+}
+
+// validateEmbedURLs parses and sanity-checks the router and embed base URLs,
+// returning the parsed router URL for downstream logging. Config sanity
+// (scheme must be http/https), not SSRF protection — see the call-site note (#608).
+func validateEmbedURLs(routerURL, embedURL string) (*url.URL, error) {
+	parsedRouterURL, err := url.ParseRequestURI(routerURL)
+	if err != nil || (parsedRouterURL.Scheme != "http" && parsedRouterURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid --litellm-url %q: must be an http:// or https:// URL", routerURL)
+	}
+	if parsedEmbedURL, err := url.ParseRequestURI(embedURL); err != nil || (parsedEmbedURL.Scheme != "http" && parsedEmbedURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid ENGRAM_EMBED_URL %q: must be an http:// or https:// URL", embedURL)
+	}
+	return parsedRouterURL, nil
+}
+
+// startEmbedBackgroundProbe wires a background recovery probe so the embed
+// circuit breaker can recover from an Open state independently of query load
+// (#1000). Logs loudly if the client is not *embed.LiteLLMClient, since then
+// recovery would silently depend on demand traffic only.
+func startEmbedBackgroundProbe(ctx context.Context, embedClient embed.Client, interval time.Duration) {
+	if liteLLMClient, ok := embedClient.(*embed.LiteLLMClient); ok {
+		liteLLMClient.StartBackgroundProbe(ctx, interval)
+		slog.Info("embed circuit breaker background probe started",
+			"interval", interval)
+	} else {
+		// If the embed client is ever wrapped or swapped, the background probe
+		// silently would not start and circuit-breaker recovery would again
+		// depend entirely on demand traffic — the exact 18-hour stuck-open
+		// failure #1000 fixes. Log loudly so this regression is never silent.
+		slog.Warn("embed circuit breaker background probe NOT started: "+
+			"embed client is not *embed.LiteLLMClient — recovery from an OPEN "+
+			"circuit will depend on demand-path traffic only (#1000)",
+			"embed_client_type", fmt.Sprintf("%T", embedClient))
+	}
 }

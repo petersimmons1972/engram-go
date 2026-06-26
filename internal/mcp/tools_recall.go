@@ -109,6 +109,15 @@ func sanitizeMemoryFloatFields(m *types.Memory) {
 	}
 }
 
+func atomPreambleForResults(results []types.SearchResult) string {
+	for _, r := range results {
+		if r.AtomPreamble != "" {
+			return r.AtomPreamble
+		}
+	}
+	return ""
+}
+
 func sanitizeRecallResults(results []types.SearchResult) {
 	for i := range results {
 		results[i].Score = finiteOrZero(results[i].Score)
@@ -131,8 +140,8 @@ func sanitizeConflictingResults(conflicts []types.ConflictingResult) {
 	}
 }
 
-func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
-	m, err := f.GetMemoryByID(ctx, id)
+func execFetch(ctx context.Context, f backendFetcher, project, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
+	m, err := f.GetMemoryByIDInProject(ctx, id, project)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +234,7 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	result, err := execFetch(ctx, h.Engine.Backend(), id, detail, maxBytes, chunkIDs)
+	result, err := execFetch(ctx, h.Engine.Backend(), project, id, detail, maxBytes, chunkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +341,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	temporalWindowRecall := getBool(args, "temporal_window_recall", false)
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
+	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
+	if err != nil {
+		return nil, err
+	}
+	opts.AtomRecallEnabled = getBool(args, "atom_recall", false)
+	opts.AtomRecallAsOf = atomRecallAsOf
 
 	// Federated path: "projects" overrides the single-project recall.
 	projectNames, err := toStringSlice(args["projects"])
@@ -428,6 +443,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if !ok {
 			addRecallDegradedWarning(out, cfg.RouterURL, reason)
 		}
+		attachSynthesisDirective(out, query)
 		return toolResult(out)
 	}
 
@@ -442,6 +458,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
 	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
+	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN)
 	opts.TemporalWindowRecall = temporalWindowRecall
 	opts.QuestionText = questionText
 	opts.QuestionDate = questionDate
@@ -459,10 +476,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.Reranker = arReranker
 	}
 	// Cross-encoder reranker (LEVER-2): flag-gated via ENGRAM_CROSS_ENCODER_RERANK=true.
-	// When enabled, replaces any other reranker — cross-encoder is the stronger signal.
 	// ENGRAM_CROSS_ENCODER_URL must be set to the TEI /rerank endpoint.
+	// This reranks the dense/vector leg before hybrid fusion; it does not replace
+	// the final fused-result reranker.
 	if ceReranker := search.NewCrossEncoderRerankerFromEnv(); ceReranker != nil {
-		opts.Reranker = ceReranker
+		opts.DenseReranker = ceReranker
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
 	if id, ok := episodeIDFromContext(ctx); ok {
@@ -542,6 +560,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if opts.EvidenceFirstPack {
 		results = search.OrderResultsEvidenceFirst(results, query)
 	}
+	atomPreamble := atomPreambleForResults(results)
 
 	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
 	// surface a structured error instead of silently returning BM25 results.
@@ -560,6 +579,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
 		}
+		if atomPreamble != "" {
+			out["atom_preamble"] = atomPreamble
+		}
 		if embedDegraded {
 			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
 		}
@@ -571,6 +593,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
+	attachSynthesisDirective(out, query)
+	if atomPreamble != "" {
+		out["atom_preamble"] = atomPreamble
+	}
 	if eventID != "" {
 		out["event_id"] = eventID
 		out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"

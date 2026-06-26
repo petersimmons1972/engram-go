@@ -4,17 +4,21 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // stubAtomBackend satisfies search.AtomBackend for unit tests.
 type stubAtomBackend struct {
-	atoms []atom.Atom
+	atoms    []atom.Atom
+	filtered []atom.Atom
+	lastOpts db.AtomQueryOpts
 }
 
 func (s *stubAtomBackend) GetActiveAtoms(_ context.Context, _ string, atomType string) ([]atom.Atom, error) {
@@ -28,6 +32,11 @@ func (s *stubAtomBackend) GetActiveAtoms(_ context.Context, _ string, atomType s
 		}
 	}
 	return filtered, nil
+}
+
+func (s *stubAtomBackend) GetActiveAtomsFiltered(_ context.Context, _ string, opts db.AtomQueryOpts) ([]atom.Atom, error) {
+	s.lastOpts = opts
+	return s.filtered, nil
 }
 
 func makeTestAtom(id, atomType, statement string, confidence float64) atom.Atom {
@@ -139,4 +148,37 @@ func TestFormatAtomsAsContext_NoTrailingGarbage(t *testing.T) {
 	result := search.FormatAtomsAsContext(atoms)
 	// Should end cleanly (newline after last atom).
 	assert.True(t, strings.HasSuffix(result, "\n"), "should end with newline")
+}
+
+func TestRecallPreferenceAtoms_LatestAndColdStart(t *testing.T) {
+	observedAt := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	backend := &stubAtomBackend{
+		filtered: []atom.Atom{
+			{
+				ID:         "a1",
+				Type:       atom.TypePreference,
+				Subject:    "the user",
+				Predicate:  "prefers",
+				Value:      "oolong tea",
+				Statement:  "The user prefers oolong tea.",
+				Scope:      atom.ScopeGlobal,
+				Confidence: 0.93,
+				ObservedAt: &observedAt,
+			},
+		},
+	}
+
+	asOf := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+	preamble, err := search.RecallPreferenceAtoms(context.Background(), backend, "proj", "what tea do I like", &asOf)
+	require.NoError(t, err)
+	require.Contains(t, preamble, "The user prefers oolong tea.")
+	require.True(t, backend.lastOpts.LatestOnly, "RecallPreferenceAtoms must request LatestOnly")
+	require.Equal(t, atom.TypePreference, backend.lastOpts.AtomType)
+	require.NotNil(t, backend.lastOpts.AsOf)
+	require.True(t, backend.lastOpts.AsOf.Equal(asOf))
+
+	backend.filtered = nil
+	preamble, err = search.RecallPreferenceAtoms(context.Background(), backend, "proj", "what tea do I like", nil)
+	require.NoError(t, err)
+	assert.Empty(t, preamble, "cold start must return an empty preamble, not an error")
 }

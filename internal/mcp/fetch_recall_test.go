@@ -36,6 +36,13 @@ func (s *recallStubFetcher) GetMemoryByID(_ context.Context, _ string) (*types.M
 	return s.mem, s.memErr
 }
 
+func (s *recallStubFetcher) GetMemoryByIDInProject(_ context.Context, _ string, project string) (*types.Memory, error) {
+	if s.mem != nil && s.mem.Project != "" && s.mem.Project != project {
+		return nil, nil
+	}
+	return s.mem, s.memErr
+}
+
 func (s *recallStubFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error) {
 	return s.chunks, nil
 }
@@ -156,7 +163,7 @@ func newHandleFastPathPool(t *testing.T, backend *handleFastPathBackend) *Engine
 func TestExecFetch_GetMemoryError(t *testing.T) {
 	sentinel := errors.New("db exploded")
 	f := &recallStubFetcher{memErr: sentinel}
-	_, err := execFetch(context.Background(), f, "any-id", "summary", 0, nil)
+	_, err := execFetch(context.Background(), f, "default", "any-id", "summary", 0, nil)
 	require.ErrorIs(t, err, sentinel)
 }
 
@@ -169,7 +176,7 @@ func TestExecFetch_FullDetail_ZeroMaxBytes(t *testing.T) {
 		Project: "p",
 		Content: longContent,
 	}}
-	out, err := execFetch(context.Background(), f, "big-mem", "full", 0, nil)
+	out, err := execFetch(context.Background(), f, "p", "big-mem", "full", 0, nil)
 	require.NoError(t, err)
 	content, ok := out["content"].(string)
 	require.True(t, ok)
@@ -638,47 +645,6 @@ func TestHandleMemoryRecall_FullMode_Degraded_AddsWarnings(t *testing.T) {
 	warnings, ok := warningsRaw.([]any)
 	require.True(t, ok)
 	require.Contains(t, warnings, recallEmbedDegradedWarning)
-}
-
-// ── Fix B: cross-project recall→fetch (#634 primary) ─────────────────────────
-
-// crossProjectFetcher simulates a backend pool scoped to project "default"
-// serving a memory that lives in project "global". GetMemoryByID finds it
-// (no project filter); the old GetMemory call would have returned nil.
-type crossProjectFetcher struct {
-	mem    *types.Memory
-	chunks []*types.Chunk
-}
-
-func (c *crossProjectFetcher) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
-	return c.mem, nil
-}
-
-func (c *crossProjectFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*types.Chunk, error) {
-	return c.chunks, nil
-}
-
-// TestExecFetch_CrossProjectFetch_Issue634 is the regression test for the
-// primary bug in #634: memory_recall(project="global") returned handles that
-// memory_fetch(project="default") could not resolve.
-//
-// Before the fix, execFetch called f.GetMemory which filtered by the pool's
-// project; a backend scoped to "default" would return nil for a memory stored
-// under "global". After the fix, execFetch calls f.GetMemoryByID which omits
-// the project filter, so the memory is found regardless of pool scope.
-func TestExecFetch_CrossProjectFetch_Issue634(t *testing.T) {
-	mem := &types.Memory{
-		ID:      "019d8bae-eeae-7035-b2aa-0d8b764ed6c8", // UUIDv7 from the bug report
-		Project: "global",
-		Content: "Peter's writing style rules — voice and cadence",
-	}
-	// crossProjectFetcher.GetMemoryByID always returns the memory; its
-	// GetMemory counterpart (removed from the interface) would have returned nil.
-	f := &crossProjectFetcher{mem: mem}
-	out, err := execFetch(context.Background(), f, mem.ID, "full", 65536, nil)
-	require.NoError(t, err, "cross-project fetch must succeed after #634 fix")
-	require.Equal(t, mem.ID, out["id"], "returned id must match requested id")
-	require.Equal(t, mem.Content, out["content"], "full content must be present")
 }
 
 // ── Blocker 2: embed-timeout degradation path counter coverage ───────────────

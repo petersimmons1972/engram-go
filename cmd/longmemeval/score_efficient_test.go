@@ -220,3 +220,12 @@ func TestScoreErrorRetriedThenCounted(t *testing.T) {
 		t.Errorf("score_error_total = %v, want 1", scoreErrorTotal)
 	}
 }
+
+// TestScorerHTTPClientHasTimeout verifies the package-level scorerHTTPClient has
+// a non-zero transport-layer timeout so a stalled health-check endpoint cannot
+// hold the health-check goroutine open indefinitely (#1107).
+func TestScorerHTTPClientHasTimeout(t *testing.T) {
+	if scorerHTTPClient.Timeout == 0 {
+		t.Fatal("scorerHTTPClient.Timeout is zero: stalled gateway will block ollaHealthCheck forever")
+	}
+}

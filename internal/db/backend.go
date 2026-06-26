@@ -44,6 +44,9 @@ type Backend interface {
 	// Used by EnrichWithConflicts to fetch cross-project contradicting memories.
 	// Returns nil, nil if not found.
 	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByIDInProject retrieves a memory by ID scoped to the given project.
+	// Returns nil, nil if not found.
+	GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error)
 	// GetMemoriesByIDs retrieves multiple memories by ID in a single query.
 	// Only memories belonging to project are returned. Missing IDs are silently omitted.
 	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)
@@ -426,4 +429,3 @@ type MemoryCluster struct {
 	Label    string
 	Size     int
 }
-

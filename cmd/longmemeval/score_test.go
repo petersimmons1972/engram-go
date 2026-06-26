@@ -183,6 +183,46 @@ func TestWriteScoreReport_Basic(t *testing.T) {
 	}
 }
 
+func TestWriteScoreReport_IncludesStrictAndLenientAccuracy(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "accuracy-breakdown-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	report := readScoreReport(t, filepath.Join(dir, "score_report.json"))
+	overall := reportMap(t, report["overall"], "overall")
+
+	assertAccuracySummary(t, reportMap(t, overall["strict"], "overall.strict"), 1, 3, 1.0/3.0)
+	assertAccuracySummary(t, reportMap(t, overall["lenient"], "overall.lenient"), 2, 3, 2.0/3.0)
+}
+
+func TestWriteScoreReport_SingleSessionPreferenceLenientCountsPartialCredit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "ss-preference-lenient-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-preference", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-preference", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "single-session-preference", ScoreLabel: "INCORRECT", Status: "done"},
+		{QuestionID: "q4", QuestionType: "single-session-preference", ScoreLabel: "CORRECT", Status: "done"},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	report := readScoreReport(t, filepath.Join(dir, "score_report.json"))
+	byType := reportMap(t, report["by_type"], "by_type")
+	row := reportMap(t, byType["single-session-preference"], "by_type.single-session-preference")
+
+	assertAccuracySummary(t, reportMap(t, row["strict"], "by_type.single-session-preference.strict"), 1, 4, 0.25)
+	assertAccuracySummary(t, reportMap(t, row["lenient"], "by_type.single-session-preference.lenient"), 3, 4, 0.75)
+}
+
 func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
 	const fixed = "2026-06-03T10:00:00Z"
 	cfg := &Config{
@@ -254,6 +294,60 @@ func TestWriteOutputArtifactsArePrivate(t *testing.T) {
 	assertMode(t, filepath.Join(dir, "hypotheses.jsonl"), 0o600)
 	assertMode(t, filepath.Join(dir, "retrieval_log.jsonl"), 0o600)
 	assertMode(t, filepath.Join(dir, "score_report.json"), 0o600)
+}
+
+func TestScoreReport_SessionDominanceAggregation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{OutDir: dir, RunID: "session-dominance-test"}
+
+	scores := []longmemeval.ScoreEntry{
+		{QuestionID: "q1", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+		{QuestionID: "q2", QuestionType: "single-session-user", ScoreLabel: "INCORRECT", Status: "done"},
+		{QuestionID: "q3", QuestionType: "temporal-reasoning", ScoreLabel: "PARTIALLY_CORRECT", Status: "done"},
+		{QuestionID: "q4", QuestionType: "temporal-reasoning", ScoreLabel: "CORRECT", Status: "error"},
+	}
+	runMap := map[string]longmemeval.RunEntry{
+		"q1": {QuestionID: "q1", SessionDominanceRatio: 1.0, ContextSessionCount: 1},
+		"q2": {QuestionID: "q2", SessionDominanceRatio: 0.5, ContextSessionCount: 2},
+		"q3": {QuestionID: "q3", SessionDominanceRatio: 0.25, ContextSessionCount: 4},
+		"q4": {QuestionID: "q4", SessionDominanceRatio: 0.99, ContextSessionCount: 9},
+	}
+
+	writeScoreReportWithRunMap(cfg, scores, runMap)
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+
+	overall := report["overall"].(map[string]any)
+	if got, want := overall["avg_session_dominance_ratio"].(float64), (1.0+0.5+0.25)/3.0; got != want {
+		t.Fatalf("overall avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := overall["avg_context_session_count"].(float64), (1.0+2.0+4.0)/3.0; got != want {
+		t.Fatalf("overall avg_context_session_count = %v, want %v", got, want)
+	}
+
+	byType := report["by_type"].(map[string]any)
+	single := byType["single-session-user"].(map[string]any)
+	if got, want := single["avg_session_dominance_ratio"].(float64), 0.75; got != want {
+		t.Fatalf("single-session-user avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := single["avg_context_session_count"].(float64), 1.5; got != want {
+		t.Fatalf("single-session-user avg_context_session_count = %v, want %v", got, want)
+	}
+
+	temporal := byType["temporal-reasoning"].(map[string]any)
+	if got, want := temporal["avg_session_dominance_ratio"].(float64), 0.25; got != want {
+		t.Fatalf("temporal-reasoning avg_session_dominance_ratio = %v, want %v", got, want)
+	}
+	if got, want := temporal["avg_context_session_count"].(float64), 4.0; got != want {
+		t.Fatalf("temporal-reasoning avg_context_session_count = %v, want %v", got, want)
+	}
 }
 
 func TestWriteOutputArtifactsTightenExistingFiles(t *testing.T) {
@@ -394,6 +488,45 @@ func TestNormalizeLabel(t *testing.T) {
 		if got != c.want {
 			t.Errorf("normalizeLabel(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func readScoreReport(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Base(path), err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse %s: %v", filepath.Base(path), err)
+	}
+	return report
+}
+
+func reportMap(t *testing.T, v any, name string) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("%s not a map: %T (%v)", name, v, v)
+	}
+	return m
+}
+
+func assertAccuracySummary(t *testing.T, got map[string]any, wantCredited, wantTotal int, wantAccuracy float64) {
+	t.Helper()
+	if credited := int(got["credited_correct"].(float64)); credited != wantCredited {
+		t.Fatalf("credited_correct = %d, want %d", credited, wantCredited)
+	}
+	if total := int(got["total"].(float64)); total != wantTotal {
+		t.Fatalf("total = %d, want %d", total, wantTotal)
+	}
+	accuracy, ok := got["accuracy"].(float64)
+	if !ok {
+		t.Fatalf("accuracy not a number: %T (%v)", got["accuracy"], got["accuracy"])
+	}
+	if diff := accuracy - wantAccuracy; diff < -1e-9 || diff > 1e-9 {
+		t.Fatalf("accuracy = %.12f, want %.12f", accuracy, wantAccuracy)
 	}
 }
 

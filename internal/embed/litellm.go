@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -47,45 +48,112 @@ type LiteLLMClient struct {
 // without rebind protection — used by tests + the no-probe constructor's
 // short-lived calls).
 func newLiteLLMHTTPClient(baseURL string) *http.Client {
+	var configuredHost string
+	if baseURL != "" {
+		if u, err := url.Parse(baseURL); err == nil {
+			configuredHost = u.Hostname()
+		}
+	}
 	baseDialer := &net.Dialer{
 		Timeout:   500 * time.Millisecond,
 		KeepAlive: 30 * time.Second,
 	}
-	return newLiteLLMHTTPClientWithOptions(baseURL, netutil.SafeDialOptions{
-		Dialer:                     baseDialer,
-		AllowPrivateConfiguredHost: true,
-		ErrorPrefix:                "litellm URL",
-	})
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     60 * time.Second,
+			// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
+			// nil Proxy field means ProxyFromEnvironment; http.ProxyURL(nil) returns a
+			// function that always returns (nil, nil) — no proxy — which is what we want.
+			Proxy:       http.ProxyURL(nil),
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				// Skip the rebind guard when no baseURL is configured (test paths).
+				if configuredHost == "" {
+					return baseDialer.DialContext(ctx, network, addr)
+				}
+				// Re-resolve on every dial to prevent short-TTL rebinding from
+				// bypassing the startup IP check.
+				addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+				}
+				// Skip private-IP check for the operator-configured host.
+				if host != configuredHost {
+					for _, resolved := range addrs {
+						if netutil.IsPrivateIP(resolved) {
+							return nil, fmt.Errorf("litellm URL resolved to private IP %q (SSRF protection, closes #688)", resolved)
+						}
+					}
+				}
+				return baseDialer.DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
 
+// newLiteLLMValidatedHTTPClient builds a *http.Client for a user-supplied upstream
+// URL. Unlike newLiteLLMHTTPClient, this variant never allow-lists the configured
+// host — private IPs are rejected on every dial regardless of the hostname.
+// Used by NewLiteLLMClientForValidatedUpstream (Property 2, SSRF #319/#688).
 func newLiteLLMValidatedHTTPClient(baseURL string) *http.Client {
 	baseDialer := &net.Dialer{
 		Timeout:   500 * time.Millisecond,
 		KeepAlive: 30 * time.Second,
 	}
-	return newLiteLLMHTTPClientWithOptions(baseURL, netutil.SafeDialOptions{
-		Dialer:                     baseDialer,
-		AllowPrivateConfiguredHost: false,
-		ErrorPrefix:                "litellm URL",
-	})
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     60 * time.Second,
+			// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
+			Proxy: http.ProxyURL(nil),
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				// Re-resolve on every dial to prevent short-TTL DNS rebinding.
+				addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+				}
+				// Always reject private IPs — no allow-list for user-supplied URLs.
+				for _, resolved := range addrs {
+					if netutil.IsPrivateIP(resolved) {
+						return nil, fmt.Errorf("litellm validated URL resolved to private IP %q (SSRF protection, #319)", resolved)
+					}
+				}
+				return baseDialer.DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
 
-func newLiteLLMHTTPClientWithOptions(baseURL string, opts netutil.SafeDialOptions) *http.Client {
-	transport := &http.Transport{
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     60 * time.Second,
-		// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
-		// nil Proxy field means ProxyFromEnvironment; http.ProxyURL(nil) returns a
-		// function that always returns (nil, nil) — no proxy — which is what we want.
-		Proxy: http.ProxyURL(nil),
+// NewLiteLLMClientForValidatedUpstream constructs a LiteLLMClient for a
+// user-supplied upstream URL. Unlike NewLiteLLMClient (which allow-lists the
+// operator-configured host), this constructor rejects private/reserved IPs on
+// every dial regardless of the configured hostname (SSRF #319, closes #1186).
+func NewLiteLLMClientForValidatedUpstream(ctx context.Context, baseURL, model, apiKey string, targetDims int) (*LiteLLMClient, error) {
+	c := &LiteLLMClient{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		model:      model,
+		apiKey:     apiKey,
+		targetDims: targetDims,
+		http:       newLiteLLMValidatedHTTPClient(baseURL),
 	}
-	if baseURL != "" {
-		transport.DialContext = netutil.NewUpstreamDialContext(baseURL, opts)
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	vec, err := c.Embed(probeCtx, "probe")
+	if err != nil {
+		return nil, fmt.Errorf("litellm startup probe: %w", err)
 	}
-	return &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
-	}
+	c.dims.Store(int32(len(vec)))
+	return c, nil
 }
 
 // NewLiteLLMClient constructs a LiteLLMClient and validates connectivity with
@@ -98,28 +166,6 @@ func NewLiteLLMClient(ctx context.Context, baseURL, model, apiKey string, target
 		apiKey:     apiKey,
 		targetDims: targetDims,
 		http:       newLiteLLMHTTPClient(baseURL),
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	vec, err := c.Embed(probeCtx, "probe")
-	if err != nil {
-		return nil, fmt.Errorf("litellm startup probe: %w", err)
-	}
-	c.dims.Store(int32(len(vec)))
-	return c, nil
-}
-
-// NewLiteLLMClientForValidatedUpstream constructs a LiteLLMClient for a
-// user-supplied upstream URL that already passed ValidateUpstreamURL.
-// Unlike operator-configured router URLs, the validated host is re-resolved on
-// every dial and private/reserved answers are rejected even for the configured host.
-func NewLiteLLMClientForValidatedUpstream(ctx context.Context, baseURL, model, apiKey string, targetDims int) (*LiteLLMClient, error) {
-	c := &LiteLLMClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		model:      model,
-		apiKey:     apiKey,
-		targetDims: targetDims,
-		http:       newLiteLLMValidatedHTTPClient(baseURL),
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

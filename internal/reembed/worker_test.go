@@ -96,6 +96,9 @@ func (noopBackend) StoreMemory(_ context.Context, _ *types.Memory) error        
 func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) error  { return nil }
 func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error)     { return nil, nil }
 func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
+func (noopBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
+	return nil, nil
+}
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }

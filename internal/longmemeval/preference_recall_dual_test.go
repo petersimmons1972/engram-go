@@ -139,13 +139,72 @@ func TestDualPreferenceRecall_AnchorIsolatesGoldItem(t *testing.T) {
 	}
 }
 
-func TestPreferenceSubjectAnchorQueryPreservesPreferenceSignal(t *testing.T) {
+func TestPreferenceSubjectAnchorQuery_CleansSubjectNP(t *testing.T) {
 	question := "Can you recommend a conference about AI in healthcare?"
 	query := longmemeval.PreferenceSubjectAnchorQuery(question)
 
-	for _, want := range []string{"user preference", "conference", "AI", "healthcare", "like", "dislike"} {
+	for _, want := range []string{"conference", "AI", "healthcare"} {
 		if !strings.Contains(query, want) {
 			t.Errorf("PreferenceSubjectAnchorQuery(%q) = %q, missing %q", question, query, want)
+		}
+	}
+	for _, skip := range []string{"user preference", "like", "dislike", "recommend", "about"} {
+		if strings.Contains(strings.ToLower(query), strings.ToLower(skip)) {
+			t.Errorf("PreferenceSubjectAnchorQuery(%q) = %q, should not contain %q", question, query, skip)
+		}
+	}
+}
+
+func TestPreferenceSubjectAnchorQuery_CleansTrailingPreferencePredicate(t *testing.T) {
+	question := "What restaurants would I enjoy?"
+	if got, want := longmemeval.PreferenceSubjectAnchorQuery(question), "restaurants"; got != want {
+		t.Fatalf("PreferenceSubjectAnchorQuery(%q) = %q, want %q", question, got, want)
+	}
+}
+
+func TestIsInferredPreferenceQuestion(t *testing.T) {
+	hits := []string{
+		"Can you recommend a hotel for Miami?",
+		"What restaurants would I enjoy?",
+		"What kind of music do I like?",
+		"What is my favorite cuisine?",
+	}
+	for _, question := range hits {
+		if !longmemeval.IsInferredPreferenceQuestion(question) {
+			t.Errorf("IsInferredPreferenceQuestion(%q) = false, want true", question)
+		}
+	}
+
+	misses := []string{
+		"What happened last week?",
+		"When did I travel to Miami?",
+		"Summarize the project decisions.",
+	}
+	for _, question := range misses {
+		if longmemeval.IsInferredPreferenceQuestion(question) {
+			t.Errorf("IsInferredPreferenceQuestion(%q) = true, want false", question)
+		}
+	}
+}
+
+func TestMergeScoredRecall_UsesMaxScorePerMemoryID(t *testing.T) {
+	primary := []longmemeval.ScoredMemoryID{
+		{ID: "m1", Score: 0.92},
+		{ID: "m2", Score: 0.61},
+	}
+	secondary := []longmemeval.ScoredMemoryID{
+		{ID: "m2", Score: 0.97},
+		{ID: "m3", Score: 0.88},
+	}
+
+	got := longmemeval.MergeScoredRecall(primary, secondary)
+	want := []string{"m2", "m1", "m3"}
+	if len(got) != len(want) {
+		t.Fatalf("MergeScoredRecall len = %d, want %d", len(got), len(want))
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("MergeScoredRecall[%d].ID = %q, want %q (full=%v)", i, got[i].ID, id, got)
 		}
 	}
 }

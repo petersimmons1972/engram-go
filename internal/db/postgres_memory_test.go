@@ -60,3 +60,30 @@ func TestGetMemoryByID_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, retrieved, "GetMemoryByID must return nil for nonexistent IDs")
 }
+
+func TestGetMemoryByIDInProject_SameProject(t *testing.T) {
+	proj := uniqueProject("get-mem-proj-same")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	mem := storeMemory(t, b, proj, "same-project scoped memory")
+
+	retrieved, err := b.GetMemoryByIDInProject(ctx, mem.ID, proj)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved, "GetMemoryByIDInProject must return the memory in the matching project")
+	require.Equal(t, mem.ID, retrieved.ID)
+	require.Equal(t, mem.Content, retrieved.Content)
+}
+
+func TestGetMemoryByIDInProject_CrossProjectRejected(t *testing.T) {
+	projA := uniqueProject("get-mem-proj-cross-a")
+	projB := uniqueProject("get-mem-proj-cross-b")
+	bA := newTestBackend(t, projA)
+	ctx := context.Background()
+
+	memA := storeMemory(t, bA, projA, "cross-project scoped memory")
+
+	retrieved, err := bA.GetMemoryByIDInProject(ctx, memA.ID, projB)
+	require.NoError(t, err)
+	require.Nil(t, retrieved, "GetMemoryByIDInProject must not return a memory from another project")
+}

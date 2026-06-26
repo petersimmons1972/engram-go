@@ -83,9 +83,7 @@ func (q *Queue) Status(jobID string) *JobResult {
 	return jr
 }
 
-func (q *Queue) Depth() int    { return len(q.ch) }
-func (q *Queue) Inflight() int { return int(q.inflight.Load()) }
-
+func (q *Queue) Depth() int { return len(q.ch) }
 func (q *Queue) worker(ctx context.Context) {
 	defer q.wg.Done()
 	for {

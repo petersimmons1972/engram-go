@@ -61,6 +61,14 @@ type RerankResult struct {
 // RecallOpts controls optional post-processing for Recall.
 type RecallOpts struct {
 	Reranker ResultReranker // nil = skip re-ranking
+	// DenseReranker re-scores the dense/vector leg before hybrid scoring.
+	// Unlike Reranker, which reorders the final fused result set, DenseReranker
+	// only sees the top-N vector candidates and rewrites their dense score before
+	// BM25/recency/precision fusion. Nil = skip dense-leg reranking.
+	DenseReranker ResultReranker
+	// DenseRerankTopN caps how many vector candidates DenseReranker receives.
+	// 0 uses defaultDenseRerankTopN (20). Ignored when DenseReranker is nil.
+	DenseRerankTopN int
 	// Mode controls response format. "" or "full" returns complete SearchResults;
 	// "handle" returns lightweight Handle references (content omitted).
 	Mode string
@@ -122,7 +130,6 @@ type RecallOpts struct {
 	// ablatable: when false the code path is entirely bypassed and results are
 	// identical to the baseline. Default false. (LEVER-8)
 	SessionNDCGAgg bool
-
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for preference
 	// queries. When true and the query is preference-shaped, the engine fetches
 	// best-chunk embeddings for top candidates, computes a centroid of the top-10
@@ -159,6 +166,27 @@ type RecallOpts struct {
 	// ordering is load-bearing (mirrors the run.go precedence rule).
 	// Default false (ablatable — no behavior change until explicitly enabled).
 	EvidenceFirstPack bool
+
+	// SessionDiversityN caps the per-session chunk contribution to N chunks in the
+	// post-ranking result set (LEVER-9, issue #1121). When N > 0 and ≥2 distinct
+	// sessions are present, applySessionDiversity redistributes topK slots so no
+	// single session dominates the context window. Default 0 = off (baseline-safe).
+	//
+	// When 0, RecallWithOpts additionally checks ENGRAM_SESSION_DIVERSITY_N from
+	// the environment, allowing server-side configuration without modifying the
+	// MCP handler. Tests set this field directly to bypass the env var.
+	//
+	// Dynamic gate: when ≤1 distinct session is present in results, the pass is
+	// skipped entirely (no-op, no allocation). No question_type gating (FM-77).
+	SessionDiversityN int
+
+	// AtomRecallEnabled attaches a separate structured atom preamble for
+	// preference-shaped queries. The preamble is additive metadata only and does
+	// not enter composite scoring or the ranked result pool.
+	AtomRecallEnabled bool
+	// AtomRecallAsOf filters recalled atoms to observations at or before this
+	// point in time. Nil means no observed_at cutoff.
+	AtomRecallAsOf *time.Time
 }
 
 // ToHandles projects a slice of SearchResults into lightweight Handle references.
@@ -182,6 +210,7 @@ func ToHandles(results []types.SearchResult) []types.Handle {
 			ID:          r.Memory.ID,
 			Project:     r.Memory.Project,
 			Summary:     sum,
+			Tags:        r.Memory.Tags,
 			Score:       r.Score,
 			StorageMode: r.Memory.StorageMode,
 			Bytes:       len(r.Memory.Content),
@@ -219,6 +248,7 @@ type MergeDecision struct {
 // the function returns.
 type bestHit struct {
 	cosine         float64
+	denseScore     float64
 	chunkText      string
 	chunkIndex     int
 	sectionHeading *string // borrowed; see struct comment
@@ -233,6 +263,10 @@ type bestHit struct {
 // to 500ms to preserve the production recall SLA contract.
 const defaultEmbedRecallTimeoutMS = 500
 
+// defaultDenseRerankTopN bounds the number of vector candidates sent to a
+// dense-leg reranker (for example a cross-encoder) before hybrid fusion.
+const defaultDenseRerankTopN = 20
+
 // noEmbedTimeout is a sentinel stored in embedRecallTimeout to indicate that
 // no per-embed deadline should be applied. The parent context's deadline (if
 // any) governs the embed call instead. Set by SetEmbedRecallTimeout(0) which
@@ -243,8 +277,9 @@ const noEmbedTimeout = time.Duration(-1)
 // and recalls them via composite vector+FTS scoring.
 type SearchEngine struct {
 	backend             db.Backend
-	embedMu             sync.RWMutex // protects embedder; use getEmbedder() for all reads
+	embedMu             sync.RWMutex // protects live + reembed embedder selection
 	embedder            embed.Client
+	reembedderOverride  embed.Client
 	project             string
 	ollamaURL           string
 	targetDims          int             // MRL truncation target; 0 = model native output
@@ -282,10 +317,51 @@ func (e *SearchEngine) getEmbedder() embed.Client {
 	return e.embedder
 }
 
+// getReembedEmbedder returns the embedder used by reembed workers. By default
+// it follows the live embedder, but main.go may install an override so
+// batch/backfill work routes to a different model alias.
+func (e *SearchEngine) getReembedEmbedder() embed.Client {
+	e.embedMu.RLock()
+	defer e.embedMu.RUnlock()
+	if e.reembedderOverride != nil {
+		return e.reembedderOverride
+	}
+	return e.embedder
+}
+
 // Embedder returns the current embedding client. Used by callers (e.g. consolidate
 // runner) that need the live embedder rather than a nil placeholder (#94).
 func (e *SearchEngine) Embedder() embed.Client {
 	return e.getEmbedder()
+}
+
+// ReembedEmbedder returns the embedder currently used by reembed workers.
+func (e *SearchEngine) ReembedEmbedder() embed.Client {
+	return e.getReembedEmbedder()
+}
+
+// SetReembedEmbedder overrides the embedder used by reembed workers. When not
+// called, reembed work uses the live embedder. The worker is rebuilt so future
+// Notify() calls and embedder migrations use the new routing immediately.
+func (e *SearchEngine) SetReembedEmbedder(client embed.Client) {
+	if client == nil {
+		return
+	}
+	wasActive := e.reembedder != nil && e.reembedder.IsActive()
+	if e.reembedder != nil {
+		e.reembedder.Stop()
+	}
+
+	e.embedMu.Lock()
+	e.reembedderOverride = client
+	e.embedMu.Unlock()
+
+	if wasActive {
+		e.reembedder = reembed.NewWorker(e.backend, client, e.project, true)
+		e.reembedder.StartWithContext(e.ctx)
+		return
+	}
+	e.reembedder = reembed.NewWorkerFromMeta(e.ctx, e.backend, client, e.project)
 }
 
 // SetGlobalReembedder wires the shared GlobalReembedder so StoreWithRawBody and
@@ -816,6 +892,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
 			bestHits[h.MemoryID] = bestHit{
 				cosine:         cosine,
+				denseScore:     cosine,
 				chunkText:      h.ChunkText,
 				chunkIndex:     h.ChunkIndex,
 				sectionHeading: h.SectionHeading,
@@ -890,6 +967,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 						if existing, ok := bestHits[h.MemoryID]; !ok || cosine > existing.cosine {
 							bestHits[h.MemoryID] = bestHit{
 								cosine:         cosine,
+								denseScore:     cosine,
 								chunkText:      h.ChunkText,
 								chunkIndex:     h.ChunkIndex,
 								sectionHeading: h.SectionHeading,
@@ -947,10 +1025,25 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
+	// Optional dense-leg reranking: re-score the top vector candidates before
+	// hybrid fusion so the weighted scorer sees a stronger dense signal than raw
+	// cosine alone. This is distinct from opts.Reranker, which reorders the
+	// already-fused final result set.
+	applyDenseRerank(ctx, query, memories, bestHits, opts.DenseReranker, opts.DenseRerankTopN)
+
 	// Detect query type once before the scoring loop.
 	prefQuery := isPreferenceQuery(query)
 	tempQuery := isTemporalQuery(query)
 	kuQuery := isKnowledgeUpdateQuery(query)
+	atomPreamble := ""
+	if opts.AtomRecallEnabled && prefQuery {
+		if atomBackend, ok := e.backend.(AtomBackend); ok {
+			atomPreamble, err = RecallPreferenceAtoms(ctx, atomBackend, e.project, query, opts.AtomRecallAsOf)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Identifier query detection for exact-fact boost (LME #938 improvement #3).
 	// Only active when the caller enables the flag; detection is cheap (regex).
 	exactBoostEnabled := opts.ExactFactBoost && isIdentifierQuery(query)
@@ -958,6 +1051,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// RRF setup (LME experiment #6, issue #938 improvement #1): pre-compute
 	// per-leg rank positions. applyFusion is a strict no-op when Fusion=false.
 	vecRanks := rankVectorHits(vecHits)
+	if opts.DenseReranker != nil {
+		vecRanks = rankBestHitsByDenseScore(bestHits)
+	}
 	ftsRanks := rankFTSResults(ftsRes.results)
 	applyFusion(opts, memories, bestHits, vecRanks, ftsRanks)
 
@@ -1019,7 +1115,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		hit := bestHits[id]
 		exactMatch := exactBoostEnabled && ExactIdentifierHit(m.Content, query)
 		input := ScoreInput{
-			Cosine:             hit.cosine,
+			Cosine:             hit.denseScore,
 			BM25:               bm25,
 			HoursSince:         temporalAnchorHours(*m),
 			Importance:         m.Importance,
@@ -1072,10 +1168,14 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			ScoreBreakdown: func() map[string]float64 {
 				bd := map[string]float64{
 					"cosine":           hit.cosine,
+					"dense_score":      hit.denseScore,
 					"bm25":             bm25,
 					"recency":          RecencyDecay(input.HoursSince),
 					"episode_boost":    1.0,
 					"valid_from_boost": vwBoost,
+				}
+				if hit.denseScore != hit.cosine {
+					bd["cross_encoder_score"] = hit.denseScore
 				}
 				if input.EpisodeMatch {
 					bd["episode_boost"] = 1.15
@@ -1134,6 +1234,27 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	// singletons (no sid: tag) — session packing adds no value here — and the
 	// preference-first path already produces coherent ordering.
 	results = sessionNDCGRerank(results, allChunkCosines, opts.SessionNDCGAgg && !prefQuery)
+
+	// LEVER-9: session-diversity sampling (issue #1121).
+	// After SessionNDCGAgg re-ranking, a dominant session may still flood topK with
+	// its highest-scoring chunks, burying gold from minority sessions. This pass caps
+	// the per-session contribution at SessionDiversityN chunks. Applied before
+	// topK truncation, preference-first reordering, and downstream re-rankers so
+	// the diverse candidate set flows into all subsequent passes.
+	//
+	// Dynamic gate: skipped when ≤1 distinct session is present (single-session
+	// queries, cold-start items). No question_type gating (FM-77) — gate uses only
+	// observable data signals.
+	//
+	// N source precedence: RecallOpts.SessionDiversityN (direct callers / tests) →
+	// ENGRAM_SESSION_DIVERSITY_N env var (server-wide flag) → 0 (baseline identity).
+	{
+		divN := opts.SessionDiversityN
+		if divN == 0 {
+			divN = SessionDiversityNFromEnv()
+		}
+		results = applySessionDiversity(results, topK, divN)
+	}
 
 	// Preference-first recall path: when the query is preference-shaped, ensure
 	// preference-typed memories are represented in the top results even if their
@@ -1244,18 +1365,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 		items := make([]RerankItem, len(rerankCandidates))
 		for i, r := range rerankCandidates {
-			summary := ""
-			if r.Memory.Summary != nil {
-				summary = *r.Memory.Summary
-			} else {
-				summary = r.Memory.Content
-				if len(summary) > 500 {
-					summary = summary[:500]
-				}
-			}
 			items[i] = RerankItem{
 				ID:      r.Memory.ID,
-				Summary: summary,
+				Summary: rerankTextForMemory(r.Memory),
 				Score:   r.Score,
 			}
 		}
@@ -1345,6 +1457,12 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 		}
 	}
 
+	if atomPreamble != "" {
+		for i := range results {
+			results[i].AtomPreamble = atomPreamble
+		}
+	}
+
 	return results, nil
 }
 
@@ -1415,18 +1533,9 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 	}
 	items := make([]RerankItem, len(rerankCandidates))
 	for i, r := range rerankCandidates {
-		summary := ""
-		if r.Memory.Summary != nil {
-			summary = *r.Memory.Summary
-		} else {
-			summary = r.Memory.Content
-			if len(summary) > 500 {
-				summary = summary[:500]
-			}
-		}
 		items[i] = RerankItem{
 			ID:      r.Memory.ID,
-			Summary: summary,
+			Summary: rerankTextForMemory(r.Memory),
 			Score:   r.Score,
 		}
 	}
@@ -1446,6 +1555,155 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 	return results
 }
 
+// applyDenseRerank rewrites the dense score for the top vector candidates
+// before hybrid fusion. Original cosine values are preserved for observability
+// and matched-chunk reporting; only denseScore is overwritten.
+func applyDenseRerank(ctx context.Context, query string, memories map[string]*types.Memory, bestHits map[string]bestHit, reranker ResultReranker, topN int) {
+	if reranker == nil || len(memories) == 0 || len(bestHits) == 0 {
+		return
+	}
+	if topN <= 0 {
+		topN = defaultDenseRerankTopN
+	}
+
+	type denseCandidate struct {
+		item   RerankItem
+		cosine float64
+	}
+
+	candidates := make([]denseCandidate, 0, len(bestHits))
+	for id, hit := range bestHits {
+		m := memories[id]
+		if m == nil {
+			continue
+		}
+		candidates = append(candidates, denseCandidate{
+			item: RerankItem{
+				ID:      id,
+				Summary: rerankTextForMemory(m),
+				Score:   hit.cosine,
+			},
+			cosine: hit.cosine,
+		})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].cosine == candidates[j].cosine {
+			return candidates[i].item.ID < candidates[j].item.ID
+		}
+		return candidates[i].cosine > candidates[j].cosine
+	})
+	if len(candidates) > topN {
+		candidates = candidates[:topN]
+	}
+
+	items := make([]RerankItem, len(candidates))
+	for i, c := range candidates {
+		items[i] = c.item
+	}
+
+	reranked, err := reranker.RerankResults(ctx, query, items)
+	if err != nil || len(reranked) == 0 {
+		return
+	}
+
+	normalized := normalizeDenseRerankScores(items, reranked)
+	for _, item := range items {
+		newScore, ok := normalized[item.ID]
+		if !ok {
+			continue
+		}
+		hit := bestHits[item.ID]
+		hit.denseScore = newScore
+		bestHits[item.ID] = hit
+	}
+}
+
+func normalizeDenseRerankScores(items []RerankItem, reranked []RerankResult) map[string]float64 {
+	if len(items) == 0 {
+		return nil
+	}
+
+	raw := make(map[string]float64, len(reranked))
+	minScore := 0.0
+	maxScore := 0.0
+	first := true
+	for _, rr := range reranked {
+		raw[rr.ID] = rr.Score
+		if first {
+			minScore = rr.Score
+			maxScore = rr.Score
+			first = false
+			continue
+		}
+		if rr.Score < minScore {
+			minScore = rr.Score
+		}
+		if rr.Score > maxScore {
+			maxScore = rr.Score
+		}
+	}
+
+	out := make(map[string]float64, len(items))
+	if first || maxScore == minScore {
+		for _, item := range items {
+			out[item.ID] = item.Score
+		}
+		return out
+	}
+
+	for _, item := range items {
+		score, ok := raw[item.ID]
+		if !ok {
+			out[item.ID] = item.Score
+			continue
+		}
+		out[item.ID] = (score - minScore) / (maxScore - minScore)
+	}
+	return out
+}
+
+func rankBestHitsByDenseScore(bestHits map[string]bestHit) map[string]int {
+	type rankedHit struct {
+		id    string
+		dense float64
+	}
+
+	ranked := make([]rankedHit, 0, len(bestHits))
+	for id, hit := range bestHits {
+		ranked = append(ranked, rankedHit{id: id, dense: hit.denseScore})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].dense == ranked[j].dense {
+			return ranked[i].id < ranked[j].id
+		}
+		return ranked[i].dense > ranked[j].dense
+	})
+
+	out := make(map[string]int, len(ranked))
+	for i, hit := range ranked {
+		out[hit.id] = i + 1
+	}
+	return out
+}
+
+func rerankTextForMemory(m *types.Memory) string {
+	if m == nil {
+		return ""
+	}
+	if m.Summary != nil {
+		return *m.Summary
+	}
+	summary := m.Content
+	if len(summary) > 500 {
+		summary = summary[:500]
+	}
+	return summary
+}
+
 // mergeSearchResults unions two result slices, preserving the order of a first and
 // appending only the IDs from b that a did not already contain, then truncates to
 // limit. Results with a nil Memory are dropped. Pass-1 order is preserved because the
@@ -1453,6 +1711,10 @@ func (e *SearchEngine) maybeRerank(ctx context.Context, query string, topK int, 
 func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResult {
 	merged := make([]types.SearchResult, 0, len(a)+len(b))
 	seen := make(map[string]struct{}, len(a)+len(b))
+	atomPreamble := firstAtomPreamble(a)
+	if atomPreamble == "" {
+		atomPreamble = firstAtomPreamble(b)
+	}
 	for _, r := range a {
 		if r.Memory == nil {
 			continue
@@ -1476,7 +1738,21 @@ func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResu
 	if limit > 0 && len(merged) > limit {
 		merged = merged[:limit]
 	}
+	if atomPreamble != "" {
+		for i := range merged {
+			merged[i].AtomPreamble = atomPreamble
+		}
+	}
 	return merged
+}
+
+func firstAtomPreamble(results []types.SearchResult) string {
+	for _, r := range results {
+		if r.AtomPreamble != "" {
+			return r.AtomPreamble
+		}
+	}
+	return ""
 }
 
 // RecallWithinMemory returns up to topK chunks from a single memory's document
@@ -2182,7 +2458,7 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (ma
 	e.embedder = newEmbedder
 	e.embedMu.Unlock()
 
-	e.reembedder = reembed.NewWorker(e.backend, newEmbedder, e.project, true)
+	e.reembedder = reembed.NewWorker(e.backend, e.getReembedEmbedder(), e.project, true)
 	e.reembedder.StartWithContext(e.ctx)
 
 	return map[string]any{

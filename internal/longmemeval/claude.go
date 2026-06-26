@@ -302,13 +302,14 @@ type ScoringOptions struct {
 }
 
 // DefaultScorerMaxTokens is the default max_tokens for OAI scoring requests.
-// 2048 gives the model room to produce its label and a full explanation even
-// after reasoning tokens, preventing truncation from stripping the label.
-const DefaultScorerMaxTokens = 2048
+// 512 is ample: the judge emits one verdict word plus 1-2 sentences, and the
+// smaller budget leaves more headroom for long hypotheses within the 65536-token
+// context window (vLLM HTTP 400 fix).
+const DefaultScorerMaxTokens = 512
 
 // BuildScoringRequestBody returns an OAI request body for label classification.
-// maxTokens controls the response budget; pass DefaultScorerMaxTokens (2048)
-// unless you have a specific reason to reduce it.
+// maxTokens controls the response budget; pass DefaultScorerMaxTokens (512)
+// unless you have a specific reason to change it.
 // options.ApplyThinking=false disables OAI chain-of-thought features for judges
 // that are slow or unsupported.
 // Exported so the test package can inspect the marshalled fields.
@@ -320,6 +321,32 @@ func BuildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string, maxTokens int, options ScoringOptions) ([]byte, error) {
 	if maxTokens <= 0 {
 		maxTokens = DefaultScorerMaxTokens
+	}
+	// Cap hypothesis length so the total request fits within the 65536-token context window.
+	// Budget: 65536 - maxTokens - overhead(question, referenceAnswer) = tokens available for hypothesis.
+	// Conservative chars-to-tokens ratio of 4 chars/token keeps us safely below the limit.
+	// CRITICAL: truncate from the END (tail) to preserve the graded answer when --enumerate-first
+	// is used (answer appears at end of hypothesis, not beginning). See callOAI line 217.
+	const scorerMaxModelLen = 65536
+	// Compute actual overhead from question + referenceAnswer instead of fixed 400 const.
+	overheadPrompt := ScoringPrompt(question, referenceAnswer, "")
+	overheadChars := len(overheadPrompt)
+	overheadTokens := (overheadChars + 3) / 4 // round up: chars/4 = tokens (conservative estimate)
+	maxHypTokens := scorerMaxModelLen - maxTokens - overheadTokens
+	maxHypChars := maxHypTokens * 4
+	// Clamp to >= 0 to prevent slice-bounds panic when maxTokens > 65136.
+	if maxHypChars < 0 {
+		maxHypChars = 0
+	}
+	if len(hypothesis) > maxHypChars {
+		log.Printf("WARN: scorer hypothesis truncated for question %q: %d->%d chars (--scorer-max-tokens=%d)",
+			question[:min(len(question), 60)], len(hypothesis), maxHypChars, maxTokens)
+		// Keep the TAIL (end) — the graded answer is there, not at the beginning.
+		if maxHypChars > 0 {
+			hypothesis = hypothesis[len(hypothesis)-maxHypChars:]
+		} else {
+			hypothesis = ""
+		}
 	}
 	prompt := ScoringPrompt(question, referenceAnswer, hypothesis)
 	request := struct {
@@ -345,7 +372,7 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 
 // ScoreOAIEfficient is like ScoreOAI but uses buildScoringRequestBody
 // (maxTokens, temperature=0) for efficient local-model scoring.
-// maxTokens <= 0 uses DefaultScorerMaxTokens (2048).
+// maxTokens <= 0 uses DefaultScorerMaxTokens (512).
 func ScoreOAIEfficient(ctx context.Context, question, referenceAnswer, hypothesis, baseURL, model string, retries, maxTokens int, options ScoringOptions) (ScoreResult, error) {
 	var lastErr error
 	backoffs := []time.Duration{250 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
@@ -438,6 +465,17 @@ func ScoreOAI(ctx context.Context, question, referenceAnswer, hypothesis, baseUR
 	return ScoreResult{Label: label, Explanation: explanation}, nil
 }
 
+// hardExclusionRule is the canonical HARD EXCLUSION RULE text for preference generation.
+// Every code path that generates answers for single-session-preference questions must
+// include this text so that explicitly stated anti-preferences are treated as hard
+// constraints rather than merely described. Defined once so the two prompt paths
+// (GenerationPromptForType and GenerationPromptPreferenceEnumerate) stay in sync.
+//
+// The text intentionally uses a broad verb set ("dislike, avoid, have moved away from,
+// or do not want") to cover the most common natural-language phrasings. Callers that
+// extend or modify the exclusion behaviour must update this single constant.
+const hardExclusionRule = `HARD EXCLUSION RULE: Any item, brand, model, or option the user has explicitly stated they dislike, avoid, have moved away from, or do not want is FORBIDDEN. It must not appear anywhere in your answer — not as a suggestion, not as an alternative, not as a passing mention. Exclusions are hard constraints that override all other considerations.`
+
 // GenerationPromptForType builds a generation prompt tailored to the question type.
 // For single-session-preference questions the model is instructed to describe the
 // user's preferences rather than answer the question directly — answering directly
@@ -457,7 +495,9 @@ Relevant memory context:
 
 Question (asked on %s): %s
 
-Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.`, questionDate, ctx, questionDate, question)
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.
+
+`+hardExclusionRule, questionDate, ctx, questionDate, question)
 	}
 	return GenerationPrompt(question, questionDate, contextBlocks)
 }
@@ -494,27 +534,51 @@ func GenerationPromptForTypeWithDateInjection(question, questionType, questionDa
 	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 }
 
-// GenerationPromptForTypeEnumerate (H12, lme-h8h12h15) is like
-// GenerationPromptForType but accepts an enumerateFirst flag. When
-// enumerateFirst is true AND the question matches the aggregation pattern, the
-// generation prompt instructs the model to enumerate each relevant event from
-// the retrieved blocks before stating a count. For non-aggregation questions
-// the flag is a no-op so other question types are unaffected.
+// GenerationPromptForTypeEnumerate (H12) is like GenerationPromptForType but
+// prepends an enumerate-first instruction when enumerateFirst is true and the
+// question matches the aggregation heuristic. For non-aggregation questions the
+// flag is a no-op so other question types are unaffected.
+//
+// "single-session-preference" is explicitly excluded from the enumerate-first
+// augmentation (even when enumerateFirst is true) because preference questions are
+// handled by GenerationPromptForTypePreferenceEnumerate which routes them to
+// GenerationPromptPreferenceEnumerate — a dedicated enumerate path that already
+// carries its own enumeration instructions and the hardExclusionRule. Applying the
+// generic enumerate-first prefix on top would double-augment those prompts.
 func GenerationPromptForTypeEnumerate(question, questionType, questionDate string, contextBlocks []string, enumerateFirst bool) string {
+	prompt := GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 	if enumerateFirst && questionType != "temporal-reasoning" && questionType != "single-session-preference" && IsAggregationQuestion(question) {
-		return GenerationPromptEnumerateFirst(question, questionDate, contextBlocks)
+		return prependPromptPrefix(EnumerateFirstPrefix(), prompt)
+	}
+	return prompt
+}
+
+// GenerationPromptForTypePreferenceEnumerate (H-PE) is like
+// GenerationPromptForType but applies the preference-enumerate variant for
+// single-session-preference questions when preferenceEnumerate is true. When
+// the flag is set and the question type is "single-session-preference", the
+// prompt instructs the model to exhaustively list every specific named
+// item/brand/attribute/feature the user expressed a preference about, rather
+// than summarising the preference abstractly. For all other question types or
+// when the flag is false the standard GenerationPromptForType output is
+// returned unchanged.
+// Activated by --preference-enumerate (Config.PreferenceEnumerate). Off by default.
+func GenerationPromptForTypePreferenceEnumerate(question, questionType, questionDate string, contextBlocks []string, preferenceEnumerate bool) string {
+	if preferenceEnumerate && questionType == "single-session-preference" {
+		return GenerationPromptPreferenceEnumerate(question, questionDate, contextBlocks)
 	}
 	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
 }
 
-// GenerationPromptEnumerateFirst (H12) returns a generation prompt that
-// instructs the model to enumerate each relevant event from the memory blocks
-// individually before computing a total. Forces an explicit intermediate
-// enumeration pass that prevents the model from returning a session count
-// instead of an entity count.
-func GenerationPromptEnumerateFirst(question, questionDate string, contextBlocks []string) string {
+// GenerationPromptPreferenceEnumerate (H-PE) returns a generation prompt that
+// instructs the model to list every specific named item, brand, attribute, or
+// feature the user expressed a preference about that appears in the provided
+// context — not an abstract summary. Targets the judge failure mode where a
+// correct-substance answer is marked PARTIALLY_CORRECT because it omits the
+// specific concrete items the gold answer lists.
+func GenerationPromptPreferenceEnumerate(question, questionDate string, contextBlocks []string) string {
 	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
-	return fmt.Sprintf(`You are answering questions about a person's conversation history.
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
 
 Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
 
@@ -524,10 +588,21 @@ Relevant memory context:
 Question (asked on %s): %s
 
 Instructions:
-1. First, enumerate each relevant event or entity mentioned across the memory blocks above. List each one separately (e.g. "1. Visit on 2023-03-10", "2. Visit on 2023-07-22"). If the same event appears in multiple blocks, count it only once.
-2. Then, sum or total the distinct items you enumerated to answer the question.
-3. State the final answer concisely. If the answer is a number, return only that number with minimal framing.
-4. If the answer is not present in the memory blocks, say so. Do not invent events or dates not found in the context.`, questionDate, ctx, questionDate, question)
+1. Read the context carefully and identify every specific named item, brand, model, attribute, or feature the user expressed a preference about that is relevant to the question.
+2. List each one explicitly — do not summarise or generalise. For example: name the specific product, brand, feature, or location rather than saying "functional accessories" or "a pool".
+3. Start your response with "The user prefers:" followed by the enumerated list.
+4. Include what the user would NOT prefer if the context supports it.
+5. Only include preferences found in the memory context. Do not invent items not present in the context.
+6. `+hardExclusionRule, questionDate, ctx, questionDate, question)
+}
+
+// GenerationPromptEnumerateFirst (H12) returns a generation prompt that
+// instructs the model to enumerate each relevant event from the memory blocks
+// individually before computing a total. Forces an explicit intermediate
+// enumeration pass that prevents the model from returning a session count
+// instead of an entity count.
+func GenerationPromptEnumerateFirst(question, questionDate string, contextBlocks []string) string {
+	return prependPromptPrefix(EnumerateFirstPrefix(), GenerationPrompt(question, questionDate, contextBlocks))
 }
 
 // GenerationPrompt builds the prompt for answer generation.

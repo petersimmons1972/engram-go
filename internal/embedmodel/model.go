@@ -6,6 +6,8 @@ const (
 	CanonicalBGEM3  = "BAAI/bge-m3"
 	RequiredDims    = 1024
 	PGNotifyChannel = "embed_queue"
+	LiveAlias       = "bge-m3-live"
+	ReembedAlias    = "bge-m3-reembed"
 )
 
 var AcceptedAliases = []string{
@@ -13,8 +15,8 @@ var AcceptedAliases = []string{
 	"bge-m3",
 	"bge-m3-Q8_0.gguf",
 	"bge-m3-Q4_K_M.gguf",
-	"bge-m3-live",    // olla routing alias: MI-50 burst embedder (gfx906, priority 50)
-	"bge-m3-reembed", // olla routing alias: W6800+leviathan bulk embedder (priority 100)
+	LiveAlias,    // olla routing alias: MI-50 burst embedder (gfx906, priority 50)
+	ReembedAlias, // olla routing alias: W6800+leviathan bulk embedder (priority 100)
 }
 
 var aliasToCanonical = map[string]string{
@@ -22,8 +24,16 @@ var aliasToCanonical = map[string]string{
 	"bge-m3":             CanonicalBGEM3,
 	"bge-m3-Q8_0.gguf":   CanonicalBGEM3,
 	"bge-m3-Q4_K_M.gguf": CanonicalBGEM3,
-	"bge-m3-live":        CanonicalBGEM3, // olla routing alias: MI-50 burst embedder
-	"bge-m3-reembed":     CanonicalBGEM3, // olla routing alias: W6800+leviathan bulk embedder
+	LiveAlias:           CanonicalBGEM3, // olla routing alias: MI-50 burst embedder
+	ReembedAlias:        CanonicalBGEM3, // olla routing alias: W6800+leviathan bulk embedder
+}
+
+func IsLiveAlias(modelID string) bool {
+	return modelID == LiveAlias
+}
+
+func IsReembedAlias(modelID string) bool {
+	return modelID == ReembedAlias
 }
 
 // CanonicalName resolves a model alias to its canonical identifier.

@@ -64,6 +64,55 @@ func TestRestClient_QuickStore_HappyPath(t *testing.T) {
 	}
 }
 
+func TestNewRestClient_URLNormalization(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "bare base URL", path: ""},
+		{name: "trailing slash", path: "/"},
+		{name: "mcp suffix", path: "/mcp"},
+		{name: "sse suffix", path: "/sse"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawQuickStore bool
+			mux := http.NewServeMux()
+			mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`1`))
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/quick-store" {
+					sawQuickStore = true
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "mem-normalized"})
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`1`))
+			})
+
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			rc := longmemeval.NewRestClient(srv.URL+tc.path, "")
+			id, err := rc.QuickStore(context.Background(), "proj", "content", nil, nil)
+			if err != nil {
+				t.Fatalf("QuickStore(%q): %v", tc.path, err)
+			}
+			if !sawQuickStore {
+				t.Fatalf("QuickStore(%q) did not hit /quick-store", tc.path)
+			}
+			if id != "mem-normalized" {
+				t.Fatalf("id = %q, want mem-normalized", id)
+			}
+		})
+	}
+}
+
 // TestRestClient_QuickStore_RateLimitRetry verifies that 429 triggers retry
 // and that a subsequent success is returned.
 func TestRestClient_QuickStore_RateLimitRetry(t *testing.T) {

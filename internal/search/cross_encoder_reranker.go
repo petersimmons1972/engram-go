@@ -4,10 +4,12 @@ package search
 //
 // # Design
 //
-// After candidate retrieval (any method), this reranker re-scores the top-K
+// After ANN/vector retrieval, this reranker re-scores the top-N dense
 // candidates using a cross-encoder model (e.g. bge-reranker-v2-m3) that
 // JOINTLY encodes (query, chunk) rather than using independent bi-encoder
-// cosine similarity. This directly addresses the "compilation bottleneck":
+// cosine similarity. The engine feeds the reranked dense signal into the
+// hybrid scorer before BM25/recency fusion. This directly addresses the
+// "compilation bottleneck":
 // SmartSearch oracle analysis shows ~22.5% of gold evidence is lost to
 // truncation, and cross-encoder reranking is the dominant SOTA lever
 // (arXiv 2603.15599, +8–14pp).
@@ -41,9 +43,9 @@ package search
 // The endpoint URL is configured via ENGRAM_CROSS_ENCODER_URL.
 // When the URL is empty, the reranker is disabled even if the flag is on.
 //
-// Set RecallOpts.Reranker = NewCrossEncoderRerankerFromEnv() at the call site;
-// when the flag is off (or URL unset), the function returns nil and the hook
-// is a no-op — baseline scores and ordering are unchanged.
+// Set RecallOpts.DenseReranker = NewCrossEncoderRerankerFromEnv() at the call
+// site; when the flag is off (or URL unset), the function returns nil and the
+// hook is a no-op — baseline scores and ordering are unchanged.
 //
 // # Ablation bench command
 //
@@ -132,13 +134,13 @@ func IsCrossEncoderRerankerEnabled() bool {
 //   - ENGRAM_CROSS_ENCODER_URL is non-empty.
 //
 // Returns nil (no-op) when either condition is not met. Assign directly to
-// RecallOpts.Reranker:
+// RecallOpts.DenseReranker:
 //
 //	opts := search.RecallOpts{
-//	    Reranker: search.NewCrossEncoderRerankerFromEnv(),
+//	    DenseReranker: search.NewCrossEncoderRerankerFromEnv(),
 //	}
 //
-// When nil, RecallWithOpts skips re-ranking entirely — baseline unchanged.
+// When nil, RecallWithOpts skips dense-leg reranking entirely — baseline unchanged.
 func NewCrossEncoderRerankerFromEnv() ResultReranker {
 	if !IsCrossEncoderRerankerEnabled() {
 		return nil
@@ -159,8 +161,7 @@ func NewCrossEncoderRerankerFromEnv() ResultReranker {
 // what score order the endpoint returns results in.
 //
 // On HTTP or parse error, the error is returned and the caller falls through
-// to the existing bi-encoder ordering (engine.go: error from Reranker is
-// logged and the original results are used unchanged).
+// to the existing bi-encoder ordering for that dense candidate set.
 func (r *CrossEncoderReranker) RerankResults(
 	ctx context.Context,
 	query string,
