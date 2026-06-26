@@ -475,6 +475,50 @@ func TestGenerationPrompt_PreferenceType_DescribesPreference(t *testing.T) {
 	}
 }
 
+func TestGenerationPrompt_PreferenceGround_AddsGroundingRule(t *testing.T) {
+	// H-PG: single-session-preference prompts under --preference-ground must add a
+	// grounding rule that forbids inventing specifics absent from the context.
+	// Targets FM-PG (ss-pref specific-detail confabulation): the generator surfaces
+	// the right preference category but fabricates named items (brands/titles/dishes)
+	// not present in the retrieved context. Measured: hallucination 13/30 baseline,
+	// rising to 16/30 at context-topk=20.
+	prompt := longmemeval.GenerationPromptForTypePreferenceGround(
+		"Can you recommend some resources where I can learn more about video editing?",
+		"single-session-preference",
+		"2024-03-15",
+		[]string{"Session date: 2024-03-10\nUser asked about advanced Adobe Premiere Pro color grading settings."},
+		true,
+	)
+	low := strings.ToLower(prompt)
+	if !strings.Contains(low, "prefer") {
+		t.Errorf("grounded preference prompt must still orient toward preference description, got:\n%s", prompt)
+	}
+	if !strings.Contains(low, "grounding rule") {
+		t.Errorf("grounded preference prompt must contain the GROUNDING RULE, got:\n%s", prompt)
+	}
+	if !strings.Contains(low, "not present in the context") && !strings.Contains(low, "absent") {
+		t.Errorf("grounding rule must forbid details not present in the context, got:\n%s", prompt)
+	}
+}
+
+func TestGenerationPrompt_PreferenceGround_NoopForNonPreference(t *testing.T) {
+	// The flag must be a no-op for non-preference types: identical to baseline.
+	base := longmemeval.GenerationPromptForType(
+		"When did the user buy their camera?", "single-session-user", "2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."},
+	)
+	got := longmemeval.GenerationPromptForTypePreferenceGround(
+		"When did the user buy their camera?", "single-session-user", "2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."}, true,
+	)
+	if got != base {
+		t.Errorf("PreferenceGround must be a no-op for non-preference types, but output differed from baseline")
+	}
+	if strings.Contains(strings.ToLower(got), "grounding rule") {
+		t.Errorf("non-preference prompt must NOT carry the grounding rule, got:\n%s", got)
+	}
+}
+
 func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
 	// Non-preference types must still use the original generic prompt.
 	prompt := longmemeval.GenerationPromptForType(

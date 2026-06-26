@@ -569,6 +569,50 @@ Instructions:
 6. `+hardExclusionRule, questionDate, ctx, questionDate, question)
 }
 
+// preferenceGroundingRule is the canonical GROUNDING RULE text for the H-PG lever.
+// It is the philosophical inverse of GenerationPromptPreferenceEnumerate (H-PE):
+// where H-PE instructs the model to emit MORE specifics (and measured -20pp on the
+// ss-preference slice), H-PG forbids introducing any specific not present in the
+// retrieved context. Targets FM-PG (ss-pref specific-detail confabulation): a
+// taxonomy audit of frozen Qwen3-32B outputs found 0/60 scorer-undercounts but
+// 13/30 (baseline) -> 16/30 (context-topk=20) predictions hallucinating named
+// specifics absent from context. Confabulation scales with retrieval breadth.
+const preferenceGroundingRule = `GROUNDING RULE: Name only specific items, brands, titles, places, people, or ingredients that appear explicitly in the memory context above. Do NOT introduce any specific example, product, genre, dish, or detail that is not present in the context. If the context supports only a general preference, state it generally rather than inventing concrete specifics to sound complete. A short answer grounded in the context is better than a longer answer containing invented details.`
+
+// GenerationPromptForTypePreferenceGround (H-PG) routes single-session-preference
+// questions to a grounding-constrained prompt when preferenceGround is true. For
+// every other question type, or when the flag is off, it returns the baseline
+// GenerationPromptForType output unchanged. Activated by --preference-ground
+// (Config.PreferenceGround). See preferenceGroundingRule and FM-PG.
+func GenerationPromptForTypePreferenceGround(question, questionType, questionDate string, contextBlocks []string, preferenceGround bool) string {
+	if preferenceGround && questionType == "single-session-preference" {
+		return GenerationPromptPreferenceGround(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptPreferenceGround (H-PG) returns the baseline single-session-
+// preference prompt augmented with the GROUNDING RULE that forbids fabricating
+// specifics absent from the memory context. Structurally identical to the 50%
+// baseline prompt (GenerationPromptForType) plus preferenceGroundingRule.
+func GenerationPromptPreferenceGround(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.
+
+`+preferenceGroundingRule+`
+
+`+hardExclusionRule, questionDate, ctx, questionDate, question)
+}
+
 // GenerationPromptEnumerateFirst (H12) returns a generation prompt that
 // instructs the model to enumerate each relevant event from the memory blocks
 // individually before computing a total. Forces an explicit intermediate
