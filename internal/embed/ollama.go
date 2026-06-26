@@ -92,6 +92,8 @@ func newOllamaClient(ctx context.Context, baseURL, model string, targetDims int,
 			ResponseHeaderTimeout: 10 * time.Second,
 			IdleConnTimeout:       30 * time.Second,
 			MaxIdleConnsPerHost:   2,
+			// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
+			Proxy: http.ProxyURL(nil),
 		}
 	}
 

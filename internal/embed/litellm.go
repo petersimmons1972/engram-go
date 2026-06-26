@@ -74,6 +74,10 @@ func newLiteLLMHTTPClientWithOptions(baseURL string, opts netutil.SafeDialOption
 	transport := &http.Transport{
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     60 * time.Second,
+		// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
+		// nil Proxy field means ProxyFromEnvironment; http.ProxyURL(nil) returns a
+		// function that always returns (nil, nil) — no proxy — which is what we want.
+		Proxy: http.ProxyURL(nil),
 	}
 	if baseURL != "" {
 		transport.DialContext = netutil.NewUpstreamDialContext(baseURL, opts)

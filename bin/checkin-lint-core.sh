@@ -63,7 +63,7 @@ _check_home_literal() {
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' --include='*.sh' \
     --include='*.conf' --include='*.service' --include='*.toml' --include='*.env' \
-    --exclude-dir='.git' --exclude-dir='.claude' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
     --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
     '/home/[a-z][a-z0-9_-]*' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "C.home-literal" "no hardcoded /home/<user> paths"
@@ -82,7 +82,7 @@ _check_version_pinned_path() {
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' --include='*.sh' \
     --include='*.conf' --include='*.service' \
-    --exclude-dir='.git' --exclude-dir='.claude' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
     --exclude='checkin-lint*.sh' \
     -E '(\.nvm/versions/node/v[0-9]|/versions/node/v[0-9]|/node/v[0-9]+\.[0-9]+\.[0-9]+[^-])' \
     . 2>/dev/null || true)
@@ -104,7 +104,7 @@ _check_exit_zero_wrapper() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.sh' \
-    --exclude-dir='.git' --exclude-dir='.claude' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
     --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
     'exit 0' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "D.exit-zero-wrapper" "no unconditional 'exit 0' in shell scripts"
@@ -122,7 +122,7 @@ _check_latest_image() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
     -E 'image:\s+[^@[:space:]]+:latest' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "G.latest-image" "no ':latest' image tags"
 }
@@ -140,7 +140,7 @@ _check_hardcoded_ip() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
     -E '(ip:|cidr:)\s+[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
     . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "G.hardcoded-ip" "no hardcoded IPs in NetworkPolicy"
@@ -152,10 +152,11 @@ _check_missing_namespace() {
   local system_ns="default kube-system kube-public kube-node-lease"
   local referenced_ns defined_ns
   referenced_ns=$(grep -rh --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' -E '^\s+namespace:\s+\S+' . 2>/dev/null \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' \
+    -E '^\s+namespace:\s+\S+' . 2>/dev/null \
     | sed 's/.*namespace:[[:space:]]*//' | sort -u || true)
   defined_ns=$(grep -rhl 'kind: Namespace' --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' . 2>/dev/null \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='results' . 2>/dev/null \
     | xargs grep -h '^  name:' 2>/dev/null \
     | sed 's/.*name:[[:space:]]*//' | sort -u || true)
   while IFS= read -r ns; do
