@@ -737,9 +737,15 @@ type RestClient struct {
 }
 
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
+// The sessionless REST endpoints (/quick-store, /atoms, /quick-recall) live at
+// the SERVER ROOT, never under /mcp or /sse. Callers commonly pass the MCP
+// endpoint URL (e.g. https://host/mcp) from the Claude config, so normalize the
+// base here via baseServerURL — otherwise QuickStore would POST to
+// /mcp/quick-store, which returns a non-object body and fails decoding with the
+// opaque "cannot unmarshal number" error (#1185).
 func NewRestClient(baseURL, token string) *RestClient {
 	return &RestClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseServerURL(baseURL),
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
