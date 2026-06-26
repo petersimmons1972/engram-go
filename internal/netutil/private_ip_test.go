@@ -179,7 +179,10 @@ func TestValidateUpstreamURL_DialTimeReResolutionRejectsPrivateRebind(t *testing
 	if err != nil {
 		t.Fatalf("NewRequestWithContext() error = %v", err)
 	}
-	_, err = client.Do(req)
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("client.Do() error = nil, want private-IP rejection on second lookup")
 	}
