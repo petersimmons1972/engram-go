@@ -27,11 +27,47 @@ func (f *fakeEmbedder) Name() string    { return "fake" }
 func (f *fakeEmbedder) Dimensions() int { return f.dims }
 
 func TestWorker_StartsAndStops(t *testing.T) {
-	w := reembed.NewWorker(nil, &fakeEmbedder{dims: 768}, "proj", false)
+	w := reembed.NewWorker(noopBackend{}, &fakeEmbedder{dims: 768}, "proj", false)
 	w.Start()
 	time.Sleep(20 * time.Millisecond)
 	w.Stop()
 	// reached here without hanging
+}
+
+func TestWorker_ConcurrentNotifyIsActive_NoRace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w := reembed.NewWorker(noopBackend{}, &fakeEmbedder{dims: 768}, "proj", false)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(3)
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				w.StartWithContext(ctx)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				w.Notify()
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = w.IsActive()
+			}
+		}()
+	}
+
+	wg.Wait()
+	w.Stop()
 }
 
 // TestNewWorkerFromMeta_ActivatesOnPendingChunks verifies that NewWorkerFromMeta
