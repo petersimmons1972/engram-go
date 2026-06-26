@@ -1,9 +1,28 @@
 package netutil
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+type lookupIPAddrFunc func(context.Context, string) ([]net.IPAddr, error)
+
+func (f lookupIPAddrFunc) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return f(ctx, host)
+}
+
+type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+func (f dialContextFunc) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return f(ctx, network, addr)
+}
 
 func TestIsPrivateIP(t *testing.T) {
 	cases := []struct {
@@ -118,5 +137,135 @@ func TestValidateUpstreamURL_S549(t *testing.T) {
 				t.Errorf("ValidateUpstreamURL(%q) error %q does not contain %q", tc.url, err, tc.errMsg)
 			}
 		})
+	}
+}
+
+func TestValidateUpstreamURL_DialTimeReResolutionRejectsPrivateRebind(t *testing.T) {
+	t.Parallel()
+
+	var lookups atomic.Int32
+	resolver := lookupIPAddrFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		switch call := lookups.Add(1); call {
+		case 1:
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		case 2:
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		default:
+			return nil, errors.New("unexpected extra lookup")
+		}
+	})
+
+	rawURL := "http://rebind.example.test:8080"
+	if err := validateUpstreamURLWithResolver(rawURL, resolver); err != nil {
+		t.Fatalf("validateUpstreamURLWithResolver() first lookup failed: %v", err)
+	}
+
+	var dials atomic.Int32
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: NewUpstreamDialContext(rawURL, SafeDialOptions{
+				Resolver: resolver,
+				Dialer: dialContextFunc(func(context.Context, string, string) (net.Conn, error) {
+					dials.Add(1)
+					return nil, errors.New("must reject before dialing")
+				}),
+				AllowPrivateConfiguredHost: false,
+				ErrorPrefix:                "ollama_url",
+			}),
+		},
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, rawURL+"/v1/models", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	_, err = client.Do(req)
+	if err == nil {
+		t.Fatal("client.Do() error = nil, want private-IP rejection on second lookup")
+	}
+	if !strings.Contains(err.Error(), "private IP") {
+		t.Fatalf("client.Do() error = %v, want private-IP rejection", err)
+	}
+	if got := dials.Load(); got != 0 {
+		t.Fatalf("DialContext called %d times, want 0 after private-IP rebind rejection", got)
+	}
+	if got := lookups.Load(); got != 2 {
+		t.Fatalf("resolver lookups = %d, want validate lookup + dial-time lookup", got)
+	}
+}
+
+func TestValidateUpstreamURL_DialTimeResolutionUsesLiteralPublicIP(t *testing.T) {
+	t.Parallel()
+
+	resolver := lookupIPAddrFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+	})
+
+	rawURL := "http://public.example.test:8080"
+	if err := validateUpstreamURLWithResolver(rawURL, resolver); err != nil {
+		t.Fatalf("validateUpstreamURLWithResolver() error = %v", err)
+	}
+
+	var dialedAddr atomic.Value
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: NewUpstreamDialContext(rawURL, SafeDialOptions{
+				Resolver: resolver,
+				Dialer: dialContextFunc(func(_ context.Context, network, addr string) (net.Conn, error) {
+					dialedAddr.Store(addr)
+					serverConn, clientConn := net.Pipe()
+					go func() {
+						defer serverConn.Close()
+						reader := bufio.NewReader(serverConn)
+						for {
+							line, readErr := reader.ReadString('\n')
+							if readErr != nil {
+								return
+							}
+							if line == "\r\n" {
+								break
+							}
+						}
+						_, _ = io.WriteString(serverConn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+					}()
+					return clientConn, nil
+				}),
+				AllowPrivateConfiguredHost: false,
+				ErrorPrefix:                "ollama_url",
+			}),
+		},
+	}
+
+	resp, err := client.Get(rawURL + "/v1/models")
+	if err != nil {
+		t.Fatalf("client.Get() error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != "ok" {
+		t.Fatalf("response body = %q, want ok", body)
+	}
+	if got, _ := dialedAddr.Load().(string); got != "203.0.113.10:8080" {
+		t.Fatalf("dialed addr = %q, want literal public IP", got)
+	}
+}
+
+func TestValidateUpstreamURL_HostnameResolvingPrivateStillFailsOnFirstLookup(t *testing.T) {
+	t.Parallel()
+
+	resolver := lookupIPAddrFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	})
+
+	err := validateUpstreamURLWithResolver("http://private.example.test:8080", resolver)
+	if err == nil {
+		t.Fatal("validateUpstreamURLWithResolver() error = nil, want private hostname rejection")
+	}
+	if !strings.Contains(err.Error(), "private IP") {
+		t.Fatalf("validateUpstreamURLWithResolver() error = %v, want private-IP rejection", err)
 	}
 }

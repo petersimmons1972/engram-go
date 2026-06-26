@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,4 +253,73 @@ func TestMigrateStampsCanonicalEmbedderName_AliasInput(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "BAAI/bge-m3", storedName,
 		"bge-m3-Q8_0.gguf alias must be stored as canonical BAAI/bge-m3")
+}
+
+func TestMigrateUsesValidatedUpstreamClientForUserSuppliedOverride(t *testing.T) {
+	eng, backend := newMigrateGuardEngine(t, "BAAI/bge-m3", 1024, 10)
+	eng.embedGateway = nil
+
+	origDefault := newLiteLLMClient
+	origValidated := newValidatedLiteLLMClient
+	t.Cleanup(func() {
+		newLiteLLMClient = origDefault
+		newValidatedLiteLLMClient = origValidated
+	})
+
+	defaultCalls := 0
+	validatedCalls := 0
+	newLiteLLMClient = func(_ context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+		defaultCalls++
+		return &cacheTestEmbedder{name: model, dims: 768}, nil
+	}
+	newValidatedLiteLLMClient = func(_ context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+		validatedCalls++
+		return &cacheTestEmbedder{name: model, dims: 768}, nil
+	}
+
+	result, err := eng.MigrateEmbedder(context.Background(), MigrateParams{
+		NewModel:             "validated-override-model",
+		NewDims:              768,
+		Confirm:              true,
+		ValidatedUpstreamURL: "http://public.example.test:11434",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, defaultCalls, "validated upstream must bypass the default constructor")
+	require.Equal(t, 1, validatedCalls, "validated upstream must use the strict constructor exactly once")
+	require.Equal(t, int32(1), backend.nullAllCalls.Load(), "migration should still null existing embeddings")
+	require.Equal(t, "migration started — reembed worker running with new model", result["status"])
+}
+
+func TestMigrateUsesDefaultClientWhenNoValidatedUpstreamOverrideIsPresent(t *testing.T) {
+	eng, backend := newMigrateGuardEngine(t, "BAAI/bge-m3", 1024, 10)
+	eng.embedGateway = nil
+
+	origDefault := newLiteLLMClient
+	origValidated := newValidatedLiteLLMClient
+	t.Cleanup(func() {
+		newLiteLLMClient = origDefault
+		newValidatedLiteLLMClient = origValidated
+	})
+
+	defaultCalls := 0
+	validatedCalls := 0
+	newLiteLLMClient = func(_ context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+		defaultCalls++
+		return &cacheTestEmbedder{name: model, dims: 768}, nil
+	}
+	newValidatedLiteLLMClient = func(_ context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+		validatedCalls++
+		return &cacheTestEmbedder{name: model, dims: 768}, nil
+	}
+
+	result, err := eng.MigrateEmbedder(context.Background(), MigrateParams{
+		NewModel: "default-router-model",
+		NewDims:  768,
+		Confirm:  true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, defaultCalls, "default router URL must use the standard constructor")
+	require.Equal(t, 0, validatedCalls, "default router URL must not use the strict validated constructor")
+	require.Equal(t, int32(1), backend.nullAllCalls.Load(), "migration should still null existing embeddings")
+	require.Equal(t, "migration started — reembed worker running with new model", result["status"])
 }
