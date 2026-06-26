@@ -1,5 +1,6 @@
 # Stage 1: build engram + starter
-FROM cgr.dev/chainguard/go:latest AS build
+# Pinned 2026-06-26: re-pin when Go minor version changes (crane digest cgr.dev/chainguard/go:latest)
+FROM cgr.dev/chainguard/go:latest@sha256:faf3f70ddc6b4780f0506724bdd813f91511b253b76c4a2c6e94a01f99130219 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -12,7 +13,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.Version=
 # Stage 2: minimal runtime — no shell, no OS tools, CA certs only
 # starter (the ENTRYPOINT) authenticates to Infisical, injects ENGRAM_API_KEY,
 # then exec-replaces itself with /engram. No secrets on disk.
-FROM cgr.dev/chainguard/static:latest
+# Pinned 2026-06-26: re-pin on Chainguard static updates (crane digest cgr.dev/chainguard/static:latest)
+FROM cgr.dev/chainguard/static:latest@sha256:77d8b8925dc27970ec2f48243f44c7a260d52c49cd778288e4ee97566e0cb75b
 COPY --from=build /engram /engram
 COPY --from=build /starter /starter
 COPY --from=build /engram-setup /engram-setup
