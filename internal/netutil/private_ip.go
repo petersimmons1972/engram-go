@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+// IPAddrResolver resolves a hostname into IP addresses.
+type IPAddrResolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
+// ContextDialer dials a network address using a context-aware call.
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+// SafeDialOptions configures the dial-time DNS re-resolution guard.
+type SafeDialOptions struct {
+	Resolver                   IPAddrResolver
+	Dialer                     ContextDialer
+	AllowPrivateConfiguredHost bool
+	ErrorPrefix                string
+}
+
 // privateRanges lists IP ranges that must not be dialed by user-supplied URLs.
 // Initialized once at startup via init(); safe for concurrent reads.
 var privateRanges []*net.IPNet
@@ -68,6 +86,14 @@ func IsPrivateIP(ipStr string) bool {
 // 3. If hostname, resolve via net.LookupIP and check all resolved IPs
 // 4. Return error if any resolved IP is private/reserved.
 func ValidateUpstreamURL(urlStr string) error {
+	return validateUpstreamURLWithResolver(urlStr, net.DefaultResolver)
+}
+
+func validateUpstreamURLWithResolver(urlStr string, resolver IPAddrResolver) error {
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -92,7 +118,7 @@ func ValidateUpstreamURL(urlStr string) error {
 	// Otherwise, resolve the hostname and check all resolved IPs.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ips, err := net.DefaultResolver.LookupIPAddr(resolveCtx, hostname)
+	ips, err := resolver.LookupIPAddr(resolveCtx, hostname)
 	if err != nil {
 		return fmt.Errorf("failed to resolve hostname %q: %w", hostname, err)
 	}
@@ -107,4 +133,64 @@ func ValidateUpstreamURL(urlStr string) error {
 	}
 
 	return nil
+}
+
+// NewUpstreamDialContext returns a DialContext hook that re-resolves the target
+// hostname at dial time, rejects private/reserved IPs when configured to do so,
+// and dials the resolved literal IP directly to avoid a second OS resolver hop.
+func NewUpstreamDialContext(baseURL string, opts SafeDialOptions) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	var configuredHost string
+	if u, err := url.Parse(baseURL); err == nil {
+		configuredHost = u.Hostname()
+	}
+
+	resolver := opts.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+
+	dialer := opts.Dialer
+	if dialer == nil {
+		dialer = &net.Dialer{}
+	}
+
+	errorPrefix := opts.ErrorPrefix
+	if errorPrefix == "" {
+		errorPrefix = "upstream URL"
+	}
+
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+
+		ips, err := resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("hostname %q resolved to no IP addresses", host)
+		}
+
+		if !opts.AllowPrivateConfiguredHost || host != configuredHost {
+			for _, ipAddr := range ips {
+				if ipAddr.IP == nil {
+					continue
+				}
+				if IsPrivateIP(ipAddr.IP.String()) {
+					return nil, fmt.Errorf("%s resolved to private IP %q", errorPrefix, ipAddr.IP)
+				}
+			}
+		}
+
+		for _, ipAddr := range ips {
+			if ipAddr.IP == nil {
+				continue
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), port))
+		}
+
+		return nil, fmt.Errorf("hostname %q resolved to no valid IP addresses", host)
+	}
 }

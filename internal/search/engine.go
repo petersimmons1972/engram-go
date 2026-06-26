@@ -2315,6 +2315,18 @@ type MigrateParams struct {
 	// Confirm must be true when the affected chunk count exceeds
 	// migrateConfirmThreshold. Prevents accidental mass-null on large corpora.
 	Confirm bool
+	// ValidatedUpstreamURL is a caller-supplied embedding endpoint that already
+	// passed netutil.ValidateUpstreamURL and must be re-resolved at dial time
+	// without allow-listing the configured hostname.
+	ValidatedUpstreamURL string
+}
+
+var newLiteLLMClient = func(ctx context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+	return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
+}
+
+var newValidatedLiteLLMClient = func(ctx context.Context, baseURL, model string, targetDims int) (embed.Client, error) {
+	return embed.NewLiteLLMClientForValidatedUpstream(ctx, baseURL, model, "", targetDims)
 }
 
 // MigrateEmbedder initiates an embedding migration to a new model by nulling all
@@ -2431,7 +2443,14 @@ func (e *SearchEngine) MigrateEmbedder(ctx context.Context, p MigrateParams) (ma
 	e.reembedder.Stop()
 
 	// ctx is used only for the startup probe; the returned client is context-independent.
-	newEmbedder, err := embed.NewLiteLLMClient(ctx, e.ollamaURL, canonicalNewModel, "", e.targetDims)
+	clientFactory := newLiteLLMClient
+	upstreamURL := e.ollamaURL
+	if p.ValidatedUpstreamURL != "" {
+		clientFactory = newValidatedLiteLLMClient
+		upstreamURL = p.ValidatedUpstreamURL
+	}
+
+	newEmbedder, err := clientFactory(ctx, upstreamURL, canonicalNewModel, e.targetDims)
 	if err != nil {
 		return nil, fmt.Errorf("create embedder for new model %q: %w", canonicalNewModel, err)
 	}
