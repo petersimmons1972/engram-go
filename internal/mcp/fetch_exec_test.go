@@ -35,7 +35,7 @@ func TestExecFetch_SummaryDetail(t *testing.T) {
 			Content: "full content that should not appear",
 		},
 	}
-	result, err := execFetch(context.Background(), ff, "m1", "summary", 65536, nil)
+	result, err := execFetch(context.Background(), ff, "default", "m1", "summary", 65536, nil)
 	require.NoError(t, err)
 	require.Equal(t, "m1", result["id"])
 	require.Equal(t, "A brief summary", result["summary"])
@@ -47,14 +47,14 @@ func TestExecFetch_SummaryDetail_NilSummary(t *testing.T) {
 	ff := &fakeFetcher{
 		mem: &types.Memory{ID: "m2", Summary: nil, Content: "body"},
 	}
-	result, err := execFetch(context.Background(), ff, "m2", "summary", 65536, nil)
+	result, err := execFetch(context.Background(), ff, "default", "m2", "summary", 65536, nil)
 	require.NoError(t, err)
 	require.Equal(t, "", result["summary"])
 }
 
 func TestExecFetch_IDNotFound(t *testing.T) {
 	ff := &fakeFetcher{mem: nil}
-	_, err := execFetch(context.Background(), ff, "missing", "full", 65536, nil)
+	_, err := execFetch(context.Background(), ff, "default", "missing", "full", 65536, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }
@@ -64,7 +64,7 @@ func TestExecFetch_FullDetailByteCapApplied(t *testing.T) {
 	ff := &fakeFetcher{
 		mem: &types.Memory{ID: "m3", Content: bigContent},
 	}
-	result, err := execFetch(context.Background(), ff, "m3", "full", 65536, nil)
+	result, err := execFetch(context.Background(), ff, "default", "m3", "full", 65536, nil)
 	require.NoError(t, err)
 	content, ok := result["content"].(string)
 	require.True(t, ok)
@@ -77,7 +77,7 @@ func TestExecFetch_FullDetailUnderCap_NotTruncated(t *testing.T) {
 	ff := &fakeFetcher{
 		mem: &types.Memory{ID: "m4", Content: "short"},
 	}
-	result, err := execFetch(context.Background(), ff, "m4", "full", 65536, nil)
+	result, err := execFetch(context.Background(), ff, "default", "m4", "full", 65536, nil)
 	require.NoError(t, err)
 	require.Equal(t, "short", result["content"])
 	truncated, _ := result["truncated"].(bool)
@@ -92,7 +92,7 @@ func TestExecFetch_ChunkDetail_AllChunks(t *testing.T) {
 			{ID: "c2", ChunkIndex: 1, ChunkText: "chunk one"},
 		},
 	}
-	result, err := execFetch(context.Background(), ff, "m5", "chunk", 65536, nil)
+	result, err := execFetch(context.Background(), ff, "default", "m5", "chunk", 65536, nil)
 	require.NoError(t, err)
 	chunks, ok := result["chunks"].([]*types.Chunk)
 	require.True(t, ok)
@@ -108,11 +108,25 @@ func TestExecFetch_ChunkDetail_FilterByIDs(t *testing.T) {
 			{ID: "c3", ChunkIndex: 2, ChunkText: "two"},
 		},
 	}
-	result, err := execFetch(context.Background(), ff, "m6", "chunk", 65536, []string{"c1", "c3"})
+	result, err := execFetch(context.Background(), ff, "default", "m6", "chunk", 65536, []string{"c1", "c3"})
 	require.NoError(t, err)
 	chunks, ok := result["chunks"].([]*types.Chunk)
 	require.True(t, ok)
 	require.Len(t, chunks, 2)
 	ids := []string{chunks[0].ID, chunks[1].ID}
 	require.ElementsMatch(t, []string{"c1", "c3"}, ids)
+}
+
+func TestExecFetch_CrossProjectIDRejected(t *testing.T) {
+	ff := &fakeFetcher{
+		mem: &types.Memory{
+			ID:      "m-cross",
+			Project: "alpha",
+			Content: "secret memory content",
+		},
+	}
+
+	_, err := execFetch(context.Background(), ff, "beta", "m-cross", "full", 65536, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
 }

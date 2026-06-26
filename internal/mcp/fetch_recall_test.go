@@ -156,7 +156,7 @@ func newHandleFastPathPool(t *testing.T, backend *handleFastPathBackend) *Engine
 func TestExecFetch_GetMemoryError(t *testing.T) {
 	sentinel := errors.New("db exploded")
 	f := &recallStubFetcher{memErr: sentinel}
-	_, err := execFetch(context.Background(), f, "any-id", "summary", 0, nil)
+	_, err := execFetch(context.Background(), f, "default", "any-id", "summary", 0, nil)
 	require.ErrorIs(t, err, sentinel)
 }
 
@@ -169,7 +169,7 @@ func TestExecFetch_FullDetail_ZeroMaxBytes(t *testing.T) {
 		Project: "p",
 		Content: longContent,
 	}}
-	out, err := execFetch(context.Background(), f, "big-mem", "full", 0, nil)
+	out, err := execFetch(context.Background(), f, "default", "big-mem", "full", 0, nil)
 	require.NoError(t, err)
 	content, ok := out["content"].(string)
 	require.True(t, ok)
@@ -675,7 +675,7 @@ func TestExecFetch_CrossProjectFetch_Issue634(t *testing.T) {
 	// crossProjectFetcher.GetMemoryByID always returns the memory; its
 	// GetMemory counterpart (removed from the interface) would have returned nil.
 	f := &crossProjectFetcher{mem: mem}
-	out, err := execFetch(context.Background(), f, mem.ID, "full", 65536, nil)
+	out, err := execFetch(context.Background(), f, "default", mem.ID, "full", 65536, nil)
 	require.NoError(t, err, "cross-project fetch must succeed after #634 fix")
 	require.Equal(t, mem.ID, out["id"], "returned id must match requested id")
 	require.Equal(t, mem.Content, out["content"], "full content must be present")

@@ -131,7 +131,7 @@ func sanitizeConflictingResults(conflicts []types.ConflictingResult) {
 	}
 }
 
-func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
+func execFetch(ctx context.Context, f backendFetcher, project, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
 	m, err := f.GetMemoryByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	result, err := execFetch(ctx, h.Engine.Backend(), id, detail, maxBytes, chunkIDs)
+	result, err := execFetch(ctx, h.Engine.Backend(), project, id, detail, maxBytes, chunkIDs)
 	if err != nil {
 		return nil, err
 	}
