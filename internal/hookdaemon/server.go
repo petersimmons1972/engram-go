@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -46,13 +47,24 @@ func NewServer(ctx context.Context, d *Daemon, sockPath string) (*Server, error)
 		}
 		_ = os.Remove(sockPath)
 	}
+	// Bind the socket with owner-only permissions from the moment the inode is
+	// created — no TOCTOU window. syscall.Umask is process-wide and not goroutine-
+	// safe; NewServer must be called from the main goroutine (or with external
+	// serialisation) to avoid racing with other concurrent Umask calls. (#1191)
 	var lc net.ListenConfig
+	oldMask := syscall.Umask(0o177) // allow only owner rw (0600) on new files
 	ln, err := lc.Listen(ctx, "unix", sockPath)
+	syscall.Umask(oldMask) // restore immediately after the bind syscall
 	if err != nil {
 		return nil, fmt.Errorf("hookdaemon: listen %s: %w", sockPath, err)
 	}
-	// Owner-only socket — no other local user should drive the daemon.
-	_ = os.Chmod(sockPath, 0o600)
+	// Belt-and-suspenders: explicitly chmod to 0600 and treat any error as fatal.
+	// This catches corner cases where the umask was overridden by the OS or a
+	// security module.
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("hookdaemon: chmod socket %s: %w", sockPath, err)
+	}
 	return &Server{daemon: d, sockPath: sockPath, ln: ln}, nil
 }
 
