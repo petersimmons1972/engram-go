@@ -228,10 +228,9 @@ type Server struct {
 	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
 	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
 	tofuGranted atomic.Bool
-	// #707: when tofuGranted was first set. Used by the same-process re-grant
-	// path: if the legitimate first request raced (e.g. engram-setup crashed
-	// mid-parse), allow another grant after 60 seconds without requiring a
-	// process restart. atomic.Int64 holds unix epoch seconds.
+	// tofuGrantedAt records when the one-time localhost bootstrap grant was
+	// issued. It remains for timing/observability and tests. atomic.Int64 holds
+	// unix epoch seconds.
 	tofuGrantedAt atomic.Int64
 
 	// serverPhase tracks startup lifecycle: 0=starting, 1=warming, 2=warm.
@@ -744,17 +743,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
-		// #707: allow re-grant after 60s. If the prior grant succeeded but
-		// the client crashed/raced before receiving the response, the operator
-		// would otherwise have to restart the process. The time window keeps
-		// the "exactly once during bootstrap" semantics within a session.
-		if isLoopbackIP(rawPeer) {
-			if s.tofuGranted.Load() {
-				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
-					s.tofuGranted.Store(false)
-				}
-			}
-		}
+		// Re-grant removed in #1187 — one grant per process lifetime.
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
@@ -997,17 +986,7 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
-		// #707: allow re-grant after 60s. If the prior grant succeeded but
-		// the client crashed/raced before receiving the response, the operator
-		// would otherwise have to restart the process. The time window keeps
-		// the "exactly once during bootstrap" semantics within a session.
-		if isLoopbackIP(rawPeer) {
-			if s.tofuGranted.Load() {
-				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
-					s.tofuGranted.Store(false)
-				}
-			}
-		}
+		// Re-grant removed in #1187 — one grant per process lifetime.
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
 			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",

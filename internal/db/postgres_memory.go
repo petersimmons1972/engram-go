@@ -355,6 +355,24 @@ func (b *PostgresBackend) MergeMemoriesAtomic(ctx context.Context, project, winn
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	row, err := tx.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
+		winnerID, project,
+	)
+	if err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic lock winner: %w", err)
+	}
+	winner, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return fmt.Errorf("MergeMemoriesAtomic winner %s not found", winnerID)
+	}
+	if err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic lock winner: %w", err)
+	}
+	if err := b.versionMemoryTx(ctx, tx, winner, types.VersionChangeUpdate, ""); err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic version winner: %w", err)
+	}
+
 	if newContent != "" {
 		now := time.Now().UTC()
 		hash := ContentHash(newContent)

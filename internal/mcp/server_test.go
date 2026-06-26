@@ -70,6 +70,27 @@ func TestSetupTokenBudgetDoesNotConsumeNormalBudget(t *testing.T) {
 	}
 }
 
+func TestTOFU_NoReGrant(t *testing.T) {
+	const apiKey = "test-api-key-no-regrant"
+
+	s := newTOFUTestServer(t, apiKey)
+	s.tofuGranted.Store(true)
+	s.tofuGrantedAt.Store(time.Now().Add(-2 * time.Minute).Unix())
+
+	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req.RemoteAddr = "127.0.0.1:44444"
+	w := httptest.NewRecorder()
+
+	buildSetupTokenTOFUHandler(s, apiKey).ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 after prior TOFU grant, got %d", w.Code)
+	}
+	if !s.tofuGranted.Load() {
+		t.Fatal("tofuGranted must remain true after rejecting a re-grant attempt")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // E3: clientIP IP validation tests (#290)
 // ---------------------------------------------------------------------------

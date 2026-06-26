@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/petersimmons1972/engram/internal/types"
@@ -59,6 +60,69 @@ func TestGetMemoryByID_NotFound(t *testing.T) {
 	retrieved, err := b.GetMemoryByID(ctx, types.NewMemoryID())
 	require.NoError(t, err)
 	require.Nil(t, retrieved, "GetMemoryByID must return nil for nonexistent IDs")
+}
+
+func TestMergeMemoriesAtomic_ConcurrentSameWinner(t *testing.T) {
+	proj := uniqueProject("merge-concurrent")
+	b := newTestBackend(t, proj)
+	ctx := context.Background()
+
+	winner := storeMemory(t, b, proj, "winner-before-merge")
+	loserA := storeMemory(t, b, proj, "loser-a")
+	loserB := storeMemory(t, b, proj, "loser-b")
+
+	const contentA = "winner-after-merge-a"
+	const contentB = "winner-after-merge-b"
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	runMerge := func(loserID, content string) {
+		defer wg.Done()
+		<-start
+		errs <- b.MergeMemoriesAtomic(ctx, proj, winner.ID, loserID, content)
+	}
+
+	wg.Add(2)
+	go runMerge(loserA.ID, contentA)
+	go runMerge(loserB.ID, contentB)
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	finalWinner, err := b.GetMemory(ctx, winner.ID)
+	require.NoError(t, err)
+	require.NotNil(t, finalWinner)
+	require.Contains(t, []string{contentA, contentB}, finalWinner.Content)
+
+	for _, loserID := range []string{loserA.ID, loserB.ID} {
+		loser, err := b.GetMemory(ctx, loserID)
+		require.NoError(t, err)
+		require.Nil(t, loser, "loser %s must be deleted", loserID)
+	}
+
+	history, err := b.GetMemoryHistory(ctx, proj, winner.ID)
+	require.NoError(t, err)
+	require.Len(t, history, 2, "winner should capture both pre-merge states across serialized merges")
+
+	versionedContents := map[string]bool{}
+	for _, version := range history {
+		versionedContents[version.Content] = true
+		require.Equal(t, types.VersionChangeUpdate, version.ChangeType)
+	}
+
+	require.True(t, versionedContents[winner.Content], "original winner content must be versioned before the first merge")
+
+	intermediate := contentA
+	if finalWinner.Content == contentA {
+		intermediate = contentB
+	}
+	require.True(t, versionedContents[intermediate], "the winner state from the earlier merge must be versioned before the later merge")
 }
 
 func TestGetMemoryByIDInProject_SameProject(t *testing.T) {
