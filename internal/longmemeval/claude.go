@@ -613,6 +613,47 @@ Do NOT answer the question directly. Instead, describe what the user would prefe
 `+hardExclusionRule, questionDate, ctx, questionDate, question)
 }
 
+// quoteFirstRule is the canonical QUOTE-FIRST text for the H-QF lever — the
+// stronger sibling of H-PG (preferenceGroundingRule). Where H-PG forbids
+// invented specifics but allows retreating to general statements (which over-
+// suppressed gold-required specifics and scored 40% vs 50% baseline), H-QF
+// anchors the answer ON the verbatim span: it instructs the model to first
+// locate the exact context phrase stating the preference, then describe the
+// preference using only the specifics in that phrase. Grounds TO specifics
+// rather than away from them. Targets FM-PG (#1183).
+const quoteFirstRule = `QUOTE-FIRST RULE: Before describing the preference, silently find the exact phrase(s) in the memory context above that state what the user likes, wants, or dislikes. Describe the preference using ONLY the specific items, brands, titles, places, or ingredients that appear in those phrases. Do not add any specific not present in the context, and do not omit a specific that is present — name it exactly as the context does.`
+
+// GenerationPromptForTypePreferenceQuoteFirst (H-QF) routes single-session-
+// preference questions to a quote-first prompt when preferenceQuoteFirst is true;
+// otherwise returns the baseline GenerationPromptForType unchanged. Activated by
+// --preference-quote-first (Config.PreferenceQuoteFirst). See quoteFirstRule, FM-PG.
+func GenerationPromptForTypePreferenceQuoteFirst(question, questionType, questionDate string, contextBlocks []string, preferenceQuoteFirst bool) string {
+	if preferenceQuoteFirst && questionType == "single-session-preference" {
+		return GenerationPromptPreferenceQuoteFirst(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
+// GenerationPromptPreferenceQuoteFirst (H-QF) returns the baseline ss-preference
+// prompt augmented with the QUOTE-FIRST RULE. See quoteFirstRule.
+func GenerationPromptPreferenceQuoteFirst(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are describing a person's preferences based on their conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Do NOT answer the question directly. Instead, describe what the user would prefer based on their past conversations. Start your response with "The user would prefer..." and include what they would NOT prefer if the context supports it. Be concise.
+
+`+quoteFirstRule+`
+
+`+hardExclusionRule, questionDate, ctx, questionDate, question)
+}
+
 // GenerationPromptEnumerateFirst (H12) returns a generation prompt that
 // instructs the model to enumerate each relevant event from the memory blocks
 // individually before computing a total. Forces an explicit intermediate

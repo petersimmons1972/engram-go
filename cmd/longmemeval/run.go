@@ -766,6 +766,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypePreferenceEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.PreferenceGround:
 		prompt = longmemeval.GenerationPromptForTypePreferenceGround(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	case cfg.PreferenceQuoteFirst:
+		prompt = longmemeval.GenerationPromptForTypePreferenceQuoteFirst(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}

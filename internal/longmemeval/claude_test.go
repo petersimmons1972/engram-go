@@ -519,6 +519,41 @@ func TestGenerationPrompt_PreferenceGround_NoopForNonPreference(t *testing.T) {
 	}
 }
 
+func TestGenerationPrompt_PreferenceQuoteFirst_AnchorsOnVerbatimSpan(t *testing.T) {
+	// H-QF: quote-first variant must instruct the model to anchor on a verbatim
+	// span from context before describing the preference — the stronger sibling of
+	// H-PG. Distinct from H-PG: it grounds TO specifics present in context rather
+	// than retreating to general statements (H-PG's "prefer general" clause caused
+	// it to score 40% vs baseline 50% by over-suppressing gold-required specifics).
+	prompt := longmemeval.GenerationPromptForTypePreferenceQuoteFirst(
+		"Can you recommend some resources where I can learn more about video editing?",
+		"single-session-preference", "2024-03-15",
+		[]string{"Session date: 2024-03-10\nUser asked about advanced Adobe Premiere Pro color grading settings."},
+		true,
+	)
+	low := strings.ToLower(prompt)
+	if !strings.Contains(low, "prefer") {
+		t.Errorf("quote-first prompt must orient toward preference description, got:\n%s", prompt)
+	}
+	if !strings.Contains(low, "quote") && !strings.Contains(low, "verbatim") {
+		t.Errorf("quote-first prompt must instruct anchoring on a verbatim quote, got:\n%s", prompt)
+	}
+}
+
+func TestGenerationPrompt_PreferenceQuoteFirst_NoopForNonPreference(t *testing.T) {
+	base := longmemeval.GenerationPromptForType(
+		"When did the user buy their camera?", "single-session-user", "2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."},
+	)
+	got := longmemeval.GenerationPromptForTypePreferenceQuoteFirst(
+		"When did the user buy their camera?", "single-session-user", "2024-03-15",
+		[]string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."}, true,
+	)
+	if got != base {
+		t.Errorf("PreferenceQuoteFirst must be a no-op for non-preference types")
+	}
+}
+
 func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
 	// Non-preference types must still use the original generic prompt.
 	prompt := longmemeval.GenerationPromptForType(
