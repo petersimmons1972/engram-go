@@ -639,6 +639,7 @@ func applyRepairPreset(cfg *Config) error {
 		cfg.ExhaustiveAggregation = true
 		cfg.EnumerateFirst = true
 		cfg.TemporalPromptAug = true
+		cfg.TemporalWindowRecall = true
 		cfg.ChronoSort = true
 		return nil
 	default:

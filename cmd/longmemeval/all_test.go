@@ -78,6 +78,9 @@ func TestApplyRepairPresetRecallRepair(t *testing.T) {
 	if !cfg.TemporalPromptAug {
 		t.Error("recall-repair preset should enable temporal prompt augmentation")
 	}
+	if !cfg.TemporalWindowRecall {
+		t.Error("recall-repair preset should enable server-side temporal window recall")
+	}
 	if !cfg.ChronoSort {
 		t.Error("recall-repair preset should enable chronological context ordering")
 	}
@@ -89,7 +92,7 @@ func TestApplyRepairPresetDefaultBaselineNoop(t *testing.T) {
 		t.Fatalf("applyRepairPreset default: %v", err)
 	}
 	if cfg.DualPreferenceRecall || cfg.ExhaustiveAggregation || cfg.EnumerateFirst ||
-		cfg.TemporalPromptAug || cfg.ChronoSort {
+		cfg.TemporalPromptAug || cfg.TemporalWindowRecall || cfg.ChronoSort {
 		t.Fatalf("default config should leave repair switches off: %+v", cfg)
 	}
 }
