@@ -916,8 +916,14 @@ func (s *Server) applyMiddlewareWithRL(next http.Handler, apiKey string, rl *rat
 		// Rate limit before auth check to prevent timing-based enumeration.
 		// Exempt loopback IPs (127.0.0.1, ::1) — a local process is not a threat.
 		// Also exempt entirely when RateLimitDisable=true (#387).
-		remoteHost := s.clientIP(r)
-		if !s.cfg.RateLimitDisable && !isLoopbackIP(remoteHost) {
+		//
+		// The loopback exemption MUST use the physical network address (r.RemoteAddr),
+		// never a client-supplied header such as X-Real-IP or X-Forwarded-For.
+		// A remote attacker sending "X-Real-IP: 127.0.0.1" must NOT bypass rate
+		// limiting, regardless of the ENGRAM_TRUST_PROXY_HEADERS setting. (#1190)
+		remoteHost := s.clientIP(r) // proxy-aware; used as the per-IP RL bucket key
+		physicalHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !s.cfg.RateLimitDisable && !isLoopbackIP(physicalHost) {
 			if !rl.allow(remoteHost) {
 				w.Header().Set("Retry-After", "1")
 				writeJSON(w, http.StatusTooManyRequests, map[string]string{
