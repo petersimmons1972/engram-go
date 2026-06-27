@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -736,7 +737,14 @@ type RestClient struct {
 	http    *http.Client
 }
 
+const (
+	restResponsePreviewBytes = 80
+	restBaseURLHint          = "is the base URL the server root rather than /mcp?"
+)
+
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
+// The URL is normalised with baseServerURL so callers may pass the server root,
+// an /mcp suffix, or an /sse suffix interchangeably.
 func NewRestClient(baseURL, token string) *RestClient {
 	return &RestClient{
 		baseURL: baseServerURL(baseURL),
@@ -791,23 +799,24 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			OK    bool   `json:"ok"`
 			ID    string `json:"id"`
 			Error string `json:"error"`
+			Hint  string `json:"hint"`
 		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
-			continue
+		if err := decodeRESTJSONObjectResponse(resp, req.Method, req.URL.String(), &result); err != nil {
+			return "", fmt.Errorf("quick-store decode: %w", err)
 		}
 		if resp.StatusCode == 429 {
-			lastErr = fmt.Errorf("quick-store rate limited (status 429)")
+			lastErr = restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 			continue
 		}
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("quick-store server error (status %d): %s", resp.StatusCode, result.Error)
+			lastErr = restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 			continue
 		}
+		if resp.StatusCode >= 400 {
+			return "", restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
+		}
 		if !result.OK || result.ID == "" {
-			return "", fmt.Errorf("quick-store failed: %s (status %d)", result.Error, resp.StatusCode)
+			return "", restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 		}
 		return result.ID, nil
 	}
@@ -836,15 +845,59 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
-		IDs []string `json:"ids"`
+		IDs   []string `json:"ids"`
+		Error string   `json:"error"`
+		Hint  string   `json:"hint"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeRESTJSONObjectResponse(resp, req.Method, req.URL.String(), &result); err != nil {
 		return nil, fmt.Errorf("quick-recall decode: %w", err)
 	}
+	if resp.StatusCode >= 400 {
+		return nil, restStatusError("quick-recall", resp.StatusCode, result.Error, result.Hint)
+	}
 	return result.IDs, nil
+}
+
+func decodeRESTJSONObjectResponse(resp *http.Response, method, url string, dst any) error {
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read response body from %s %s: %w", method, url, err)
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	preview := responseBodyPreview(trimmed)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("unexpected non-object response from %s %s (status %d, first %d bytes: %q): %s",
+			method, url, resp.StatusCode, len(preview), preview, restBaseURLHint)
+	}
+	if err := json.Unmarshal(trimmed, dst); err != nil {
+		return fmt.Errorf("unexpected response object from %s %s (status %d, first %d bytes: %q): %v: %s",
+			method, url, resp.StatusCode, len(preview), preview, err, restBaseURLHint)
+	}
+	return nil
+}
+
+func responseBodyPreview(body []byte) string {
+	if len(body) > restResponsePreviewBytes {
+		body = body[:restResponsePreviewBytes]
+	}
+	return string(body)
+}
+
+func restStatusError(op string, status int, msg, hint string) error {
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	if msg == "" {
+		msg = "request failed"
+	}
+	if hint != "" {
+		return fmt.Errorf("%s failed: %s (status %d): %s", op, msg, status, hint)
+	}
+	return fmt.Errorf("%s failed: %s (status %d)", op, msg, status)
 }
 
 // SessionContent concatenates all turns of a session into a single string,

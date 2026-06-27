@@ -39,6 +39,8 @@ const (
 	phaseWarm     int32 = 2
 )
 
+const restEndpointRootHint = "REST endpoints (/quick-store,/atoms,/quick-recall) are at the server root, not under /mcp"
+
 // Exported aliases for use by main.go and other external callers that need to
 // advance the server phase without accessing unexported fields directly.
 const (
@@ -806,6 +808,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// Configure in mcp_servers.json: type:"http", url:"http://127.0.0.1:8788/mcp"
 	streamable := buildStreamableHTTPServer(s.mcp)
 	mux.Handle("/mcp", s.applyMiddleware(streamable, apiKey, rl))
+	mux.Handle("/mcp/", s.authenticatedNotFoundHandler(apiKey, rl))
 
 	// /quick-store — sessionless REST endpoint for hook scripts and CLI callers
 	// that cannot establish an SSE session (e.g. PreCompact hooks).
@@ -820,8 +823,10 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// POST {"project":...,"atom_type":...,"top_k":N} → returns {"atoms":[...]} for --atom-mode recall.
 	mux.Handle("/atoms", s.applyMiddleware(http.HandlerFunc(s.handleAtoms), apiKey, rl))
 
-	// All other authenticated routes (including /sse) go through the standard middleware.
-	mux.Handle("/", s.applyMiddleware(sse, apiKey, rl))
+	// All other authenticated routes are either the legacy SSE endpoint or a
+	// structured JSON 404. Unknown paths must not fall through to the SSE
+	// transport, which can emit opaque non-object bodies (#1192).
+	mux.Handle("/", s.authenticatedFallbackHandler(sse, apiKey, rl))
 
 	// Background sweeper closes crash-orphaned open episodes on an hourly interval.
 	go s.sweepStaleEpisodes(ctx)
@@ -865,6 +870,29 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	case err := <-errCh:
 		return err
 	}
+}
+
+func writeRESTEndpointNotFound(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotFound, map[string]string{
+		"error": "not found",
+		"hint":  restEndpointRootHint,
+	})
+}
+
+func (s *Server) authenticatedNotFoundHandler(apiKey string, rl *rateLimiter) http.Handler {
+	return s.applyMiddlewareWithRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeRESTEndpointNotFound(w)
+	}), apiKey, rl)
+}
+
+func (s *Server) authenticatedFallbackHandler(sse http.Handler, apiKey string, rl *rateLimiter) http.Handler {
+	return s.applyMiddlewareWithRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sse" {
+			sse.ServeHTTP(w, r)
+			return
+		}
+		writeRESTEndpointNotFound(w)
+	}), apiKey, rl)
 }
 
 // applyMiddleware chains per-IP rate limiting (#140) and Bearer auth onto next.

@@ -170,6 +170,43 @@ func TestRestClient_QuickStore_ServerError(t *testing.T) {
 	}
 }
 
+// TestRestClient_QuickStore_NonObjectResponseError verifies that decode
+// failures surface the called URL, HTTP status, body prefix, and the root-vs-
+// /mcp hint instead of the raw Go struct unmarshal error (#1192).
+func TestRestClient_QuickStore_NonObjectResponseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/quick-store" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("42"))
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	_, err := rc.QuickStore(context.Background(), "proj-1", "content here", []string{"tag1"}, nil)
+	if err == nil {
+		t.Fatal("QuickStore error = nil, want non-object response error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unexpected non-object response from POST") {
+		t.Fatalf("error = %q, want non-object response framing", msg)
+	}
+	if !strings.Contains(msg, "/quick-store") {
+		t.Fatalf("error = %q, want called URL", msg)
+	}
+	if !strings.Contains(msg, "status 200") {
+		t.Fatalf("error = %q, want status code", msg)
+	}
+	if !strings.Contains(msg, "\"42\"") {
+		t.Fatalf("error = %q, want body prefix", msg)
+	}
+	if !strings.Contains(msg, "server root rather than /mcp") {
+		t.Fatalf("error = %q, want base URL hint", msg)
+	}
+}
+
 // TestRestClient_QuickRecall_HappyPath verifies QuickRecall returns IDs.
 func TestRestClient_QuickRecall_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +224,73 @@ func TestRestClient_QuickRecall_HappyPath(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != "id-1" {
 		t.Errorf("ids = %v, want [id-1, id-2]", ids)
+	}
+}
+
+// TestRestClient_QuickRecall_NonObjectResponseError verifies QuickRecall uses
+// the same wrapped decode error shape as QuickStore when the server returns a
+// scalar or other non-object body (#1192).
+func TestRestClient_QuickRecall_NonObjectResponseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/quick-recall" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("7"))
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	_, err := rc.QuickRecall(context.Background(), "proj", "query", 5)
+	if err == nil {
+		t.Fatal("QuickRecall error = nil, want non-object response error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unexpected non-object response from POST") {
+		t.Fatalf("error = %q, want non-object response framing", msg)
+	}
+	if !strings.Contains(msg, "/quick-recall") {
+		t.Fatalf("error = %q, want called URL", msg)
+	}
+	if !strings.Contains(msg, "status 404") {
+		t.Fatalf("error = %q, want status code", msg)
+	}
+	if !strings.Contains(msg, "\"7\"") {
+		t.Fatalf("error = %q, want body prefix", msg)
+	}
+	if !strings.Contains(msg, "server root rather than /mcp") {
+		t.Fatalf("error = %q, want base URL hint", msg)
+	}
+}
+
+// TestRestClient_QuickRecall_ObjectErrorResponse verifies that a structured
+// JSON error response does not decode as a false success with empty IDs (#1192).
+func TestRestClient_QuickRecall_ObjectErrorResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/quick-recall" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": "not found",
+			"hint":  "REST endpoints (/quick-store,/atoms,/quick-recall) are at the server root, not under /mcp",
+		})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	_, err := rc.QuickRecall(context.Background(), "proj", "query", 5)
+	if err == nil {
+		t.Fatal("QuickRecall error = nil, want structured 404 error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "quick-recall failed: not found (status 404)") {
+		t.Fatalf("error = %q, want status error framing", msg)
+	}
+	if !strings.Contains(msg, "REST endpoints (/quick-store,/atoms,/quick-recall) are at the server root, not under /mcp") {
+		t.Fatalf("error = %q, want server hint", msg)
 	}
 }
 
