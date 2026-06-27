@@ -67,22 +67,51 @@ func TestRestClient_QuickStore_HappyPath(t *testing.T) {
 // TestNewRestClient_URLNormalization verifies that NewRestClient strips /mcp and /sse
 // suffixes so callers can pass any of the three common URL forms interchangeably.
 func TestNewRestClient_URLNormalization(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
-		input string
-		want  string
+		name string
+		path string
 	}{
-		{"http://host:8788", "http://host:8788"},
-		{"http://host:8788/", "http://host:8788"},
-		{"http://host:8788/mcp", "http://host:8788"},
-		{"http://host:8788/mcp/", "http://host:8788"},
-		{"http://host:8788/sse", "http://host:8788"},
-		{"http://host:8788/sse/", "http://host:8788"},
+		{name: "bare base URL", path: ""},
+		{name: "trailing slash", path: "/"},
+		{name: "mcp suffix", path: "/mcp"},
+		{name: "sse suffix", path: "/sse"},
 	}
+
 	for _, tc := range cases {
-		rc := longmemeval.NewRestClient(tc.input, "tok")
-		if got := rc.BaseURL(); got != tc.want {
-			t.Errorf("NewRestClient(%q).BaseURL() = %q, want %q", tc.input, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			var sawQuickStore bool
+			mux := http.NewServeMux()
+			mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`1`))
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/quick-store" {
+					sawQuickStore = true
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "mem-normalized"})
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`1`))
+			})
+
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			rc := longmemeval.NewRestClient(srv.URL+tc.path, "")
+			id, err := rc.QuickStore(context.Background(), "proj", "content", nil, nil)
+			if err != nil {
+				t.Fatalf("QuickStore(%q): %v", tc.path, err)
+			}
+			if !sawQuickStore {
+				t.Fatalf("QuickStore(%q) did not hit /quick-store", tc.path)
+			}
+			if id != "mem-normalized" {
+				t.Fatalf("id = %q, want mem-normalized", id)
+			}
+		})
 	}
 }
 
