@@ -1,0 +1,93 @@
+name: build-push-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - ".github/workflows/build-push-deploy.yml"
+      - "!deploy/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-push-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  IMAGE: registry.petersimmons.com/engram/engram-go
+  CONTEXT: .
+  DOCKERFILE: Dockerfile
+  NAMESPACE: engram
+  DEPLOYMENT: engram-go
+  CONTAINER: engram-go
+  MANIFEST: deploy/engram-go.yaml
+  PLATFORMS: linux/amd64,linux/arm64
+  BUILDKITD: tcp://buildkitd.ai-fleet.svc.cluster.local:1234
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, homelab]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./... -count=1 -race
+      - run: go vet ./...
+
+  build-push-deploy:
+    needs: test
+    runs-on: [self-hosted, linux, homelab]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tag: ${{ steps.tags.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute immutable tag
+        id: tags
+        run: |
+          echo "tag=main-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+      - name: Set up buildx against in-cluster buildkitd
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: remote
+          endpoint: ${{ env.BUILDKITD }}
+      - name: Build and push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          provenance: false
+          build-args: VERSION=${{ steps.tags.outputs.tag }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+      - name: Bump manifest digest
+        run: |
+          REF="${IMAGE}:${{ steps.tags.outputs.tag }}@${{ steps.build.outputs.digest }}"
+          sed -i -E "s#( *image: )registry\.petersimmons\.com/engram/engram-go.*#\1${REF}#" "$MANIFEST"
+          git --no-pager diff -- "$MANIFEST"
+      - name: Commit bumped manifest back to main
+        run: |
+          git config user.name "fleet-ci[bot]"
+          git config user.email "fleet-ci@petersimmons.com"
+          git add "$MANIFEST"
+          git commit -m "deploy(${DEPLOYMENT}): bump image to ${{ steps.tags.outputs.tag }} [skip ci]" || echo "no change"
+          git push origin HEAD:main
+      - name: Apply + wait for rollout
+        run: |
+          kubectl -n "$NAMESPACE" apply -f "$MANIFEST"
+          kubectl -n "$NAMESPACE" rollout status "deployment/${DEPLOYMENT}" --timeout=180s
