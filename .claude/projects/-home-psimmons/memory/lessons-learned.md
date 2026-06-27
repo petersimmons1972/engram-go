@@ -220,3 +220,83 @@ When building homelab infrastructure scripts, subagents may reach for available 
 ## 2026-06-18 — Codex ChatGPT auth auto-refreshes — do not flag re-auth on access-token expiry
 
 The Codex container uses ChatGPT device-flow auth (auth.json on the codex-auth volume) which holds a refresh token (tokens + last_refresh). The access_token short expiry (~6 days) auto-refreshes via the refresh token; an expired id_token is normal. Do NOT flag a manual interactive re-auth as a needed founder action based on access-token expiry — it is not required. Founder confirmed auth is already set up and working.
+
+## 2026-06-20 — File GitHub issues for findings — not just plan files / FM catalog
+
+Founder reminder ("Always issues"): bugs and backlog findings must be filed as GitHub Issues (the system of record) before/alongside reporting status, per the CLAUDE.md Bug Accountability rule. During the fleet campaign I leaned on plan files and the failure-mode catalog instead of opening issues; the founder corrected this. Standing behavior: when a bug or actionable finding is discovered, open a tracked GitHub issue in the owning repo, not only a plan-file note.
+
+## 2026-06-21 — Search online when stuck
+
+When debugging an unfamiliar system (e.g. opencode HTTP API), search the web EARLY rather than guessing through redeploy cycles. The x-opencode-directory header fix + the known ?directory= bug (upstream #12271) were found in one searxng query after several failed deploy iterations. Founder flagged this explicitly as a failure mode.
+
+## 2026-06-21 — Never echo secrets even with inline redaction
+
+A sed redaction of a GH_TOKEN in command output FAILED to match the format and leaked the full PAT into the transcript. Do not print env values for secrets at all (not even piped through sed); test presence with ${VAR:+present} ONLY when the surrounding echo cannot concatenate the value. Prefer a boolean check that cannot expand the secret.
+
+## 2026-06-21 — Plan socialization must hit ALL reachable fleet AIs, not just codex+hermes
+
+When socializing a plan (three-way-plan/fleet-plan), dispatch to every reachable fleet worker — codex, grok, AND hermes — not the historical "three-way" pair. Discover reachability via ssh <node> docker ps. Updated both skill rosters (fleet-plan + three-way-plan) to add grok and reframe to "all reachable workers". Grok added genuine value: it cast the lone dissent that turned out mechanistically correct (refuted evidence-first-pack).
+
+## 2026-06-22 — Kill by explicit PID in a separate step; never pkill -f PATTERN in a command that also contains PATTERN
+
+pkill -f PATTERN (and kill of ps|grep PATTERN) self-matches and kills the CURRENT shell — exit 144, command aborts mid-run, leaving the target state ambiguous (sometimes killed, relaunch skipped) — whenever the running command line itself contains PATTERN, e.g. a kill-and-relaunch one-liner (the relaunch carries the binary name) or even the literal grep pattern. Hit 3x this session on longmemeval-s and run_experiment.py. CORRECT METHOD: (1) obtain the PID in a SEPARATE read-only tool call (pgrep -f PATTERN, or ps -eo pid,cmd | grep with the bracket trick); (2) kill the explicit numeric PID; (3) NEVER combine kill-by-pattern with a relaunch (which contains PATTERN) in one command — split into separate tool calls; (4) the bracket trick alone is insufficient if the SAME command contains the literal string elsewhere.
+
+## 2026-06-22 — Eisenhower-charter drift: the field-marshal session kept doing lieutenant work (hands-on Bash) instead of delegating
+
+The orchestrating Opus/Eisenhower session repeatedly ran mechanical hands-on work itself — kill-process commands, fleet enqueues, experiment restarts, prod deploys, log-greps — instead of dispatching Sonnet/Haiku subagents, violating its own charter (coordinates/briefs/synthesizes/adjudicates; does NOT implement; disallowedTools [Edit,Bash]). ROOT CAUSE: Bash is enabled on the MAIN session, so the charter is unenforced and rides on discipline; under momentum the fast self-path beat the doctrinal delegate-path, and per-act this-one-is-quick rationalizations compounded into the commander operating as a lieutenant — burning Opus tokens on mechanical work and producing fumbles (pkill self-kills). GATE (default-to-delegate): before ANY Bash, classify — a genuinely trivial single pre-approved one-liner MAY run inline; anything multi-step, investigative, a deploy, experiment management, or doable by a Sonnet/Haiku agent MUST be dispatched to a subagent. Stand up Bradley (omar-bradley) as the operational shield so the marshal stays strategic. The marshal output is briefs, synthesis, and decisions — not shell commands.
+
+## 2026-06-23 — Grok /imagine can render diagrams, not just photos
+
+Grok /imagine output type is prompt-driven: ask explicitly for a flat-vector technical diagram (labeled boxes, arrows, no photorealism, palette hexes) and it produces clean diagrams. Do not assume it is photo-only or fall back to hand-authored SVG for schematics.
+
+## 2026-06-25 — Default-deny egress is known for this cluster; apply it proactively + verify behavior not pod status
+
+This k8s cluster is default-deny egress (previously discussed). When a pod needs outbound, proactively add the egress allow rule rather than diagnosing/handing off. Never call a service live on 1/1 Ready — verify logs/downstream effect. Symptom of the trap: Ready pod, silent per-cycle outbound failures.
+
+## 2026-06-25 — Persist live cluster fixes to source manifests (GitOps), not just kubectl
+
+Any live kubectl fix (NetworkPolicy, secret, scale, edit) must be written into the GitOps-watched source manifests and merged, else it reverts on reconcile/rebuild. Check for ArgoCD/Flux + ESO before applying live; edit source when managed. A fix is not done until it is in source on the watched branch.
+
+## 2026-06-25 — Do not prompt user to handle Infisical token operations
+
+After updating a secret in Infisical, complete the full deploy cycle (ESO force-sync + kubectl rollout restart) autonomously. Never prompt the user to retrieve, set, or act on an Infisical token — the MCP tool and kubectl are available and sufficient. Prompting is a failure mode.
+
+## 2026-06-25 — Fleet deploy secret-handling: inject via infisical run, pre-name authorized paths in the brief
+
+For claude-codex fleet deploys that need a secret (e.g. GH_TOKEN), inject it with `infisical run --path <p> --env prod -- <deploy-script>` so the value reaches the subprocess env without touching argv, shell history, or a temp file. In the dispatch brief, pre-name the exact authorized Infisical path(s) the deploy script expects so the agent fetches one known secret rather than searching across projects. Confirm deploy success only via non-secret signals (gh auth identity print, container health). Known path for the Grok worker GH_TOKEN: /homelab/fleet/codex.
+
+## 2026-06-25 — Spark (oblivion GB10) has no embed service
+
+The 47-day-old project_oblivion_spark_state.md recorded BAAI/bge-m3 via Infinity on Spark. This is wrong per current infra: embed lives on precision (MI-50:8007 live queries, W6800:8005 batch). Spark is inference-only. Full 128GB is available for the LLM — do not subtract embed budget when sizing models for oblivion.
+
+## 2026-06-26 — Capture the live response before concluding a server-side root cause
+
+On engram #1185 I diagnosed the deployed server as stale and nearly redeployed a container, when the actual bug was a one-line client URL-normalization miss (RestClient kept the /mcp suffix -> POSTed to /mcp/quick-store -> bare-number response). I only confirmed by finally capturing the live /quick-store response, which was correct {ok,id}. Rule: before attributing a failure to a deployed service (and especially before any restart/redeploy), capture the actual response from the exact URL the failing client uses. A cryptic decode error (cannot unmarshal number) points at a wrong endpoint/contract, not necessarily a stale server.
+
+## 2026-06-26 — Manifest-first deploy discipline
+
+Never leave a running container ahead of its source/manifest/image; commit + update the image/manifest before or with any deploy so a rebuild reproduces running state; verify running==manifest after deploy by running ~/bin/check-manifest-drift.sh; cp-into-running-container is banned; drift is a wake-the-founder incident.
+
+## 2026-06-26 — Truncation-to-fit gutted accuracy (LME)
+
+--max-block-chars 2500 forced all items to fit Spark 40960 but dropped user30 strict 87->21%. A suspiciously low score on an easy type implicates context truncation, not model capability. Cap context by lowering topk or use generous max-block-chars (full-session ~8000), never aggressive truncation.
+
+## 2026-06-26 — LME Spark exclusive-lock collisions from overlapping bg jobs
+
+longmemeval run takes an exclusive backend lock; a second overlapping run exits 75 and writes 0/0 garbage. An orchestrator killed mid-flight falls through to its next stage and grabs the lock. Run ONE Spark job at a time; verify-free-before-launch; kill the orchestrator parent, not just its child.
+
+## 2026-06-26 — Biased-subset trap in partial benchmark runs
+
+When items error out (context overflow), scoring only survivors overstates accuracy (survivors are the easier small-context items). Always check scored-total vs N; denominator < N = silent item loss, numbers untrustworthy.
+
+## 2026-06-26 — Codex host auth vs container-volume auth are separate
+
+Re-authing codex on the host or leviathan via 'codex login' updates /home/<user>/.codex/auth.json on that host only. The codex-agent container uses a SEPARATE Docker volume (/home/codex/.codex/auth.json) that host/leviathan re-auth never touches. The fleet-plan relay (ssh host 'codex exec') uses the host bare auth; the codex-attach daemon uses the container volume. Fix the path the failing consumer actually uses.
+
+## 2026-06-26 — Idle install on a shared OAuth account looks healthy but isn't
+
+A ChatGPT/x.ai OAuth account shared across hosts uses rolling single-use refresh tokens; any refresh revokes the others' stored copy. An idle install appears to 'never fail' only because it never exercises (and thus never discovers) its now-stale token. Co-locating a fleet daemon and an ad-hoc relay in one container makes them race on one auth.json.
+
+## 2026-06-26 — Pin Grok CLI model to grok-build, not Composer
+
+Grok CLI offers grok-build (Grok 4.x, xAI) and grok-composer-2.5-fast (Cursor's Composer). A silent default-model swap to Composer changes every Grok review's behavior. Pin default=grok-build in the container config and verify the self-reported model after any Grok update.

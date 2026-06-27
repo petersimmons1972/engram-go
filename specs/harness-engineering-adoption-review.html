@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan: Harness-Engineering Adoption Review</title>
+<style>
+/* ===== ROOT PALETTE — security-audit / methodology-governance ===== */
+:root {
+  --bg:            #f2f4f7;
+  --surface:       #ffffff;
+  --surface-raised:#f8f9fb;
+  --border:        #c5cdd9;
+  --border-soft:   #dde3ec;
+  --ink:           #18202e;
+  --ink-2:         #44536a;
+  --ink-3:         #6b7d96;
+  --accent:        #2c4a7c;       /* slate-steel blue */
+  --accent-light:  #e3ebf8;
+  --accent-dark:   #1a2f52;
+  --adopt:         #1b5e3b;
+  --adopt-bg:      #d2eedd;
+  --adopt-border:  #82c99a;
+  --reject:        #8b1c20;
+  --reject-bg:     #fae0e1;
+  --reject-border: #e09193;
+  --partial:       #7a5900;
+  --partial-bg:    #fef3d0;
+  --partial-border:#e0c060;
+  --defer-bg:      #ececec;
+  --defer-border:  #b0b8c4;
+  --font:          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono:          'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace;
+  --r:             6px;
+  --shadow:        0 1px 4px rgba(0,0,0,.09), 0 0 0 1px rgba(0,0,0,.04);
+  --shadow-lg:     0 4px 16px rgba(0,0,0,.12), 0 1px 4px rgba(0,0,0,.06);
+}
+
+/* ===== RESET / BASE ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.65;
+  padding: 2rem 1rem 4rem;
+}
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+a { color: var(--accent); text-decoration: underline; }
+
+/* ===== TYPOGRAPHY ===== */
+h1 { font-size: 1.9rem; font-weight: 700; color: var(--accent-dark); letter-spacing: -.02em; }
+h2 {
+  font-size: 1.2rem; font-weight: 700; color: var(--accent);
+  border-bottom: 2px solid var(--accent-light); padding-bottom: .35rem;
+  margin-bottom: .85rem; letter-spacing: -.01em;
+}
+h3 { font-size: 1rem; font-weight: 600; color: var(--ink); margin: 1rem 0 .4rem; }
+h4 { font-size: .9rem; font-weight: 600; color: var(--ink-2); margin: .85rem 0 .3rem; }
+p { margin-bottom: .75rem; color: var(--ink-2); font-size: .95rem; }
+code {
+  font-family: var(--mono);
+  font-size: .82em;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  padding: .1em .35em;
+  color: var(--accent-dark);
+}
+pre {
+  background: var(--ink);
+  color: #d4e0f7;
+  border-radius: var(--r);
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: .82rem;
+  line-height: 1.5;
+  margin: .75rem 0;
+}
+pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
+strong { color: var(--ink); }
+
+/* ===== SECTIONS ===== */
+section {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  padding: 1.5rem 1.75rem;
+}
+section + section { }
+
+/* ===== HEADER ===== */
+header {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  padding: 1.75rem 2rem 1.5rem;
+  border-top: 4px solid var(--accent);
+}
+header h1 { margin-bottom: .25rem; }
+header p.subtitle {
+  color: var(--ink-3);
+  font-size: .88rem;
+  margin: 0 0 1rem;
+}
+details.meta {
+  margin-top: .75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  background: var(--surface-raised);
+}
+details.meta summary {
+  padding: .5rem .85rem;
+  cursor: pointer;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  list-style: none;
+  user-select: none;
+}
+details.meta summary::-webkit-details-marker { display: none; }
+details.meta summary::before { content: '▶ '; font-size: .7rem; }
+details.meta[open] summary::before { content: '▼ '; }
+details.meta dl {
+  padding: .5rem .85rem .75rem;
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: .25rem .75rem;
+  font-size: .8rem;
+}
+details.meta dt { font-weight: 600; color: var(--ink-3); padding-top: .1rem; }
+details.meta dd { color: var(--ink-2); font-family: var(--mono); font-size: .78rem; }
+
+/* ===== FIGURES / IMAGES ===== */
+figure {
+  margin: 1.25rem 0;
+  text-align: center;
+}
+figure img {
+  max-width: 100%;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+}
+figure .img-placeholder {
+  background: linear-gradient(135deg, var(--accent-light) 0%, var(--surface-raised) 100%);
+  border: 2px dashed var(--border);
+  border-radius: var(--r);
+  padding: 2.5rem 2rem;
+  color: var(--ink-3);
+  font-size: .85rem;
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+}
+figcaption {
+  font-size: .78rem;
+  color: var(--ink-3);
+  margin-top: .5rem;
+  font-style: italic;
+}
+
+/* ===== FILE TAGS ===== */
+.files ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.files li { font-size: .88rem; color: var(--ink-2); display: flex; align-items: baseline; gap: .5rem; }
+.tag {
+  font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  border-radius: 3px; padding: .1em .45em; flex-shrink: 0;
+}
+.tag.existing { background: var(--accent-light); color: var(--accent); }
+.tag.new      { background: var(--adopt-bg); color: var(--adopt); }
+
+/* ===== PHASES ===== */
+.phase {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem;
+  background: var(--surface-raised);
+}
+.phase:last-child { margin-bottom: 0; }
+.phase h3 { margin-top: 0; font-size: 1rem; }
+.phase h3 code.status {
+  font-size: .8rem; font-weight: 700;
+  background: var(--defer-bg); color: var(--ink-3);
+  border: 1px solid var(--defer-border);
+}
+
+/* Wave accent borders */
+.wave-0 { border-left: 4px solid #c0392b; }
+.wave-1 { border-left: 4px solid var(--accent); }
+.wave-2 { border-left: 4px solid #27ae60; }
+.wave-3 { border-left: 4px solid #8e44ad; }
+
+/* ===== CHECKLISTS ===== */
+ul.checklist { list-style: none; padding: 0; margin: .4rem 0 .75rem; display: flex; flex-direction: column; gap: .3rem; }
+ul.checklist li { display: flex; align-items: flex-start; gap: .5rem; font-size: .88rem; color: var(--ink-2); }
+ul.checklist li code.status {
+  font-size: .75rem; font-weight: 700; flex-shrink: 0;
+  margin-top: .1rem;
+  background: var(--defer-bg); color: var(--ink-3);
+  border: 1px solid var(--defer-border);
+}
+
+/* ===== LOOP BOX ===== */
+.loop {
+  background: #fff8e7;
+  border: 1px solid #f0c040;
+  border-radius: var(--r);
+  padding: .65rem 1rem;
+  font-size: .83rem;
+  color: #6b4800;
+  margin-top: .75rem;
+}
+
+/* ===== QUESTIONABLES ===== */
+#questionables details {
+  border: 1px solid var(--partial-border);
+  border-radius: var(--r);
+  background: var(--partial-bg);
+  margin-bottom: .6rem;
+}
+#questionables details summary {
+  padding: .65rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .9rem;
+  color: var(--partial);
+  list-style: none;
+  user-select: none;
+}
+#questionables details summary::-webkit-details-marker { display: none; }
+#questionables details summary::before { content: '⚠ '; }
+#questionables details[open] summary::before { content: '⚠ '; }
+p.qa-answer {
+  padding: .5rem 1rem .85rem;
+  font-size: .88rem;
+  color: var(--ink-2);
+  margin: 0;
+  border-top: 1px solid var(--partial-border);
+}
+
+/* ===== AMENDMENTS ===== */
+#amendments details {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  background: var(--surface-raised);
+  margin-bottom: .5rem;
+}
+#amendments details summary {
+  padding: .5rem .85rem;
+  cursor: pointer;
+  font-size: .83rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  list-style: none;
+  user-select: none;
+}
+#amendments details p { padding: .5rem .85rem .75rem; margin: 0; font-size: .83rem; border-top: 1px solid var(--border-soft); }
+
+/* ===== DECISION MATRIX TABLE ===== */
+.matrix-wrap { overflow-x: auto; }
+table.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .8rem;
+  margin: .75rem 0;
+}
+table.matrix th {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  text-align: left;
+  padding: .5rem .65rem;
+  white-space: nowrap;
+}
+table.matrix td {
+  padding: .4rem .65rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+table.matrix tr:hover td { background: var(--accent-light); }
+table.matrix .u-id { font-family: var(--mono); font-weight: 700; color: var(--accent); white-space: nowrap; }
+table.matrix .primitive { color: var(--ink); }
+table.matrix .vote { text-align: center; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+.vote-a { color: var(--adopt); }
+.vote-p { color: var(--partial); }
+.vote-r { color: var(--reject); }
+
+/* Verdict badges */
+.verdict {
+  display: inline-block; border-radius: 3px; font-size: .72rem;
+  font-weight: 700; padding: .15em .5em; white-space: nowrap;
+}
+.v-adopt   { background: var(--adopt-bg);   color: var(--adopt);   border: 1px solid var(--adopt-border); }
+.v-partial { background: var(--partial-bg); color: var(--partial); border: 1px solid var(--partial-border); }
+.v-defer   { background: var(--defer-bg);   color: var(--ink-3);   border: 1px solid var(--defer-border); }
+.v-reject  { background: var(--reject-bg);  color: var(--reject);  border: 1px solid var(--reject-border); }
+.v-adopt-cond { background: #ddf7ea; color: #155e38; border: 1px solid #7bcda0; }
+
+/* Wave badges */
+.wave-badge {
+  display: inline-block; border-radius: 3px; font-size: .7rem;
+  font-weight: 700; padding: .12em .45em; white-space: nowrap;
+}
+.wb-0 { background: #fdecea; color: #a12020; border: 1px solid #e0a0a0; }
+.wb-1 { background: var(--accent-light); color: var(--accent); border: 1px solid #a0b8e0; }
+.wb-2 { background: #e0f5e9; color: #1b5e38; border: 1px solid #80c89a; }
+.wb-3 { background: #f0e4fa; color: #6b2fa0; border: 1px solid #c090e0; }
+
+/* ===== RISK / CALLOUT BOXES ===== */
+.risk-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: .85rem 1rem;
+  margin-bottom: .65rem;
+  background: var(--surface);
+  font-size: .88rem;
+  color: var(--ink-2);
+}
+.risk-block strong { color: var(--ink); }
+.risk-block.risk-high { border-left: 4px solid var(--reject); }
+.risk-block.risk-med  { border-left: 4px solid var(--partial); }
+.risk-block.risk-low  { border-left: 4px solid var(--adopt); }
+
+/* ===== NOTES: REJECT CLUSTER ===== */
+.reject-cluster {
+  background: var(--reject-bg);
+  border: 1px solid var(--reject-border);
+  border-radius: var(--r);
+  padding: .85rem 1rem;
+  margin-bottom: .65rem;
+  font-size: .87rem;
+  color: var(--ink-2);
+}
+.reject-cluster h4 { color: var(--reject); margin-top: 0; }
+
+/* ===== SUMMARY BADGES (tally) ===== */
+.tally-row { display: flex; gap: .75rem; flex-wrap: wrap; margin: .85rem 0; }
+.tally-badge {
+  display: flex; align-items: center; gap: .4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: .4rem .85rem;
+  font-size: .82rem;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+.tally-badge .num { font-size: 1.2rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== HEADER + UPDATABLE METADATA ===== -->
+  <header>
+    <h1>Plan: Harness-Engineering Adoption Review</h1>
+    <p class="subtitle">Decision memo rendered as an adoption plan · Disposition: reject-unless-proven · All verdicts settled.</p>
+    <details class="meta">
+      <summary>Metadata</summary>
+      <dl>
+        <dt>created</dt>      <dd>2026-06-26T00:00:00Z</dd>
+        <dt>modified</dt>     <dd>2026-06-26T00:00:00Z</dd>
+        <dt>commits</dt>      <dd>—</dd>
+        <dt>agent name</dt>   <dd>Eisenhower (coordinator) + Codex (gpt-5.3-codex-spark) / Hermes (gpt-5.4) / Grok panel</dd>
+        <dt>session id</dt>   <dd>20260626-harness-adoption</dd>
+        <dt>back refs</dt>    <dd>.claude/plans/harness-port-adoption-decision-memo.md · rocklambros/harness-engineering · petersimmons1972/harness-port · PR #9 (QC.4a fix)</dd>
+        <dt>forward refs</dt> <dd>Wave 0 ratification → Wave 1 write-codex-plan / planf3 for U30+U38 beachhead</dd>
+      </dl>
+    </details>
+  </header>
+
+  <!-- Hero image — three harnesses adjudicating 40 primitives → adoption decision -->
+  <figure>
+    <img src="harness-engineering-adoption-review/hero.jpg" alt="Three luminous AI council nodes converging beams of judgment toward a central fortified gate, dark slate background">
+    <figcaption>Three independent harnesses (Codex · Hermes · Grok) converged on verdicts across 40 not-yet-ported primitives, forming the Project-B security spine.</figcaption>
+  </figure>
+
+  <!-- ===== PURPOSE / PROBLEM / SOLUTION ===== -->
+  <section id="purpose">
+    <h2>Purpose</h2>
+    <p>This document renders the <strong>Harness-Engineering Adoption Decision Memo</strong> (2026-06-26) as an executable adoption plan. The verdicts are settled — this plan serves as the sequenced implementation record for adopting selected primitives from <code>rocklambros/harness-engineering</code> into the live harness. No decisions are re-opened here; this is the authoritative ordered execution record for the coordinator, the implementing harnesses, and future agents referencing the adoption history.</p>
+  </section>
+
+  <section id="problem">
+    <h2>Problem</h2>
+    <p><code>petersimmons1972/harness-port</code> is our fork of upstream <code>rocklambros/harness-engineering</code> (50 primitives, U1–U50). The fork ported only the <strong>first slice</strong> (~10 primitives: QC/AP vocabulary docs, commit-msg validator, CLAUDE.md budget linter, install/backfill, JOURNEY.md) — collectively <strong>Project A</strong>, internally consistent with 42 bats cases.</p>
+    <p><strong>Project B — the entire deterministic security-hook layer — has zero committed code.</strong> Project C is a doc-only scope-close (which carried a self-contradiction fixed in PR #9). The real adoption question is the <strong>40 not-yet-ported primitives</strong>: which close real gaps, which are redundant with our existing machinery, and what order minimizes blast radius.</p>
+    <figure>
+      <img src="harness-engineering-adoption-review/problem.jpg" alt="Half-constructed stone fortress in dark fog, ten stones placed, forty unplaced, abandoned security architecture">
+      <figcaption>Project A complete; Project B (the security-hook layer) has zero committed code — 40 primitives unresolved.</figcaption>
+    </figure>
+  </section>
+
+  <section id="solution">
+    <h2>Solution</h2>
+    <p>The three-harness panel converged on a clear answer: <strong>adopt the unported Project-B security-hook layer</strong> — it closes concrete automatic gaps the current stack genuinely misses. Adopt a small set of cheap integrity/process primitives. Reject harness-construction scaffolding and memory/permission primitives already covered by other means.</p>
+    <p><strong>7 unanimous ADOPTs</strong> form the spine. <strong>One architectural decision (Wave 0) gates all of them</strong> and must be resolved before any hook lands: the fail-open vs. fail-closed precedence policy. Adoption proceeds in four waves, strictly ordered — sequencing is load-bearing per all three harnesses.</p>
+    <figure>
+      <img src="harness-engineering-adoption-review/solution.jpg" alt="Four ascending stone ramparts in golden dawn light, each tier stronger, a glowing key above the topmost wall">
+      <figcaption>Four adoption waves: Wave 0 (gate policy) → Wave 1 (Project-B security spine) → Wave 2 (integrity &amp; process) → Wave 3 (scoped partials).</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== RELEVANT FILES ===== -->
+  <section id="files" class="files">
+    <h2>Relevant Files</h2>
+
+    <h3>Existing Files</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>rocklambros/harness-engineering</code> — upstream source: all 50 primitives (U1–U50); primary reference for every ADOPT implementation</li>
+      <li><span class="tag existing">existing</span> <code>petersimmons1972/harness-port</code> — our fork; Project A committed (~10 primitives); Projects B/C not yet present</li>
+      <li><span class="tag existing">existing</span> <code>~/.claude/hooks/codex-guard-bash-guard.sh</code> — existing codex-guard PreToolUse hook (fail-open); Wave 0 must document its precedence relationship to incoming fail-closed hooks</li>
+      <li><span class="tag existing">existing</span> <code>~/CLAUDE.md</code> — harness config doc; Wave 0 adds AP.13 here; Wave 1 hooks reference it</li>
+      <li><span class="tag existing">existing</span> <code>~/docs/failure-modes-standard.md</code> — consult before any hook lands; Wave 1 may surface new FM entries</li>
+      <li><span class="tag existing">existing</span> <code>~/.claude/settings.json</code> — hook registration; every Wave 1 hook requires an entry here and a U43 parity check</li>
+      <li><span class="tag existing">existing</span> <code>~/.claude/plans/harness-port-adoption-decision-memo.md</code> — authoritative decision source; this plan is a rendering of it</li>
+      <li><span class="tag existing">existing</span> <code>~/docs/night-protocols.md</code> — U31 (Wave 3) adds forensic TSV + cost hard-cap here</li>
+    </ul>
+
+    <h3>New Files</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/mcp-pre-trust-audit.sh</code> — U38: MCP server pre-trust audit hook (Wave 1, step 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/config-hash-audit.sh</code> — U30: config hash-lock at SessionStart (Wave 1, step 2); depends on U45 CLI</li>
+      <li><span class="tag new">new</span> <code>~/.claude/bin/audit-claude-config.sh</code> — U45: CLI plumbing for U30; only lands because U30 is adopted</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/supply-chain-bash-checks.sh</code> — U25: curl|sh / unpinned install gate (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/external-write-gate.sh</code> — U27: gate writes to ~/.ssh, system paths (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/cached-prefix-write-gate.sh</code> — U28: gate writes to CLAUDE.md/foundation (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/post-tool-semgrep.sh</code> — U24: PostToolUse Semgrep hardening (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/bash-subcommand-cap.sh</code> — U26 (cap only): 49-subcommand hard cap (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/deployed-hook-parity.sh</code> — U43: parity check ships with every hook (Wave 1)</li>
+      <li><span class="tag new">new</span> <code>~/.claude/hooks/id-reference-integrity.sh</code> — U16: dangling QC/AP/T/R reference verifier (Wave 2)</li>
+    </ul>
+  </section>
+
+  <!-- ===== IMPLEMENTATION PHASES (ADOPTION WAVES) ===== -->
+  <section id="phases">
+    <h2>Implementation Phases</h2>
+    <p><strong>IMPORTANT:</strong> Execute every phase and task step by step, in order, top to bottom. Sequencing is load-bearing — all three harnesses flagged this explicitly. Wave 0 is a hard gate for all subsequent waves.</p>
+    <p>Status markers: <code>[]</code> idle · <code>[wip]</code> in progress · <code>[x]</code> complete · <code>[f]</code> failed. All start as <code>[]</code>; the Handoff to Codex workflow sets <code>[wip]</code> on dispatch, and the Update Plan workflow records <code>[x]</code>/<code>[f]</code> when the harness reports back. This plan never executes the build.</p>
+
+    <!-- ===== WAVE 0 ===== -->
+    <div class="phase wave-0">
+      <h3><code class="status">[]</code> Phase 0 (Wave 0): Ratify the Fail-Open / Fail-Closed Precedence Policy</h3>
+      <p>This is the sharpest finding the panel surfaced (Grok, echoed by Codex). <strong>Nothing in Waves 1–3 may land until this is ratified.</strong> Our <code>codex-guard</code> PreToolUse hook is fail-OPEN with logging; every upstream Project-B hook is fail-CLOSED. Without an explicit precedence policy, one layer can log-and-allow while another blocks — and operators cannot diagnose which layer acted.</p>
+      <p><strong>Recommended policy (Q1 default):</strong> security-class hooks (U24/U25/U27/U28/U30) are <strong>fail-closed</strong>; codex-guard remains the fail-open destructive-op backstop <em>beneath</em> them; precedence is documented as AP.13 "enforcement-layer precedence: pre-trust &gt; write-scope &gt; supply-chain &gt; destructive-op backstop."</p>
+
+      <h4>0.1 Founder Ratification</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Founder reviews Q1 (Fail-open/closed precedence) in the Questionables section and provides explicit ratification or counter-direction</li>
+        <li><code class="status">[]</code> Record ratification decision (policy choice + date) in CLAUDE.md amendments log</li>
+      </ul>
+
+      <h4>0.2 Document AP.13 in CLAUDE.md</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Add <strong>AP.13</strong> to CLAUDE.md: "Enforcement-layer precedence — pre-trust hooks (U30/U38) take highest precedence, then write-scope/supply-chain (U24/U25/U27/U28), then destructive-op backstop (codex-guard, fail-open). Each layer logs independently; the outermost blocking layer wins."</li>
+        <li><code class="status">[]</code> Add codex-guard-enforcement-hierarchy note: "Section updated for AP.13; Wave 0 ratification date: [DATE]"</li>
+        <li><code class="status">[]</code> Commit to <code>harness-port</code> fork with message <code>docs(ap13): ratify fail-open/closed precedence policy</code></li>
+      </ul>
+
+      <h4>0.3 Testing Strategy</h4>
+      <p>Verify the policy exists and is unambiguous before any hook is written.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>grep -n "AP.13" ~/CLAUDE.md</code> — confirms AP.13 is present</li>
+        <li><code class="status">[]</code> <code>grep -n "fail-closed\|fail-open" ~/CLAUDE.md | head -20</code> — confirms both terms appear and precedence is explicit</li>
+        <li><code class="status">[]</code> <code>grep -n "enforcement-layer\|AP.13" ~/docs/codex-guard-enforcement-hierarchy.md</code> — confirms hierarchy doc is updated</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Wave 0 until every box above is checked and founder ratification is recorded.</strong></div>
+    </div>
+
+    <!-- ===== WAVE 1 ===== -->
+    <div class="phase wave-1">
+      <h3><code class="status">[]</code> Phase 1 (Wave 1): Pre-Trust + Boundary Security Hooks — Project-B Spine</h3>
+      <p>The 9 Wave-1 items form the core Project-B security-hook layer. Order within Wave 1 is load-bearing: U38 before U30 (audit before you hash-lock, or you freeze unaudited state), U43 ships <em>with</em> every hook (not after). U45 is included as plumbing for U30.</p>
+
+      <h4>1.1 U38 — MCP Server Pre-Trust Audit (first)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement SessionStart hook that enumerates all registered MCP servers in <code>~/.claude/settings.json</code></li>
+        <li><code class="status">[]</code> For each server: verify binary path exists, check code-exec + egress surface, emit a structured audit entry to <code>~/.claude/audit/mcp-pre-trust.log</code></li>
+        <li><code class="status">[]</code> Hook blocks new (previously-unseen) MCP servers until founder acknowledges — fail-closed per AP.13</li>
+        <li><code class="status">[]</code> Register hook in <code>settings.json</code> under <code>hooks.SessionStart</code></li>
+      </ul>
+
+      <h4>1.2 U30 + U45 — Config Hash-Audit + CLI Plumbing (second)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement <code>~/.claude/bin/audit-claude-config.sh</code> (U45 CLI): reads <code>settings.json</code> and <code>.mcp.json</code>, computes SHA-256, writes to <code>~/.claude/audit/config-hash.tsv</code></li>
+        <li><code class="status">[]</code> Implement SessionStart hook (U30) that invokes U45 CLI and compares current hash against stored baseline; fails-closed if drift detected</li>
+        <li><code class="status">[]</code> Initial baseline written on first run (bootstraps the lock after U38 audit passes)</li>
+        <li><code class="status">[]</code> Register U30 hook in <code>settings.json</code> after U38 hook (execution order matters)</li>
+      </ul>
+
+      <h4>1.3 U25 — Supply-Chain Bash Checks</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement PreToolUse hook that scans Bash commands for <code>curl | sh</code>, <code>wget | sh</code>, unpinned <code>pip install</code>, and <code>npm install</code> without lockfile — patterns the current codex-guard does not catch</li>
+        <li><code class="status">[]</code> Hook blocks on match, surfaces the flagged pattern, fails-closed per AP.13</li>
+        <li><code class="status">[]</code> Register in <code>settings.json</code> <code>hooks.PreToolUse</code>; document in codex-guard-enforcement-hierarchy as Layer 1a (supply-chain sublayer)</li>
+      </ul>
+
+      <h4>1.4 U27 — External-Write Gate</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement PreToolUse hook that intercepts Write/Edit calls targeting <code>~/.ssh/</code>, <code>/etc/</code>, <code>/usr/</code>, and other system paths</li>
+        <li><code class="status">[]</code> Allowlist: <code>~/.claude/</code>, <code>~/projects/</code>, worktree scratch dirs — upstream's exact design</li>
+        <li><code class="status">[]</code> Hook fails-closed; operator can expand the allowlist explicitly, documented in CLAUDE.md</li>
+      </ul>
+
+      <h4>1.5 U28 — Cached-Prefix Write Gate</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement PreToolUse hook that intercepts Write/Edit calls targeting <code>~/CLAUDE.md</code>, all foundation docs, and any file matching <code>*.claude/settings.json</code></li>
+        <li><code class="status">[]</code> Hook fails-closed; requires explicit founder confirmation per write — CLAUDE.md / foundation poisoning persists across sessions, making this higher-stakes than a one-session write</li>
+        <li><code class="status">[]</code> Confirm the hook cannot block itself (must allow the ratification commit from Wave 0)</li>
+      </ul>
+
+      <h4>1.6 U24 — PostToolUse Semgrep Hardening</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement PostToolUse hook that runs <code>semgrep scan --config auto</code> on any file written or edited in the current tool call</li>
+        <li><code class="status">[]</code> Surface HIGH/CRITICAL findings before proceeding to next tool call; MEDIUM → warn; LOW → log only</li>
+        <li><code class="status">[]</code> This is the in-session security layer; document relationship to U17 (pre-commit blocking floor) per the rule: "pre-commit = blocking floor; in-session U24 = second layer; manual semgrep-first-step is retired as the primary."</li>
+        <li><code class="status">[]</code> Update AP.2 in CLAUDE.md to reflect retirement of <code>semgrep scan --config auto &lt;path&gt;</code> as the <em>primary</em> step; it becomes a manual override / audit tool</li>
+      </ul>
+
+      <h4>1.7 U26 (cap only) — Bash Subcommand Hard Cap</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement PreToolUse hook that counts subcommands in any Bash call and blocks at 49 (the Adversa deny-stops-firing threshold above 50)</li>
+        <li><code class="status">[]</code> <em>Drop</em> the chatty ask behavior from the upstream primitive — hard-cap only, no interactive prompt</li>
+        <li><code class="status">[]</code> Log every cap-hit to <code>~/.claude/codex-guard-hook.log</code> consistent with existing guard logging</li>
+      </ul>
+
+      <h4>1.8 U43 — Deployed-Hook Parity Check (ships with every hook)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement parity check script: reads <code>settings.json</code> hook registrations, verifies each registered hook file exists and is executable</li>
+        <li><code class="status">[]</code> Run parity check as part of the Wave 1 install script — not after: <em>ship it with the hooks or you verify parity on uninstalled hooks</em></li>
+        <li><code class="status">[]</code> Add parity check to the SessionStart sequence (after U30) so every session opening self-validates</li>
+        <li><code class="status">[]</code> Parity check failure blocks session start and surfaces a repair command</li>
+      </ul>
+
+      <h4>1.9 Testing Strategy</h4>
+      <p>Each Wave-1 hook must be exercised in isolation with a known-bad input before integration. Use <code>bats</code> (already used by Project A's 42 test cases) for unit coverage.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>bats tests/wave1/</code> — all Wave-1 hook bats cases pass</li>
+        <li><code class="status">[]</code> <code>~/.claude/hooks/deployed-hook-parity.sh</code> — exits 0, confirming all 9 Wave-1 hooks are registered and executable</li>
+        <li><code class="status">[]</code> Manual smoke: run a <code>curl | sh</code> command via Claude; confirm U25 blocks it</li>
+        <li><code class="status">[]</code> Manual smoke: attempt to write a line to <code>~/CLAUDE.md</code> without confirmation; confirm U28 blocks it</li>
+        <li><code class="status">[]</code> <code>cat ~/.claude/audit/mcp-pre-trust.log</code> — confirms U38 ran on session start and logged all current MCP servers</li>
+        <li><code class="status">[]</code> <code>cat ~/.claude/audit/config-hash.tsv</code> — confirms U30 baseline hash is recorded</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Wave 1 until every box above is checked. If any hook fails its smoke test, fix the cause and re-run — loop until all pass. U43 parity must show 100%.</strong></div>
+    </div>
+
+    <!-- ===== WAVE 2 ===== -->
+    <div class="phase wave-2">
+      <h3><code class="status">[]</code> Phase 2 (Wave 2): Integrity &amp; Process Primitives</h3>
+      <p>Four cheap, high-leverage primitives that extend harness coverage into commit quality, documentation integrity, and SAST pipeline hygiene. No sequencing constraint between Wave-2 items, but U16 is highest leverage and should land first (we already hold the QC/AP namespace — the resolver is safe to deploy immediately).</p>
+
+      <h4>2.1 U16 — ID Reference-Integrity Verifier</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Implement hook (or pre-commit check) that resolves every QC.N / AP.N / T.N / R.N / FM.N citation in CLAUDE.md, docs/, and hook files — flags unresolvable IDs as errors</li>
+        <li><code class="status">[]</code> Dangling IDs (e.g., QC.4a in a brief that references a removed section) reach agents as real rules; this hook prevents that class of poisoning</li>
+        <li><code class="status">[]</code> Run in warn-not-block mode initially; upgrade to block after a 1-week clean run</li>
+      </ul>
+
+      <h4>2.2 U7 — Four-Field Commit + Validator (port the fork's existing work)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> The fork (<code>harness-port</code>) has already built a warn-not-block commit-message validator for the four-field format (type/scope/subject/body) — port it directly, do not rewrite</li>
+        <li><code class="status">[]</code> Confirm validator remains warn-not-block (not block); the panel vote was P|P|P, reflecting the partial adoption of content only</li>
+        <li><code class="status">[]</code> Add to <code>.pre-commit-config.yaml</code> or <code>settings.json</code> PostToolUse hook for git commit calls</li>
+      </ul>
+
+      <h4>2.3 U12 — Security-Review Output Contract</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Fold the upstream contract (severity + CWE + file:line + FP probability + READY marker) into our <code>security-reviewer</code> agent persona (<code>~/.claude/agents/</code>)</li>
+        <li><code class="status">[]</code> Every security-review output must include: severity band (CRIT/HIGH/MED/LOW), CWE ID or "CWE-unknown", file:line, false-positive note, and an explicit <code>READY</code> / <code>NOT-READY</code> verdict</li>
+        <li><code class="status">[]</code> Update the <code>security-review</code> skill in <code>~/.claude/skills/</code> to document the new contract</li>
+      </ul>
+
+      <h4>2.4 U17 — Pinned Pre-Commit SAST Stack (culture-clash resolved)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Add pinned semgrep (and optional bandit/gosec where applicable) to <code>.pre-commit-config.yaml</code>; pin to exact version hashes</li>
+        <li><code class="status">[]</code> Explicit rule (add to CLAUDE.md): "pre-commit = blocking floor; in-session U24 = second layer; manual <code>semgrep scan --config auto</code> is no longer the primary step (it is a manual override / audit tool)"</li>
+        <li><code class="status">[]</code> This resolves the culture-clash Codex+Grok flagged: without an explicit rule, pinned pre-commit SAST would be undermined as "redundant with AP.2 semgrep-first-step"</li>
+      </ul>
+
+      <h4>2.5 Testing Strategy</h4>
+      <p>Wave-2 items are process/doc primitives — validation is mostly structural (does the hook exist and produce the right output format?).</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>~/.claude/hooks/id-reference-integrity.sh</code> on CLAUDE.md — exits 0 with no dangling IDs reported</li>
+        <li><code class="status">[]</code> Make a test commit with a malformed message; confirm U7 validator warns (does not block)</li>
+        <li><code class="status">[]</code> Run <code>security-reviewer</code> agent on a known-vulnerable snippet; confirm output includes severity, CWE, file:line, FP note, and READY verdict</li>
+        <li><code class="status">[]</code> <code>pre-commit run semgrep --all-files</code> — exits 0 on clean codebase; exits non-zero on a file with a known SAST finding</li>
+        <li><code class="status">[]</code> <code>grep "pre-commit = blocking floor" ~/CLAUDE.md</code> — confirms U17 culture-clash rule is in place</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Wave 2 until every box above is checked.</strong></div>
+    </div>
+
+    <!-- ===== WAVE 3 ===== -->
+    <div class="phase wave-3">
+      <h3><code class="status">[]</code> Phase 3 (Wave 3): Scoped Partials</h3>
+      <p>Five items with narrower applicability or higher coordination cost. Each is scoped: adopt only under the specific condition stated. Per U39's meta-irony (Grok's finding): <em>each ADOPT lands as a sandbox pilot first, not a direct merge — this is the U39 methodology applied to its own adoption.</em></p>
+
+      <h4>3.1 U34 — PreCompact State Preservation (scoped)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <em>Scope gate:</em> adopt only if compaction is observed to drop live plan state in practice (Engram partially covers this already)</li>
+        <li><code class="status">[]</code> Implement PreCompact hook that snapshots active plan state (phase status, current working context) to <code>~/.claude/compact-state.json</code> before compaction fires</li>
+        <li><code class="status">[]</code> PostCompact hook restores state from snapshot if the compaction cleared it</li>
+        <li><code class="status">[]</code> If Engram proves sufficient via R2 recall, mark this item <code>[f]</code> (deferred — covered) and document the reason</li>
+      </ul>
+
+      <h4>3.2 U31 — Forensic TSV + Cost Hard-Cap (into night-protocols for AP.11 evidence)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Add forensic TSV logging to <code>~/docs/night-protocols.md</code>: every autonomous action under <code>bypassPermissions</code> emits a TSV row (timestamp · tool · args-hash · cost-estimate) to <code>~/.claude/audit/night-forensics.tsv</code></li>
+        <li><code class="status">[]</code> Add cost hard-cap to night-protocols: autonomous session aborts and alerts if cumulative estimated cost exceeds $5 (the AP.11 wake-the-founder trigger)</li>
+        <li><code class="status">[]</code> This closes the AP.11 gap Grok flagged: <code>bypassPermissions</code> + night-protocols currently leave no forensic cost-trail; a runaway unattended run has no evidence for the wake-the-founder trigger</li>
+      </ul>
+
+      <h4>3.3 U39 + U40 — Seed-Evaluation Methodology (piloted)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> U39 (ADOPT pilot): implement the seed-evaluation skill as a sandbox exercise on the next major harness evaluation — the methodology is: sandbox exercise &gt; matrix scoring; the pilot subject is the next adoption exercise of this type</li>
+        <li><code class="status">[]</code> U40 (PARTIAL): add worked examples only to the methodology doc — not the full abstract methodology doc; the worked example <em>is</em> this exercise (the 40-primitive panel review)</li>
+        <li><code class="status">[]</code> Document the meta-irony explicitly: this review socialized 40 primitives with no formal seed-eval, which is precisely what U39 addresses</li>
+      </ul>
+
+      <h4>3.4 U44 — SBOM + Exact Pinning (scoped to external artifacts)</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <em>Scope gate:</em> SBOM only where we ship external containers or binaries (not for internal scripts/hooks)</li>
+        <li><code class="status">[]</code> For any container image built under <code>~/docs/container-images.md</code> standard: add SBOM generation step to the build pipeline</li>
+        <li><code class="status">[]</code> Exact pinning: any <code>apt-get install</code>, <code>pip install</code>, or <code>npm install</code> in a Dockerfile is pinned to an exact version hash</li>
+        <li><code class="status">[]</code> If no external containers currently ship, mark <code>[f]</code> (deferred — not applicable) with a date to re-evaluate</li>
+      </ul>
+
+      <h4>3.5 Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> U34: run a compaction cycle on a session with an active plan; confirm <code>~/.claude/compact-state.json</code> is written and restored correctly</li>
+        <li><code class="status">[]</code> U31: run a short night-protocols session; confirm <code>~/.claude/audit/night-forensics.tsv</code> contains a row per tool call</li>
+        <li><code class="status">[]</code> U31: simulate cost exceeding $5 threshold (mock); confirm session abort fires before next tool call</li>
+        <li><code class="status">[]</code> U39: conduct the next harness eval as a sandbox pilot; confirm the seed-eval methodology was applied and documented</li>
+        <li><code class="status">[]</code> U44: <code>syft &lt;image&gt; -o spdx-json</code> on the next container build — SBOM output is non-empty and pinned packages match the Dockerfile</li>
+      </ul>
+      <div class="loop">🔁 <strong>Do not exit Wave 3 until every applicable box is checked. Deferred items must be explicitly marked [f] with a documented reason — not silently skipped.</strong></div>
+    </div>
+  </section>
+
+  <!-- ===== GLOBAL VALIDATION ===== -->
+  <section id="validation">
+    <h2>Validation Commands</h2>
+    <p>Execute these commands to validate the entire adoption plan is complete:</p>
+    <ul class="checklist">
+      <li><code class="status">[]</code> <code>grep -n "AP.13" ~/CLAUDE.md</code> — Wave 0 ratification committed</li>
+      <li><code class="status">[]</code> <code>~/.claude/hooks/deployed-hook-parity.sh</code> — exits 0; all registered hooks exist and are executable</li>
+      <li><code class="status">[]</code> <code>cat ~/.claude/audit/config-hash.tsv</code> — U30 baseline hash present and current</li>
+      <li><code class="status">[]</code> <code>cat ~/.claude/audit/mcp-pre-trust.log | tail -5</code> — U38 logged all current MCP servers on last session start</li>
+      <li><code class="status">[]</code> <code>grep "pre-commit = blocking floor" ~/CLAUDE.md</code> — U17 culture-clash rule in place</li>
+      <li><code class="status">[]</code> <code>grep -c "AP.13\|enforcement-layer" ~/docs/codex-guard-enforcement-hierarchy.md</code> — hierarchy doc updated with AP.13</li>
+      <li><code class="status">[]</code> <code>bats tests/wave1/ tests/wave2/ tests/wave3/</code> — all bats test cases pass across all three waves</li>
+      <li><code class="status">[]</code> Review the decision matrix (Notes section) and confirm every ADOPT and PARTIAL primitive has a corresponding hook file or doc update — no ADOPT left unimplemented without a filed deferral issue</li>
+    </ul>
+    <div class="loop">
+      🔁 <strong>The plan is not complete until every box is checked and every command passes. If a step is not possible to complete, mark it with [f] and file a GitHub Issue documenting the deferral before moving on.</strong>
+    </div>
+  </section>
+
+  <!-- ===== QUESTIONABLES ===== -->
+  <section id="questionables">
+    <h2>Questionables</h2>
+    <p>These four decisions are open for the founder. The panel provided recommended defaults — each is noted below. Answering Q1 unblocks Wave 1.</p>
+    <figure>
+      <img src="harness-engineering-adoption-review/questionables.jpg" alt="Forked path in fog, one branch guarded by a red iron gate, the other open and bathed in blue light">
+      <figcaption>Q1 gates everything: fail-closed security hooks vs. operational smoothness. The recommended default is fail-closed above a fail-open backstop.</figcaption>
+    </figure>
+
+    <details>
+      <summary>Q1 — Fail-open/closed precedence (Wave 0 gate): ratify the recommended policy?</summary>
+      <p class="qa-answer"><strong>Recommended default (ratify):</strong> Security-class hooks (U24/U25/U27/U28/U30) are <strong>fail-closed</strong>; codex-guard remains the fail-open destructive-op backstop beneath them; precedence is documented as AP.13 "enforcement-layer precedence: pre-trust &gt; write-scope &gt; supply-chain &gt; destructive-op backstop."
+      <br><br>
+      <strong>Alternative:</strong> Keep everything fail-open for operational smoothness — adds no new blocking behavior, but leaves the pre-trust and write-scope gaps open indefinitely.
+      <br><br>
+      <strong>What changes based on the answer:</strong> If ratified, Wave 1 proceeds. If declined, Waves 1–3 are blocked until a new policy is proposed. The panel's consensus is that the mixed fail-open/fail-closed state without a precedence policy creates a worse operational hazard than either pure approach would.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q2 — Friction budget: allowlists + immediate adoption vs. 1-week warn-only soak first?</summary>
+      <p class="qa-answer"><strong>Recommended default (allowlists + immediate adoption):</strong> U27/U28/U30 adopt with narrow allowlists and worktree/tmp/managed-store exemptions — upstream's exact design. The allowlists absorb most legitimate ops; the block cases are genuinely worth blocking.
+      <br><br>
+      <strong>Alternative:</strong> Run a 1-week soak in warn-only mode first. Lower risk of workflow disruption; higher risk that the soak is never "graduated" to blocking (historical pattern).
+      <br><br>
+      <strong>What changes based on the answer:</strong> Soak mode changes the hook implementation (warn path must be distinct from block path) and adds a re-evaluation gate after week 1 before the blocking behavior activates.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q3 — Wave 1 scope: all 9 hooks at once, or U30+U38 beachhead first?</summary>
+      <p class="qa-answer"><strong>Recommended default (beachhead first):</strong> Land U30+U38 (pre-trust) as the first, highest-value, lowest-blast-radius beachhead. Evaluate for 1 week, then land the remaining 7 Wave-1 hooks. This is the memo's own stated "recommended first build target."
+      <br><br>
+      <strong>Alternative:</strong> All 9 Wave-1 hooks at once. Faster to full coverage; higher coordination cost; harder to isolate a regression if something misbehaves.
+      <br><br>
+      <strong>What changes based on the answer:</strong> Beachhead approach splits Wave 1 into two Codex dispatches with a founder check in the middle. All-at-once is a single dispatch.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q4 — Where does this live: harness-port fork vs. ~/.claude/hooks + CLAUDE.md directly?</summary>
+      <p class="qa-answer"><strong>Recommended default (continue the fork):</strong> Port hooks into <code>harness-port</code> (continue the fork as the methodology home, Projects B/C). This keeps the fork as a coherent record of adoption history and preserves the upstream/fork diff as a meaningful artifact.
+      <br><br>
+      <strong>Alternative:</strong> Implement directly into <code>~/.claude/hooks</code> + CLAUDE.md — simpler, one fewer repo to maintain, but loses the upstream attribution and makes it harder to pull in future upstream changes.
+      <br><br>
+      <strong>What changes based on the answer:</strong> Fork approach means Codex dispatches target the <code>harness-port</code> repo. Direct approach targets the home directory dotfiles directly. Both are feasible; the fork approach has higher provenance value.
+      </p>
+    </details>
+  </section>
+
+  <!-- ===== NOTES ===== -->
+  <section id="notes">
+    <h2>Notes</h2>
+
+    <h3>Decision Matrix — All 40 Not-Yet-Ported Primitives</h3>
+    <p>Votes: <span class="vote vote-a">A = ADOPT</span> · <span class="vote vote-p">P = PARTIAL</span> · <span class="vote vote-r">R = REJECT</span> &nbsp;|&nbsp; H = Hermes · C = Codex · G = Grok</p>
+
+    <div class="tally-row">
+      <div class="tally-badge"><span class="num">7</span> ✅ Unanimous ADOPT</div>
+      <div class="tally-badge"><span class="num">8</span> ✅ Further ADOPT / partial-adopt</div>
+      <div class="tally-badge"><span class="num">3</span> 🟡 PARTIAL</div>
+      <div class="tally-badge"><span class="num">1</span> ⚫ DEFER</div>
+      <div class="tally-badge"><span class="num">21</span> ❌ REJECT (+ 1 conditional adopt)</div>
+    </div>
+
+    <div class="matrix-wrap">
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>U#</th>
+          <th>Primitive</th>
+          <th>H</th>
+          <th>C</th>
+          <th>G</th>
+          <th>Verdict</th>
+          <th>Wave / Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- ===== WAVE 1 — ADOPT ===== -->
+        <tr>
+          <td class="u-id">U30</td>
+          <td class="primitive">Config hash-audit (pre-trust-init defense)</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> Closes CVE-class pre-trust gap; we have nothing</td>
+        </tr>
+        <tr>
+          <td class="u-id">U38</td>
+          <td class="primitive">MCP server pre-trust audit</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> We add MCP servers with zero gate; code-exec + egress surface</td>
+        </tr>
+        <tr>
+          <td class="u-id">U25</td>
+          <td class="primitive">Supply-chain bash checks</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> curl|sh, unpinned installs untouched by codex-guard</td>
+        </tr>
+        <tr>
+          <td class="u-id">U27</td>
+          <td class="primitive">External-write gate</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> Writes to ~/.ssh, system paths currently ungated</td>
+        </tr>
+        <tr>
+          <td class="u-id">U28</td>
+          <td class="primitive">Cached-prefix write gate</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> CLAUDE.md/foundation poisoning persists across sessions</td>
+        </tr>
+        <tr>
+          <td class="u-id">U24</td>
+          <td class="primitive">PostToolUse Semgrep hardening</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> Vulns introduced mid-session sit unsurfaced; biggest auto gap</td>
+        </tr>
+        <tr>
+          <td class="u-id">U26</td>
+          <td class="primitive">Bash subcommand hard cap</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (cap only)</span></td>
+          <td><span class="wave-badge wb-1">W1</span> Keep 49 hard-cap (Adversa deny-stops-firing &gt;50); drop chatty ask</td>
+        </tr>
+        <tr>
+          <td class="u-id">U43</td>
+          <td class="primitive">Deployed-hook parity check</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-1">W1</span> Must ship with every hook or you verify parity on uninstalled hooks</td>
+        </tr>
+        <!-- ===== WAVE 2 — ADOPT ===== -->
+        <tr>
+          <td class="u-id">U16</td>
+          <td class="primitive">ID reference-integrity verifier</td>
+          <td class="vote vote-a">A</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT</span></td>
+          <td><span class="wave-badge wb-2">W2</span> Dangling QC/T/R cites reach agents as real rules; we have the namespace</td>
+        </tr>
+        <tr>
+          <td class="u-id">U7</td>
+          <td class="primitive">Four-field commit + validator</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (content)</span></td>
+          <td><span class="wave-badge wb-2">W2</span> Fork already built the warn-not-block validator; port it</td>
+        </tr>
+        <tr>
+          <td class="u-id">U12</td>
+          <td class="primitive">Security-review output contract</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (contract)</span></td>
+          <td><span class="wave-badge wb-2">W2</span> Fold severity+CWE+file:line+FP+READY into security-reviewer persona</td>
+        </tr>
+        <tr>
+          <td class="u-id">U17</td>
+          <td class="primitive">Pinned pre-commit SAST stack</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (scoped)</span></td>
+          <td><span class="wave-badge wb-2">W2</span> Rule: pre-commit=blocking floor, U24=in-session layer (resolves culture clash)</td>
+        </tr>
+        <!-- ===== WAVE 3 — ADOPT / PARTIAL ===== -->
+        <tr>
+          <td class="u-id">U39</td>
+          <td class="primitive">Seed-evaluation skill (anti-rubric)</td>
+          <td class="vote vote-r">R</td><td class="vote vote-a">A</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (pilot)</span></td>
+          <td><span class="wave-badge wb-3">W3</span> Sandbox-exercise &gt; matrix scoring; pilot on THIS exercise</td>
+        </tr>
+        <tr>
+          <td class="u-id">U34</td>
+          <td class="primitive">PreCompact state preservation</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-adopt">✅ ADOPT (scoped)</span></td>
+          <td><span class="wave-badge wb-3">W3</span> Adopt if compaction drops live plan state; Engram partially covers</td>
+        </tr>
+        <tr>
+          <td class="u-id">U40</td>
+          <td class="primitive">Seed-eval methodology doc</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-partial">🟡 PARTIAL</span></td>
+          <td><span class="wave-badge wb-3">W3</span> Companion to U39; worked examples only</td>
+        </tr>
+        <tr>
+          <td class="u-id">U31</td>
+          <td class="primitive">Autonomous forensic-log + hard cap</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-partial">🟡 PARTIAL</span></td>
+          <td><span class="wave-badge wb-3">W3</span> Add forensic TSV + cost hard-cap to night-protocols for AP.11 evidence</td>
+        </tr>
+        <tr>
+          <td class="u-id">U44</td>
+          <td class="primitive">SBOM + exact pinning</td>
+          <td class="vote vote-p">P</td><td class="vote vote-p">P</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-partial">🟡 PARTIAL</span></td>
+          <td><span class="wave-badge wb-3">W3</span> SBOM only where we ship external containers/binaries</td>
+        </tr>
+        <!-- ===== DEFER ===== -->
+        <tr>
+          <td class="u-id">U14</td>
+          <td class="primitive">Same-family subagent cache lineage</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-a">A</td>
+          <td><span class="verdict v-defer">⚫ DEFER</span></td>
+          <td>Hidden cost: pays off only if dispatch briefs model parent/child cache</td>
+        </tr>
+        <!-- ===== CONDITIONAL ADOPT ===== -->
+        <tr>
+          <td class="u-id">U45</td>
+          <td class="primitive">audit-claude-config.sh CLI</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-adopt-cond">✅ ADOPT* (W1)</span></td>
+          <td><span class="wave-badge wb-1">W1</span> <em>*Conditional:</em> adopt as plumbing because U30 is adopted; dead without U30</td>
+        </tr>
+        <!-- ===== REJECT ===== -->
+        <tr>
+          <td class="u-id">U3</td>
+          <td class="primitive">Threat-model IDs T.1–T.7</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ failure-modes catalog; no enforcement unless cited</td>
+        </tr>
+        <tr>
+          <td class="u-id">U4</td>
+          <td class="primitive">Reference IDs R.1–R.4</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Value only with U16 resolver; inline cites already work</td>
+        </tr>
+        <tr>
+          <td class="u-id">U5</td>
+          <td class="primitive">Six-phase build sequence</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td><strong>Panel's top reject.</strong> Cargo-cult — builds a harness we already have</td>
+        </tr>
+        <tr>
+          <td class="u-id">U6</td>
+          <td class="primitive">Per-phase artifact filenames</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Naming ceremony; planf3 phases cover it</td>
+        </tr>
+        <tr>
+          <td class="u-id">U8</td>
+          <td class="primitive">Numbered operations docs</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ skills + runbooks</td>
+        </tr>
+        <tr>
+          <td class="u-id">U9</td>
+          <td class="primitive">Cross-pollination procedure</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>N/A single-machine</td>
+        </tr>
+        <tr>
+          <td class="u-id">U11</td>
+          <td class="primitive">Inventory subagent</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ Explore + roster</td>
+        </tr>
+        <tr>
+          <td class="u-id">U13</td>
+          <td class="primitive">Writer/reviewer pair</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ write/groves skills</td>
+        </tr>
+        <tr>
+          <td class="u-id">U15</td>
+          <td class="primitive">Effort in agent frontmatter</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ per-dispatch M2</td>
+        </tr>
+        <tr>
+          <td class="u-id">U20</td>
+          <td class="primitive">MemPalace protocol</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ Engram</td>
+        </tr>
+        <tr>
+          <td class="u-id">U21</td>
+          <td class="primitive">AAAK diary Stop-hook</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ Engram + lessons-learned</td>
+        </tr>
+        <tr>
+          <td class="u-id">U23</td>
+          <td class="primitive">90-day session-log prune</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ session-start janitor</td>
+        </tr>
+        <tr>
+          <td class="u-id">U29</td>
+          <td class="primitive">git push --force ask</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ no-push mandate</td>
+        </tr>
+        <tr>
+          <td class="u-id">U32</td>
+          <td class="primitive">Deny-first ML permission model</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ deny-list + codex-guard; adds nondeterminism</td>
+        </tr>
+        <tr>
+          <td class="u-id">U33</td>
+          <td class="primitive">Deny rules as separate files</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Maintainability polish, not coverage</td>
+        </tr>
+        <tr>
+          <td class="u-id">U36</td>
+          <td class="primitive">Three-layer security stack (model doc)</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td><strong>Grok's top reject.</strong> False-posture: wire the layers, don't diagram them</td>
+        </tr>
+        <tr>
+          <td class="u-id">U37</td>
+          <td class="primitive">Lazy-loaded security-review skill</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-p">P</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Re-platforming unless our /security-review bulk-loads</td>
+        </tr>
+        <tr>
+          <td class="u-id">U41</td>
+          <td class="primitive">Cross-platform parity mandate</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>N/A single-machine</td>
+        </tr>
+        <tr>
+          <td class="u-id">U42</td>
+          <td class="primitive">Version pinning + re-eval triggers</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Redundant w/ AP.9/QC.5</td>
+        </tr>
+        <tr>
+          <td class="u-id">U46</td>
+          <td class="primitive">Permission mode per phase</td>
+          <td class="vote vote-r">R</td><td class="vote vote-r">R</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Not our dispatch model</td>
+        </tr>
+        <tr>
+          <td class="u-id">U48</td>
+          <td class="primitive">Writing rules</td>
+          <td class="vote vote-r">R</td><td class="vote vote-p">P</td><td class="vote vote-r">R</td>
+          <td><span class="verdict v-reject">❌ REJECT</span></td>
+          <td>Style preference, not a harness/security failure</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>§5 Cross-Cutting Risks (carry into implementation)</h3>
+    <p>All three harnesses surfaced these. They are non-negotiable guard-rails for the implementation phase.</p>
+
+    <div class="risk-block risk-high">
+      <strong>Risk 1 — Sequencing (all three harnesses):</strong> U38 before U30; U43 ships with every hook; U45 is dead without U30; U16 needs the stable QC/AP namespace (we have it — safe). Violating this order creates a lock on unaudited state or leaves parity checks unverifiable.
+    </div>
+
+    <div class="risk-block risk-high">
+      <strong>Risk 2 — Fail-open/closed precedence (Grok):</strong> The Wave 0 decision. Non-negotiable prerequisite. A mixed fail-open/fail-closed harness without a documented precedence policy creates an incident class where operators cannot diagnose which layer stopped (or failed to stop) an action. This is worse than either pure approach.
+    </div>
+
+    <div class="risk-block risk-high">
+      <strong>Risk 3 — U36 false-posture trap (Grok's top reject):</strong> Do NOT adopt the three-layer <em>model doc</em>. It makes the harness look complete while U24/U17/U43 stay unwired and tempts people to skip manual SAST. Wire the layers; skip the diagram. The trap: a security model document that creates a false sense of coverage is more dangerous than having no model document.
+    </div>
+
+    <div class="risk-block risk-med">
+      <strong>Risk 4 — U17 culture clash (Codex + Grok):</strong> Without an explicit rule, pinned pre-commit SAST will be undermined as "redundant with AP.2 semgrep-first-step." Rule (must be in CLAUDE.md): pre-commit = blocking floor; in-session U24 = second layer; manual semgrep-first-step is retired as the primary. This must be documented before either hook lands.
+    </div>
+
+    <div class="risk-block risk-med">
+      <strong>Risk 5 — U39 meta-irony (Grok):</strong> This review socialized 40 primitives with no formal seed-eval. Honor it: each ADOPT lands as a <strong>sandbox pilot first</strong>, not a direct merge — which <em>is</em> the U39 methodology, applied to its own adoption. Do not skip the pilot step to move faster.
+    </div>
+
+    <div class="risk-block risk-med">
+      <strong>Risk 6 — U31 AP.11 gap (Grok):</strong> <code>bypassPermissions</code> + night-protocols currently leave no forensic cost-trail. A runaway unattended run has no evidence for the wake-the-founder trigger. Wave 3 closes this, but the gap is live now — note it in <code>docs/night-protocols.md</code> as a known gap until U31 lands.
+    </div>
+
+    <h3>§7 Reject Rationale — Why the 24 Rejects Are the Right Call</h3>
+
+    <div class="reject-cluster">
+      <h4>Cluster A — Harness-Construction Scaffolding (U5, U6, U8, U9, U11, U13, U46)</h4>
+      <p>These solve a bootstrap problem we don't have. We already have a built, mature harness. The panel's top unanimous reject (U5 — six-phase build sequence) exemplifies the category: cargo-cult behavior that builds a harness from scratch while ignoring the one we operate daily. None of these named a concrete failure our current setup misses.</p>
+    </div>
+
+    <div class="reject-cluster">
+      <h4>Cluster B — Already Covered by Our Machinery (U20, U21, U23, U29, U32, U33, U36, U37, U42)</h4>
+      <p><strong>Memory:</strong> U20 (MemPalace) → Engram; U21 (AAAK diary) → Engram + lessons-learned; U23 (90-day prune) → session-start janitor.
+      <br><strong>Permissions:</strong> U32/U33 (deny-first ML / deny files) → codex-guard + deny-list; U29 (force-push ask) → no-push mandate.
+      <br><strong>Security:</strong> U36 (three-layer model) → do not adopt (false-posture trap, see Risk 3); U37 (lazy-loaded skill) → re-platforming; U42 (version pinning) → AP.9/QC.5.
+      <br>None named a gap. Redundant primitives add maintenance surface without closing failures.</p>
+    </div>
+
+    <div class="reject-cluster">
+      <h4>Cluster C — Ceremony Without Enforcement (U3, U4, U15, U48)</h4>
+      <p>U3 (threat-model IDs) and U4 (reference IDs) produce artifacts with no enforcement path — they add naming overhead without the U16 resolver that would give them meaning. U15 (effort in agent frontmatter) is covered by per-dispatch M2 mandate. U48 (writing rules) is a style preference, not a harness or security failure. The reject-unless-proven bar is doing its job: none of these named a concrete failure mode.
+      </p>
+    </div>
+
+    <figure>
+      <img src="harness-engineering-adoption-review/notes.jpg" alt="Three distinct luminous clusters of stones: large emerald mound, small amber cluster, scattered gray pile in shadow">
+      <figcaption>The reject-unless-proven bar: 24 rejects cluster cleanly into scaffolding, covered machinery, and ceremony — none named a concrete gap our current stack misses.</figcaption>
+    </figure>
+
+    <h3>Next Step (from memo §8)</h3>
+    <p>This document is the decision artifact. Implementation is deferred per scope. When ready, Wave 0 ratification (Q1) unblocks a <code>write-codex-plan</code> / planf3 implementation plan for Wave 1. <strong>Recommended first build target: U30 + U38</strong> (highest-value, lowest-blast-radius, pre-trust beachhead).</p>
+  </section>
+
+  <!-- ===== AMENDMENTS ===== -->
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <p style="font-size:.82rem;color:var(--ink-3);font-style:italic;">No amendments yet — this is the initial rendering of the decision memo (2026-06-26). Append-only after this point.</p>
+    <details>
+      <summary>2026-06-26 — Post-decision provenance</summary>
+      <p>(1) QC.4a contradictory-Enforcement-line bug fixed → harness-port PR #9. (2) During the three-harness socialization, a recurring fleet-auth failure surfaced: Codex/Grok rolling single-use OAuth tokens shared across one ChatGPT account (leviathan + codex host + codex-agent container, divergent auth.json stores) cause mutual revocation; <code>codex exec --ephemeral</code> additionally suppresses token write-back. Root-caused and filed as FM-125. Fix tracked in <code>~/.claude/plans/fleet-auth-decouple-plan.md</code> (decouple fleet consumers onto API-key auth; leviathan keeps OAuth). Grok restored to service via container restart (model pinned to grok-build, not Composer). Not part of the adoption decision; recorded for provenance.</p>
+    </details>
+  </section>
+
+</main>
+</body>
+</html>
