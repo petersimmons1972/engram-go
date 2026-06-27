@@ -378,3 +378,109 @@ func TestHealth_CircuitStateOpen(t *testing.T) {
 		t.Errorf("circuit_state: expected %q, got %q", "open", resp.CircuitState)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// #1210 — /health topology gated behind Bearer auth
+// ---------------------------------------------------------------------------
+
+// TestHealth_UnauthenticatedReturnsMinimalStatus verifies that an unauthenticated
+// caller receives only {"status":"ok"|"degraded"} with no postgres/ollama/circuit
+// fields, while an authenticated caller receives the full topology (#1210).
+func TestHealth_UnauthenticatedReturnsMinimalStatus(t *testing.T) {
+	// Healthy fake Infinity server.
+	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"data": []map[string]any{{
+					"id": "BAAI/bge-m3",
+					"stats": map[string]any{
+						"queue_fraction":  0.10,
+						"queue_absolute":  6,
+						"results_pending": 2,
+						"batch_size":      64,
+					},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ollamaServer.Close()
+
+	const testKey = "health-gate-test-key"
+	s := &Server{
+		cfg:       Config{RouterURL: ollamaServer.URL},
+		embedDegraded: &atomic.Bool{},
+		apiKey:    testKey,
+	}
+
+	t.Run("unauthenticated_gets_minimal", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		// No Authorization header.
+		w := httptest.NewRecorder()
+		s.handleHealth(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["status"] != "ok" {
+			t.Errorf("status: expected ok, got %q", body["status"])
+		}
+		if _, hasPostgres := body["postgres"]; hasPostgres {
+			t.Error("unauthenticated response must not include postgres field")
+		}
+		if _, hasOllama := body["ollama"]; hasOllama {
+			t.Error("unauthenticated response must not include ollama field")
+		}
+		if _, hasCircuit := body["circuit_state"]; hasCircuit {
+			t.Error("unauthenticated response must not include circuit_state field")
+		}
+	})
+
+	t.Run("authenticated_gets_full_topology", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		req.Header.Set("Authorization", "Bearer "+testKey)
+		w := httptest.NewRecorder()
+		s.handleHealth(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var resp healthResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Errorf("status: expected ok, got %q", resp.Status)
+		}
+		if resp.Postgres != "ok" {
+			t.Errorf("postgres: expected ok, got %q", resp.Postgres)
+		}
+		if resp.Ollama != "ok" {
+			t.Errorf("ollama: expected ok, got %q", resp.Ollama)
+		}
+		if resp.CircuitState != "closed" {
+			t.Errorf("circuit_state: expected closed, got %q", resp.CircuitState)
+		}
+	})
+
+	t.Run("wrong_token_gets_minimal", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		req.Header.Set("Authorization", "Bearer wrong-token")
+		w := httptest.NewRecorder()
+		s.handleHealth(w, req)
+
+		var body map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if _, hasPostgres := body["postgres"]; hasPostgres {
+			t.Error("wrong-token response must not include postgres field")
+		}
+	})
+}
