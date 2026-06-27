@@ -121,7 +121,10 @@ func runServer(args []string) error {
 	}
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
-	databaseURL := fs.String("database-url", envOr("DATABASE_URL", ""), "PostgreSQL DSN (required)")
+	// DATABASE_URL is intentionally NOT a CLI flag — a DSN with an embedded password
+	// would appear in /proc/cmdline, ps aux, shell history, and --help PrintDefaults
+	// output if registered as a flag.String.  Read from environment only. (#1212)
+	databaseURL := os.Getenv("DATABASE_URL")
 	routerURL := fs.String("litellm-url", routerURLFromEnv("http://litellm:4000", slog.Default()), "Router base URL (generation); env: ENGRAM_ROUTER_URL (LITELLM_URL accepted as deprecated fallback)")
 	litellmAPIKey := envOr("LITELLM_API_KEY", "")
 	// ENGRAM_EMBED_URL overrides ENGRAM_ROUTER_URL for embeddings only — use when the
@@ -217,6 +220,15 @@ func runServer(args []string) error {
 			"rate_limit", *rateLimit, "rate_limit_rps", *rateLimitRPS)
 	}
 
+	// Unset secrets from the process environment after reading (#139, #141, #250, #549, #1212).
+	// Must happen before runHealthcheckProbe because that function calls os.Exit, which
+	// would skip the Unsetenv block if it were placed after it — leaving credentials
+	// in /proc/self/environ for any subsequent process lifetime.
+	_ = os.Unsetenv("ENGRAM_API_KEY")
+	_ = os.Unsetenv("ANTHROPIC_API_KEY")
+	_ = os.Unsetenv("DATABASE_URL")
+	_ = os.Unsetenv("LITELLM_API_KEY")
+
 	// Docker HEALTHCHECK support — distroless images have no shell or wget,
 	// so CMD-SHELL form is unusable. This flag lets the binary probe its own
 	// /health endpoint and exit with the appropriate code. See issue #341.
@@ -225,8 +237,8 @@ func runServer(args []string) error {
 		runHealthcheckProbe(*port, apiKey)
 	}
 
-	if *databaseURL == "" {
-		return fmt.Errorf("DATABASE_URL or --database-url is required")
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL environment variable is required (--database-url flag intentionally omitted — see issue #1212)")
 	}
 	if apiKey == "" {
 		return fmt.Errorf("ENGRAM_API_KEY environment variable is required (--api-key flag intentionally omitted — see issue #136)")
@@ -247,13 +259,6 @@ func runServer(args []string) error {
 	if warn := validateEmbedConfig(*embedModel, *embedDims); warn != "" {
 		slog.Warn("embed config warning", "detail", warn)
 	}
-
-	// Unset secrets from the process environment after reading (#139, #141, #250, #549).
-	// Reduces the exposure window for credentials in /proc/self/environ.
-	_ = os.Unsetenv("ENGRAM_API_KEY")
-	_ = os.Unsetenv("ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("DATABASE_URL")
-	_ = os.Unsetenv("LITELLM_API_KEY")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -322,7 +327,7 @@ func runServer(args []string) error {
 	// is configured to allow demand-driven probes.
 	startEmbedBackgroundProbe(ctx, embedClient, *embedCircuitOpenDuration)
 
-	dsn := *databaseURL
+	dsn := databaseURL
 	routerURLVal := *routerURL
 	sumModel := *summarizeModel
 	sumEnabled := *summarizeEnabled

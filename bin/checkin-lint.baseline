@@ -312,6 +312,9 @@ P1.hardcoded-dsn::./cmd/engram/main_test.go::332
 P1.hardcoded-dsn::./cmd/engram/main_test.go::339
 P1.hardcoded-dsn::./cmd/engram/main_test.go::365
 P1.hardcoded-dsn::./cmd/engram/main_test.go::388
+P1.hardcoded-dsn::./cmd/engram/db_url_leak_test.go::22
+P1.hardcoded-dsn::./cmd/engram/db_url_leak_test.go::29
+P1.hardcoded-dsn::./cmd/engram/db_url_leak_test.go::47
 P1.hardcoded-dsn::./cmd/longmemeval/prune_test.go::139
 P1.hardcoded-dsn::./cmd/starter/main_test.go::26
 P1.hardcoded-dsn::./cmd/starter/main_test.go::28
