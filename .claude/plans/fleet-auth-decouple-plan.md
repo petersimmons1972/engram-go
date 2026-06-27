@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-06-26** — Founder decision: STAY ON OAUTH; the API-key decoupling below is DROPPED (its mutual-revocation premise was unconfirmed). Durable fix retained instead: (1) drop `--ephemeral` from relay + poller, (2) never co-run the Grok relay with its live daemon, (3) do not exercise OAuth CLIs for diagnostics. Content below kept for historical context.
+
 # Plan — Decouple Fleet AI Consumers from Rolling-OAuth (FM-125 fix)
 
 **Date:** 2026-06-26 · **Owner:** Claude-direct (founder-gated infra) · **Tracks:** FM-125
