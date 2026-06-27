@@ -83,9 +83,9 @@ func (b *PostgresBackend) CloseStaleEpisodes(ctx context.Context, olderThan time
 func (b *PostgresBackend) RecallEpisode(ctx context.Context, episodeID string) ([]*types.Memory, error) {
 	rows, err := b.pool.Query(ctx, `
 		SELECT * FROM memories
-		WHERE episode_id = $1 AND valid_to IS NULL
+		WHERE episode_id = $1 AND project = $2 AND valid_to IS NULL
 		ORDER BY created_at ASC`,
-		episodeID,
+		episodeID, b.project,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("RecallEpisode: %w", err)
