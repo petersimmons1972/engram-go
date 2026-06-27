@@ -742,25 +742,31 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 			return
 		}
 
-		// TOFU: first unauthenticated request from loopback only.
+		// TOFU: first unauthenticated request from loopback (always) or RFC1918
+		// (when ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1) is granted exactly once.
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		isTOFUEligible := isLoopbackIP(rawPeer) || (s.cfg.AllowRFC1918SetupToken && isRFC1918IP(rawPeer))
 		// #707: allow re-grant after 60s. If the prior grant succeeded but
 		// the client crashed/raced before receiving the response, the operator
 		// would otherwise have to restart the process. The time window keeps
 		// the "exactly once during bootstrap" semantics within a session.
-		if isLoopbackIP(rawPeer) {
+		if isTOFUEligible {
 			if s.tofuGranted.Load() {
 				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
 					s.tofuGranted.Store(false)
 				}
 			}
 		}
-		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+		if isTOFUEligible && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
-			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
-				"remote_ip", rawPeer)
+			via := "localhost"
+			if isRFC1918IP(rawPeer) && !isLoopbackIP(rawPeer) {
+				via = "RFC1918"
+			}
+			slog.Warn("setup-token TOFU: one-time bootstrap grant issued (#613, #1206)",
+				"remote_ip", rawPeer, "via", via)
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
 				"endpoint": advertised + "/mcp",
@@ -992,6 +998,25 @@ func isLoopbackIP(ip string) bool {
 	return parsed != nil && parsed.IsLoopback()
 }
 
+// isRFC1918IP returns true when ip falls within any of the private address
+// ranges defined by RFC1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+// IPv6 ULA addresses (fc00::/7) are intentionally excluded — Docker bridge
+// networks use IPv4 RFC1918, so the check is scoped to IPv4 only.
+func isRFC1918IP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
 // setupTokenTOFUHandler returns the /setup-token handler with TOFU (Trust On
 // First Use) logic. It creates an internal rate limiter whose eviction goroutine
 // is bound to ctx so it stops when the server shuts down (prevents goroutine leak).
@@ -1021,25 +1046,31 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 			return
 		}
 
-		// TOFU: first unauthenticated request from loopback only.
+		// TOFU: first unauthenticated request from loopback (always) or RFC1918
+		// (when ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1) is granted exactly once.
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
 		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		isTOFUEligible := isLoopbackIP(rawPeer) || (s.cfg.AllowRFC1918SetupToken && isRFC1918IP(rawPeer))
 		// #707: allow re-grant after 60s. If the prior grant succeeded but
 		// the client crashed/raced before receiving the response, the operator
 		// would otherwise have to restart the process. The time window keeps
 		// the "exactly once during bootstrap" semantics within a session.
-		if isLoopbackIP(rawPeer) {
+		if isTOFUEligible {
 			if s.tofuGranted.Load() {
 				if grantedAt := s.tofuGrantedAt.Load(); grantedAt != 0 && time.Now().Unix()-grantedAt > 60 {
 					s.tofuGranted.Store(false)
 				}
 			}
 		}
-		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
+		if isTOFUEligible && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
-			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
-				"remote_ip", rawPeer)
+			via := "localhost"
+			if isRFC1918IP(rawPeer) && !isLoopbackIP(rawPeer) {
+				via = "RFC1918"
+			}
+			slog.Warn("setup-token TOFU: one-time bootstrap grant issued (#613, #1206)",
+				"remote_ip", rawPeer, "via", via)
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
 				"endpoint": "/mcp",

@@ -6,6 +6,11 @@ package mcp
 // that engram-session-end.sh and fresh installations can self-configure without
 // a chicken-and-egg key problem (#613). All subsequent requests require Bearer
 // authentication (unchanged from #540).
+//
+// RFC1918 extension (#1206): when ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1, the
+// one-time TOFU grant is also issued to Docker bridge addresses (172.x RFC1918).
+// Without this flag, RFC1918 addresses are rejected identically to any other
+// non-loopback address.
 
 import (
 	"context"
@@ -175,4 +180,138 @@ func TestSetupToken_TOFURateLimitRunsFirst(t *testing.T) {
 
 	require.Equal(t, http.StatusTooManyRequests, w.Code,
 		"exhausted rate limiter must return 429 before TOFU logic runs")
+}
+
+// ── RFC1918 extension tests (#1206) ────────────────────────────────────────
+
+// newTOFUTestServerWithRFC1918 returns a Server with AllowRFC1918SetupToken set.
+func newTOFUTestServerWithRFC1918(t *testing.T, apiKey string, allow bool) *Server {
+	t.Helper()
+	pool := newTestNoopPool(t)
+	cfg := testConfig()
+	cfg.AllowRFC1918SetupToken = allow
+	s := NewServer(pool, cfg)
+	s.tofuGranted.Store(false)
+	return s
+}
+
+// TestSetupToken_RFC1918FlagOffRejectsDockerBridgeIP verifies that an
+// unauthenticated request from a Docker bridge IP (172.x, RFC1918) is rejected
+// when ENGRAM_SETUP_TOKEN_ALLOW_RFC1918 is false (the default).
+// This is the regression guard: before #1206 the flag existed but was never
+// read, so even "flag OFF" was silently granted.
+func TestSetupToken_RFC1918FlagOffRejectsDockerBridgeIP(t *testing.T) {
+	const apiKey = "test-api-key-rfc1918-off"
+	s := newTOFUTestServerWithRFC1918(t, apiKey, false /* flag OFF */)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+
+	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req.RemoteAddr = "172.23.0.1:48000" // typical Docker bridge IP
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code,
+		"RFC1918 address must be rejected when AllowRFC1918SetupToken=false")
+	require.False(t, s.tofuGranted.Load(),
+		"tofuGranted must remain false after RFC1918 rejection with flag OFF")
+}
+
+// TestSetupToken_RFC1918FlagOnGrantsDockerBridgeIP verifies that an
+// unauthenticated request from a Docker bridge IP is granted the one-time TOFU
+// token when ENGRAM_SETUP_TOKEN_ALLOW_RFC1918=1. This is the main fix for #1206:
+// Docker TOFU bootstrap was silently broken because 172.x is RFC1918, not loopback.
+func TestSetupToken_RFC1918FlagOnGrantsDockerBridgeIP(t *testing.T) {
+	const apiKey = "test-api-key-rfc1918-on"
+	s := newTOFUTestServerWithRFC1918(t, apiKey, true /* flag ON */)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+
+	require.False(t, s.tofuGranted.Load(), "tofuGranted must start as false")
+
+	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req.RemoteAddr = "172.23.0.1:48000" // typical Docker bridge IP
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code,
+		"RFC1918 address must receive the one-time TOFU grant when AllowRFC1918SetupToken=true")
+	require.Contains(t, w.Body.String(), apiKey,
+		"response body must contain the API key on RFC1918 TOFU grant")
+	require.Contains(t, w.Body.String(), "/mcp",
+		"response body must advertise /mcp endpoint (not /sse)")
+	require.True(t, s.tofuGranted.Load(),
+		"tofuGranted must be true after RFC1918 TOFU grant")
+}
+
+// TestSetupToken_RFC1918FlagOnSecondRequestFails verifies that the RFC1918 TOFU
+// grant is still one-time-only: a second unauthenticated RFC1918 request after
+// the grant is consumed must return 401.
+func TestSetupToken_RFC1918FlagOnSecondRequestFails(t *testing.T) {
+	const apiKey = "test-api-key-rfc1918-second"
+	s := newTOFUTestServerWithRFC1918(t, apiKey, true)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+
+	// First RFC1918 request — TOFU grant.
+	req1 := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req1.RemoteAddr = "172.23.0.1:48001"
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code, "first RFC1918 TOFU request must succeed")
+
+	// Second unauthenticated RFC1918 request — must be rejected.
+	req2 := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req2.RemoteAddr = "172.23.0.2:48002"
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusUnauthorized, w2.Code,
+		"second unauthenticated RFC1918 request must return 401 (TOFU already consumed)")
+}
+
+// TestSetupToken_LoopbackResponseContainsMCPEndpoint verifies that the loopback
+// TOFU grant response advertises /mcp (not /sse) in the endpoint field (#1206).
+func TestSetupToken_LoopbackResponseContainsMCPEndpoint(t *testing.T) {
+	const apiKey = "test-api-key-endpoint-check"
+	s := newTOFUTestServer(t, apiKey)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(context.Background()))
+
+	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req.RemoteAddr = "127.0.0.1:60001"
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "loopback TOFU must return 200")
+	body := w.Body.String()
+	require.Contains(t, body, "/mcp",
+		"setup-token response must contain /mcp in endpoint field")
+	require.NotContains(t, body, `"endpoint":"/sse"`,
+		"setup-token response must not advertise /sse as the endpoint")
+}
+
+// TestSetupToken_RFC1918AllSubnets verifies isRFC1918IP across all three
+// private address ranges and confirms a public IP is not matched.
+func TestSetupToken_RFC1918AllSubnets(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want bool
+		desc string
+	}{
+		{"10.0.0.1", true, "10.x class-A private"},
+		{"10.255.255.255", true, "10.x upper bound"},
+		{"172.16.0.1", true, "172.16.x lower bound"},
+		{"172.23.0.1", true, "172.23.x Docker bridge typical"},
+		{"172.31.255.255", true, "172.31.x upper bound"},
+		{"172.15.0.1", false, "172.15.x just below 172.16/12"},
+		{"172.32.0.1", false, "172.32.x just above 172.31/12"},
+		{"192.168.0.1", true, "192.168.x private"},
+		{"192.168.255.255", true, "192.168.x upper bound"},
+		{"8.8.8.8", false, "public IP"},
+		{"127.0.0.1", false, "loopback is not RFC1918"},
+		{"::1", false, "IPv6 loopback is not RFC1918"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.desc, func(t *testing.T) {
+			got := isRFC1918IP(tc.ip)
+			require.Equal(t, tc.want, got, "isRFC1918IP(%q): %s", tc.ip, tc.desc)
+		})
+	}
 }

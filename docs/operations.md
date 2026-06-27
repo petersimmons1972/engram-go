@@ -56,7 +56,7 @@ curl http://localhost:8788/health
 curl http://localhost:8788/ready
 ```
 
-**`GET /setup-token`** — returns the current bearer token, SSE endpoint URL, and server name as JSON. Requires `Authorization: Bearer <ENGRAM_API_KEY>`. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
+**`GET /setup-token`** — returns the current bearer token, MCP endpoint path, and server name as JSON. Requires `Authorization: Bearer <ENGRAM_API_KEY>`. Localhost-only (accepts loopback `127.0.0.1` / `::1` and RFC1918 Docker bridge addresses; rejects all others). Used by `make setup` to configure MCP clients without manual copy-paste.
 
 **Request:**
 ```bash
@@ -69,7 +69,7 @@ curl \
 ```json
 {
   "token": "64-char-hex-bearer-token",
-  "endpoint": "http://127.0.0.1:8788/sse",
+  "endpoint": "/mcp",
   "name": "engram"
 }
 ```
