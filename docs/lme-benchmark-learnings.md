@@ -731,3 +731,37 @@ See `docs/lme-campaign/PLAN-2026-06-21.md` for the lever + run config + acceptan
 A *fair* cross-type gap profile on Spark's 40960 requires per-type context capping that fits without gutting. `--max-block-chars 2500` was too aggressive; the committed retry is `--context-topk 8 --max-block-chars 8000` (fewer blocks, each a full session). Numbers from that run, with the config noted, are the defensible profile — distinct from the ss-pref baseline's *native* config. Cross-type comparison on a 40960 backend is inherently config-constrained; a larger-context backend removes the confound.
 
 See issues #1183 (FM-PG), #1185 (RestClient URL fix), #1192 (cleanup), #1181 (structural fix + impl map).
+
+---
+
+## Temporal Reasoning Lever Experiments (Phase 6, 2026-06-26)
+
+**Baseline**: 48.3% strict / 55.2% lenient on temporal30 (topk8/max-block8000, Qwen3-32B/Spark)
+
+### T1: --inject-question-date (H16)
+
+**Result**: **strict=63.3% (+15.0pp)  lenient=63.3% (+8.1pp)** (19/30)
+
+Prepends `"Today's date is: {question_date}"` to every temporal-reasoning prompt. This is the single largest lever found for temporal reasoning. The lenient=strict collapse (63.3%=63.3%) is significant: every item the model gets right, it gets **strictly** right — there are no partial-credit cases where the model approximates the answer.
+
+**Interpretation**: The baseline failures were not retrieval failures — they were date-arithmetic failures. The model had the relevant memory blocks but couldn't anchor date math without knowing "now". Injecting the question date resolves the anchor.
+
+### Mistral-Small-24B Cross-Arch Baseline (pref30, max-block-chars=4000)
+
+**Result**: strict=6.7% (2/30)  lenient=53.3% (16/30) vs Qwen3-32B strict=50.0%/lenient=83.3%
+
+Severe accuracy degradation — 43pp strict gap vs Qwen3. Two hypotheses:
+1. **Context-gutting**: max-block-chars=4000 (vs 8000 for Qwen3) to fit Mistral's 16384 token ceiling may strip answer-bearing content
+2. **Model weakness**: Mistral-24B may be genuinely weaker at preference synthesis even given full context
+
+**Retake B2** (max-block-chars=6000) in flight to isolate: 6000 chars/block × 8 blocks ≈ 12000 tokens + overhead ≤ 16384. If B2 shows significant lift, context-gutting is the cause; if flat, it is model capability.
+
+### Key new failure mode (FM-TEMPORAL-ANCHOR)
+
+**FM-TEMPORAL-ANCHOR**: Temporal-reasoning questions without an explicit "today is X" anchor cause 15pp accuracy loss even when retrieved memory blocks are correct. The model performs date arithmetic relative to an implicit "now" it cannot know. Lever: `--inject-question-date`. Applies to any question_type=temporal-reasoning with a `question_date` field. **Do not benchmark temporal reasoning without this flag unless measuring the no-anchor baseline intentionally.**
+
+### T2/T3/T4 in flight
+
+- **T2** (`--temporal-prompt-aug`): enumerate-all-events-then-commit ordering instruction (H-M5+H-M1)
+- **T3** (`--inject-question-date --temporal-prompt-aug`): combined levers
+- **T4** (`--temporal-window-recall`): server-side two-pass date-windowed recall (H-NEW-1); runs after T3
