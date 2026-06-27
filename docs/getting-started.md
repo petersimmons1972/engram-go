@@ -118,7 +118,7 @@ Subsequent local-only starts are fast — the model is cached in the Ollama volu
 
 ## Step 5: Connect Your IDE
 
-For Claude Code, configure the MCP client once the server is healthy. `make setup` targets the default home-network endpoint `https://engram.petersimmons.com`:
+For Claude Code, configure the MCP client once the server is healthy. `make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host:
 
 ```bash
 make setup

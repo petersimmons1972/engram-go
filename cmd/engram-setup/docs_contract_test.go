@@ -18,7 +18,7 @@ func TestSetupDocsMatchNetworkDefaultContract(t *testing.T) {
 			name: "root README",
 			path: filepath.Join("..", "..", "README.md"),
 			mustContain: []string{
-				"`make setup` targets the default home-network endpoint `https://engram.petersimmons.com`",
+				"`make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host",
 				"go run ./cmd/engram-setup --url http://127.0.0.1:8788",
 				"`~/.config/engram/api_key`",
 				"`~/projects/engram-go/.env`",
@@ -33,7 +33,7 @@ func TestSetupDocsMatchNetworkDefaultContract(t *testing.T) {
 			name: "command README",
 			path: filepath.Join("..", "README.md"),
 			mustContain: []string{
-				"Configure with default home-network endpoint (`https://engram.petersimmons.com`)",
+				"Configure with default local endpoint (`http://localhost:8788`)",
 				"go run ./cmd/engram-setup --url http://127.0.0.1:8788",
 				"`~/.config/engram/api_key`",
 				"`~/projects/engram-go/.env`",
@@ -48,7 +48,7 @@ func TestSetupDocsMatchNetworkDefaultContract(t *testing.T) {
 			name: "getting started",
 			path: filepath.Join("..", "..", "docs", "getting-started.md"),
 			mustContain: []string{
-				"`make setup` targets the default home-network endpoint `https://engram.petersimmons.com`",
+				"`make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host",
 				"go run ./cmd/engram-setup --url http://127.0.0.1:8788",
 				"`~/.claude/mcp_servers.json`",
 				"`~/.claude.json`",

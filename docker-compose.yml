@@ -127,7 +127,8 @@ services:
       - path: .env.machine-identity
         required: true
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
+      # Set POSTGRES_HOST to your PostgreSQL host in .env
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@${POSTGRES_HOST:?POSTGRES_HOST must be set}:${POSTGRES_PORT:-5432}/engram?sslmode=disable
       # OpenAI-compatible upstream (olla load balancer; LiteLLM container retired 2026-05-05)
       # LITELLM_URL is accepted as a deprecated fallback
       - ENGRAM_ROUTER_URL=${ENGRAM_ROUTER_URL:-${LITELLM_URL:-http://olla:40114/olla/openai}}
@@ -187,7 +188,8 @@ services:
     # Secondary GPU: lower CONCURRENCY_MAX (4) and longer idle poll interval (5s)
     # so W6800 wins the FOR UPDATE SKIP LOCKED race on new work. Override via .env.
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
+      # Set POSTGRES_HOST to your PostgreSQL host in .env
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@${POSTGRES_HOST:?POSTGRES_HOST must be set}:${POSTGRES_PORT:-5432}/engram?sslmode=disable
       - ENGRAM_ROUTER_URL=${REEMBED_7900XT_URL:-http://172.23.0.1:8004}
       # LITELLM_URL is accepted as a deprecated fallback
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
@@ -212,7 +214,8 @@ services:
     # Use REEMBED_W6800_SUB_BATCH to override global ENGRAM_EMBED_SUB_BATCH.
     # Default 32 (not 100) — W6800 OOMs with sub_batch=100 at concurrency≥4.
     environment:
-      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@trunas.petersimmons.com:5434/engram?sslmode=disable
+      # Set POSTGRES_HOST to your PostgreSQL host in .env
+      - DATABASE_URL=postgresql://engram:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@${POSTGRES_HOST:?POSTGRES_HOST must be set}:${POSTGRES_PORT:-5432}/engram?sslmode=disable
       # #668: default placeholder — set REEMBED_W6800_URL in .env to your real W6800 host
       - ENGRAM_ROUTER_URL=${REEMBED_W6800_URL:-http://example.invalid:8005}
       # LITELLM_URL is accepted as a deprecated fallback

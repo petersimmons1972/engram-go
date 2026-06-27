@@ -21,7 +21,7 @@
 //
 // Usage:
 //
-//	go run ./cmd/engram-setup              # configure with defaults (remote default: https://engram.petersimmons.com)
+//	go run ./cmd/engram-setup              # configure with defaults (default: http://localhost:8788)
 //	go run ./cmd/engram-setup --dry-run    # preview changes without writing
 //	go run ./cmd/engram-setup --url http://127.0.0.1:8788  # local Docker override
 //	go run ./cmd/engram-setup --port 9000  # local port override (sets base to http://127.0.0.1:<port>)
@@ -50,9 +50,9 @@ func main() {
 	}
 }
 
-// defaultServerURL is the remote ingress endpoint for the engram MCP server.
-// Override with --url for local Docker development, or --port for a local port.
-const defaultServerURL = "https://engram.petersimmons.com"
+// defaultServerURL is the local MCP server endpoint for single-host installs.
+// Override with --url for a remote host, or --port for a different local port.
+const defaultServerURL = "http://localhost:8788"
 
 func run() error {
 	serverURL := flag.String("url", defaultServerURL, "engram server base URL (overrides --port)")

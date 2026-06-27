@@ -152,7 +152,10 @@ func main() {
 	}
 
 	clientSecret := mustEnv("INFISICAL_CLIENT_SECRET")
-	domain := envOr("INFISICAL_DOMAIN", "https://infisical.petersimmons.com")
+	domain := os.Getenv("INFISICAL_DOMAIN")
+	if domain == "" {
+		fatalf("INFISICAL_DOMAIN is not set — set it to your Infisical instance URL (e.g. https://app.infisical.com or your self-hosted domain)")
+	}
 	projectID := mustEnv("INFISICAL_PROJECT_ID")
 	env := envOr("INFISICAL_ENV", "prod")
 	secretPath := envOr("INFISICAL_SECRET_PATH", "/apps/engram")
