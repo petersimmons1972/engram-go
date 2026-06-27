@@ -56,8 +56,10 @@ while IFS= read -r hit; do
   hint "Replace with: os.Getenv(\"DATABASE_URL\") or equivalent config struct."
   ((p1_n++)) || true
 # postgres://[^$][^{] — excludes $VAR and ${VAR} style env references; flags bare DSNs
+# *_test.go files are excluded: test DSNs are never production secrets.
 done < <(grep -rn \
   --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
+  --exclude='*_test.go' \
   --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
   'postgres://[^$][^{]' . 2>/dev/null || true)
 [[ $p1_n -eq 0 ]] && pass_rule "P1.hardcoded-dsn" "no hardcoded postgres:// DSNs"
