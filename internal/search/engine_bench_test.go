@@ -265,6 +265,12 @@ func (s *stubBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int
 func (s *stubBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
 
 func (s *stubBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
+func (s *stubBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (s *stubBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 
 func (s *stubBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil

@@ -57,6 +57,27 @@ func (b *PostgresBackend) StoreRelationship(ctx context.Context, rel *types.Rela
 	return tx.Commit(ctx)
 }
 
+// StoreRelationshipTx upserts a directed relationship inside an existing
+// transaction. FK existence checks are omitted — the caller must guarantee
+// that both memories exist (e.g. by holding row locks from an outer tx).
+func (b *PostgresBackend) StoreRelationshipTx(ctx context.Context, tx Tx, rel *types.Relationship) error {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return err
+	}
+	rel.Project = b.project
+	_, err = raw.Exec(ctx, `
+		INSERT INTO relationships
+		  (id, source_id, target_id, rel_type, strength, project, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (source_id, target_id, rel_type)
+		DO UPDATE SET strength = EXCLUDED.strength`,
+		rel.ID, rel.SourceID, rel.TargetID,
+		rel.RelType, rel.Strength, rel.Project, rel.CreatedAt,
+	)
+	return err
+}
+
 // GetConnected performs BFS from memoryID via a single recursive CTE (#113).
 // Returns all connected memories up to maxHops hops away, with the shortest-path
 // metadata (rel_type, direction, strength) for each discovered node.

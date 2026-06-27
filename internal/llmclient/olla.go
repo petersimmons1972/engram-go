@@ -49,13 +49,13 @@ type ollaClient struct {
 	host    string
 	timeout time.Duration
 
-	// modelOnce guards the cached model ID.  sync.Once is appropriate because
-	// pickModel is idempotent: running it N times on the same Olla host always
-	// returns the same model (model list is stable within a single run).
-	// Reset modelOnce on ErrBackendUnavailable to allow re-resolution on a
-	// flapping host.
-	modelOnce sync.Once
-	modelID   string // set once by modelOnce
+	// mu guards modelID and modelResolved.  A mutex (rather than sync.Once) is
+	// used so resetModel can safely clear the cache while another goroutine may
+	// concurrently be running resolvedModel — assigning to a sync.Once struct
+	// field is a data race.
+	mu            sync.Mutex
+	modelID       string
+	modelResolved bool
 }
 
 // NewOllaClient constructs an Olla LLMClient from cfg.
@@ -165,18 +165,24 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 // invocation.  If the cached model is empty (discovery failed), it returns "".
 // Call resetModel to clear the cache so the next call retries discovery.
 func (c *ollaClient) resolvedModel(ctx context.Context) string {
-	c.modelOnce.Do(func() {
+	c.mu.Lock()
+	if !c.modelResolved {
 		c.modelID = c.pickModel(ctx)
-	})
-	return c.modelID
+		c.modelResolved = true
+	}
+	m := c.modelID
+	c.mu.Unlock()
+	return m
 }
 
 // resetModel clears the model cache so the next Complete call re-discovers.
 // Called when the completion endpoint returns ErrBackendUnavailable, indicating
 // the previously selected model may have become unavailable.
 func (c *ollaClient) resetModel() {
-	c.modelOnce = sync.Once{}
+	c.mu.Lock()
+	c.modelResolved = false
 	c.modelID = ""
+	c.mu.Unlock()
 }
 
 // Complete sends systemPrompt + userPrompt to Olla using the OpenAI-compatible

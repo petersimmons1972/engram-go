@@ -552,6 +552,33 @@ func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, rea
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	ok, err := b.softDeleteMemoryExec(ctx, tx, project, id, reason)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// SoftDeleteMemoryTx is like SoftDeleteMemory but runs inside an existing
+// transaction. The caller is responsible for commit/rollback.
+func (b *PostgresBackend) SoftDeleteMemoryTx(ctx context.Context, tx Tx, project, id, reason string) (bool, error) {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return false, err
+	}
+	return b.softDeleteMemoryExec(ctx, raw, project, id, reason)
+}
+
+// softDeleteMemoryExec contains the core logic for SoftDeleteMemory, operating
+// on an arbitrary pgx.Tx so it can be called from both SoftDeleteMemory (which
+// owns its own tx) and SoftDeleteMemoryTx (caller-owned tx).
+func (b *PostgresBackend) softDeleteMemoryExec(ctx context.Context, tx pgx.Tx, project, id, reason string) (bool, error) {
 	row, err := tx.Query(ctx,
 		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
 		id, project,
@@ -584,10 +611,6 @@ func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, rea
 		now, reasonPtr, id, project,
 	)
 	if err != nil {
-		return false, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return true, nil
