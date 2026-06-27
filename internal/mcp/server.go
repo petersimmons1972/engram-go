@@ -226,6 +226,11 @@ type Server struct {
 	// Tool handlers read these without locking to avoid contention.
 	runtimeCfg *RuntimeConfig
 
+	// apiKey is the Bearer token required to authenticate requests. Set once by
+	// Start() and never modified afterward. Used by handleHealth to gate the
+	// detailed topology response from unauthenticated callers (#1210).
+	apiKey string
+
 	// tofuGranted tracks whether the one-time localhost bootstrap grant for /setup-token
 	// has been issued (#613). Zero value (false) is the correct initial state — no allocation
 	// needed. CompareAndSwap ensures exactly one unauthenticated loopback request succeeds.
@@ -692,6 +697,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	sse := buildSSEServer(s.mcp, advertised)
 
 	s.registerSessionHooks(apiKey)
+	s.apiKey = apiKey
 
 	// setupTokenLimiter enforces 3 calls per 5-minute window per IP (#243).
 	// Uses a fixed budget regardless of RateLimitDisable — /setup-token is security-sensitive.
@@ -1555,6 +1561,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// statusCode stays 200 — server is operational
 	}
 
+	// Gate the detailed topology (postgres/ollama/circuit_state) behind Bearer
+	// authentication so unauthenticated callers (e.g. K8s readiness probes) only
+	// learn the overall ok/degraded status without internal topology details (#1210).
+	// When s.apiKey is empty (test environments that construct Server without a key),
+	// the full response is returned for backward compatibility.
+	if s.apiKey != "" {
+		got := hmac.New(sha256.New, []byte(s.apiKey))
+		got.Write([]byte(r.Header.Get("Authorization")))
+		want := hmac.New(sha256.New, []byte(s.apiKey))
+		want.Write([]byte("Bearer " + s.apiKey))
+		if subtle.ConstantTimeCompare(got.Sum(nil), want.Sum(nil)) != 1 {
+			// Unauthenticated: return minimal status without internal topology.
+			writeJSON(w, statusCode, map[string]string{"status": res.Status})
+			return
+		}
+	}
 	writeJSON(w, statusCode, res)
 }
 
