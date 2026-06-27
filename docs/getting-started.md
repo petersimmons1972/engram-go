@@ -218,7 +218,7 @@ ENGRAM_API_KEY=                            # Required: bearer token for all MCP 
 OLLAMA_URL=http://ollama:11434             # Default: Ollama inside Docker
 # OLLAMA_URL=http://host.docker.internal:11434  # Mac: native Ollama outside Docker
 
-ENGRAM_EMBED_MODEL=mxbai-embed-large      # Any 1024-dim compatible embedding model (Ollama or Infinity/olla)
+ENGRAM_EMBED_MODEL=mxbai-embed-large      # Ollama local-only path default; Infinity/olla path uses BAAI/bge-m3
 
 # ============================================================
 # Background summarization
