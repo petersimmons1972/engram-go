@@ -1,0 +1,103 @@
+# engram-reembed — background re-embedding worker for the engram memory store.
+# Captured 2026-06-27 from live cluster (kubectl get deployment engram-reembed -n engram).
+# MI-50 / W6800 path: ENGRAM_EMBED_MODEL=BAAI/bge-m3 via olla LiteLLM proxy.
+# CAPTURE-ONLY — do NOT alter embed/MI-50 config; change nothing on the reembed side.
+# Image is digest-pinned to the live sha256 as of capture time.
+#
+# Secrets referenced:
+#   engram-app-secret   key: DATABASE_URL   — PostgreSQL connection string
+#   engram-app-secret   key: LITELLM_API_KEY — LiteLLM API key for olla proxy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: engram-reembed
+  name: engram-reembed
+  namespace: engram
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: engram-reembed
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-06-24T21:56:04-04:00"
+      labels:
+        app: engram-reembed
+    spec:
+      containers:
+      - env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: engram-app-secret
+        - name: LITELLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: LITELLM_API_KEY
+              name: engram-app-secret
+        - name: LITELLM_URL
+          value: http://olla.ai-fleet.svc.cluster.local:80/olla/openai
+        - name: ENGRAM_EMBED_MODEL
+          value: BAAI/bge-m3
+        - name: ENGRAM_EMBED_DIMENSIONS
+          value: "1024"
+        - name: ENGRAM_EMBED_SUB_BATCH
+          value: "100"
+        - name: ENGRAM_REEMBED_BATCH_SIZE
+          value: "2000"
+        - name: ENGRAM_REEMBED_INTERVAL
+          value: 1s
+        - name: ENGRAM_REEMBED_CONCURRENCY_MIN
+          value: "1"
+        - name: ENGRAM_REEMBED_CONCURRENCY_MAX
+          value: "2"
+        - name: ENGRAM_REEMBED_RAMP_AFTER
+          value: "3"
+        - name: ENGRAM_REEMBED_LATENCY_LOW_MS
+          value: "400"
+        - name: ENGRAM_REEMBED_LATENCY_HIGH_MS
+          value: "500"
+        - name: TOKIO_WORKER_THREADS
+          value: "20"
+        - name: ENGRAM_EMBED_URL
+          value: http://olla.ai-fleet.svc.cluster.local:80/olla/openai
+        image: registry.petersimmons.com/engram/engram-reembed@sha256:c6e406760506fbff97322df471cc2ea847cf4d8789391095d7baf8ee028cb1c5
+        imagePullPolicy: Always
+        livenessProbe:
+          exec:
+            command:
+            - /bin/kill
+            - "-0"
+            - "1"
+          failureThreshold: 3
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: engram-reembed
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      terminationGracePeriodSeconds: 30
