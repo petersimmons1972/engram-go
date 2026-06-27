@@ -87,7 +87,7 @@ make up
 make setup
 ```
 
-Local Docker profiles listen at `http://localhost:8788`. `make setup` targets the default home-network endpoint `https://engram.petersimmons.com`; use the explicit `--url http://127.0.0.1:8788` override when you want Claude Code connected to the local container. Cold start: ~200ms. Idle memory: 18 MB.
+Local Docker profiles listen at `http://localhost:8788`. `make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host when you want Claude Code connected to an external server. Cold start: ~200ms. Idle memory: 18 MB.
 
 ### Environment Configuration
 
@@ -116,7 +116,7 @@ All <!-- count:visible-default -->18<!-- /count --> visible tools (+ <!-- count:
 
 ### Setup Target and Config Writes
 
-`make setup` targets the default home-network endpoint `https://engram.petersimmons.com`. For local-only Docker, run the setup tool directly with an explicit local override:
+`make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host. For local-only Docker, run the setup tool directly:
 
 ```bash
 go run ./cmd/engram-setup --url http://127.0.0.1:8788

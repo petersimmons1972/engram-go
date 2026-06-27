@@ -82,7 +82,7 @@ Run `--dry-run` to see the effective server, endpoint, redacted token, and exact
 **Usage:**
 
 ```bash
-go run ./cmd/engram-setup              # Configure with default home-network endpoint (`https://engram.petersimmons.com`)
+go run ./cmd/engram-setup              # Configure with default local endpoint (`http://localhost:8788`)
 go run ./cmd/engram-setup --dry-run    # Preview effective server, endpoint, and target files without writing
 go run ./cmd/engram-setup --url http://127.0.0.1:8788  # Local Docker override
 go run ./cmd/engram-setup --port 9000  # Local port shorthand (sets http://127.0.0.1:9000)
@@ -90,7 +90,7 @@ go run ./cmd/engram-setup --port 9000  # Local port shorthand (sets http://127.0
 
 Default behavior:
 
-- Effective default target: `https://engram.petersimmons.com`.
+- Effective default target: `http://localhost:8788`. Pass `--url` to point at a remote host.
 - Explicit local override: `go run ./cmd/engram-setup --url http://127.0.0.1:8788`.
 - Credential source: `/setup-token` first, then validated disk fallbacks from `~/.config/engram/api_key` and `~/projects/engram-go/.env` (`ENGRAM_API_KEY`) when bootstrap auth fails.
 - Config files touched: `~/.claude/mcp_servers.json` is created or updated; `~/.claude.json` is updated only when it already has `mcpServers`.

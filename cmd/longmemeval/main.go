@@ -453,8 +453,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		rdfs := flag.NewFlagSet("route-discover", flag.ContinueOnError)
 		rdfs.SetOutput(stderr)
 		var rd routeDiscoverConfig
-		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", "https://ai-fleet.petersimmons.com"), "AI Flight Controller base URL")
-		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", "https://olla.petersimmons.com"), "Olla base URL")
+		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", ""), "AI Flight Controller base URL")
+		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", ""), "Olla base URL")
 		rdfs.StringVar(&rd.Model, "model", envOr("LME_ROUTE_MODEL", ""), "required model name; empty selects the first compatible live model")
 		rdfs.StringVar(&rd.Purpose, "purpose", envOr("LME_ROUTE_PURPOSE", "generation"), "route purpose: generation, scoring, or embedding")
 		rdfs.StringVar(&rd.FleetCert, "fleet-cert", envOr("LME_FLEET_CERT", ""), "AI Flight Controller mTLS client certificate")

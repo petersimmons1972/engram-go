@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	defaultOllaHost    = "https://olla.petersimmons.com"
 	ollaModelsPath     = "/olla/models"
 	ollaCompletePath   = "/v1/chat/completions"
 	defaultOllaTimeout = 60 * time.Second
@@ -60,13 +59,12 @@ type ollaClient struct {
 }
 
 // NewOllaClient constructs an Olla LLMClient from cfg.
-// cfg.Endpoint is the base host (e.g. "https://olla.petersimmons.com").
-// Defaults to defaultOllaHost when empty.
+// cfg.Endpoint is required — set OLLA_URL or pass --olla-url.
 // cfg.APIKey and cfg.Model are ignored; Olla resolves the model dynamically.
 func NewOllaClient(cfg Config) (LLMClient, error) {
 	host := cfg.Endpoint
 	if host == "" {
-		host = defaultOllaHost
+		return nil, fmt.Errorf("llmclient/olla: Endpoint is required — set OLLA_URL or pass --olla-url")
 	}
 	timeout := cfg.Timeout
 	if timeout == 0 {
