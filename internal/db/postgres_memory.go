@@ -452,8 +452,8 @@ func (b *PostgresBackend) ListMemories(ctx context.Context, project string, opts
 
 func (b *PostgresBackend) TouchMemory(ctx context.Context, id string) error {
 	_, err := b.pool.Exec(ctx,
-		"UPDATE memories SET access_count=access_count+1, last_accessed=$1 WHERE id=$2",
-		time.Now().UTC(), id,
+		"UPDATE memories SET access_count=access_count+1, last_accessed=$1 WHERE id=$2 AND project=$3",
+		time.Now().UTC(), id, b.project,
 	)
 	return err
 }
