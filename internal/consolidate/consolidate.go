@@ -586,8 +586,8 @@ func (r *Runner) AutoSupersede(ctx context.Context) (int, error) {
 				newer, older = memB, memA
 			}
 
-			// Create the supersedes edge (newer → older).  StoreRelationship uses
-			// ON CONFLICT DO UPDATE so calling it on an already-existing edge is safe.
+			// Create the supersedes edge (newer → older) and soft-delete the older
+			// memory atomically so the graph and the memory table are never inconsistent.
 			supRel := &types.Relationship{
 				ID:       types.NewMemoryID(),
 				SourceID: newer.ID,
@@ -596,14 +596,21 @@ func (r *Runner) AutoSupersede(ctx context.Context) (int, error) {
 				Strength: 1.0,
 				Project:  r.project,
 			}
-			if err := r.backend.StoreRelationship(ctx, supRel); err != nil {
-				return superseded, fmt.Errorf("consolidate: AutoSupersede: StoreRelationship: %w", err)
+			tx, err := r.backend.Begin(ctx)
+			if err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: begin tx: %w", err)
 			}
-
-			// Soft-delete the older memory.
+			if err := r.backend.StoreRelationshipTx(ctx, tx, supRel); err != nil {
+				_ = tx.Rollback(ctx)
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: StoreRelationshipTx: %w", err)
+			}
 			reason := "superseded by " + newer.ID
-			if _, err := r.backend.SoftDeleteMemory(ctx, r.project, older.ID, reason); err != nil {
-				return superseded, fmt.Errorf("consolidate: AutoSupersede: SoftDeleteMemory(%s): %w", older.ID, err)
+			if _, err := r.backend.SoftDeleteMemoryTx(ctx, tx, r.project, older.ID, reason); err != nil {
+				_ = tx.Rollback(ctx)
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: SoftDeleteMemoryTx(%s): %w", older.ID, err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return superseded, fmt.Errorf("consolidate: AutoSupersede: commit: %w", err)
 			}
 			superseded++
 		}

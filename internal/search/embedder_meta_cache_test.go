@@ -221,6 +221,12 @@ func (b *cacheMetaBackend) GetRelationshipsBatch(_ context.Context, _ string, _ 
 func (b *cacheMetaBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error {
 	return nil
 }
+func (b *cacheMetaBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (b *cacheMetaBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (b *cacheMetaBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
 }

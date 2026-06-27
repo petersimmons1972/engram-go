@@ -194,6 +194,12 @@ func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, e
 	return 0, nil
 }
 func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
+func (noopBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (noopBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
 }

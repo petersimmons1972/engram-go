@@ -34,10 +34,11 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 
 func normalizeRecallMode(rawMode string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(rawMode))
-	if mode == "" || mode == "handle" || mode == "full" {
+	switch mode {
+	case "", "handle", "full", "summary", "id_only":
 		return mode, nil
 	}
-	return "", fmt.Errorf("mode must be one of: handle, full")
+	return "", fmt.Errorf("mode must be one of: handle, full, summary, id_only")
 }
 
 func federatedFailurePayload(failed []search.FailedFederatedProject) []map[string]any {
