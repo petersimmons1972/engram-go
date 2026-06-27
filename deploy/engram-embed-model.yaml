@@ -1,0 +1,13 @@
+# engram-embed-model.yaml — ConfigMap for the embedding model name
+#
+# Captured from live cluster: 2026-06-27
+# BAAI/bge-m3 is a Hugging Face model identifier — not a secret, safe to commit.
+# The slash in the model name is intentional and verbatim from the live object.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: engram-embed-model
+  namespace: engram
+data:
+  ENGRAM_EMBED_MODEL: BAAI/bge-m3
