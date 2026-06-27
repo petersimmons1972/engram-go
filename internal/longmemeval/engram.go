@@ -527,9 +527,11 @@ const (
 )
 
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
+// The URL is normalised with baseServerURL so callers may pass the server root,
+// an /mcp suffix, or an /sse suffix interchangeably.
 func NewRestClient(baseURL, token string) *RestClient {
 	return &RestClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseServerURL(baseURL),
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
