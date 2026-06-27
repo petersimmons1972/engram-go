@@ -84,10 +84,6 @@ type Config struct {
 	// server continued anyway. /health returns 200 with "ollama":"degraded"
 	// rather than 503, because the server itself is operational.
 	EmbedDegraded bool
-	// CircuitStateFunc, when non-nil, is called by the /health handler to
-	// surface the current circuit-breaker state in the response. It must
-	// return one of "closed", "half-open", or "open". (#926)
-	CircuitStateFunc func() string
 	// PgPool is the PostgreSQL connection pool, used by audit and weight tools.
 	// When nil, audit/weight tools return an error.
 	PgPool *pgxpool.Pool

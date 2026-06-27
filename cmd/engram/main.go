@@ -429,16 +429,6 @@ func run() error {
 		EmbedDimensions:          *embedDims,
 		PgPool:                   sharedPool,
 		EmbedDegraded:            embedDegraded,
-		// Wire circuit breaker state into /health via a closure over the concrete client. (#926)
-		CircuitStateFunc: func() string {
-			type circuitStater interface {
-				CircuitState() embed.CircuitState
-			}
-			if cs, ok := embedClient.(circuitStater); ok {
-				return cs.CircuitState().String()
-			}
-			return "closed"
-		},
 		DegradedErrorMode:        envOr("ENGRAM_DEGRADED_ERROR_MODE", ""),
 		SessionDB:                retentionBackend, // retentionBackend satisfies db.SessionRegistry
 		IngestQueue:              ingestQ,

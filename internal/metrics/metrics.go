@@ -140,12 +140,11 @@ var (
 		Name: "engram_recall_embed_timeout_total",
 		Help: "memory_recall calls that exceeded embed timeout and fell back to BM25+recency",
 	})
-
-	// RecallDegradedTotal counts memory_recall calls that returned degraded
-	// results due to embed backend unavailability/fallback.
+	// RecallDegradedTotal counts memory_recall responses that ran in degraded
+	// mode for any embed-path reason (timeout, backend unavailable, etc.).
 	RecallDegradedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "engram_recall_degraded_total",
-		Help: "memory_recall degraded responses by reason",
+		Help: "memory_recall responses served in degraded mode by reason",
 	}, []string{"reason"})
 
 	// #673: pgxpool connection pool gauges. Operators need visibility into

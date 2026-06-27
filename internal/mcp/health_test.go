@@ -19,10 +19,9 @@ import (
 
 // healthResponse is the shape returned by handleHealth.
 type healthResponse struct {
-	Status       string `json:"status"`
-	Postgres     string `json:"postgres"`
-	Ollama       string `json:"ollama"`
-	CircuitState string `json:"circuit_state"`
+	Status   string `json:"status"`
+	Postgres string `json:"postgres"`
+	Ollama   string `json:"ollama"`
 }
 
 // newHealthServer builds a Server configured with a fake Ollama URL pointing
@@ -287,94 +286,5 @@ func TestHealth_InfinityHealthyStats(t *testing.T) {
 	}
 	if resp.Ollama != "ok" {
 		t.Errorf("expected ollama=ok for healthy queue, got %q", resp.Ollama)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// #926 — circuit_state surfaced in /health response
-// ---------------------------------------------------------------------------
-
-// TestHealth_CircuitStateClosed verifies that /health includes circuit_state="closed"
-// when no CircuitStateFunc is configured (default/nil path → closed).
-func TestHealth_CircuitStateClosed(t *testing.T) {
-	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-				"data": []map[string]any{{
-					"id": "BAAI/bge-m3",
-					"stats": map[string]any{
-						"queue_fraction":  0.10,
-						"queue_absolute":  6,
-						"results_pending": 2,
-						"batch_size":      64,
-					},
-				}},
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer ollamaServer.Close()
-
-	// No CircuitStateFunc → defaults to "closed".
-	s := newHealthServer(ollamaServer.URL)
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-	s.handleHealth(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
-	}
-	var resp healthResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.CircuitState != "closed" {
-		t.Errorf("circuit_state: expected %q, got %q", "closed", resp.CircuitState)
-	}
-}
-
-// TestHealth_CircuitStateOpen verifies that /health reflects circuit_state="open"
-// when the CircuitStateFunc reports an open circuit breaker. (#926)
-func TestHealth_CircuitStateOpen(t *testing.T) {
-	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-				"data": []map[string]any{{
-					"id": "BAAI/bge-m3",
-					"stats": map[string]any{
-						"queue_fraction":  0.10,
-						"queue_absolute":  6,
-						"results_pending": 2,
-						"batch_size":      64,
-					},
-				}},
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer ollamaServer.Close()
-
-	s := &Server{
-		cfg: Config{
-			RouterURL: ollamaServer.URL,
-			// CircuitStateFunc simulates an open breaker.
-			CircuitStateFunc: func() string { return "open" },
-		},
-		embedDegraded: &atomic.Bool{},
-	}
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-	s.handleHealth(w, req)
-
-	var resp healthResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.CircuitState != "open" {
-		t.Errorf("circuit_state: expected %q, got %q", "open", resp.CircuitState)
 	}
 }

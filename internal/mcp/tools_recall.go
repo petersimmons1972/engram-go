@@ -2,9 +2,9 @@ package mcp
 
 import (
 	"context"
-	"math"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -14,8 +14,6 @@ import (
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
-
-const recallEmbedDegradedWarning = "recall degraded: embed unavailable, using BM25 fallback"
 
 // degradedMap builds the "degraded" response field.
 // When embed is true the reason string is included; when embed is false the
@@ -32,12 +30,11 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 	return map[string]any{"embed": false}
 }
 
-func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
-	metrics.RecallDegradedTotal.WithLabelValues(reason).Inc()
-	slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
-		"embed_endpoint", endpoint,
-		"reason", reason)
-	out["warnings"] = []string{recallEmbedDegradedWarning}
+func degradedWarnings(embedDegraded bool) []string {
+	if !embedDegraded {
+		return nil
+	}
+	return []string{"recall degraded: embed unavailable or timed out; using BM25+recency fallback"}
 }
 
 func finiteOrZero(v float64) float64 {
@@ -87,7 +84,6 @@ func sanitizeConflictingResults(conflicts []types.ConflictingResult) {
 		sanitizeMemoryFloatFields(conflicts[i].Memory)
 	}
 }
-
 func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
 	m, err := f.GetMemoryByID(ctx, id)
 	if err != nil {
@@ -314,19 +310,24 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if err != nil {
 			return nil, err
 		}
+		sanitizeRecallResults(results)
 		if mode == "handle" {
-			sanitizeRecallResults(results)
 			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-			out := map[string]any{
+			degraded := !ok
+			if degraded {
+				r := reason
+				if r == "" {
+					r = "embed_unavailable"
+				}
+				metrics.RecallDegradedTotal.WithLabelValues(r).Inc()
+			}
+			return toolResult(map[string]any{
 				"handles":    search.ToHandles(results),
 				"count":      len(results),
 				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
-				"degraded":   degradedMap(!ok, reason),
-			}
-			if !ok {
-				addRecallDegradedWarning(out, cfg.RouterURL, reason)
-			}
-			return toolResult(out)
+				"degraded":   degradedMap(degraded, reason),
+				"warnings":   degradedWarnings(degraded),
+			})
 		}
 		out := map[string]any{"results": results, "count": len(results)}
 		if includeConflicts && firstHandle != nil {
@@ -341,9 +342,15 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			out["conflict_count"] = len(conflicts)
 		}
 		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-		out["degraded"] = degradedMap(!ok, reason)
-		if !ok {
-			addRecallDegradedWarning(out, cfg.RouterURL, reason)
+		degraded := !ok
+		out["degraded"] = degradedMap(degraded, reason)
+		out["warnings"] = degradedWarnings(degraded)
+		if degraded {
+			r := reason
+			if r == "" {
+				r = "embed_unavailable"
+			}
+			metrics.RecallDegradedTotal.WithLabelValues(r).Inc()
 		}
 		return toolResult(out)
 	}
@@ -412,17 +419,17 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 
 	if mode == "handle" {
+		if embedDegraded {
+			metrics.RecallDegradedTotal.WithLabelValues("embed_timeout").Inc()
+		}
 		sanitizeRecallResults(results)
-		out := map[string]any{
+		return toolResult(map[string]any{
 			"handles":    search.ToHandles(results),
 			"count":      len(results),
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 			"degraded":   degradedMap(embedDegraded, "embed_timeout"),
-		}
-		if embedDegraded {
-			addRecallDegradedWarning(out, cfg.RouterURL, "embed_timeout")
-		}
-		return toolResult(out)
+			"warnings":   degradedWarnings(embedDegraded),
+		})
 	}
 	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
@@ -438,13 +445,17 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	// Add embedder health status to response.
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-	isDegraded := embedDegraded || !ok
-	out["degraded"] = degradedMap(isDegraded, reason)
-	if isDegraded {
-		if reason == "" && embedDegraded {
-			reason = "embed_timeout"
+	degraded := embedDegraded || !ok
+	out["degraded"] = degradedMap(degraded, reason)
+	out["warnings"] = degradedWarnings(degraded)
+	if degraded {
+		r := reason
+		if r == "" {
+			r = "embed_timeout"
 		}
-		addRecallDegradedWarning(out, cfg.RouterURL, reason)
+		metrics.RecallDegradedTotal.WithLabelValues(r).Inc()
+		slog.Warn("memory_recall degraded: using BM25+recency fallback",
+			"project", project, "reason", r, "query", query)
 	}
 	return toolResult(out)
 }
