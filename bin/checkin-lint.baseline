@@ -252,7 +252,7 @@ D.exit-zero-wrapper::./hooks/engram/engram-session-end.sh::65
 D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::33
 D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::77
 D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::83
-D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::187
+D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::192
 D.exit-zero-wrapper::./hooks/engram/engram-hook-shim.sh::26
 D.exit-zero-wrapper::./hooks/engram/engram-hook-shim.sh::38
 D.exit-zero-wrapper::./hooks/engram/engram-auth-check.sh::134
