@@ -9,6 +9,7 @@ via `git add -f`. The currently-tracked files are:
 - `lme-camp-state.json`, `lme-camp-stratified-100.json` — campaign-state machine data
 - `next-campaign-manifest.md` — next-campaign starting point + post-campaign outcomes block
 - `wisdom/bottleneck-symmetry.md` — durable pattern doc: bottleneck symmetry analysis
+- `wisdom/ss-pref-model-recommendations-2026-06-27.md` — durable model-selection memo for ss-pref benchmarking
 - `wisdom/temporal-reasoning-mechanism-analysis.md` — durable pattern doc: temporal reasoning failure mechanisms
 
 ## When to commit a file under `results/`
