@@ -731,9 +731,13 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	//
 	// Rate limit: per IP (3 calls per 5-minute window).
 	mux.Handle("/setup-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Rate limit applies unconditionally — security-critical endpoint.
-		if !setupLimiter.allowSetupToken(s.clientIP(r)) {
-			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+		// Rate limit must use the physical TCP peer address, not the proxy-aware IP.
+		// Keying on s.clientIP(r) lets an attacker rotate X-Forwarded-For to mint new
+		// rate-limit buckets and exhaust unlimited /setup-token calls. The physical
+		// r.RemoteAddr cannot be forged via request headers. (#1209)
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !setupLimiter.allowSetupToken(rawPeer) {
+			slog.Warn("setup-token rate limited", "physical_remote", rawPeer)
 			w.Header().Set("Retry-After", "100")
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
@@ -742,7 +746,7 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 		// TOFU: first unauthenticated request from loopback only.
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
-		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// rawPeer is already extracted above for the rate limit — reuse it here.
 		// Re-grant removed in #1187 — one grant per process lifetime.
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
@@ -979,10 +983,13 @@ func (s *Server) setupTokenTOFUHandler(ctx context.Context, apiKey string) http.
 //  4. All subsequent requests require Bearer authentication (unchanged from #540).
 func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Rate limit applies unconditionally — security-critical endpoint.
-		// Use clientIP here for rate limiting (proxy headers are fine for rate limits).
-		if !rl.allowSetupToken(s.clientIP(r)) {
-			slog.Warn("setup-token rate limited", "remote_ip", s.clientIP(r))
+		// Rate limit must use the physical TCP peer address, not the proxy-aware IP.
+		// Keying on s.clientIP(r) lets an attacker rotate X-Forwarded-For to mint new
+		// rate-limit buckets and exhaust unlimited /setup-token calls. The physical
+		// r.RemoteAddr cannot be forged via request headers. (#1209)
+		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !rl.allowSetupToken(rawPeer) {
+			slog.Warn("setup-token rate limited", "physical_remote", rawPeer)
 			w.Header().Set("Retry-After", "100")
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
@@ -991,7 +998,7 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 		// TOFU: first unauthenticated request from loopback only.
 		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
 		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
-		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
+		// rawPeer is already extracted above for the rate limit — reuse it here.
 		// Re-grant removed in #1187 — one grant per process lifetime.
 		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
 			s.tofuGrantedAt.Store(time.Now().Unix())
