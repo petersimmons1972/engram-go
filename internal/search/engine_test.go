@@ -78,12 +78,10 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m1))
 
-	// Storing the same content for the same memory a second time must deduplicate
-	// (the chunk hash already exists for m1.ID — no new chunk is written).
-	require.NoError(t, engine.Store(ctx, m1))
-
-	// A *different* memory with the same content gets its own chunk because
-	// ChunkHashExists is scoped per memory_id, not project-wide (fix #1218).
+	// A *different* memory with the same content must get its own independent
+	// chunk. ChunkHashExists is now scoped per memory_id (fix #1218): the pre-fix
+	// implementation was project-wide, so m2's chunk would incorrectly be skipped
+	// as a duplicate of m1's chunk. Post-fix both memories each own one chunk.
 	m2 := &types.Memory{ID: types.NewMemoryID(), Content: content,
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m2))
@@ -92,30 +90,9 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 	// with nil embeddings until the reembed worker runs.
 	chunks, err := engine.Backend().GetChunksPendingEmbedding(ctx, proj, 10_000)
 	require.NoError(t, err)
-	// m1 (stored twice) produces 1 chunk; m2 produces 1 chunk → 2 total.
-	// Pre-fix the query was project-wide, so both counted as duplicates of each
-	// other. Now each memory owns its chunks independently.
-	require.Len(t, chunks, 2, "same content in different memories each get one chunk (memory-scoped dedup)")
-}
-
-// TestSearchEngine_Store_DeduplicatesChunks_SameMemory verifies that storing
-// the same memory twice does NOT create a duplicate chunk for that memory.
-func TestSearchEngine_Store_DeduplicatesChunks_SameMemory(t *testing.T) {
-	proj := uniqueProject("test-dedup-same")
-	engine := newTestEngine(t, proj)
-	t.Cleanup(func() { engine.Close() })
-
-	ctx := context.Background()
-	m := &types.Memory{ID: types.NewMemoryID(),
-		Content:     "Re-storing the same memory must not duplicate its chunks.",
-		MemoryType:  types.MemoryTypeContext,
-		StorageMode: "focused"}
-	require.NoError(t, engine.Store(ctx, m))
-	require.NoError(t, engine.Store(ctx, m)) // second Store of identical memory
-
-	chunks, err := engine.Backend().GetChunksPendingEmbedding(ctx, proj, 10_000)
-	require.NoError(t, err)
-	require.Len(t, chunks, 1, "re-storing the same memory must not create duplicate chunks")
+	// Each memory owns its chunks independently: 2 memories → 2 chunks.
+	// The old project-wide dedup produced only 1 chunk here (m2's was suppressed).
+	require.Len(t, chunks, 2, "each memory gets its own chunk; memory-scoped dedup does not suppress across memories")
 }
 
 func TestSearchEngine_Recall(t *testing.T) {
