@@ -175,7 +175,7 @@ func TestRestClient_QuickStore_ServerError(t *testing.T) {
 // /mcp hint instead of the raw Go struct unmarshal error (#1192).
 func TestRestClient_QuickStore_NonObjectResponseError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/mcp/quick-store" {
+		if r.URL.Path != "/quick-store" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -184,7 +184,7 @@ func TestRestClient_QuickStore_NonObjectResponseError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rc := longmemeval.NewRestClient(srv.URL+"/mcp", "")
+	rc := longmemeval.NewRestClient(srv.URL, "")
 	_, err := rc.QuickStore(context.Background(), "proj-1", "content here", []string{"tag1"}, nil)
 	if err == nil {
 		t.Fatal("QuickStore error = nil, want non-object response error")
@@ -193,7 +193,7 @@ func TestRestClient_QuickStore_NonObjectResponseError(t *testing.T) {
 	if !strings.Contains(msg, "unexpected non-object response from POST") {
 		t.Fatalf("error = %q, want non-object response framing", msg)
 	}
-	if !strings.Contains(msg, "/mcp/quick-store") {
+	if !strings.Contains(msg, "/quick-store") {
 		t.Fatalf("error = %q, want called URL", msg)
 	}
 	if !strings.Contains(msg, "status 200") {
@@ -232,7 +232,7 @@ func TestRestClient_QuickRecall_HappyPath(t *testing.T) {
 // scalar or other non-object body (#1192).
 func TestRestClient_QuickRecall_NonObjectResponseError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/mcp/quick-recall" {
+		if r.URL.Path != "/quick-recall" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -241,7 +241,7 @@ func TestRestClient_QuickRecall_NonObjectResponseError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rc := longmemeval.NewRestClient(srv.URL+"/mcp", "")
+	rc := longmemeval.NewRestClient(srv.URL, "")
 	_, err := rc.QuickRecall(context.Background(), "proj", "query", 5)
 	if err == nil {
 		t.Fatal("QuickRecall error = nil, want non-object response error")
@@ -250,7 +250,7 @@ func TestRestClient_QuickRecall_NonObjectResponseError(t *testing.T) {
 	if !strings.Contains(msg, "unexpected non-object response from POST") {
 		t.Fatalf("error = %q, want non-object response framing", msg)
 	}
-	if !strings.Contains(msg, "/mcp/quick-recall") {
+	if !strings.Contains(msg, "/quick-recall") {
 		t.Fatalf("error = %q, want called URL", msg)
 	}
 	if !strings.Contains(msg, "status 404") {
@@ -268,7 +268,7 @@ func TestRestClient_QuickRecall_NonObjectResponseError(t *testing.T) {
 // JSON error response does not decode as a false success with empty IDs (#1192).
 func TestRestClient_QuickRecall_ObjectErrorResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/mcp/quick-recall" {
+		if r.URL.Path != "/quick-recall" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -280,7 +280,7 @@ func TestRestClient_QuickRecall_ObjectErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rc := longmemeval.NewRestClient(srv.URL+"/mcp", "")
+	rc := longmemeval.NewRestClient(srv.URL, "")
 	_, err := rc.QuickRecall(context.Background(), "proj", "query", 5)
 	if err == nil {
 		t.Fatal("QuickRecall error = nil, want structured 404 error")
