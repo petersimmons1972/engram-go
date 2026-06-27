@@ -6,5 +6,3 @@ package longmemeval
 // accepts an injected TextGenerator instead of hard-coding GenerateHaiku.
 // Used by tests to inject a fake LLM without spawning a real claude process.
 var GenerateParaphrasesWith = generateParaphrasesWith
-// RestClientBaseURL exposes the normalised base URL of a RestClient for tests.
-func (r *RestClient) BaseURL() string { return r.baseURL }
