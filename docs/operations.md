@@ -145,7 +145,7 @@ Five tables, each playing a specific role in how memories are stored, searched, 
 |---|---|
 | `memories` | Core records: content, type, tags, importance, summary, SHA-256 hash |
 | `memory_fts` | PostgreSQL `tsvector` full-text search index (BM25) |
-| `chunks` | Content chunks with vector embeddings (768-dim float32 array) |
+| `chunks` | Content chunks with vector embeddings (1024-dim float32 array) |
 | `relationships` | Knowledge graph edges: source, target, type, weight, created_at |
 | `project_meta` | Per-project metadata: embedder lock, migration state |
 | `retrieval_events` | Per-recall event log for retrieval quality metrics. Rows older than 90 days are purged automatically by the retention worker. |
