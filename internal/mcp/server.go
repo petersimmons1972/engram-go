@@ -738,50 +738,9 @@ func (s *Server) Start(ctx context.Context, host string, port int, apiKey string
 	// the chicken-and-egg problem where engram-setup needs the token before it can authenticate.
 	//
 	// Rate limit: per IP (3 calls per 5-minute window).
-	mux.Handle("/setup-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Rate limit must use the physical TCP peer address, not the proxy-aware IP.
-		// Keying on s.clientIP(r) lets an attacker rotate X-Forwarded-For to mint new
-		// rate-limit buckets and exhaust unlimited /setup-token calls. The physical
-		// r.RemoteAddr cannot be forged via request headers. (#1209)
-		rawPeer, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !setupLimiter.allowSetupToken(rawPeer) {
-			slog.Warn("setup-token rate limited", "physical_remote", rawPeer)
-			w.Header().Set("Retry-After", "100")
-			http.Error(w, "rate limited", http.StatusTooManyRequests)
-			return
-		}
-
-		// TOFU: first unauthenticated request from loopback only.
-		// CRITICAL: use r.RemoteAddr (raw TCP peer), NOT s.clientIP(r),
-		// to prevent X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1.
-		// rawPeer is already extracted above for the rate limit — reuse it here.
-		// Re-grant removed in #1187 — one grant per process lifetime.
-		if isLoopbackIP(rawPeer) && s.tofuGranted.CompareAndSwap(false, true) {
-			s.tofuGrantedAt.Store(time.Now().Unix())
-			slog.Warn("setup-token TOFU: one-time localhost bootstrap grant issued (#613)",
-				"remote_ip", rawPeer)
-			writeJSON(w, http.StatusOK, map[string]string{
-				"token":    apiKey,
-				"endpoint": advertised + "/mcp",
-				"name":     "engram",
-			})
-			return
-		}
-
-		// All other requests: require Bearer authentication (unchanged from #540).
-		s.applyMiddlewareWithRL(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
-				writeJSON(w, http.StatusOK, map[string]string{
-					"token":    apiKey,
-					"endpoint": advertised + "/mcp",
-					"name":     "engram",
-				})
-			}),
-			apiKey,
-			setupLimiter,
-		).ServeHTTP(w, r)
-	}))
+	// Route /setup-token through the shared TOFU handler so both production and
+	// tests exercise the same code path (#1214).
+	mux.Handle("/setup-token", s.setupTokenTOFUHandlerWithLimiter(apiKey, advertised, setupLimiter))
 
 	// GET /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource —
 	// Return 404 to tell Claude Code this server does not use MCP OAuth (spec 2025-03-26).
@@ -1001,13 +960,17 @@ func isLoopbackIP(ip string) bool {
 // First Use) logic. It creates an internal rate limiter whose eviction goroutine
 // is bound to ctx so it stops when the server shuts down (prevents goroutine leak).
 // Use setupTokenTOFUHandlerWithLimiter in tests to inject a pre-exhausted limiter.
-func (s *Server) setupTokenTOFUHandler(ctx context.Context, apiKey string) http.Handler {
-	return s.setupTokenTOFUHandlerWithLimiter(apiKey, newRateLimiter(ctx))
+// advertised is the base URL prefix for the "endpoint" field (e.g. https://engram.example.com).
+func (s *Server) setupTokenTOFUHandler(ctx context.Context, apiKey, advertised string) http.Handler {
+	return s.setupTokenTOFUHandlerWithLimiter(apiKey, advertised, newRateLimiter(ctx))
 }
 
 // setupTokenTOFUHandlerWithLimiter returns the /setup-token handler using the
-// provided rate limiter. This is the implementation; setupTokenTOFUHandler is
-// the production convenience wrapper.
+// provided rate limiter. This is the canonical implementation shared by the
+// production path (via Start → mux.Handle) and tests (#1214 unification).
+// advertised is the base URL prefix (e.g. "https://engram.example.com"); the
+// full endpoint is advertised+"/mcp". Pass "" in tests that do not care about
+// the advertised URL — the response will contain just "/mcp".
 //
 // Security contract:
 //  1. Rate limit is checked unconditionally — even TOFU requests are throttled.
@@ -1015,7 +978,8 @@ func (s *Server) setupTokenTOFUHandler(ctx context.Context, apiKey string) http.
 //     X-Forwarded-For spoofing when ENGRAM_TRUST_PROXY_HEADERS=1 (#540).
 //  3. Exactly one unauthenticated loopback request is granted via CompareAndSwap.
 //  4. All subsequent requests require Bearer authentication (unchanged from #540).
-func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter) http.Handler {
+func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey, advertised string, rl *rateLimiter) http.Handler {
+	endpoint := advertised + "/mcp"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Rate limit must use the physical TCP peer address, not the proxy-aware IP.
 		// Keying on s.clientIP(r) lets an attacker rotate X-Forwarded-For to mint new
@@ -1040,7 +1004,7 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 				"remote_ip", rawPeer)
 			writeJSON(w, http.StatusOK, map[string]string{
 				"token":    apiKey,
-				"endpoint": "/mcp",
+				"endpoint": endpoint,
 				"name":     "engram",
 			})
 			return
@@ -1052,7 +1016,7 @@ func (s *Server) setupTokenTOFUHandlerWithLimiter(apiKey string, rl *rateLimiter
 				slog.Warn("setup-token accessed (authenticated)", "remote_ip", s.clientIP(r))
 				writeJSON(w, http.StatusOK, map[string]string{
 					"token":    apiKey,
-					"endpoint": "/mcp",
+					"endpoint": endpoint,
 					"name":     "engram",
 				})
 			}),
