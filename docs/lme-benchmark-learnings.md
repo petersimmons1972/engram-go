@@ -760,8 +760,46 @@ Severe accuracy degradation — 43pp strict gap vs Qwen3. Two hypotheses:
 
 **FM-TEMPORAL-ANCHOR**: Temporal-reasoning questions without an explicit "today is X" anchor cause 15pp accuracy loss even when retrieved memory blocks are correct. The model performs date arithmetic relative to an implicit "now" it cannot know. Lever: `--inject-question-date`. Applies to any question_type=temporal-reasoning with a `question_date` field. **Do not benchmark temporal reasoning without this flag unless measuring the no-anchor baseline intentionally.**
 
-### T2/T3/T4 in flight
+### T2: --temporal-prompt-aug (H-M5+H-M1)
 
-- **T2** (`--temporal-prompt-aug`): enumerate-all-events-then-commit ordering instruction (H-M5+H-M1)
-- **T3** (`--inject-question-date --temporal-prompt-aug`): combined levers
-- **T4** (`--temporal-window-recall`): server-side two-pass date-windowed recall (H-NEW-1); runs after T3
+**Result**: **strict=53.3% (+5.0pp)  lenient=56.7% (+1.5pp)** (16/30)
+
+Enumerate-all-events-then-commit ordering instruction: model lists all temporal events before committing to an ordering. Modest improvement. The strict=lenient collapse holds here too (53.3%=53.3% approx — 56.7% lenient is close but not equal, meaning a few partial-credit cases exist).
+
+**Interpretation**: Ordering-enumeration provides some benefit but much less than date-anchor injection. The model benefits more from knowing *when now is* than from being instructed to enumerate events carefully.
+
+### T3: --inject-question-date --temporal-prompt-aug (Combined)
+
+**Result**: **strict=60.0% (+11.7pp)  lenient=60.0% (+4.8pp)** (18/30)
+
+Combining T1 and T2 levers. Strict=Lenient again (zero partial-credit gap).
+
+**Key finding — subadditivity**: T3 (+11.7pp) < T1 (+15.0pp). Adding temporal-prompt-aug to inject-question-date *reduces* performance from the T1 baseline. Possible causes: (a) the enumeration instruction adds prompt overhead that dilutes the date-anchor benefit, (b) the two instructions interact in ways that confuse the model's reasoning chain, (c) N=30 noise. Given T2's weak standalone effect (+5pp), the enumeration instruction may be net-negative when date is already anchored.
+
+**Recommendation**: Use T1 (`--inject-question-date`) alone as the production temporal lever. Do not combine with `--temporal-prompt-aug`.
+
+### Mistral-Small-24B Cross-Arch Baseline B2 (pref30, max-block-chars=6000)
+
+**Result**: **strict=20.0% (+13.3pp vs B1)  lenient=76.7% (+23.4pp vs B1)** (6/30 strict, 23/30 lenient)
+
+**Context-gutting hypothesis confirmed**: Raising max-block-chars from 4000 to 6000 produces +13.3pp strict improvement. Context size was materially limiting Mistral-24B's preference-synthesis accuracy.
+
+**Capability gap remains**: Even with adequate context, Mistral-24B strict=20.0% is 30pp below Qwen3-32B strict=50.0%. The lenient gap narrows significantly (76.7% vs 83.3% = only 6.6pp), suggesting Mistral-24B can identify preference *categories* reliably but fails to retrieve the specific details required for strict credit.
+
+**Failure pattern**: Mistral-24B exhibits FM-PG confabulation at a different failure boundary than Qwen3. The strict/lenient split (20% vs 77%) is far wider than Qwen3's (50% vs 83%), indicating Mistral generates plausible-category answers that lack the specificity Qwen3 achieves.
+
+### Temporal Lever Leaderboard (temporal30, Qwen3-32B, N=30)
+
+| Variant  | Flags                                  | Strict   | Lenient  | Delta strict |
+|----------|----------------------------------------|----------|----------|--------------|
+| Baseline | —                                      | 48.3%    | 55.2%    | —            |
+| T2       | `--temporal-prompt-aug`                | 53.3%    | 56.7%    | +5.0pp       |
+| T3       | `--inject-question-date --temporal-prompt-aug` | 60.0% | 60.0% | +11.7pp   |
+| **T1**   | **`--inject-question-date`**           | **63.3%** | **63.3%** | **+15.0pp** |
+| T4       | `--temporal-window-recall`             | *pending* | *pending* | —          |
+| T5       | `--inject-question-date --temporal-window-recall` | *pending* | *pending* | —   |
+
+### T4/T5 in flight
+
+- **T4** (`--temporal-window-recall`): server-side two-pass date-windowed recall via `valid_from` filtering (H-NEW-1)
+- **T5** (`--inject-question-date --temporal-window-recall`): H16 + H-NEW-1 combination; highest-value test given T1 dominance
