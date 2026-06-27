@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,6 +194,94 @@ func TestQuickStoreHandler_InvalidJSON_JSONErrorBody(t *testing.T) {
 	// Must not leak internal Go error messages like "invalid character".
 	if strings.Contains(body, "invalid character") || strings.Contains(body, "unexpected end") {
 		t.Fatalf("response body leaks raw Go error: %q", body)
+	}
+}
+
+// TestAuthenticatedWrongRESTPath_JSONNotFound verifies that authenticated
+// wrong-path REST requests under /mcp return a structured JSON 404 instead of
+// falling through to the legacy SSE catch-all (#1192).
+func TestAuthenticatedWrongRESTPath_JSONNotFound(t *testing.T) {
+	s := &Server{}
+	apiKey := "test-secret-key-123"
+	rl := newRateLimiter(context.Background())
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", s.applyMiddlewareWithRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}), apiKey, rl))
+	mux.Handle("/mcp/", s.authenticatedNotFoundHandler(apiKey, rl))
+	mux.Handle("/", s.authenticatedFallbackHandler(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("42"))
+		}),
+		apiKey,
+		rl,
+	))
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp/quick-store", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for wrong-path REST request, got %d body=%q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected JSON content-type, got %q", ct)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal JSON body: %v", err)
+	}
+	if body["error"] != "not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "not found")
+	}
+	if !strings.Contains(body["hint"], "/quick-store") || !strings.Contains(body["hint"], "not under /mcp") {
+		t.Fatalf("hint = %q, want REST root-path guidance", body["hint"])
+	}
+}
+
+// TestAuthenticatedUnknownPath_JSONNotFound verifies that unrouted
+// authenticated paths also return structured JSON 404s instead of whatever the
+// catch-all transport handler emits (#1192).
+func TestAuthenticatedUnknownPath_JSONNotFound(t *testing.T) {
+	s := &Server{}
+	apiKey := "test-secret-key-123"
+	rl := newRateLimiter(context.Background())
+
+	mux := http.NewServeMux()
+	mux.Handle("/", s.authenticatedFallbackHandler(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("42"))
+		}),
+		apiKey,
+		rl,
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/definitely-not-a-route", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown path, got %d body=%q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected JSON content-type, got %q", ct)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal JSON body: %v", err)
+	}
+	if body["error"] != "not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "not found")
+	}
+	if !strings.Contains(body["hint"], "/quick-store") || !strings.Contains(body["hint"], "not under /mcp") {
+		t.Fatalf("hint = %q, want REST root-path guidance", body["hint"])
 	}
 }
 
