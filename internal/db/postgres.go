@@ -207,8 +207,9 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 // The password value is intentionally omitted from the error message to prevent clear-text logging
 // of credentials (CWE-312).
 func rejectDefaultPassword(cfg *pgxpool.Config) error {
-	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
-		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default password — " +
+	switch cfg.ConnConfig.Password {
+	case "", "engram", "postgres", "change_me_to_a_strong_password":
+		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default or unset password — " +
 			"set a strong POSTGRES_PASSWORD in your environment before starting engram")
 	}
 	return nil
