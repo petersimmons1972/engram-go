@@ -1503,7 +1503,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.RouterURL != "" {
 		embedCtx, embedCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer embedCancel()
-		probeOK, probeReason := embed.InfinityQueueCheck(embedCtx, http.DefaultClient, s.cfg.RouterURL)
+		healthHTTPClient := &http.Client{Timeout: 5 * time.Second}
+		probeOK, probeReason := embed.InfinityQueueCheck(embedCtx, healthHTTPClient, s.cfg.RouterURL)
 		if !probeOK {
 			ollamaStatus = "error" //nolint:ineffassign // overwritten if EmbedDegraded
 			slog.Warn("health: litellm probe failed", "reason", probeReason)

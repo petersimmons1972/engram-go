@@ -6,6 +6,7 @@ package llmclient
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 )
@@ -20,6 +21,7 @@ func TestResetModelNoRace(t *testing.T) {
 	c := &ollaClient{
 		host:    "http://127.0.0.1:1", // unreachable; pickModel will return ""
 		timeout: 0,
+		client:  &http.Client{Timeout: 0},
 	}
 
 	const workers = 8

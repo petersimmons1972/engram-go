@@ -48,6 +48,7 @@ var skipFamilies = map[string]struct{}{
 type ollaClient struct {
 	host    string
 	timeout time.Duration
+	client  *http.Client
 
 	// mu guards modelID and modelResolved.  A mutex (rather than sync.Once) is
 	// used so resetModel can safely clear the cache while another goroutine may
@@ -71,7 +72,7 @@ func NewOllaClient(cfg Config) (LLMClient, error) {
 	if timeout == 0 {
 		timeout = defaultOllaTimeout
 	}
-	return &ollaClient{host: host, timeout: timeout}, nil
+	return &ollaClient{host: host, timeout: timeout, client: &http.Client{Timeout: timeout}}, nil
 }
 
 // pickModel queries /olla/models and returns the first model id suitable for
@@ -85,7 +86,7 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 		return ""
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: cannot reach Olla", "host", c.host, "err", err)
 		return ""
@@ -226,7 +227,7 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 	}
 	req.Header.Set("content-type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: completion HTTP error", "err", err)
 		c.resetModel() // cached model may be gone; re-resolve next call
