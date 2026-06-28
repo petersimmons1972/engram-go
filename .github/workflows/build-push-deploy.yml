@@ -39,7 +39,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -p 1 ./... -count=1 -timeout 20m
+      - run: go test -p 1 $(go list ./... | grep -v '/.claude/') -count=1 -timeout 20m
         env:
           GOMAXPROCS: "2"
       - run: go vet ./...
