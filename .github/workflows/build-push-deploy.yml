@@ -85,21 +85,29 @@ jobs:
           REF="${IMAGE}:${{ steps.tags.outputs.tag }}@${DIGEST}"
           kubectl -n "$NAMESPACE" set image "deployment/${DEPLOYMENT}" "${CONTAINER}=${REF}"
           kubectl -n "$NAMESPACE" rollout status "deployment/${DEPLOYMENT}" --timeout=180s
+      - name: Mint app token for commit-back
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.ENGRAM_FLEET_CI_APP_ID }}
+          private-key: ${{ secrets.ENGRAM_FLEET_CI_PRIVATE_KEY }}
       - name: Commit manifest digest bump back to main (source catches up after confirmed rollout)
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN_APP: ${{ steps.app-token.outputs.token }}
         run: |
           REF="${IMAGE}:${{ steps.tags.outputs.tag }}@${DIGEST}"
           sed -i -E "s#( *image: )registry\.petersimmons\.com/engram/engram-go.*#\1${REF}#" "$MANIFEST"
           grep -qF "@${DIGEST}" "$MANIFEST" || { echo "BUG: digest bump did not apply to $MANIFEST"; exit 1; }
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "engram-fleet-ci[bot]"
+          git config user.email "engram-fleet-ci[bot]@users.noreply.github.com"
           git add "$MANIFEST"
           if git diff --cached --quiet; then
             echo "manifest already at this digest — nothing to commit"
             exit 0
           fi
           git commit -m "deploy(${DEPLOYMENT}): bump image to ${{ steps.tags.outputs.tag }} [skip ci]"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN_APP}@github.com/petersimmons1972/engram-go.git"
           for attempt in 1 2 3; do
             git fetch origin main
             if ! git rebase origin/main; then
