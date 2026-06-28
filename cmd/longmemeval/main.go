@@ -94,6 +94,10 @@ type Config struct {
 	PreferenceGround bool // inject grounding rule forbidding specifics absent from context, for single-session-preference questions (default off)
 	// H-QF: preference-quote-first generation prompt (stronger sibling of H-PG)
 	PreferenceQuoteFirst bool // anchor answer on a verbatim context span, for single-session-preference questions (default off)
+
+	// #1178: KU recency prompt — prefer the most recent session's value for knowledge-update questions.
+	KURecencyPrompt bool // inject RECENCY RULE instructing the model to use the most recently dated session's value for knowledge-update questions (default off)
+
 	// Retrieval-fusion flags for issue #938.
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
@@ -276,6 +280,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.PreferenceEnumerate, "preference-enumerate", false, "H-PE: inject exhaustive named-item enumeration instruction for single-session-preference questions; lists every specific item/brand/attribute from context rather than abstractly summarising (default off)")
 	fs.BoolVar(&cfg.PreferenceGround, "preference-ground", false, "H-PG: inject a grounding rule forbidding specifics absent from the retrieved context, for single-session-preference questions; inverse of --preference-enumerate, targets FM-PG specific-detail confabulation (default off)")
 	fs.BoolVar(&cfg.PreferenceQuoteFirst, "preference-quote-first", false, "H-QF: anchor the answer on a verbatim context span (use only specifics present, omit none), for single-session-preference questions; stronger sibling of --preference-ground, targets FM-PG (default off)")
+	// #1178: KU recency prompt — prefer the most-recently-dated session's value for knowledge-update.
+	fs.BoolVar(&cfg.KURecencyPrompt, "ku-recency-prompt", false, "#1178: inject RECENCY RULE instructing the model to prefer the most recently dated session's value when multiple sessions carry conflicting values for the same fact (knowledge-update questions only; default off)")
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")

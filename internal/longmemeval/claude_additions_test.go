@@ -453,3 +453,72 @@ func TestGenerateParaphrasesWith_GeneratorError_Propagates(t *testing.T) {
 		t.Errorf("error should contain 'paraphrase' prefix, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GenerationPromptForTypeWithKURecency (#1178)
+// ---------------------------------------------------------------------------
+
+// TestGenerationPromptForTypeWithKURecency_FlagOff verifies that when
+// kuRecency is false the function returns the standard prompt unchanged
+// (same as GenerationPromptForType for knowledge-update).
+func TestGenerationPromptForTypeWithKURecency_FlagOff(t *testing.T) {
+	q := "What is my gym membership fee?"
+	qt := "knowledge-update"
+	qd := "2026-01-15"
+	blocks := []string{"Session date: 2026-01-01\nGym fee: $30/month"}
+
+	got := longmemeval.GenerationPromptForTypeWithKURecency(q, qt, qd, blocks, false)
+	want := longmemeval.GenerationPromptForType(q, qt, qd, blocks)
+	if got != want {
+		t.Errorf("flag=false: expected standard prompt, got different output\ngot: %q\nwant: %q", got, want)
+	}
+}
+
+// TestGenerationPromptForTypeWithKURecency_FlagOnKU verifies that when
+// kuRecency is true and the question type is knowledge-update, the returned
+// prompt contains a recency-precedence instruction so the model uses the most
+// recently dated session value rather than an older one.
+func TestGenerationPromptForTypeWithKURecency_FlagOnKU(t *testing.T) {
+	q := "What is my current gym membership fee?"
+	qt := "knowledge-update"
+	qd := "2026-01-15"
+	blocks := []string{
+		"Session date: 2025-06-01\nGym fee: $25/month",
+		"Session date: 2026-01-10\nGym fee: $35/month",
+	}
+
+	got := longmemeval.GenerationPromptForTypeWithKURecency(q, qt, qd, blocks, true)
+
+	// The prompt must contain the question and date.
+	if !strings.Contains(got, q) {
+		t.Errorf("prompt missing question: %q", q)
+	}
+	// The prompt must instruct the model to prefer the most recent session.
+	recencyKeywords := []string{"most recent", "latest", "newest", "most up-to-date"}
+	found := false
+	for _, kw := range recencyKeywords {
+		if strings.Contains(strings.ToLower(got), kw) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("KU recency prompt missing recency instruction; got:\n%s", got)
+	}
+}
+
+// TestGenerationPromptForTypeWithKURecency_FlagOnNonKU verifies that when
+// kuRecency is true but the question type is NOT knowledge-update, the flag
+// is a no-op and the standard prompt is returned.
+func TestGenerationPromptForTypeWithKURecency_FlagOnNonKU(t *testing.T) {
+	q := "When did I last go to the gym?"
+	qt := "temporal-reasoning"
+	qd := "2026-01-15"
+	blocks := []string{"Session date: 2026-01-10\nWent to gym."}
+
+	got := longmemeval.GenerationPromptForTypeWithKURecency(q, qt, qd, blocks, true)
+	want := longmemeval.GenerationPromptForType(q, qt, qd, blocks)
+	if got != want {
+		t.Errorf("non-KU type: flag should be no-op; got different prompt\ngot:  %q\nwant: %q", got, want)
+	}
+}

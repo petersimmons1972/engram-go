@@ -1092,6 +1092,46 @@ func ScoreBatch(ctx context.Context, items []BatchScoringItem, apiKey, model str
 	return out, nil
 }
 
+// kuRecencyRule is the canonical instruction injected by GenerationPromptWithKURecency.
+// It targets the FM where the model picks a stale value from an older session when
+// a more recent session contains an updated value. The rule instructs the model to
+// treat the most recent session's value as authoritative for knowledge-update questions.
+const kuRecencyRule = `RECENCY RULE: When multiple sessions contain different values for the same fact, use the most recent session's value as the authoritative answer. Earlier sessions reflect outdated information.`
+
+// GenerationPromptWithKURecency builds a generation prompt for knowledge-update
+// questions that explicitly instructs the model to prefer the most recent session's
+// value over older ones when both are present in context.
+func GenerationPromptWithKURecency(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are answering questions about a person's conversation history.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. Use these dates to determine which information is most recent. The question was asked on %s.
+
+%s
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. IMPORTANT: You MUST always provide a specific answer — never say "not mentioned", "not found in context", "cannot be determined", "not explicitly stated", or any similar refusal. If the answer is not directly stated, infer the most likely answer from the available context clues and state it directly. Output only the answer with no uncertainty hedging.`, questionDate, kuRecencyRule, ctx, questionDate, question)
+}
+
+// GenerationPromptForTypeWithKURecency (#1178) is like GenerationPromptForType
+// but applies a recency-precedence instruction for knowledge-update questions when
+// kuRecency is true. The instruction tells the model to use the most recent
+// session's value when older and newer values are both in context — addressing the
+// failure mode where the model picks the stale value (gold_visible=0.99 means both
+// old+new are retrieved, yet accuracy sits at ~72%). For non-knowledge-update types,
+// or when kuRecency is false, the standard GenerationPromptForType is returned.
+// Activated by --ku-recency-prompt (Config.KURecencyPrompt). Off by default.
+func GenerationPromptForTypeWithKURecency(question, questionType, questionDate string, contextBlocks []string, kuRecency bool) string {
+	if kuRecency && questionType == "knowledge-update" {
+		return GenerationPromptWithKURecency(question, questionDate, contextBlocks)
+	}
+	return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+}
+
 // setAnthropicHeaders attaches the required headers for all Anthropic API calls,
 // including the message-batches beta header.
 func setAnthropicHeaders(req *http.Request, apiKey string) {
