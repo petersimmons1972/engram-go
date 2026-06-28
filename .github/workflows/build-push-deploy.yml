@@ -40,6 +40,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./... -count=1 -timeout 10m
+        env:
+          GOMAXPROCS: "2"
       - run: go vet ./...
 
   build-push-deploy:
