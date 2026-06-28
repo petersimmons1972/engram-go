@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -63,6 +64,7 @@ type Config struct {
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
+	BlockOverlapChars   int  // ingest-time pre-chunk overlap in chars; 0 = disabled
 	RepairPreset        string
 
 	// H16: question_date injection
@@ -232,6 +234,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	fs.IntVar(&cfg.BlockOverlapChars, "block-overlap-chars", 0, "pre-chunk ingest sessions with this many overlap chars before QuickStore; 0 = disabled")
 	fs.StringVar(&cfg.RepairPreset, "repair-preset", "", "named LongMemEval repair preset to enable known repair switches: recall-repair")
 	// H16: prepend question_date as first line of temporal-reasoning prompts
 	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")
@@ -511,6 +514,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		}
 		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
 		cfg.CleanupPolicy = CleanupPolicyNever
+	}
+	if cfg.BlockOverlapChars >= chunk.LazyChunkThreshold/2 {
+		_, _ = fmt.Fprintf(stderr,
+			"--block-overlap-chars must be < %d (LazyChunkThreshold/2 = %d)\n",
+			chunk.LazyChunkThreshold/2,
+			chunk.LazyChunkThreshold/2,
+		)
+		return 1
 	}
 
 	if cfg.DataFile == "" {

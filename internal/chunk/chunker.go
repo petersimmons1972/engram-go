@@ -29,6 +29,10 @@ var whitespaceRE = regexp.MustCompile(`\s+`)
 // sentenceSplitRE splits on sentence-ending punctuation followed by whitespace.
 var sentenceSplitRE = regexp.MustCompile(`(?:[.!?])\s+`)
 
+// abbreviationProtectRE matches sentence-internal abbreviations that should not
+// be treated as sentence boundaries by sentenceSplitRE.
+var abbreviationProtectRE = regexp.MustCompile(`(?i)\b(?:mr|mrs|dr|prof|sr|jr|vs|etc|u\.s|u\.k|inc|ltd|corp|co|ave|blvd|dept|est)\.`)
+
 // paragraphSplitRE splits on two or more consecutive newlines.
 var paragraphSplitRE = regexp.MustCompile(`\n{2,}`)
 
@@ -407,11 +411,12 @@ func splitSentences(text string) []string {
 	if text == "" {
 		return nil
 	}
+	text = protectAbbreviations(text)
 
 	// Find all split positions
 	locs := sentenceSplitRE.FindAllStringIndex(text, -1)
 	if len(locs) == 0 {
-		return []string{text}
+		return []string{restoreAbbreviations(text)}
 	}
 
 	var parts []string
@@ -420,16 +425,26 @@ func splitSentences(text string) []string {
 		// sentenceSplitRE matches [.!?]\s+ so loc[0] is the punctuation char and
 		// loc[1] is just past the trailing whitespace. Slicing to loc[1] keeps the
 		// punctuation attached to the sentence; TrimSpace strips the whitespace.
-		part := strings.TrimSpace(text[prev:loc[1]])
+		part := restoreAbbreviations(strings.TrimSpace(text[prev:loc[1]]))
 		if part != "" {
 			parts = append(parts, part)
 		}
 		prev = loc[1]
 	}
-	if tail := strings.TrimSpace(text[prev:]); tail != "" {
+	if tail := restoreAbbreviations(strings.TrimSpace(text[prev:])); tail != "" {
 		parts = append(parts, tail)
 	}
 	return parts
+}
+
+func protectAbbreviations(text string) string {
+	return abbreviationProtectRE.ReplaceAllStringFunc(text, func(match string) string {
+		return strings.ReplaceAll(match, ".", "\x00")
+	})
+}
+
+func restoreAbbreviations(text string) string {
+	return strings.ReplaceAll(text, "\x00", ".")
 }
 
 func wordSet(text string) map[string]bool {
