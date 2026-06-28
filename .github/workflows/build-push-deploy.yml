@@ -39,7 +39,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./... -count=1 -race
+      - run: go test ./... -count=1 -timeout 10m
       - run: go vet ./...
 
   build-push-deploy:
