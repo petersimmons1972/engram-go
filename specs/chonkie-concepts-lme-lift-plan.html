@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan: Chonkie-Derived Chunking Improvements for LME-S and LME-M Score Lift</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --accent: #238636;
+    --accent-dim: #1a4a26;
+    --warn: #d29922;
+    --warn-dim: #3d2e05;
+    --danger: #da3633;
+    --danger-dim: #3d0805;
+    --info: #1f6feb;
+    --info-dim: #051d3d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --code-bg: #1e242c;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  /* Header */
+  header { margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; }
+  header h1 { font-size: 1.6rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem; }
+  details.meta { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 1rem; }
+  details.meta summary { cursor: pointer; color: var(--text-muted); font-size: 0.8rem; padding: 0.25rem 0; }
+  details.meta dl { display: grid; grid-template-columns: 140px 1fr; gap: 0.3rem 1rem; margin-top: 0.75rem; }
+  details.meta dt { color: var(--text-muted); font-size: 0.78rem; }
+  details.meta dd { color: var(--text); font-size: 0.78rem; font-family: var(--mono); }
+
+  /* Sections */
+  section { margin-bottom: 2.5rem; }
+  h2 { font-size: 1.2rem; font-weight: 600; margin-bottom: 1rem; padding-bottom: 0.4rem;
+       border-bottom: 1px solid var(--border); color: var(--text); }
+  h3 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 0.6rem; color: var(--text); }
+  h4 { font-size: 0.9rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: var(--text-muted); }
+  p { margin-bottom: 0.75rem; color: var(--text); }
+
+  /* Code */
+  code { font-family: var(--mono); background: var(--code-bg); border: 1px solid var(--border);
+         border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.82rem; color: #79c0ff; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+        padding: 1rem; overflow-x: auto; margin: 0.75rem 0; }
+  pre code { background: none; border: none; padding: 0; font-size: 0.82rem; color: #e6edf3; }
+
+  /* Tags */
+  .tag { font-size: 0.7rem; font-weight: 600; border-radius: 3px; padding: 0.1rem 0.4rem;
+         vertical-align: middle; margin-right: 0.4rem; text-transform: uppercase; }
+  .tag.existing { background: var(--info-dim); color: #58a6ff; border: 1px solid #1f6feb44; }
+  .tag.new { background: var(--accent-dim); color: #3fb950; border: 1px solid #23863644; }
+  .tag.high { background: var(--accent-dim); color: #3fb950; border: 1px solid #23863644; }
+  .tag.medium { background: var(--warn-dim); color: #e3b341; border: 1px solid #d2992244; }
+  .tag.low { background: var(--danger-dim); color: #f85149; border: 1px solid #da363344; }
+
+  /* Files */
+  section.files ul { list-style: none; }
+  section.files li { padding: 0.4rem 0; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 0.5rem; }
+  section.files li:last-child { border-bottom: none; }
+
+  /* Phases */
+  .phase { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+            padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+  .phase h3 { margin-top: 0; font-size: 1rem; }
+  .phase p { font-size: 0.9rem; }
+
+  /* Status badges */
+  code.status { background: var(--code-bg); border: 1px solid var(--border); color: var(--text-muted);
+                 font-size: 0.78rem; padding: 0.1rem 0.3rem; margin-right: 0.4rem; }
+
+  /* Checklist */
+  ul.checklist { list-style: none; margin: 0.5rem 0 1rem; }
+  ul.checklist li { padding: 0.25rem 0; font-size: 0.88rem; display: flex; align-items: flex-start; gap: 0.4rem; }
+  ul.checklist li code.status { flex-shrink: 0; }
+
+  /* Loop box */
+  .loop { background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 6px;
+           padding: 0.6rem 1rem; font-size: 0.82rem; margin-top: 1rem; color: #3fb950; }
+
+  /* Confidence table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin: 0.75rem 0; }
+  th { background: var(--surface); border: 1px solid var(--border); padding: 0.5rem 0.75rem;
+       text-align: left; color: var(--text-muted); font-weight: 600; }
+  td { border: 1px solid var(--border); padding: 0.45rem 0.75rem; vertical-align: top; }
+  tr:nth-child(even) td { background: #12171f; }
+
+  /* Callout boxes */
+  .callout { border-radius: 6px; padding: 0.75rem 1rem; margin: 0.75rem 0; font-size: 0.87rem; }
+  .callout.warn { background: var(--warn-dim); border: 1px solid var(--warn); color: #e3b341; }
+  .callout.danger { background: var(--danger-dim); border: 1px solid var(--danger); color: #f85149; }
+  .callout.info { background: var(--info-dim); border: 1px solid var(--info); color: #79c0ff; }
+  .callout.ok { background: var(--accent-dim); border: 1px solid var(--accent); color: #3fb950; }
+
+  /* Questionables */
+  #questionables details { background: var(--surface); border: 1px solid var(--border);
+                            border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 0.75rem; }
+  #questionables details summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  .qa-answer { margin-top: 0.6rem; font-size: 0.87rem; color: var(--text-muted); }
+
+  /* Dispatch block */
+  .dispatch-block { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+                    padding: 1rem; margin: 0.75rem 0; }
+  .dispatch-block .node-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+                                  letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .dispatch-block .node-label.codex { color: #79c0ff; }
+  .dispatch-block .node-label.hermes { color: #d2a8ff; }
+  .dispatch-block .node-label.grok { color: #ffa657; }
+
+  /* Score table */
+  .score-table td.num { text-align: right; font-family: var(--mono); }
+  .score-table td.win { color: #3fb950; }
+  .score-table td.loss { color: #f85149; }
+
+  /* Amendments */
+  #amendments details { background: var(--surface); border: 1px solid var(--border);
+                         border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 0.5rem; }
+
+  figure { margin: 1rem 0; text-align: center; }
+  figcaption { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-style: italic; }
+
+  /* Hero banner */
+  .hero-banner {
+    background: linear-gradient(135deg, #0d1117 0%, #1a2332 50%, #0d1117 100%);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-banner::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      45deg, transparent, transparent 40px,
+      rgba(35, 134, 54, 0.03) 40px, rgba(35, 134, 54, 0.03) 80px
+    );
+  }
+  .hero-banner .hero-title { font-size: 1.1rem; font-weight: 700; color: #3fb950; margin-bottom: 0.5rem; }
+  .hero-banner .hero-sub { font-size: 0.85rem; color: var(--text-muted); }
+  .hero-banner .hero-metrics { display: flex; justify-content: center; gap: 2rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .hero-banner .metric { text-align: center; }
+  .hero-banner .metric .val { font-size: 1.6rem; font-weight: 700; font-family: var(--mono); color: #79c0ff; }
+  .hero-banner .metric .lbl { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  ul { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+  ul li { margin-bottom: 0.3rem; font-size: 0.88rem; }
+  ol { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+  ol li { margin-bottom: 0.3rem; font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== HEADER + METADATA ===== -->
+  <header>
+    <h1>Plan: Chonkie-Derived Chunking Improvements for LME-S and LME-M Score Lift</h1>
+    <details class="meta">
+      <summary>Metadata</summary>
+      <dl>
+        <dt>created</dt>      <dd>2026-06-28T18:00:00Z</dd>
+        <dt>modified</dt>     <dd>2026-06-28T18:00:00Z</dd>
+        <dt>commits</dt>      <dd>dc1f0ad, 46af385, e9f1ad7, 17e024f, 8b8e5b7</dd>
+        <dt>agent name</dt>   <dd>Chester William Nimitz (Claude Code)</dd>
+        <dt>session id</dt>   <dd>d46a7447-ca10-4970-a8a7-883f032625b5</dd>
+        <dt>back refs</dt>    <dd>KU-B1 70.0%, KU-R1 67.1% (benchmark-registry.jsonl); camp-22 LME-M 78.6% (aifleet/COMPATIBILITY.md); Chonkie assessment (prior session); six-QA-persona review (prior session)</dd>
+        <dt>forward refs</dt> <dd>issue-1192-engram-go (Codex branch); KU-R2 (pending clean run)</dd>
+      </dl>
+    </details>
+  </header>
+
+  <!-- Hero -->
+  <div class="hero-banner">
+    <div class="hero-title">Chonkie Concepts → engram-go Go Implementation → LME Score Lift</div>
+    <div class="hero-sub">Three sequential chunking upgrades, multi-AI socialized, TDD-gated, benchmarked on all four LME-S question types</div>
+    <div class="hero-metrics">
+      <div class="metric">
+        <div class="val">78.6%</div>
+        <div class="lbl">LME-M baseline (camp-22)</div>
+      </div>
+      <div class="metric">
+        <div class="val">70.0%</div>
+        <div class="lbl">KU-78 strict (KU-B1)</div>
+      </div>
+      <div class="metric">
+        <div class="val">3</div>
+        <div class="lbl">Chunking concepts (sequential)</div>
+      </div>
+      <div class="metric">
+        <div class="val">3</div>
+        <div class="lbl">AI reviewers (Codex/Hermes/Grok)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PURPOSE ===== -->
+  <section id="purpose">
+    <h2>Purpose</h2>
+    <p>
+      Three chunking improvements — borrowed conceptually from the Python library
+      <code>chonkie-inc/chonkie</code> and re-implemented natively in Go — are intended
+      to lift engram-go's LME-S and LME-M benchmark scores by improving how session
+      content is chunked at ingest time. The plan covers: socialization of the approach
+      with the AI fleet (Codex, Hermes, Grok); TDD-first Go implementation of each
+      concept; and benchmark validation gating each phase's green-light.
+    </p>
+    <p>
+      All four LME-S question types are in scope: <strong>temporal-reasoning</strong>,
+      <strong>single-session-preference</strong>, <strong>knowledge-update (KU-78)</strong>,
+      and <strong>multi-session</strong>. Both LME-S (500Q) and LME-M (500-session) are
+      target benchmarks.
+    </p>
+  </section>
+
+  <!-- ===== PROBLEM ===== -->
+  <section id="problem">
+    <h2>Problem</h2>
+    <p>
+      engram-go's <code>ChunkText()</code> at <code>internal/engine/engine.go:~502</code>
+      already accepts an <code>overlapTokens</code> parameter, but this value is hard-wired
+      at the call site to 50 tokens — there is no CLI flag to tune it. No session-boundary
+      flush exists, creating potential PII leakage between sessions when overlap is non-zero.
+      Turn boundaries (user/assistant alternation within a session) are not respected as
+      natural chunk split points. No semantic similarity check is applied at split time,
+      meaning thematically coherent content can be split mid-thought.
+    </p>
+    <p>
+      The consequence: atom retrieval quality is sub-optimal, leading to a context window
+      that does not reliably contain the most relevant turns for question-answering.
+    </p>
+
+    <div class="callout danger">
+      <strong>QA blocker corrections (6-persona review, prior session)</strong> — must be
+      incorporated before any implementation begins:
+      <ol style="margin-top:0.5rem">
+        <li><code>--max-block-chars 8000</code> targets the <em>prompt-assembly</em> layer,
+            not the chunker. The new flag must be <code>--block-overlap-chars N</code>
+            (separate namespace).</li>
+        <li><code>--semantic-chunk</code> boolean is ambiguous. Correct form:
+            <code>--semantic-chunk-threshold=&lt;float&gt; --semantic-chunk-model=&lt;id&gt;</code></li>
+        <li>Parse-time guard required: if <code>overlap &gt;= max-block/2</code>, exit nonzero with
+            clear message. Server-enforced cap prevents runaway configuration.</li>
+        <li>Overlap buffer <strong>must flush on session boundary</strong>. A new session ID
+            must never inherit overlap tokens from a prior session (confidentiality, PII).</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ===== SOLUTION ===== -->
+  <section id="solution">
+    <h2>Solution</h2>
+    <p>
+      Native Go implementation of three concepts from Chonkie, applied sequentially with
+      benchmark gates between phases. The Python library is <em>not</em> imported (Python/Go
+      barrier, RCE surface, HuggingFace weight downloads); only the algorithms are adopted.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Phase</th>
+          <th>Concept (Chonkie origin)</th>
+          <th>Go target</th>
+          <th>Gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1</strong></td>
+          <td>OverlapRefinery — sliding window token overlap between chunks</td>
+          <td>Surface <code>overlapTokens</code> via <code>--block-overlap-chars N</code>; session-boundary flush</td>
+          <td>KU-R2 clean run; ≥+1pp vs KU-B1 on paired items</td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td>
+          <td>Turn-boundary respect — never split user/assistant turns mid-turn</td>
+          <td><code>ChunkText()</code> split points snap to <code>\nRole:</code> boundaries</td>
+          <td>≥+1pp vs Phase 1 on multi-session question type</td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td>
+          <td>SemanticChunker — cosine similarity at split time</td>
+          <td><code>--semantic-chunk-threshold=&lt;float&gt; --semantic-chunk-model=&lt;id&gt;</code>; local embedding</td>
+          <td>≥+3pp delta vs Phase 2 baseline; else skip to Phase 4</td>
+        </tr>
+        <tr>
+          <td><strong>4</strong></td>
+          <td>Full LME-M validation</td>
+          <td>Run complete 500Q on best config from Phases 1–3</td>
+          <td>&gt;78.6% LME-M (beat camp-22)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Before implementation, the approach is socialized in parallel with three AI reviewers
+      (Codex, Hermes, Grok) via the fleet-dispatch queue. Verdicts are synthesized, blockers
+      addressed, and the final implementation brief is dispatched to Codex for Go coding.
+    </p>
+  </section>
+
+  <!-- ===== RELEVANT FILES ===== -->
+  <section id="files" class="files">
+    <h2>Relevant Files</h2>
+
+    <h3>Existing Files</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>internal/engine/engine.go</code> — <code>ChunkText()</code> with <code>overlapTokens</code> at ~line 502; <code>ChunkDocument()</code> heading→paragraph→sentence path</li>
+      <li><span class="tag existing">existing</span> <code>cmd/longmemeval/main.go</code> — <code>Config</code> struct; <code>MaxBlockChars</code> (prompt-assembly, NOT chunker); <code>KURecencyPrompt</code>; <code>TemporalWindowRecall</code></li>
+      <li><span class="tag existing">existing</span> <code>cmd/longmemeval/run.go</code> — ingest pipeline; call site for <code>ChunkText()</code> with hard-coded 50-token overlap</li>
+      <li><span class="tag existing">existing</span> <code>internal/longmemeval/types.go</code> — <code>Item</code>, <code>Turn</code>, <code>IngestEntry</code>, <code>RunEntry</code>, <code>ScoreEntry</code></li>
+      <li><span class="tag existing">existing</span> <code>results/benchmark-registry.jsonl</code> — 28 entries; KU-B1 70.0%, KU-R1 67.1% (force-added, results/ gitignored)</li>
+      <li><span class="tag existing">existing</span> <code>scripts/lme-judge.sh</code> — Qwen3-32B judge runner</li>
+      <li><span class="tag existing">existing</span> <code>results/score-pending-runs.sh</code> — manual score trigger</li>
+    </ul>
+
+    <h3>New Files</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>internal/engine/engine_overlap_test.go</code> — TDD tests for overlap configuration, boundary flush, parse-time guard</li>
+      <li><span class="tag new">new</span> <code>internal/engine/engine_turnboundary_test.go</code> — TDD tests for turn-boundary-aware splitting</li>
+      <li><span class="tag new">new</span> <code>internal/engine/semantic_chunk.go</code> — semantic similarity grouping (Phase 3; gated)</li>
+      <li><span class="tag new">new</span> <code>internal/engine/semantic_chunk_test.go</code> — TDD tests for semantic chunking threshold/model</li>
+      <li><span class="tag new">new</span> <code>specs/socialization-brief-chonkie.md</code> — dispatch brief for Codex/Hermes/Grok (source of truth for fleet-dispatch payloads)</li>
+    </ul>
+  </section>
+
+  <!-- ===== IMPLEMENTATION PHASES ===== -->
+  <section id="phases">
+    <h2>Implementation Phases</h2>
+    <p><strong>IMPORTANT:</strong> Execute every phase and task step by step, in order, top to bottom.</p>
+    <p>Status markers: <code>[]</code> idle · <code>[wip]</code> in progress · <code>[x]</code> complete · <code>[f]</code> failed. All start as <code>[]</code>.</p>
+
+    <!-- =================== PHASE 0 =================== -->
+    <div class="phase">
+      <h3><code class="status">[wip]</code> Phase 0: Multi-AI Socialization via Fleet-Dispatch</h3>
+      <p>
+        Write one concise socialization brief, then enqueue it simultaneously to Codex (impl),
+        Hermes (consult), and Grok (grok). Collect verdicts, synthesize blockers, revise plan,
+        dispatch final implementation brief to Codex.
+      </p>
+
+      <h4>0.1 — Write Socialization Brief</h4>
+      <p>Save to <code>specs/socialization-brief-chonkie.md</code>. Must cover:</p>
+      <ul>
+        <li><code class="status">[x]</code> Situation: engram-go LME-S/M benchmark at 78.6% LME-M (camp-22, 378/500Q), targeting improvement via chunking</li>
+        <li><code class="status">[x]</code> Chonkie repo (<code>chonkie-inc/chonkie</code>, MIT, Python ≥3.10, v1.6.8): NOT imported as library — three algorithmic concepts borrowed natively in Go</li>
+        <li><code class="status">[x]</code> Concept 1 — Overlap: expose <code>overlapTokens</code> via <code>--block-overlap-chars N</code>; session-boundary flush: <strong>automatically respected</strong> (client pre-chunks per session in <code>ingestOne()</code>)</li>
+        <li><code class="status">[x]</code> Concept 2 — Turn-boundary: snap chunk split points to <code>\n{Role}:</code> boundaries (user/assistant turn starts)</li>
+        <li><code class="status">[x]</code> Concept 3 — Semantic: cosine similarity at split; <code>--semantic-chunk-threshold=&lt;float&gt;</code> (gated on ≥3pp delta from Phase 2)</li>
+        <li><code class="status">[x]</code> Four QA blocker corrections (list verbatim from Problem section above)</li>
+        <li><code class="status">[x]</code> Benchmark context: KU-B1 70.0% strict (70/78 items), KU-R1 67.1% (LOW CONFIDENCE NEUTRAL), all four question types in scope</li>
+        <li><code class="status">[x]</code> Ask for each reviewer — brief written at <code>specs/socialization-brief-chonkie.md</code></li>
+      </ul>
+      <div class="callout info" style="font-size:0.82rem;margin:0.75rem 0">
+        <strong>Architecture correction (verified 2026-06-28):</strong> <code>ChunkText</code> is server-side in
+        <code>internal/chunk/chunker.go:99</code>, NOT <code>engine.go</code>.
+        <code>cmd/longmemeval/ingest.go::ingestOne()</code> calls <code>restClient.QuickStore()</code> and
+        the server chunks internally. Phase 1 implements <strong>client-side pre-chunking</strong>:
+        import <code>internal/chunk</code> in <code>ingest.go</code>, call
+        <code>chunk.ChunkText(content, 2000, BlockOverlapChars/4)</code> per session, store each chunk
+        separately. Session boundary flush is automatic — each session is already processed independently.
+        GitHub issue: <a href="https://github.com/petersimmons1972/engram-go/issues/1252">#1252</a>.
+      </div>
+
+      <h4>0.2 — Dispatch to Hermes (capability: consult) <code class="status">[wip]</code></h4>
+      <p style="font-size:0.82rem;color:var(--warn)">Dispatched 2026-06-28 — item <code>d3a78248-2008-4149-b2a2-723554626641</code> state: <strong>leased</strong>. Poll until <code>done</code>.</p>
+      <div class="dispatch-block">
+        <div class="node-label hermes">Hermes — capability: consult — host: hermes.petersimmons.com</div>
+        <pre><code>DISPATCH_TOKEN=$(cat ~/.config/fleet-dispatch/token-consult)
+curl -sf -X POST https://fleet-dispatch.petersimmons.com/enqueue \
+  -H "Authorization: Bearer $DISPATCH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability": "consult",
+    "payload": {
+      "ask": "HERMES STRATEGIC REVIEW — Chonkie chunking lift plan for engram-go LME-S/LME-M. Read the brief in specs/socialization-brief-chonkie.md in the engram-go repo (branch: worktree-lme-preference-constraint). Produce: (a) a gated sequence plan (2A→2E format matching lme-phase2-hermes-gates.md precedent) for the three overlap/turn-boundary/semantic phases; (b) any go/no-go gates you would add beyond the current ones; (c) flag any concept you think will not lift the targeted question types. Output schema: GATE_ID | GO | <rationale>. Report deltas BY QUESTION TYPE.",
+      "repo": "engram-go",
+      "branch": "worktree-lme-preference-constraint"
+    }
+  }'</code></pre>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem">
+          Hermes attach consumer (<code>hermes-attach.py</code>) claims this, runs
+          <code>hermes chat -q "&lt;ask&gt;" -Q --yolo</code>, reports back.
+          Poll <code>GET /items?capability=consult&amp;state=done</code> for completion.
+        </p>
+      </div>
+
+      <h4>0.3 — Dispatch to Grok (capability: grok) <code class="status">[wip]</code></h4>
+      <p style="font-size:0.82rem;color:var(--warn)">Dispatched 2026-06-28 — item <code>0fb9734c-98ff-4c7f-b15d-561fc4f66ea8</code> queued. Artwork (Chonkie assessment + ROI ordering + pitfalls) included in prompt.</p>
+      <div class="dispatch-block">
+        <div class="node-label grok">Grok — capability: grok — host: grok.petersimmons.com (.13)</div>
+        <pre><code>curl -sf -X POST https://fleet-dispatch.petersimmons.com/enqueue \
+  -H "Authorization: Bearer $DISPATCH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability": "grok",
+    "payload": {
+      "ask": "GROK STRATEGIC REVIEW — Chonkie chunking concepts for LME score lift. Context brief: engram-go repo, branch worktree-lme-preference-constraint, file specs/socialization-brief-chonkie.md. We want a strategic eye on concepts from chonkie-inc/chonkie (v1.6.8, MIT, Python) that we may have missed. Questions: (1) Are there additional chunking strategies in Chonkie beyond Overlap/TurnBoundary/Semantic that would benefit temporal-reasoning or multi-session question types? (2) Does the proposed sequential implementation order (overlap→turn-boundary→semantic) match expected ROI ordering? (3) Any Go implementation pitfalls we should anticipate? Output: Un | ADOPT|PARTIAL|REJECT | <reason> for each concept reviewed.",
+      "repo": "engram-go",
+      "branch": "worktree-lme-preference-constraint"
+    }
+  }'</code></pre>
+        <div class="callout warn" style="font-size:0.8rem;margin-top:0.5rem">
+          ⚠ grok-attach.py on .13 must be running (check: <code>systemctl --user status grok-attach</code> on .13).
+          If not yet deployed, this task queues and will be claimed on next attach. See
+          <code>fleet-dispatch-grok-attach.md</code> for deploy instructions.
+        </div>
+      </div>
+
+      <h4>0.4 — Dispatch to Codex (capability: impl) <code class="status">[wip]</code></h4>
+      <p style="font-size:0.82rem;color:var(--warn)">Dispatched 2026-06-28 — item <code>d3147c89-efd1-4653-9952-a3911466ecc9</code> queued. Full impl brief dispatched (all 4 blockers + arch correction + TDD requirements). GitHub issue: <a href="https://github.com/petersimmons1972/engram-go/issues/1252">#1252</a>.</p>
+      <div class="dispatch-block">
+        <div class="node-label codex">Codex — capability: impl — issue: #1252 — branch: worktree-lme-preference-constraint</div>
+        <pre><code>curl -sf -X POST https://fleet-dispatch.petersimmons.com/enqueue \
+  -H "Authorization: Bearer $DISPATCH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability": "impl",
+    "payload": {
+      "repo": "petersimmons1972/engram-go",
+      "branch": "worktree-lme-preference-constraint",
+      "ask": "CODEX IMPLEMENTATION REVIEW — Chonkie chunking concepts for LME lift. Read specs/socialization-brief-chonkie.md and specs/chonkie-concepts-lme-lift-plan.html. Questions: (1) Are there Go idioms or existing engine.go patterns we should follow for the overlap/turn-boundary changes? (2) What is the correct call site in run.go to expose overlapTokens as a CLI flag? (3) For semantic chunking, what local embedding approach (e.g. engram existing embedder, or a light BPE cosine model) would require zero new dependencies? Reply with implementation notes; do NOT write code yet — full impl brief to follow after Hermes/Grok verdicts are synthesized."
+    }
+  }'</code></pre>
+      </div>
+
+      <h4>0.5 — Collect and Synthesize Verdicts</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Poll <code>GET /items?state=done</code> until all three nodes have reported</li>
+        <li><code class="status">[]</code> Extract ADOPT/PARTIAL/REJECT ratings from Grok output</li>
+        <li><code class="status">[]</code> Extract gated sequence plan from Hermes output</li>
+        <li><code class="status">[]</code> Extract Go implementation notes from Codex output</li>
+        <li><code class="status">[]</code> Synthesize: identify any new blockers not already in the QA corrections</li>
+        <li><code class="status">[]</code> If new blocker found: update plan via planf3 Update Plan workflow; re-dispatch to affected node</li>
+        <li><code class="status">[]</code> If no new blockers: mark Phase 0 complete; dispatch final implementation brief to Codex (see Phase 0.6)</li>
+      </ul>
+
+      <h4>0.6 — Final Implementation Brief to Codex</h4>
+      <p>
+        After synthesis, dispatch the implementation brief incorporating all verdicts. The
+        brief becomes the handoff spec for Phases 1–3 Go coding. Use the
+        <code>planf3 Handoff to Codex</code> workflow pointing at this plan file.
+      </p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Run planf3 Handoff to Codex workflow targeting <code>specs/chonkie-concepts-lme-lift-plan.html</code></li>
+        <li><code class="status">[]</code> Confirm Codex has picked up the impl task (check fleet-dispatch queue)</li>
+      </ul>
+
+      <h4>Testing Strategy</h4>
+      <p>Phase 0 validation is procedural, not automated.</p>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>curl -sf "https://fleet-dispatch.petersimmons.com/items?state=done" | jq '[.[] | select(.capability=="consult")] | length'</code> — expect ≥1 (Hermes complete)</li>
+        <li><code class="status">[]</code> <code>curl -sf "https://fleet-dispatch.petersimmons.com/items?state=done" | jq '[.[] | select(.capability=="grok")] | length'</code> — expect ≥1 (Grok complete)</li>
+        <li><code class="status">[]</code> <code>curl -sf "https://fleet-dispatch.petersimmons.com/items?state=done" | jq '[.[] | select(.capability=="impl")] | length'</code> — expect ≥1 (Codex initial review complete)</li>
+        <li><code class="status">[]</code> Synthesis doc written and no unresolved severity/blocker findings remain</li>
+      </ul>
+      <div class="loop">
+        🔁 Do not exit Phase 0 until all three nodes have reported and synthesis is complete.
+        If a node is unreachable (Grok attach not deployed), collect Hermes+Codex minimum and proceed with a MEDIUM-confidence note.
+      </div>
+    </div>
+
+    <!-- =================== PHASE 1 =================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 1: Block Overlap Exposure (<code>--block-overlap-chars N</code>)</h3>
+      <p>
+        Implement client-side pre-chunking in <code>cmd/longmemeval/ingest.go::ingestOne()</code>
+        using the existing <code>chunk.ChunkText()</code>. When <code>--block-overlap-chars N</code>
+        is set, the benchmark client imports <code>internal/chunk</code>, calls
+        <code>chunk.ChunkText(content, 2000, N/4)</code> per session, and stores each chunk
+        separately via multiple <code>QuickStore</code> calls. Session boundary is naturally
+        respected. Add parse-time guard. Follow TDD strictly (CLAUDE.md: failing test first).
+      </p>
+      <div class="callout info" style="font-size:0.82rem">
+        <strong>Architecture:</strong> <code>ChunkText</code> is in <code>internal/chunk/chunker.go:99</code>
+        (server-side library), but it is importable by the CLI. The benchmark client (<code>cmd/longmemeval/</code>)
+        currently does NOT call <code>ChunkText</code> — it sends full session content via
+        <code>restClient.QuickStore()</code> and the server chunks internally. Phase 1 adds
+        client-side pre-chunking BEFORE the <code>QuickStore</code> call.
+      </div>
+
+      <div class="callout info" style="font-size:0.85rem">
+        <strong>Important:</strong> <code>--max-block-chars</code> is a prompt-assembly flag — it
+        truncates context blocks before they are inserted into the LLM prompt. It is NOT a chunker
+        parameter. The new <code>--block-overlap-chars</code> flag operates in the
+        <em>ingest/chunking</em> layer, not the prompt layer.
+      </div>
+
+      <h4>1.1 — TDD: Write Failing Tests First</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create <code>internal/engine/engine_overlap_test.go</code></li>
+        <li><code class="status">[]</code> Test: <code>TestOverlapTokensPassedToChunkText</code> — assert that when <code>BlockOverlapChars=500</code> is set, the value reaches <code>ChunkText()</code> as <code>overlapTokens</code></li>
+        <li><code class="status">[]</code> Test: <code>TestOverlapZeroOnSessionBoundary</code> — assert overlap buffer is cleared when session ID changes</li>
+        <li><code class="status">[]</code> Test: <code>TestOverlapGuardRejectsHalfOrMore</code> — assert nonzero exit when <code>BlockOverlapChars >= MaxBlockChars/2</code></li>
+        <li><code class="status">[]</code> Test: <code>TestOverlapZeroByDefault</code> — assert default <code>BlockOverlapChars=0</code> produces same output as current behavior</li>
+        <li><code class="status">[]</code> Run <code>go test ./internal/engine/... -run TestOverlap -count=1</code> — confirm all four FAIL</li>
+      </ul>
+
+      <h4>1.2 — Implement: Config Flag</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Add <code>BlockOverlapChars int</code> to <code>Config</code> struct in <code>cmd/longmemeval/main.go</code></li>
+        <li><code class="status">[]</code> Register flag <code>--block-overlap-chars</code> with default 0, usage: "overlap between adjacent context blocks at ingest (chars; 0=disabled)"</li>
+        <li><code class="status">[]</code> Add parse-time guard: <code>if cfg.BlockOverlapChars > 0 &amp;&amp; cfg.BlockOverlapChars >= cfg.MaxBlockChars/2 { return fmt.Errorf("--block-overlap-chars must be < MaxBlockChars/2") }</code></li>
+      </ul>
+
+      <h4>1.3 — Implement: Thread to ChunkText Call Site</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Locate call site in <code>cmd/longmemeval/run.go</code> where <code>ChunkText()</code> is called with hard-coded 50-token overlap</li>
+        <li><code class="status">[]</code> Replace hard-coded value with <code>cfg.BlockOverlapChars / charsPerToken</code> (use same <code>charsPerToken</code> constant as rest of codebase)</li>
+        <li><code class="status">[]</code> Add session-boundary flush: before chunking each session's turns, if <code>currentSessionID != lastSessionID</code>, reset overlap carry-forward buffer</li>
+      </ul>
+
+      <h4>1.4 — Verify Tests Pass</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestOverlap -count=1 -race</code> — all four PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> Coverage ≥ 60% on <code>internal/engine/engine_overlap_test.go</code></li>
+      </ul>
+
+      <h4>1.5 — Benchmark: KU-R2 + Overlap Variants</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Run KU-R2 (clean baseline, 0 errors target): <code>./longmemeval --suite lme-s-ku78 --context-topk 8 --max-block-chars 8000</code></li>
+        <li><code class="status">[]</code> Run KU-O1 (overlap 400 chars): add <code>--block-overlap-chars 400</code></li>
+        <li><code class="status">[]</code> Run KU-O2 (overlap 800 chars): add <code>--block-overlap-chars 800</code></li>
+        <li><code class="status">[]</code> Score all three with <code>lme-judge.sh --judge qwen3</code></li>
+        <li><code class="status">[]</code> Register all three in <code>results/benchmark-registry.jsonl</code></li>
+        <li><code class="status">[]</code> Report deltas BY QUESTION TYPE (temporal / preference / knowledge-update / multi-session)</li>
+      </ul>
+
+      <h4>Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestOverlap -v -count=1 -race</code> — 4 tests PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> KU-R2 strict accuracy ≥ KU-B1 (70.0%) — confirms clean baseline</li>
+        <li><code class="status">[]</code> At least one overlap variant shows ≥+1pp vs KU-R2 on paired items</li>
+      </ul>
+      <div class="loop">
+        🔁 Do not exit Phase 1 until tests pass and at least one overlap variant benchmark is registered.
+        If all overlap variants are neutral or negative vs KU-R2, document as LOW CONFIDENCE and proceed to Phase 2 with overlap=0.
+      </div>
+    </div>
+
+    <!-- =================== PHASE 2 =================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 2: Turn-Boundary-Aware Chunking</h3>
+      <p>
+        Modify <code>ChunkText()</code> (sentence-window path) so that chunk split decisions
+        respect user/assistant turn boundaries — a chunk never begins mid-turn and never
+        straddles a <code>User:</code>/<code>Assistant:</code> boundary. This is a direct
+        adoption of Chonkie's concept of boundary-aware splitting.
+      </p>
+
+      <h4>2.1 — TDD: Write Failing Tests</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create <code>internal/engine/engine_turnboundary_test.go</code></li>
+        <li><code class="status">[]</code> Test: <code>TestTurnBoundaryNeverSplitsMidTurn</code> — given a text block with "User: ... Assistant: ... User: ...", assert no chunk boundary falls within a single turn's content</li>
+        <li><code class="status">[]</code> Test: <code>TestTurnBoundaryChunkStartsAtTurnBeginning</code> — assert every chunk's first token is either the start of the text or follows a turn delimiter</li>
+        <li><code class="status">[]</code> Test: <code>TestTurnBoundaryFallsBackOnNoDelimiters</code> — if no turn delimiters found, behavior is unchanged (pure sentence splits)</li>
+        <li><code class="status">[]</code> Run tests — confirm all FAIL</li>
+      </ul>
+
+      <h4>2.2 — Implement: Turn-Boundary Split Points</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> In <code>ChunkText()</code>, after sentence segmentation, identify all positions that correspond to turn-start delimiters (patterns: <code>\nUser:</code>, <code>\nAssistant:</code>, <code>\nhuman:</code>, <code>\nassistant:</code>)</li>
+        <li><code class="status">[]</code> When assembling chunks, add turn-boundary positions to the set of valid split points; when a sentence split would fall mid-turn, slide forward to the next turn boundary</li>
+        <li><code class="status">[]</code> Expose as default behavior (no new flag required); the session-mode text path benefits automatically</li>
+      </ul>
+
+      <h4>2.3 — Verify Tests Pass + Benchmark</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestTurnBoundary -count=1 -race</code> — all PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> Run TB-1 benchmark: best Phase 1 config + turn-boundary on KU-78</li>
+        <li><code class="status">[]</code> Run TB-2: turn-boundary on full 500Q LME-S subset (temporal + multi-session focus)</li>
+        <li><code class="status">[]</code> Score and register in <code>benchmark-registry.jsonl</code></li>
+        <li><code class="status">[]</code> Report deltas BY QUESTION TYPE</li>
+      </ul>
+
+      <h4>Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestTurnBoundary -v -count=1 -race</code> — 3 tests PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> TB-2 multi-session accuracy ≥ Phase 1 best (gate for Phase 3)</li>
+      </ul>
+      <div class="loop">
+        🔁 If turn-boundary produces ≥+1pp on multi-session, proceed to Phase 3. If neutral,
+        record and still proceed — turn-boundary is a correctness improvement regardless of score delta.
+      </div>
+    </div>
+
+    <!-- =================== PHASE 3 =================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 3: Semantic Similarity Grouping (Gated)</h3>
+      <p>
+        Introduce cosine-similarity-based chunk boundary detection at ingest time. Borrowing
+        from Chonkie's <code>SemanticChunker</code>: compute embedding of adjacent sentences;
+        if cosine similarity drops below <code>--semantic-chunk-threshold</code>, treat it as
+        a strong split point. Gated: only implement if Phase 2 delta is ≥+3pp vs Phase 1.
+      </p>
+
+      <div class="callout warn">
+        <strong>Gate check:</strong> Before beginning Phase 3, verify that TB-2 score minus
+        Phase 1 KU-R2 score is ≥ 3.0pp. If not, skip Phase 3 and proceed directly to Phase 4
+        with current best config. Document the decision in the Amendments section.
+      </div>
+
+      <h4>3.1 — Embedding Model Selection</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Determine available local embedding endpoint (priority: engram's existing embedder if exposed as HTTP; else Olla router's embedding endpoint if available)</li>
+        <li><code class="status">[]</code> Confirm zero new Go dependencies required (use stdlib HTTP; cosine similarity is a float dot-product)</li>
+        <li><code class="status">[]</code> If no local embedding available at zero cost: skip Phase 3, document as DEFERRED</li>
+      </ul>
+
+      <h4>3.2 — TDD: Write Failing Tests</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create <code>internal/engine/semantic_chunk_test.go</code></li>
+        <li><code class="status">[]</code> Test: <code>TestSemanticThresholdFlagRequired</code> — assert that <code>--semantic-chunk-threshold</code> without <code>--semantic-chunk-model</code> returns nonzero exit</li>
+        <li><code class="status">[]</code> Test: <code>TestSemanticChunkSplitsOnLowSimilarity</code> — mock embedding endpoint; assert split when cosine &lt; threshold</li>
+        <li><code class="status">[]</code> Test: <code>TestSemanticChunkNoSplitOnHighSimilarity</code> — mock; assert no extra split when cosine ≥ threshold</li>
+        <li><code class="status">[]</code> Test: <code>TestSemanticChunkModelFlagParsed</code> — assert model ID is passed to embedding request</li>
+        <li><code class="status">[]</code> Run tests — confirm all FAIL</li>
+      </ul>
+
+      <h4>3.3 — Implement: semantic_chunk.go</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Create <code>internal/engine/semantic_chunk.go</code></li>
+        <li><code class="status">[]</code> Implement <code>SemanticSplitter</code> struct: fields <code>Threshold float64</code>, <code>ModelID string</code>, <code>EmbedURL string</code></li>
+        <li><code class="status">[]</code> Implement <code>CosineSimilarity(a, b []float32) float64</code> — stdlib only, no new deps</li>
+        <li><code class="status">[]</code> Implement <code>EmbedSentences(ctx, sentences []string) ([][]float32, error)</code> — HTTP POST to embedding endpoint</li>
+        <li><code class="status">[]</code> Wire into <code>ChunkText()</code>: if <code>SemanticSplitter != nil</code>, after sentence segmentation, compute pairwise similarities and add low-similarity positions to the split point set</li>
+        <li><code class="status">[]</code> Add <code>--semantic-chunk-threshold=&lt;float&gt;</code> and <code>--semantic-chunk-model=&lt;id&gt;</code> flags to Config; validate both present together or neither</li>
+      </ul>
+
+      <h4>3.4 — Verify Tests Pass + Benchmark</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestSemantic -count=1 -race</code> — all PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> Run SC-1: best Phase 2 config + <code>--semantic-chunk-threshold=0.7 --semantic-chunk-model=&lt;local-id&gt;</code> on KU-78</li>
+        <li><code class="status">[]</code> Run SC-2: threshold sweep 0.6 / 0.7 / 0.8 on KU-78 (3 runs)</li>
+        <li><code class="status">[]</code> Score all and register in <code>benchmark-registry.jsonl</code></li>
+        <li><code class="status">[]</code> Report deltas BY QUESTION TYPE</li>
+      </ul>
+
+      <h4>Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./internal/engine/... -run TestSemantic -v -count=1 -race</code> — 4 tests PASS</li>
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — no regressions</li>
+        <li><code class="status">[]</code> Coverage ≥ 60% on <code>semantic_chunk.go</code></li>
+        <li><code class="status">[]</code> SC-1 or SC-2 best shows ≥+1pp vs Phase 2 TB-2 on ≥1 question type</li>
+      </ul>
+      <div class="loop">
+        🔁 If no semantic variant beats Phase 2 on any question type, mark Phase 3 [f] (expected),
+        proceed to Phase 4 with best Phase 2 config. The semantic path may be useful for LME-M
+        even if KU-78 does not show delta.
+      </div>
+    </div>
+
+    <!-- =================== PHASE 4 =================== -->
+    <div class="phase">
+      <h3><code class="status">[]</code> Phase 4: Full LME-M Validation</h3>
+      <p>
+        Run the complete LME-M 500-session benchmark with the best configuration identified
+        from Phases 1–3. Target: beat camp-22 baseline of 78.6% (378/500Q).
+      </p>
+
+      <h4>4.1 — Determine Best Config</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Review all benchmark-registry.jsonl entries from Phases 1–3</li>
+        <li><code class="status">[]</code> Select best single config (maximize strict accuracy across all 4 question types, not just KU-78)</li>
+        <li><code class="status">[]</code> Document selected flags in the Amendments section</li>
+      </ul>
+
+      <h4>4.2 — Run LME-M 500Q</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Run with canonical LME-M scoring command (see <code>aifleet/COMPATIBILITY.md</code>):
+          <code>--scorer-url http://oblivion.petersimmons.com:8000/v1</code>, Qwen3-32B BF16</li>
+        <li><code class="status">[]</code> Add best Phase 1–3 flags to the run command</li>
+        <li><code class="status">[]</code> Monitor checkpoint file; run takes several hours</li>
+        <li><code class="status">[]</code> Score with <code>lme-judge.sh --judge qwen3</code></li>
+        <li><code class="status">[]</code> Register result in <code>benchmark-registry.jsonl</code> with label <code>LME-M-CHONKIE1</code></li>
+      </ul>
+
+      <h4>4.3 — Report</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> Produce final delta table (all 4 question types, LME-S KU-78 and LME-M 500Q)</li>
+        <li><code class="status">[]</code> If LME-M-CHONKIE1 &gt; 78.6%: declare win, tag commit, open PR with label <code>ai-generated</code></li>
+        <li><code class="status">[]</code> If LME-M-CHONKIE1 ≤ 78.6%: document delta, identify which question type regressed, open issue for next iteration</li>
+      </ul>
+
+      <h4>Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — all pass on final commit</li>
+        <li><code class="status">[]</code> <code>go vet ./...</code> — clean</li>
+        <li><code class="status">[]</code> LME-M-CHONKIE1 ≥ 78.6% strict accuracy (500Q)</li>
+        <li><code class="status">[]</code> All 4 question types reported individually; no type regresses &gt;5pp vs camp-22 by-type baseline</li>
+      </ul>
+      <div class="loop">
+        🔁 The plan is complete when LME-M-CHONKIE1 is registered in benchmark-registry.jsonl,
+        the delta table is documented, and the PR (if winning) has passed the three-round
+        adversarial review gate defined in CLAUDE.md.
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== GLOBAL VALIDATION ===== -->
+  <section id="validation">
+    <h2>Validation Commands</h2>
+    <p>Execute these commands to validate the entire plan is complete:</p>
+    <ul class="checklist">
+      <li><code class="status">[]</code> <code>go test ./... -count=1 -race</code> — all tests pass, no data races</li>
+      <li><code class="status">[]</code> <code>go vet ./...</code> — no vet errors</li>
+      <li><code class="status">[]</code> <code>grep -c '"label":"KU-R2"' results/benchmark-registry.jsonl</code> — ≥1 (clean baseline registered)</li>
+      <li><code class="status">[]</code> <code>grep -c '"label":"LME-M-CHONKIE1"' results/benchmark-registry.jsonl</code> — ≥1 (LME-M run registered)</li>
+      <li><code class="status">[]</code> <code>go build ./cmd/longmemeval/...</code> — binary builds clean with all new flags</li>
+      <li><code class="status">[]</code> <code>./longmemeval --block-overlap-chars 4000 --max-block-chars 8000</code> — exits nonzero with guard message (overlap ≥ half of max-block)</li>
+      <li><code class="status">[]</code> <code>./longmemeval --semantic-chunk-threshold 0.7</code> — exits nonzero (threshold without model)</li>
+    </ul>
+    <div class="loop">
+      🔁 The plan is not complete until every box is checked and every command passes.
+      If for some reason a step is not possible to complete, mark it with [f] and move on if possible.
+    </div>
+  </section>
+
+  <!-- ===== QUESTIONABLES ===== -->
+  <section id="questionables">
+    <h2>Questionables</h2>
+    <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:1rem">
+      QUESTIONABLE=true (user requested interview mode). The following open questions were
+      surfaced during planning and are not yet closed. Each requires a decision before the
+      affected phase begins.
+    </p>
+
+    <details>
+      <summary>Q1 — Should KU-recency-prompt be combined with overlap in Phase 1, or held separate?</summary>
+      <p class="qa-answer">
+        <strong>Current status:</strong> KU-R1 (recency-prompt) showed LOW CONFIDENCE NEUTRAL vs KU-B1 on 68 paired items (+2 correct but n=8 run errors polluted the comparison). KU-R2 (clean re-run) is required before this question can close.<br><br>
+        <strong>Recommendation:</strong> Run KU-R2 without recency-prompt first to establish clean baseline. Then test overlap variants against that. Only combine recency-prompt with overlap if both show independent positive deltas. Running combined prematurely makes it impossible to attribute source of lift.<br><br>
+        <strong>What would change this:</strong> KU-R2 showing recency-prompt net +3pp on paired items at n≥70 (low error count) would justify combination in Phase 1 sweep.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q2 — Session boundary detection: how does run.go identify a session boundary?</summary>
+      <p class="qa-answer">
+        <strong>From types.go:</strong> <code>Item.HaystackSessionIDs []string</code> and
+        <code>Item.HaystackSessions [][]Turn</code> — sessions are already pre-segmented in
+        the input data structure. The boundary is simply the transition from one session slice
+        to the next in the outer loop.<br><br>
+        <strong>Assumption:</strong> The ingest loop in run.go iterates over <code>item.HaystackSessions</code>
+        with an index; session boundary = index increment. This must be confirmed at implementation
+        time by reading the actual run.go loop structure.<br><br>
+        <strong>What would change this:</strong> If sessions are flattened before chunking (all turns
+        concatenated into one string), a different boundary detection mechanism is needed —
+        likely a sentinel delimiter like <code>---SESSION-BREAK---</code>.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q3 — Is grok-attach.py deployed and running on .13 before Phase 0 dispatch?</summary>
+      <p class="qa-answer">
+        <strong>Risk:</strong> Per <code>fleet-dispatch-grok-attach.md</code>, grok-attach.py
+        is defined (clients/grok-attach.py) but the systemd service install is operator-gated
+        (install script enables but does NOT start). Grok Build v0.2.54 is installed on .13
+        and OAuth session is live in <code>~/.grok/</code>.<br><br>
+        <strong>Mitigation:</strong> The Phase 0 Grok dispatch enqueues regardless; the item
+        queues until grok-attach.py claims it. If Grok is unreachable within 48h, proceed
+        with Hermes+Codex verdicts (two of three) and document Grok absence as LOW-CONFIDENCE.<br><br>
+        <strong>What would change this:</strong> Confirm with
+        <code>systemctl --user status grok-attach</code> on .13. If not running,
+        <code>systemctl --user start grok-attach</code> (after confirming OAuth is live).
+      </p>
+    </details>
+
+    <details>
+      <summary>Q4 — Which local embedding model for Phase 3 semantic chunking?</summary>
+      <p class="qa-answer">
+        <strong>Constraints:</strong> Zero new Go deps; free (no API cost); must be local.
+        Candidates: (1) engram's existing embedder if it exposes an HTTP endpoint
+        (check <code>internal/mcp/server.go</code> or engram server logs); (2) Olla router
+        at <code>http://192.168.0.138:30411/olla/openai/v1/embeddings</code> if an embedding
+        model is loaded; (3) a light sentence-transformer served by a separate process.<br><br>
+        <strong>Recommendation:</strong> Check Olla router first (same infrastructure as generator).
+        If no embedding model is loaded there, check engram server. If neither, Phase 3 is DEFERRED
+        with a clear note — do not add a new embedding server dependency just for this phase.<br><br>
+        <strong>What would change this:</strong> <code>curl http://192.168.0.138:30411/olla/openai/v1/models</code>
+        listing an embedding model (e.g. nomic-embed-text, bge-small-en) would close this question.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q5 — Abbreviation fix in sentence splitter: should it land in Phase 1 or pre-Phase 1?</summary>
+      <p class="qa-answer">
+        <strong>Issue (SRE finding S4):</strong> The sentence splitter regex <code>(?:[.!?])\s+</code>
+        does not handle common abbreviations (Dr., Mr., U.S., etc.), causing mid-abbreviation splits
+        that degrade chunking quality.<br><br>
+        <strong>Recommendation:</strong> Fix this as a pre-Phase 1 task (before overlap benchmarking)
+        to ensure the baseline is not polluted by known splitter bugs. If the fix is non-trivial,
+        scope it separately as a pre-condition commit.<br><br>
+        <strong>What would change this:</strong> If running KU-R2 without the abbreviation fix and
+        the score matches KU-B1 (70.0%), the fix is not urgent and can be deferred post-Phase 2.
+      </p>
+    </details>
+
+    <details>
+      <summary>Q6 — LME-M Phase 4 timing: should it wait for all three Phase 1-3 results, or run in parallel?</summary>
+      <p class="qa-answer">
+        <strong>Trade-off:</strong> LME-M runs take several hours. Running it in parallel with
+        Phase 3 saves wall-clock time but risks running with a non-optimal config if Phase 3
+        produces a meaningful lift.<br><br>
+        <strong>Recommendation:</strong> Sequential. Phase 4 is the final validation, not an
+        exploratory run. Given LME-M cost (~hours of GPU time on oblivion), run it once with
+        the best confirmed config. KU-78 (78 items, ~1-2h) is cheap enough to sweep; LME-M
+        is not.<br><br>
+        <strong>What would change this:</strong> If Phase 2 produces ≥+5pp on LME-S, could justify
+        an early LME-M run with Phase 2 config while Phase 3 explores — but only if GPU time is
+        not the bottleneck.
+      </p>
+    </details>
+  </section>
+
+  <!-- ===== NOTES ===== -->
+  <section id="notes">
+    <h2>Notes</h2>
+
+    <h3>Chonkie Concept Mapping</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Chonkie concept</th>
+          <th>engram-go equivalent</th>
+          <th>Why adopted</th>
+          <th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>OverlapRefinery</code></td>
+          <td><code>overlapTokens</code> in <code>ChunkText()</code> (already exists; expose via flag)</td>
+          <td>Overlap recovers atoms split across chunk boundaries; most direct win</td>
+          <td><span class="tag high">HIGH</span></td>
+        </tr>
+        <tr>
+          <td>Implicit: respect natural boundaries in SDPMChunker</td>
+          <td>Turn-boundary snap in <code>ChunkText()</code></td>
+          <td>Session content has strong structural signals (User:/Assistant:); honoring them produces more coherent atoms</td>
+          <td><span class="tag medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>SemanticChunker</code> / <code>LateChunker</code></td>
+          <td><code>semantic_chunk.go</code> with cosine similarity</td>
+          <td>Semantic cohesion at chunk boundaries improves retrieval recall; gated on ≥3pp delta</td>
+          <td><span class="tag low">LOW</span> (depends on local embedding)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Socialization Brief Format</h3>
+    <p>
+      The brief in <code>specs/socialization-brief-chonkie.md</code> follows the pattern from
+      <code>ops-plans/harness-port-adoption-socialization-brief.md</code>. Three independent
+      reviewers, no cross-contamination before verdicts are returned. Per-node asks are
+      deliberately different to extract distinct value:
+    </p>
+    <table>
+      <thead><tr><th>Node</th><th>Role</th><th>Specific ask</th><th>Expected output format</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Hermes</td>
+          <td>Strategic reviewer (GPT-5.5 / NousResearch Agent)</td>
+          <td>Produce gated sequence plan; flag question-type regressions</td>
+          <td><code>GATE_ID | GO | rationale</code> table + delta-by-type commentary</td>
+        </tr>
+        <tr>
+          <td>Grok</td>
+          <td>Alternative-approach scout (Grok Build)</td>
+          <td>Additional Chonkie concepts missed; ROI ordering sanity check; Go pitfalls</td>
+          <td><code>Un | ADOPT|PARTIAL|REJECT | reason</code> per concept</td>
+        </tr>
+        <tr>
+          <td>Codex</td>
+          <td>Go implementation advisor</td>
+          <td>Correct call site in run.go; zero-dep embedding approach; engine.go patterns</td>
+          <td>Implementation notes (no code yet)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Benchmark Registry Schema (reminder)</h3>
+    <pre><code>{"ts":"2026-06-28T...Z","run_id":"...","label":"KU-R2","phase":"KU1",
+ "suite":"lme-s-ku78","strict_accuracy":0.XX,"correct":N,"total":78,
+ "run_errors":0,"flags":"--context-topk 8 --max-block-chars 8000",
+ "notes":"..."}</code></pre>
+    <p>Always register: label, phase, suite, strict_accuracy, correct, total, run_errors, flags, notes. Deltas by question type go in notes.</p>
+
+    <h3>Standing Rules from Hermes (lme-phase2-hermes-gates.md)</h3>
+    <div class="callout warn">
+      "Report deltas BY QUESTION TYPE always. A ss-pref win that masks ss-user/multi-session/temporal regression is a FAIL."
+    </div>
+    <p>All benchmark entries must include per-question-type breakdown. Single overall accuracy is insufficient.</p>
+
+    <h3>Model Constraints (active)</h3>
+    <ul>
+      <li>Primary generator/scorer: Qwen3-32B BF16 on <code>oblivion</code> (GB10), vLLM v0.20.0, <code>--max-model-len 40960</code></li>
+      <li>Olla router: <code>http://192.168.0.138:30411/olla/openai/v1</code> (unauthenticated)</li>
+      <li>No <code>--enable-thinking</code> flag (incompatible with Nemotron v3)</li>
+      <li>No <code>--llm-api-key</code> needed (Olla endpoint unauthenticated)</li>
+      <li>Avoid Sonnet until Wednesday reset; use local Qwen3-32B for all scoring</li>
+      <li>MI-50 live path: do NOT reembed for any reason</li>
+    </ul>
+
+    <h3>Security Note</h3>
+    <p>
+      Chonkie library (<code>chonkie-inc/chonkie</code>, Python ≥3.10) was assessed and
+      <strong>rejected as a runtime dependency</strong> due to: (1) Python/Go barrier
+      (subprocess or embedding server required); (2) transitive HuggingFace weight downloads
+      on import; (3) RCE surface from <code>transformers</code> pickle deserialization.
+      Only algorithmic concepts are adopted; no Python code runs in the production path.
+    </p>
+
+    <h3>PR Gate Reminder (CLAUDE.md)</h3>
+    <p>
+      AI-generated PRs require three adversarial review rounds before merge: Correctness,
+      Coverage (≥70% function coverage on new files), and Structural. Label: <code>ai-generated</code>.
+      CI gate: 55% statement coverage minimum (target 60% for new files).
+    </p>
+  </section>
+
+  <!-- ===== AMENDMENTS ===== -->
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <details open>
+      <summary>2026-06-28 — Architecture correction + token name correction + Phase 0 dispatches fired</summary>
+      <p><strong>Architecture correction (critical):</strong> Prior plan stated that <code>ChunkText</code> lives
+      in <code>internal/engine/engine.go</code> and is called directly by <code>cmd/longmemeval/</code>. This was
+      wrong. Confirmed location: <code>internal/chunk/chunker.go:99</code>. The benchmark client calls
+      <code>restClient.QuickStore()</code>; chunking is server-side. Phase 1 implementation must use
+      <strong>client-side pre-chunking in <code>ingestOne()</code></strong> — import <code>internal/chunk</code>,
+      call <code>chunk.ChunkText(content, 2000, BlockOverlapChars/4)</code> per session, store each resulting
+      chunk via separate <code>QuickStore</code> calls. Session boundary flush is automatic (ingestOne iterates
+      sessions independently).</p>
+      <p><strong>Token name correction:</strong> Plan curl commands referenced
+      <code>token-coordinator</code> (does not exist). Correct per-capability tokens:
+      <code>token-consult</code> (Hermes consult lane), <code>token-impl</code> (Codex impl),
+      <code>token-impl-grok</code> (Grok impl-grok).</p>
+      <p><strong>Phase 0 dispatches fired (2026-06-28):</strong></p>
+      <ul>
+        <li>GitHub issue <a href="https://github.com/petersimmons1972/engram-go/issues/1252">#1252</a> created as permanent spec record</li>
+        <li>Codex impl: item <code>d3147c89-efd1-4653-9952-a3911466ecc9</code> — full brief dispatched</li>
+        <li>Grok impl-grok: item <code>0fb9734c-98ff-4c7f-b15d-561fc4f66ea8</code> — artwork + strategic questions dispatched</li>
+        <li>Hermes consult: item <code>d3a78248-2008-4149-b2a2-723554626641</code> — state: leased (being processed)</li>
+      </ul>
+    </details>
+  </section>
+
+</main>
+</body>
+</html>
