@@ -100,3 +100,28 @@ func TestMigration029AtomsObservedAt(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hasLatestOnlyIndex, "migration 029 must create the LatestOnly observed_at index")
 }
+
+func TestMigration030AtomsPreferenceFields(t *testing.T) {
+	proj := uniqueProject("migration-030-atoms-pref")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, proj, testutil.DSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	for _, col := range []string{"polarity", "entity", "domain"} {
+		col := col
+		t.Run(col, func(t *testing.T) {
+			var exists bool
+			err = backend.Pool().QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_name  = 'atoms'
+					  AND column_name = $1
+				)`, col).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists, "migration 030 must add atoms.%s column", col)
+		})
+	}
+}
