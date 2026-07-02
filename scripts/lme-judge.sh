@@ -6,15 +6,18 @@ set -euo pipefail
 # - Preserves CORRECT rows by default (resume-friendly)
 # - Emits strict and lenient percentages with optional comparison deltas
 
-REPO=${REPO:-/home/psimmons/projects/engram-go}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO=${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}
 BIN=${BIN:-$REPO/longmemeval}
 DATA=${DATA:-$REPO/testdata/longmemeval/longmemeval_m_cleaned.json}
+LOCK_PATH=${LOCK_PATH:-$REPO/docs/lme-campaign/scorer-lock.json}
 WORKERS=${WORKERS:-4}
 COMPARE=
 RUN_DIR=
 JUDGE=
-THINKING=on
+THINKING=off
 BUNDLE=0
+SHOW_HELP=0
 SCORER_MAX_TOKENS=${SCORER_MAX_TOKENS:-2048}
 GPT4O_MODEL=${GPT4O_MODEL:-gpt-4o-2024-11-20}
 
@@ -26,9 +29,9 @@ Usage: lme-judge.sh --run <results-dir> --judge <qwen3|gpt4o> [--thinking off]
 Options:
   --run <dir>      LongMemEval output directory containing run checkpoints
   --judge <name>   Judge preset: qwen3 | gpt4o
-  --thinking <on|off>  Scorer chain-of-thought flag (default: on)
+  --thinking <on|off>  Scorer chain-of-thought flag (default: off; qwen3 lock requires off)
   --compare <dir>   Also print delta against baseline score_report.json
-  --bundle          Run both qwen3 (default thinking on) and gpt4o, writing suffix
+  --bundle          Run both qwen3 (locked non-thinking) and gpt4o, writing suffix
   --help            Show this help
 EOF
 }
@@ -56,8 +59,9 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --help|-h)
-      usage
-      exit 0
+      SHOW_HELP=1
+      shift 1
+      break
       ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
@@ -66,6 +70,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$SHOW_HELP" == "1" ]]; then
+  usage
+  status=0
+  exit "$status"
+fi
 
 if [[ -z "$RUN_DIR" ]]; then
   echo "ERROR: --run is required" >&2
@@ -92,29 +102,32 @@ fi
 run_judge() {
   local judge=$1
   local out_dir=$2
-  local scorer_url=""
-  local scorer_model=""
   local scorer_api_key=""
-  local scorer_thinking="--scorer-thinking=true"
+  local scorer_args=()
+  local scorer_thinking=()
+  local scorer_lock=()
 
   case "$judge" in
     qwen3)
-      scorer_url="http://192.168.0.138:30411/olla/openai/v1"
-      scorer_model="inference"
-      if [[ "$THINKING" == "off" ]]; then
-        scorer_thinking="--scorer-thinking=false"
+      if [[ "$THINKING" != "off" ]]; then
+        echo "ERROR: --judge=qwen3 is pinned by scorer lock and requires --thinking=off" >&2
+        exit 1
       fi
+      if [[ ! -f "$LOCK_PATH" ]]; then
+        echo "ERROR: scorer lock missing: $LOCK_PATH" >&2
+        exit 1
+      fi
+      scorer_lock=(--scorer-lock "$LOCK_PATH")
       ;;
     gpt4o)
-      scorer_url="https://api.openai.com/v1"
-      scorer_model="$GPT4O_MODEL"
       scorer_api_key="${LME_SCORER_API_KEY:-${OPENAI_API_KEY:-}}"
       if [[ -z "$scorer_api_key" ]]; then
         echo "ERROR: --judge=gpt4o requires LME_SCORER_API_KEY or OPENAI_API_KEY" >&2
         exit 1
       fi
+      scorer_args=(--scorer-url "https://api.openai.com/v1" --scorer-model "$GPT4O_MODEL")
       if [[ "$THINKING" != "on" ]]; then
-        scorer_thinking="--scorer-thinking=false"
+        scorer_thinking=(--scorer-thinking=false)
       fi
       ;;
     *)
@@ -127,11 +140,11 @@ run_judge() {
   "$BIN" score-efficient \
     --data "$DATA" \
     --out "$out_dir" \
-    --scorer-url "$scorer_url" \
-    --scorer-model "$scorer_model" \
     --scorer-api-key "$scorer_api_key" \
     --scorer-max-tokens "$SCORER_MAX_TOKENS" \
-    "$scorer_thinking" \
+    "${scorer_args[@]}" \
+    "${scorer_lock[@]}" \
+    "${scorer_thinking[@]}" \
     --workers "$WORKERS" \
     --preserve-correct
 }
@@ -160,6 +173,8 @@ correct, partial, total = _overall(report)
 overall_strict = ratio(correct, total)
 overall_lenient = ratio(correct + partial, total)
 
+if report.get("scorer_version"):
+    print("Scorer version: %s" % report["scorer_version"])
 print("Overall strict: %.2f%% (%d/%d)" % (overall_strict, correct, total))
 print("Overall lenient: %.2f%% (%d/%d)" % (overall_lenient, correct + partial, total))
 
@@ -195,20 +210,18 @@ if [[ "$BUNDLE" == "1" ]]; then
   if [[ -n "$COMPARE" ]]; then
     print_summary "$COMPARE/score_report.json" "compare baseline"
   fi
-  exit 0
-fi
+else
+  run_judge "$JUDGE" "$RUN_DIR"
+  print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
 
-run_judge "$JUDGE" "$RUN_DIR"
-print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
+  if [[ -n "$COMPARE" ]]; then
+    compare_path="$COMPARE/score_report.json"
+    if [[ ! -f "$compare_path" ]]; then
+      echo "ERROR: baseline report missing: $compare_path" >&2
+      exit 1
+    fi
 
-if [[ -n "$COMPARE" ]]; then
-  compare_path="$COMPARE/score_report.json"
-  if [[ ! -f "$compare_path" ]]; then
-    echo "ERROR: baseline report missing: $compare_path" >&2
-    exit 1
-  fi
-
-  python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
+    python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
 import json
 import sys
 
@@ -238,4 +251,5 @@ print("Delta vs baseline:")
 print("  strict:  %+0.2f%% (%+0.2f vs %+0.2f)" % (new_strict - old_strict, new_strict, old_strict))
 print("  lenient: %+0.2f%% (%+0.2f vs %+0.2f)" % (new_lenient - old_lenient, new_lenient, old_lenient))
 PY
+  fi
 fi

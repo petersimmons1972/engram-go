@@ -188,6 +188,7 @@ func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
 	cfg := &Config{
 		OutDir:          t.TempDir(),
 		RunID:           "judge-metadata-test",
+		ScorerVersion:   "tier1-qwen3-32b-nonthinking-v1",
 		ScorerURL:       "https://api.openai.com/v1",
 		ScorerModel:     "gpt-4o-2024-11-20",
 		ScorerThinking:  false,
@@ -208,6 +209,7 @@ func TestWriteScoreReport_RecordsJudgeAttributionMetadata(t *testing.T) {
 		t.Fatalf("parse report: %v", err)
 	}
 	for key, want := range map[string]any{
+		"scorer_version":    cfg.ScorerVersion,
 		"scorer_model":      cfg.ScorerModel,
 		"scorer_thinking":   cfg.ScorerThinking,
 		"scorer_max_tokens": cfg.ScorerMaxTokens,

@@ -68,15 +68,16 @@ type RunEntry struct {
 
 // ScoreEntry is one line written to checkpoint-score.jsonl.
 type ScoreEntry struct {
-	QuestionID   string `json:"question_id"`
-	QuestionType string `json:"question_type"`
-	Hypothesis   string `json:"hypothesis"`
-	ScoreLabel   string `json:"score_label"` // CORRECT | PARTIALLY_CORRECT | INCORRECT
-	Explanation  string `json:"explanation"`
-	Status       string `json:"status"`
-	Error        string `json:"error,omitempty"`
-	ScorerModel  string `json:"scorer_model,omitempty"`
-	ScorerURL    string `json:"scorer_url,omitempty"`
+	QuestionID    string `json:"question_id"`
+	QuestionType  string `json:"question_type"`
+	Hypothesis    string `json:"hypothesis"`
+	ScoreLabel    string `json:"score_label"` // CORRECT | PARTIALLY_CORRECT | INCORRECT
+	Explanation   string `json:"explanation"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+	ScorerVersion string `json:"scorer_version,omitempty"`
+	ScorerModel   string `json:"scorer_model,omitempty"`
+	ScorerURL     string `json:"scorer_url,omitempty"`
 	// ScorerThinking reports whether judge requests enabled chain-of-thought.
 	ScorerThinking bool `json:"scorer_thinking"`
 	// ScorerMaxTokens is the max_tokens value sent to the scoring request.

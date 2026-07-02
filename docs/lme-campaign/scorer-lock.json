@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scorer_version": "tier1-qwen3-32b-nonthinking-v1",
+  "campaign": "duramind-m0",
+  "owner_repo": "petersimmons1972/engram-go",
+  "locked_at": "2026-07-02",
+  "qualification_report": "docs/lme-campaign/scorer-qualification-2026-07-02.md",
+  "tier1": {
+    "backend": "Spark/olla",
+    "served_model": "Qwen3-32B",
+    "scorer_url": "http://192.168.0.138:30411/olla/openai/v1",
+    "scorer_model": "inference",
+    "scorer_thinking": false,
+    "scorer_max_tokens": 2048,
+    "preserve_correct": true,
+    "force_rescore": false
+  }
+}

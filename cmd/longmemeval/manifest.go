@@ -130,6 +130,7 @@ func writeRunManifest(
 		"git_dirty":             bestEffortGitDirty(),
 		"llm_url":               redactURL(cfg.LLMBaseURL),
 		"llm_model":             cfg.LLMModel,
+		"scorer_version":        cfg.ScorerVersion,
 		"scorer_url":            redactURL(cfg.ScorerURL),
 		"scorer_model":          cfg.ScorerModel,
 	}
@@ -179,6 +180,7 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		"server_url":            redactURL(cfg.ServerURL),
 		"llm_url":               redactURL(cfg.LLMBaseURL),
 		"llm_model":             cfg.LLMModel,
+		"scorer_version":        cfg.ScorerVersion,
 		"scorer_url":            redactURL(cfg.ScorerURL),
 		"scorer_model":          cfg.ScorerModel,
 		"lock_file":             statusLockFile(cfg),
@@ -189,6 +191,7 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 			"server_url":   redactURL(cfg.ServerURL),
 			"llm_url":      redactURL(cfg.LLMBaseURL),
 			"llm_model":    cfg.LLMModel,
+			"scorer_version": cfg.ScorerVersion,
 			"scorer_url":   redactURL(cfg.ScorerURL),
 			"scorer_model": cfg.ScorerModel,
 		},
