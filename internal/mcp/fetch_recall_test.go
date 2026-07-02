@@ -353,6 +353,45 @@ func TestHandleMemoryRecall_RecordEventOptInRecordsRetrievalEvent(t *testing.T) 
 	require.Equal(t, int64(1), backend.increments.Load())
 }
 
+// TestHandleMemoryRecall_EventIDRoundTripsToMemoryFeedback is the regression
+// test for #1259: memory_feedback's event_id parameter is documented as "the
+// id returned by memory_recall", but that id is only populated when the
+// recall call opts in via record_event=true. This test drives the full
+// round trip — recall with record_event=true, extract event_id from the
+// response, and feed it back into memory_feedback — to prove the documented
+// contract actually works end to end.
+func TestHandleMemoryRecall_EventIDRoundTripsToMemoryFeedback(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+
+	recallReq := mcpgo.CallToolRequest{}
+	recallReq.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "round trip event id to feedback",
+		"record_event": true,
+	}
+	recallRes, err := handleMemoryRecall(context.Background(), pool, recallReq, testConfig())
+	require.NoError(t, err)
+	recallOut := parseRecallResult(t, recallRes)
+
+	eventID, ok := recallOut["event_id"].(string)
+	require.True(t, ok, "event_id must be present and a string when record_event=true")
+	require.NotEmpty(t, eventID)
+	require.Equal(t, "Call memory_feedback with this event_id and the memory_ids you used", recallOut["feedback_hint"])
+
+	feedbackReq := mcpgo.CallToolRequest{}
+	feedbackReq.Params.Arguments = map[string]any{
+		"project":    "test",
+		"event_id":   eventID,
+		"memory_ids": []any{"mem-1"},
+	}
+	feedbackRes, err := handleMemoryFeedback(context.Background(), pool, feedbackReq)
+	require.NoError(t, err, "memory_feedback must accept the event_id returned by memory_recall")
+	feedbackOut := parseRecallResult(t, feedbackRes)
+	require.Equal(t, "recorded", feedbackOut["status"])
+	require.Equal(t, float64(1), feedbackOut["count"])
+}
+
 func TestHandleMemoryRecall_HandleModeRecordEventReturnsFeedbackEvent(t *testing.T) {
 	backend := &recallTrackingBackend{}
 	pool := newRecallTrackingPool(t, backend)

@@ -229,9 +229,14 @@ memory_aggregate(by="failure_class")
 
 When `memory_recall` returns nothing useful, log the miss with a failure class. This feeds the retrieval quality benchmark and makes future recall better.
 
+`event_id` only appears in `memory_recall`'s response when the call passes `record_event=true` (off by default so plain recall stays side-effect free). Pass it through when you plan to follow up with `memory_feedback`:
+
 ```python
+memory_recall(query="deployment runbook", project="myapp", record_event=True)
+# → {..., event_id: "0197f3c1-...", feedback_hint: "Call memory_feedback with this event_id and the memory_ids you used"}
+
 memory_feedback(
-    event_id="<id from recall>",
+    event_id="<event_id from recall>",
     memory_ids=[],
     failure_class="vocabulary_mismatch"  # or: aggregation_failure, stale_ranking,
                                           #     missing_content, scope_mismatch, other

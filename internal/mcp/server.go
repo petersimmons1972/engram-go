@@ -270,7 +270,6 @@ func readOnlyToolNames() map[string]bool {
 		"memory_export_all":         true,
 		"memory_audit_list_queries": true,
 		"memory_audit_compare":      true,
-		"memory_audit_run":          true,
 		"memory_weight_history":     true,
 		"memory_ingest_status":      true,
 		"memory_expand":             true,
@@ -1260,7 +1259,7 @@ func (s *Server) registerTools() {
 		{"memory_store_batch", "Store multiple memories in one call. Each item supports the same optional fields as memory_store, including pattern_confidence (float 0.0–1.0) for per-item caller-provided confidence. If any item fails validation the entire batch is rejected." + embedSuffix,
 			handleMemoryStoreBatch},
 		// Recall and retrieval
-		{"memory_recall", "Recall memories by semantic + full-text query. Accepts top_k or limit; mode=handle returns lightweight handles." + embedSuffix,
+		{"memory_recall", "Recall memories by semantic + full-text query. Accepts top_k or limit; mode=handle returns lightweight handles. Pass record_event=true to receive an event_id in the response for use with memory_feedback (off by default so recall stays side-effect free)." + embedSuffix,
 			withWarnLog("memory_recall", handleMemoryRecall)},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
 			handleMemoryFetch},
@@ -1292,7 +1291,7 @@ func (s *Server) registerTools() {
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
 			noConfig(handleMemoryVerify)},
 		// Feedback and aggregation
-		{"memory_feedback", "Record retrieval feedback. failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
+		{"memory_feedback", "Record retrieval feedback. event_id: the id returned by memory_recall's response when called with record_event=true (required when failure_class is set). failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
 			noConfig(handleMemoryFeedback)},
 		{"memory_aggregate", "Group and count memories. by=tag|type|failure_class. filter: optional ILIKE substring — tag mode only, error for failure_class.",
 			noConfig(handleMemoryAggregate)},
