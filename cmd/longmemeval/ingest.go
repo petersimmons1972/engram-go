@@ -131,13 +131,22 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 	memoryMap := make(map[string]string, len(sessions))
 	for i, s := range sessions {
 		contents := []string{s.item.Content}
-		if cfg.BlockOverlapChars > 0 {
+		if cfg.TurnBoundary || cfg.BlockOverlapChars > 0 {
 			const charsPerToken = 4
-			contents = chunk.ChunkText(
-				s.item.Content,
-				chunk.LazyChunkThreshold/charsPerToken,
-				cfg.BlockOverlapChars/charsPerToken,
-			)
+			overlapTokens := cfg.BlockOverlapChars / charsPerToken
+			if cfg.TurnBoundary {
+				contents = chunk.ChunkTextTurnBoundary(
+					s.item.Content,
+					chunk.LazyChunkThreshold/charsPerToken,
+					overlapTokens,
+				)
+			} else {
+				contents = chunk.ChunkText(
+					s.item.Content,
+					chunk.LazyChunkThreshold/charsPerToken,
+					overlapTokens,
+				)
+			}
 		}
 
 		for j, content := range contents {

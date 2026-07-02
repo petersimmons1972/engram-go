@@ -21,7 +21,9 @@ PRs submitted by any AI-assisted development (Claude Code, Cursor, GitHub Copilo
 2. **Coverage** — ≥ 70% function coverage on new files, complete tests for exported APIs
 3. **Structural** — fresh-eyes review, architecture fit, naming clarity, complexity
 
-**Merge gate:** All three must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
+**Reporting completeness:** Each pass reports every issue it finds — including low-confidence and low-severity ones — tagged with its own severity. Do not filter for importance at finding time; severity classification happens per-finding, and the merge gate below is a separate downstream decision applied *after* all findings are in, not an instruction to withhold anything. This is a deliberate guard against literal-instruction-following models (documented on Claude Sonnet 5) that read "the gate is blockers" as "only report blockers" and silently under-report — same underlying detection, lower measured recall.
+
+**Merge gate:** Applied after all findings are reported. All three must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
 
 **Tools are tools:** Use Claude Code, GitHub Copilot, or any AI assistance freely. Label the PR `ai-generated` upfront. Depth of review, not prohibition on AI use, is the control.
 

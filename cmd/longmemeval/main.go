@@ -65,6 +65,7 @@ type Config struct {
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
 	BlockOverlapChars   int  // ingest-time pre-chunk overlap in chars; 0 = disabled
+	TurnBoundary        bool // ingest-time turn-boundary-aware chunking; respects user/assistant delimiters
 	RepairPreset        string
 
 	// H16: question_date injection
@@ -252,6 +253,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
 	fs.IntVar(&cfg.BlockOverlapChars, "block-overlap-chars", 0, "pre-chunk ingest sessions with this many overlap chars before QuickStore; 0 = disabled")
+	fs.BoolVar(&cfg.TurnBoundary, "turn-boundary", false, "pre-chunk ingest sessions respecting user/assistant turn boundaries; composable with --block-overlap-chars")
 	fs.StringVar(&cfg.RepairPreset, "repair-preset", "", "named LongMemEval repair preset to enable known repair switches: recall-repair")
 	// H16: prepend question_date as first line of temporal-reasoning prompts
 	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")

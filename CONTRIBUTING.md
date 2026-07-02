@@ -146,7 +146,9 @@ PRs submitted by AI agents, code generation tools, or LLM-assisted development m
 2. **Coverage Review** — at minimum 70% function coverage on new files, complete test for every exported API
 3. **Structural Review** — fresh-eyes perspective, architecture alignment, naming clarity, no unnecessary complexity
 
-All three reviews must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
+**Reporting completeness:** Each review reports every issue it finds — including low-confidence and low-severity ones — tagged with its own severity. Do not filter for importance at finding time; severity classification happens per-finding, and the merge gate below is a separate downstream decision applied *after* all findings are in, not an instruction to withhold anything. This guards against literal-instruction-following models (documented on Claude Sonnet 5) that read "the gate is blockers" as "only report blockers" and silently under-report — same underlying detection, lower measured recall.
+
+**Merge gate (applied after all findings are reported):** All three reviews must return zero `severity/blocker` findings. `severity/nice-to-have` findings are tracked as issues but do not block merge.
 
 **Why?** PR #162 (April 2026) was AI-generated. It passed syntax checks. It had:
 - Four logic bugs (two off-by-one errors, one nil dereference, one panic on edge case)
