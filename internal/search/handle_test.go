@@ -70,16 +70,31 @@ func TestToHandles_NilSummaryEmptyContentStaysEmpty(t *testing.T) {
 // TestToHandles_NilSummaryLongContentTruncatedWithEllipsis is the boundary
 // condition: content over 500 bytes is truncated with a trailing ellipsis,
 // matching the existing detail="summary" fallback convention used elsewhere
-// in this package (see the "summary" case in RecallWithOpts).
+// in this package (see the "summary" case in RecallWithOpts). Exact-boundary
+// cases at 499/500/501 bytes pin the threshold to strictly-greater-than 500:
+// a `>= 500` mutation must fail the 500-byte case.
 func TestToHandles_NilSummaryLongContentTruncatedWithEllipsis(t *testing.T) {
-	long := strings.Repeat("a", 600)
-	results := []types.SearchResult{
-		{Memory: &types.Memory{ID: "x", Project: "p", Content: long}, Score: 0.5},
+	cases := []struct {
+		name        string
+		contentLen  int
+		wantSummary func(content string) string
+	}{
+		{"under boundary (499) not truncated", 499, func(c string) string { return c }},
+		{"at boundary (500) not truncated", 500, func(c string) string { return c }},
+		{"over boundary (501) truncated with ellipsis", 501, func(c string) string { return c[:500] + "…" }},
+		{"well over boundary (600) truncated with ellipsis", 600, func(c string) string { return c[:500] + "…" }},
 	}
-	handles := search.ToHandles(results)
-	require.Len(t, handles, 1)
-	require.Equal(t, strings.Repeat("a", 500)+"…", handles[0].Summary)
-	require.Len(t, handles[0].Summary, 503) // 500 bytes + 3-byte "…" (UTF-8)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content := strings.Repeat("a", tc.contentLen)
+			results := []types.SearchResult{
+				{Memory: &types.Memory{ID: "x", Project: "p", Content: content}, Score: 0.5},
+			}
+			handles := search.ToHandles(results)
+			require.Len(t, handles, 1)
+			require.Equal(t, tc.wantSummary(content), handles[0].Summary)
+		})
+	}
 }
 
 func TestToHandles_NilMemorySkipped(t *testing.T) {
