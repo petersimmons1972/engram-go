@@ -202,14 +202,10 @@ func ToHandles(results []types.SearchResult) []types.Handle {
 		if r.Memory == nil {
 			continue
 		}
-		sum := ""
-		if r.Memory.Summary != nil {
-			sum = *r.Memory.Summary
-		}
 		out = append(out, types.Handle{
 			ID:          r.Memory.ID,
 			Project:     r.Memory.Project,
-			Summary:     sum,
+			Summary:     handleSummaryFallback(r.Memory),
 			Tags:        r.Memory.Tags,
 			Score:       r.Score,
 			StorageMode: r.Memory.StorageMode,
@@ -219,6 +215,24 @@ func ToHandles(results []types.SearchResult) []types.Handle {
 		})
 	}
 	return out
+}
+
+// handleSummaryFallback returns the memory's background-summarizer summary
+// when available. When it is nil — e.g. a recently-stored memory that the
+// async summarizer worker (internal/summarize/worker.go, ~30s poll interval)
+// has not yet processed — it falls back to a truncated content excerpt so
+// handle-mode triage still has something useful to look at instead of an
+// empty string (#1260). Mirrors the existing detail="summary" fallback used
+// for full recall results (see the "summary" case above).
+func handleSummaryFallback(m *types.Memory) string {
+	if m.Summary != nil {
+		return *m.Summary
+	}
+	content := m.Content
+	if len(content) > 500 {
+		content = content[:500] + "…"
+	}
+	return content
 }
 
 // MergeCandidate is a pair of memories with their similarity score.
