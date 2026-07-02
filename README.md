@@ -1,4 +1,3 @@
-<!-- verify: review-gate-relaxed 2026-05-24 -->
 ![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go&logoColor=white) ![License](https://img.shields.io/badge/License-GPL%20v3-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-SSE-purple) ![Version](https://img.shields.io/badge/Version-3.1.0-green)
 
 <p align="center"><img src="docs/hero.svg" alt="Engram — Persistent Memory for AI Agents" width="100%"></p>
