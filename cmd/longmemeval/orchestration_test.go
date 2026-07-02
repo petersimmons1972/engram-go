@@ -345,6 +345,99 @@ func TestDispatchScoreWritesRunStatus(t *testing.T) {
 	}
 }
 
+func TestDispatchScoreEfficientWritesTaggedRunArtifacts(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Project: "lme-score-efficient-q001", Status: "done", MemoryMap: map[string]string{"m1": "sid-a"}},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done", RetrievedIDs: []string{"m1"}},
+	})
+
+	scorer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+		case "/chat/completions":
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"CORRECT\nExact match."}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer scorer.Close()
+
+	lockPath := filepath.Join(dir, "scorer-lock.json")
+	lockData := []byte(`{"schema_version":1,"scorer_version":"tier1-qwen3-32b-nonthinking-v1","tier1":{"scorer_url":"` + scorer.URL + `","scorer_model":"test-model","scorer_thinking":false,"scorer_max_tokens":2048}}`)
+	if err := os.WriteFile(lockPath, lockData, 0o644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{
+		"longmemeval",
+		"score-efficient",
+		"--data", dataPath,
+		"--out", dir,
+		"--workers", "1",
+		"--run-id", "score-efficient-run",
+		"--scorer-lock", lockPath,
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch exit = %d, want 0; stderr=%s", exit, stderr.String())
+	}
+
+	reportData, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(reportData, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+	if report["scorer_version"] != "tier1-qwen3-32b-nonthinking-v1" {
+		t.Fatalf("score_report scorer_version = %v, want tier1-qwen3-32b-nonthinking-v1", report["scorer_version"])
+	}
+
+	statusData, err := os.ReadFile(filepath.Join(dir, "RUN_STATUS.json"))
+	if err != nil {
+		t.Fatalf("read RUN_STATUS.json: %v", err)
+	}
+	var status map[string]any
+	if err := json.Unmarshal(statusData, &status); err != nil {
+		t.Fatalf("parse RUN_STATUS.json: %v", err)
+	}
+	if status["stage"] != "score-efficient" {
+		t.Fatalf("stage = %v, want score-efficient", status["stage"])
+	}
+	if status["scorer_version"] != "tier1-qwen3-32b-nonthinking-v1" {
+		t.Fatalf("RUN_STATUS scorer_version = %v, want tier1-qwen3-32b-nonthinking-v1", status["scorer_version"])
+	}
+
+	manifestData, err := os.ReadFile(filepath.Join(dir, "run_manifest.json"))
+	if err != nil {
+		t.Fatalf("read run_manifest.json: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("parse run_manifest.json: %v", err)
+	}
+	if manifest["stage"] != "score-efficient" {
+		t.Fatalf("run_manifest stage = %v, want score-efficient", manifest["stage"])
+	}
+	if manifest["scorer_version"] != "tier1-qwen3-32b-nonthinking-v1" {
+		t.Fatalf("run_manifest scorer_version = %v, want tier1-qwen3-32b-nonthinking-v1", manifest["scorer_version"])
+	}
+}
+
 func TestDispatchScoreRunStatusUsesCheckpointProjectProvenance(t *testing.T) {
 	dir := t.TempDir()
 

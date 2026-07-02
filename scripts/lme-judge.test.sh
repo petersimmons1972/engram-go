@@ -26,7 +26,7 @@ assert_exit() {
 
 assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -qF "$needle"; then
+  if echo "$haystack" | grep -qF -- "$needle"; then
     echo "✓ PASS: $desc"
     PASS=$((PASS + 1))
   else
@@ -49,6 +49,12 @@ mkdir -p "$run_dir"
 out=$(bash "$SCRIPT" --run "$run_dir" 2>&1); rc=$?
 assert_exit "judge required without --bundle" 2 "$rc"
 assert_contains "judge required message" "required when --bundle is not set" "$out"
+
+lock_path="$tmp/scorer-lock.json"
+printf '%s\n' '{"schema_version":1,"scorer_version":"tier1-qwen3-32b-nonthinking-v1","tier1":{"scorer_url":"http://127.0.0.1:1/v1","scorer_model":"inference","scorer_thinking":false,"scorer_max_tokens":2048}}' > "$lock_path"
+out=$(BIN=/bin/true LOCK_PATH="$lock_path" bash "$SCRIPT" --run "$run_dir" --judge qwen3 --thinking on 2>&1); rc=$?
+assert_exit "qwen3 thinking-on is rejected by scorer lock" 1 "$rc"
+assert_contains "qwen3 lock rejection message" "requires --thinking=off" "$out"
 
 rm -rf "$tmp"
 

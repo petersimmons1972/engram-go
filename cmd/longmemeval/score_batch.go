@@ -101,12 +101,13 @@ func runScoreBatch(cfg *Config) int {
 			}
 			item := itemMap[bi.QuestionID]
 			ckptCh <- longmemeval.ScoreEntry{
-				QuestionID:   bi.QuestionID,
-				QuestionType: item.QuestionType,
-				Hypothesis:   bi.Hypothesis,
-				ScoreLabel:   r.Label,
-				Explanation:  r.Explanation,
-				Status:       "done",
+				QuestionID:    bi.QuestionID,
+				QuestionType:  item.QuestionType,
+				Hypothesis:    bi.Hypothesis,
+				ScoreLabel:    r.Label,
+				Explanation:   r.Explanation,
+				Status:        "done",
+				ScorerVersion: cfg.ScorerVersion,
 			}
 			log.Printf("score-batch [%s] label=%s", bi.QuestionID, r.Label)
 		}
@@ -126,6 +127,7 @@ func runScoreBatch(cfg *Config) int {
 		return 1
 	}
 	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
+	writeRunManifest(cfg, "score-batch", itemMap, ingestMap, runMap, allScores)
 	log.Printf("score-batch: complete")
 	return 0
 }

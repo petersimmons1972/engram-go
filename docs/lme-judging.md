@@ -2,6 +2,20 @@
 
 Use this doc to produce judge-attributed, repeatable LME scores.
 
+## Locked Tier-1 scorer
+
+Repeatable campaign runs must use the scorer lock at [docs/lme-campaign/scorer-lock.json](./lme-campaign/scorer-lock.json).
+
+- Locked scorer version: `tier1-qwen3-32b-nonthinking-v1`
+- Harness stage: `score-efficient`
+- Backend: Spark/olla
+- Mode: Qwen3-32B, non-thinking, `max_tokens=2048`
+
+The lock is the single source of truth for `--scorer-url`, `--scorer-model`,
+`--scorer-thinking`, and `--scorer-max-tokens`. `score-efficient` now records
+`scorer_version` into `checkpoint-score.jsonl`, `score_report.json`,
+`run_manifest.json`, and `RUN_STATUS.json`.
+
 ## One-command judge harness
 
 The harness entrypoint is `scripts/lme-judge.sh`:
@@ -17,9 +31,10 @@ Required arguments:
 
 Optional:
 
-- `--thinking on|off` (default `on`): pass through to `--scorer-thinking`.
+- `--thinking on|off` (default `off`): `qwen3` is pinned by the scorer lock and must stay `off`; `gpt4o` passes through to `--scorer-thinking`.
 - `--compare <baseline-dir>`: print strict/lenient deltas against another run’s `score_report.json`.
 - `--bundle`: run both `qwen3` and `gpt4o` judges in one invocation. `qwen3` output lands in `--run/qwen3`, `gpt4o` in `--run/gpt4o`.
+- `LOCK_PATH=<path>`: override the scorer-lock manifest path (defaults to `docs/lme-campaign/scorer-lock.json`).
 - `WORKERS=<n>`: worker count (environment override).
 - `SCORER_MAX_TOKENS=<n>`: score request budget.
 
@@ -29,11 +44,14 @@ Optional:
 
 Use for cheap wave-over-wave scoring:
 
-- URL: `http://192.168.0.138:30411/olla/openai/v1`
-- model: `inference`
+- Config source: `docs/lme-campaign/scorer-lock.json`
+- Version tag emitted in artifacts: `tier1-qwen3-32b-nonthinking-v1`
+- URL/model come from the lock and must not be overridden ad hoc
 - API key: none
 
-Qwen3 is a reasoning model and can be slower when chain-of-thought is enabled.
+Qwen3 thinking mode is explicitly disallowed for repeatable runs. The lock pins
+non-thinking mode because campaign history already showed lenient drift from a
+local thinking-enabled scorer.
 
 ### gpt-4o (comparability)
 
@@ -49,8 +67,8 @@ Use for published comparability snapshots:
 
 `lme-judge.sh` maps judge preset selection to:
 
-- `--scorer-url`
-- `--scorer-model`
+- `--scorer-lock` for `qwen3`
+- `--scorer-url` and `--scorer-model` for `gpt4o`
 - `--scorer-api-key` (optional)
 - `--scorer-thinking`
 - `--scorer-max-tokens`
@@ -79,6 +97,6 @@ Use both when comparing checkpoints, and keep `compare` deltas in CI notes.
 ## Recommended workflow
 
 1. Keep the judge constant across a wave before computing deltas.
-2. Use `qwen3` for regular iteration (`--think on` for realism, `--think off` for throughput).
+2. Use locked `qwen3` for regular iteration; future result references should cite `scorer_version`, not just a model family name.
 3. Use `gpt4o` only for a final comparability snapshot and publication.
 4. Only compare against a baseline scored with the same judge mode.

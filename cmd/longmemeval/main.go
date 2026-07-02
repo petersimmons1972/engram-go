@@ -45,6 +45,8 @@ type Config struct {
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
 	ScorerAPIKey    string // API key for score-efficient endpoint (env: LME_SCORER_API_KEY)
 	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
+	ScorerLockPath  string // path to scorer-lock.json
+	ScorerVersion   string // stable scorer provenance tag recorded in result artifacts
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
 	ScorerThinking  bool   // enable scorer chain-of-thought (default true)
@@ -355,8 +357,11 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.SetOutput(stderr)
 		sefs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
 		sefs.IntVar(&cfg.Workers, "workers", 4, "parallel workers")
+		sefs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
 		sefs.StringVar(&cfg.OutDir, "out", ".", "output directory")
 		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
+		sefs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer-lock.json; pins scorer URL/model/thinking/max-tokens")
+		sefs.StringVar(&cfg.ScorerVersion, "scorer-version", "", "stable scorer provenance tag written into result artifacts")
 		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
 		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
@@ -377,10 +382,48 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "--data is required")
 			return 1
 		}
+		if cfg.ScorerLockPath != "" {
+			lock, err := readScorerLock(cfg.ScorerLockPath)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "invalid --scorer-lock: %v\n", err)
+				return 1
+			}
+			if flagWasProvided(sefs, "scorer-version") && cfg.ScorerVersion != lock.ScorerVersion {
+				_, _ = fmt.Fprintf(stderr, "--scorer-version %q conflicts with --scorer-lock version %q\n", cfg.ScorerVersion, lock.ScorerVersion)
+				return 1
+			}
+			if flagWasProvided(sefs, "scorer-url") && cfg.ScorerURL != lock.Tier1.ScorerURL {
+				_, _ = fmt.Fprintf(stderr, "--scorer-url %q conflicts with --scorer-lock url %q\n", cfg.ScorerURL, lock.Tier1.ScorerURL)
+				return 1
+			}
+			if flagWasProvided(sefs, "scorer-model") && cfg.ScorerModel != lock.Tier1.ScorerModel {
+				_, _ = fmt.Fprintf(stderr, "--scorer-model %q conflicts with --scorer-lock model %q\n", cfg.ScorerModel, lock.Tier1.ScorerModel)
+				return 1
+			}
+			if flagWasProvided(sefs, "scorer-thinking") && cfg.ScorerThinking != lock.Tier1.ScorerThinking {
+				_, _ = fmt.Fprintf(stderr, "--scorer-thinking=%t conflicts with --scorer-lock thinking=%t\n", cfg.ScorerThinking, lock.Tier1.ScorerThinking)
+				return 1
+			}
+			if flagWasProvided(sefs, "scorer-max-tokens") && cfg.ScorerMaxTokens != lock.Tier1.ScorerMaxTokens {
+				_, _ = fmt.Fprintf(stderr, "--scorer-max-tokens=%d conflicts with --scorer-lock max_tokens=%d\n", cfg.ScorerMaxTokens, lock.Tier1.ScorerMaxTokens)
+				return 1
+			}
+			if flagWasProvided(sefs, "preserve-correct") && cfg.PreserveCorrect != lock.Tier1.PreserveCorrect {
+				_, _ = fmt.Fprintf(stderr, "--preserve-correct=%t conflicts with --scorer-lock preserve_correct=%t\n", cfg.PreserveCorrect, lock.Tier1.PreserveCorrect)
+				return 1
+			}
+			if flagWasProvided(sefs, "force-rescore") && cfg.ForceRescore != lock.Tier1.ForceRescore {
+				_, _ = fmt.Fprintf(stderr, "--force-rescore=%t conflicts with --scorer-lock force_rescore=%t\n", cfg.ForceRescore, lock.Tier1.ForceRescore)
+				return 1
+			}
+			loadScorerLock(cfg, cfg.ScorerLockPath)
+		}
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
 		}
-		return runScoreEfficient(cfg)
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			return runScoreEfficient(cfg)
+		})
 	}
 
 	// score-batch has its own flag set and early return.
@@ -388,6 +431,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sbfs := flag.NewFlagSet("score-batch", flag.ContinueOnError)
 		sbfs.SetOutput(stderr)
 		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
+		sbfs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
 		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
 		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
 		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
@@ -403,7 +447,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
 		}
-		return runScoreBatch(cfg)
+		return runStageWithStatus(cfg, subcommand, args, func() int {
+			return runScoreBatch(cfg)
+		})
 	}
 
 	if subcommand == "sample-prepare" {

@@ -505,6 +505,7 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		"run_error_total":       completeness.RunErrorTotal,
 		"score_error_total":     completeness.ScoreErrorTotal,
 		"complete":              completeness.Complete,
+		"scorer_version":        cfg.ScorerVersion,
 		"scorer_model":          cfg.ScorerModel,
 		"scorer_url":            scorerURL,
 		"scorer_thinking":       cfg.ScorerThinking,

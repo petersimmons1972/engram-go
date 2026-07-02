@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -95,6 +96,7 @@ func TestRunScoreEfficient_WritesRetrievalLogFromIngestCheckpoint(t *testing.T) 
 		Workers:         1,
 		Retries:         0,
 		RunID:           "testrun",
+		ScorerVersion:   "tier1-qwen3-32b-nonthinking-v1",
 		ScorerURL:       scorer.URL,
 		ScorerModel:     "test-model",
 		ScorerMaxTokens: longmemeval.DefaultScorerMaxTokens,
@@ -113,6 +115,14 @@ func TestRunScoreEfficient_WritesRetrievalLogFromIngestCheckpoint(t *testing.T) 
 	}
 	if !json.Valid(data[:len(data)-1]) && !json.Valid(data) {
 		t.Fatalf("retrieval_log.jsonl line is not valid JSON: %s", data)
+	}
+
+	scoreData, err := os.ReadFile(filepath.Join(dir, "checkpoint-score.jsonl"))
+	if err != nil {
+		t.Fatalf("read checkpoint-score.jsonl: %v", err)
+	}
+	if !bytes.Contains(scoreData, []byte(`"scorer_version":"tier1-qwen3-32b-nonthinking-v1"`)) {
+		t.Fatalf("checkpoint-score.jsonl missing scorer_version:\n%s", scoreData)
 	}
 }
 

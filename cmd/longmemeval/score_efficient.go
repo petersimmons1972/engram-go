@@ -141,6 +141,7 @@ func runScoreEfficient(cfg *Config) int {
 		return 1
 	}
 	writeOutputs(cfg, itemMap, ingestMap, runMap, allScores)
+	writeRunManifest(cfg, "score-efficient", itemMap, ingestMap, runMap, allScores)
 	log.Printf("score-efficient: complete")
 	return 0
 }
@@ -208,6 +209,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 			Explanation:     result.Explanation,
 			Status:          status,
 			Error:           errText,
+			ScorerVersion:   cfg.ScorerVersion,
 			ScorerModel:     cfg.ScorerModel,
 			ScorerURL:       cfg.ScorerURL,
 			ScorerThinking:  cfg.ScorerThinking,
