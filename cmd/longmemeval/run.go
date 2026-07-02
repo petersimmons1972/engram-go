@@ -756,6 +756,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// instead of replacing it.
 	// H-PE (--preference-enumerate) is orthogonal — it only fires for
 	// single-session-preference questions and is independent of the other flags.
+	// H-KUR (--ku-recency-prompt) is likewise orthogonal — it only fires for
+	// knowledge-update questions and is independent of the other flags.
 	var prompt string
 	switch {
 	case cfg.TemporalPromptAug:
@@ -766,6 +768,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		prompt = longmemeval.GenerationPromptForTypePreferenceEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	case cfg.PreferenceGround:
 		prompt = longmemeval.GenerationPromptForTypePreferenceGround(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
+	case cfg.KURecencyPrompt:
+		prompt = longmemeval.GenerationPromptForTypeKURecency(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
