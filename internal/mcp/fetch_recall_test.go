@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +52,13 @@ type recallTrackingBackend struct {
 	noopBackend
 	storedEvents atomic.Int64
 	increments   atomic.Int64
+	// lastEventID is the ID of the most recent event passed to
+	// StoreRetrievalEvent. RecordFeedback validates against it so feedback
+	// with an event_id that recall never issued fails, mirroring
+	// PostgresBackend.RecordFeedback's "retrieval event %q not found" error
+	// (internal/db/postgres_feedback.go). Without this, the #1259 round-trip
+	// test would pass with any fabricated UUID.
+	lastEventID atomic.Value // string
 }
 
 func (b *recallTrackingBackend) FTSSearch(_ context.Context, project, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
@@ -66,8 +74,19 @@ func (b *recallTrackingBackend) FTSSearch(_ context.Context, project, _ string, 
 	}}, nil
 }
 
-func (b *recallTrackingBackend) StoreRetrievalEvent(_ context.Context, _ *types.RetrievalEvent) error {
+func (b *recallTrackingBackend) StoreRetrievalEvent(_ context.Context, event *types.RetrievalEvent) error {
 	b.storedEvents.Add(1)
+	b.lastEventID.Store(event.ID)
+	return nil
+}
+
+// RecordFeedback fails for event IDs that were never stored via
+// StoreRetrievalEvent, matching PostgresBackend.RecordFeedback's behavior
+// when GetRetrievalEvent returns nil.
+func (b *recallTrackingBackend) RecordFeedback(_ context.Context, eventID string, _ []string) error {
+	if stored, _ := b.lastEventID.Load().(string); stored == "" || stored != eventID {
+		return fmt.Errorf("retrieval event %q not found", eventID)
+	}
 	return nil
 }
 
@@ -351,6 +370,82 @@ func TestHandleMemoryRecall_RecordEventOptInRecordsRetrievalEvent(t *testing.T) 
 	require.NotEmpty(t, out["event_id"], "record_event=true should return a feedback event")
 	require.Equal(t, int64(1), backend.storedEvents.Load())
 	require.Equal(t, int64(1), backend.increments.Load())
+}
+
+// TestHandleMemoryRecall_EventIDRoundTripsToMemoryFeedback is the regression
+// test for #1259: memory_feedback's event_id parameter is documented as "the
+// id returned by memory_recall", but that id is only populated when the
+// recall call opts in via record_event=true. This test drives the full
+// round trip — recall with record_event=true, extract event_id from the
+// response, and feed it back into memory_feedback — to prove the documented
+// contract actually works end to end.
+func TestHandleMemoryRecall_EventIDRoundTripsToMemoryFeedback(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+
+	recallReq := mcpgo.CallToolRequest{}
+	recallReq.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "round trip event id to feedback",
+		"record_event": true,
+	}
+	recallRes, err := handleMemoryRecall(context.Background(), pool, recallReq, testConfig())
+	require.NoError(t, err)
+	recallOut := parseRecallResult(t, recallRes)
+
+	eventID, ok := recallOut["event_id"].(string)
+	require.True(t, ok, "event_id must be present and a string when record_event=true")
+	require.NotEmpty(t, eventID)
+	require.Equal(t, "Call memory_feedback with this event_id and the memory_ids you used", recallOut["feedback_hint"])
+
+	feedbackReq := mcpgo.CallToolRequest{}
+	feedbackReq.Params.Arguments = map[string]any{
+		"project":    "test",
+		"event_id":   eventID,
+		"memory_ids": []any{"mem-1"},
+	}
+	feedbackRes, err := handleMemoryFeedback(context.Background(), pool, feedbackReq)
+	require.NoError(t, err, "memory_feedback must accept the event_id returned by memory_recall")
+	feedbackOut := parseRecallResult(t, feedbackRes)
+	require.Equal(t, "recorded", feedbackOut["status"])
+	require.Equal(t, float64(1), feedbackOut["count"])
+}
+
+// TestHandleMemoryFeedback_UnknownEventIDFails is the negative counterpart of
+// the #1259 round-trip test: a syntactically valid UUID that memory_recall
+// never issued must be rejected, mirroring PostgresBackend.RecordFeedback's
+// "retrieval event %q not found" behavior. This guards the round-trip test
+// itself — if the fake backend accepted any UUID, the round trip would prove
+// nothing about the recall → feedback contract.
+func TestHandleMemoryFeedback_UnknownEventIDFails(t *testing.T) {
+	backend := &recallTrackingBackend{}
+	pool := newRecallTrackingPool(t, backend)
+
+	// Record a real event first so the backend has a known-good ID on file.
+	recallReq := mcpgo.CallToolRequest{}
+	recallReq.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "round trip event id to feedback",
+		"record_event": true,
+	}
+	recallRes, err := handleMemoryRecall(context.Background(), pool, recallReq, testConfig())
+	require.NoError(t, err)
+	recallOut := parseRecallResult(t, recallRes)
+	realEventID, _ := recallOut["event_id"].(string)
+	require.NotEmpty(t, realEventID)
+
+	// A valid UUID that recall never returned must fail.
+	fabricated := "018f3c6e-1111-7222-8333-444455556666"
+	require.NotEqual(t, realEventID, fabricated)
+	feedbackReq := mcpgo.CallToolRequest{}
+	feedbackReq.Params.Arguments = map[string]any{
+		"project":    "test",
+		"event_id":   fabricated,
+		"memory_ids": []any{"mem-1"},
+	}
+	_, err = handleMemoryFeedback(context.Background(), pool, feedbackReq)
+	require.Error(t, err, "memory_feedback must reject an event_id that recall never issued")
+	require.Contains(t, err.Error(), "not found")
 }
 
 func TestHandleMemoryRecall_HandleModeRecordEventReturnsFeedbackEvent(t *testing.T) {
