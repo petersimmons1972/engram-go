@@ -13,6 +13,110 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+// ---------------------------------------------------------------------------
+// resolveContextTopK / resolveSessionDiversityOverride (issue #1176:
+// per-session retrieval diversity cap + per-type context_topk override for
+// single-session-preference).
+// ---------------------------------------------------------------------------
+
+// TestResolveContextTopK_SSPrefOverrideAppliesOnlyToSSPref verifies that
+// --ss-pref-context-topk raises the window only for single-session-preference
+// questions; other types keep using ContextTopKForTypeWithBump.
+func TestResolveContextTopK_SSPrefOverrideAppliesOnlyToSSPref(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	cases := []struct {
+		questionType string
+		want         int
+	}{
+		{"single-session-preference", 25},
+		{"single-session-user", 15},
+		{"multi-session", 15},
+		{"knowledge-update", 8},
+	}
+	for _, c := range cases {
+		got := resolveContextTopK(cfg, c.questionType, false, 1000)
+		if got != c.want {
+			t.Errorf("resolveContextTopK(%q) = %d, want %d", c.questionType, got, c.want)
+		}
+	}
+}
+
+// TestResolveContextTopK_SSPrefOverrideOffIsNoOp verifies default (0) leaves
+// single-session-preference at the existing per-type default (15) — no
+// behavior change when the flag is unset (baseline-safe).
+func TestResolveContextTopK_SSPrefOverrideOffIsNoOp(t *testing.T) {
+	cfg := &Config{}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 1000)
+	if got != 15 {
+		t.Errorf("resolveContextTopK() = %d, want 15 (unchanged baseline)", got)
+	}
+}
+
+// TestResolveContextTopK_GlobalOverrideWinsOverSSPref verifies --context-topk
+// (the existing global override) still takes priority over the new
+// --ss-pref-context-topk knob — the global "kitchen sink" flag must not be
+// silently shadowed by the narrower one.
+func TestResolveContextTopK_GlobalOverrideWinsOverSSPref(t *testing.T) {
+	cfg := &Config{ContextTopKOverride: 30, SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 1000)
+	if got != 30 {
+		t.Errorf("resolveContextTopK() = %d, want 30 (global override wins)", got)
+	}
+}
+
+// TestResolveContextTopK_FullAggregationWinsOverSSPref verifies the
+// full-aggregation-context path (H8) still takes priority over the new
+// ss-pref override.
+func TestResolveContextTopK_FullAggregationWinsOverSSPref(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", true, 42)
+	if got != 42 {
+		t.Errorf("resolveContextTopK() = %d, want 42 (full-aggregation retrieved count)", got)
+	}
+}
+
+// TestResolveContextTopK_ClampsToRetrievedCount verifies the result never
+// exceeds how many IDs were actually retrieved, matching the existing
+// clamp behavior in runItem's inline contextLimit logic.
+func TestResolveContextTopK_ClampsToRetrievedCount(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 3)
+	if got != 3 {
+		t.Errorf("resolveContextTopK() = %d, want 3 (clamped to retrieved count)", got)
+	}
+}
+
+// TestResolveSessionDiversityOverride_SSPrefOnly verifies the override value
+// is returned only for single-session-preference questions.
+func TestResolveSessionDiversityOverride_SSPrefOnly(t *testing.T) {
+	cfg := &Config{SSPrefSessionDiversityN: 1}
+	cases := []struct {
+		questionType string
+		want         int
+	}{
+		{"single-session-preference", 1},
+		{"single-session-user", 0},
+		{"multi-session", 0},
+		{"", 0},
+	}
+	for _, c := range cases {
+		got := resolveSessionDiversityOverride(cfg, c.questionType)
+		if got != c.want {
+			t.Errorf("resolveSessionDiversityOverride(%q) = %d, want %d", c.questionType, got, c.want)
+		}
+	}
+}
+
+// TestResolveSessionDiversityOverride_OffByDefault verifies the flag is
+// baseline-safe: when SSPrefSessionDiversityN is 0 (unset), no override is
+// ever applied, regardless of question type.
+func TestResolveSessionDiversityOverride_OffByDefault(t *testing.T) {
+	cfg := &Config{}
+	if got := resolveSessionDiversityOverride(cfg, "single-session-preference"); got != 0 {
+		t.Errorf("resolveSessionDiversityOverride() = %d, want 0 (flag unset)", got)
+	}
+}
+
 // TestRunLogFormat_ErrorIncludesCause verifies that when runOne returns an
 // error entry, the log message format string produced by runWorker would
 // include the error cause — not just hypothesis_len=0.
@@ -380,6 +484,23 @@ func TestDualPreferenceRecallFlag_DefaultOff(t *testing.T) {
 	}
 	if !strings.Contains(string(src), `"dual-preference-recall", false`) {
 		t.Error("main.go: --dual-preference-recall must be opt-in (default false)")
+	}
+}
+
+// TestSSPrefFlags_DefaultOff verifies both issue #1176 flags are registered
+// as opt-in (default 0) so an unmodified `run` invocation is byte-identical
+// to pre-#1176 behavior.
+func TestSSPrefFlags_DefaultOff(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, `"ss-pref-session-diversity-n", 0`) {
+		t.Error("main.go: --ss-pref-session-diversity-n must be opt-in (default 0)")
+	}
+	if !strings.Contains(text, `"ss-pref-context-topk", 0`) {
+		t.Error("main.go: --ss-pref-context-topk must be opt-in (default 0)")
 	}
 }
 
