@@ -70,6 +70,18 @@ type RunEntry struct {
 	OracleAtomCount int  `json:"oracle_atom_count,omitempty"` // atoms extracted and injected
 }
 
+// ScoreProvenance records the measurement provenance required to compare
+// LongMemEval scoring runs honestly across campaigns.
+type ScoreProvenance struct {
+	GoldVersion   string         `json:"gold_version,omitempty"`
+	ScorerVersion string         `json:"scorer_version,omitempty"`
+	FeatureFlags  map[string]any `json:"feature_flags,omitempty"`
+	System        string         `json:"system,omitempty"`
+	ItemSet       string         `json:"item_set,omitempty"`
+	RunID         string         `json:"run_id,omitempty"`
+	HarnessSHA    string         `json:"harness_sha,omitempty"`
+}
+
 // ScoreEntry is one line written to checkpoint-score.jsonl.
 type ScoreEntry struct {
 	QuestionID   string `json:"question_id"`
@@ -91,6 +103,9 @@ type ScoreEntry struct {
 	Truncated bool `json:"truncated,omitempty"`
 	// JudgedAt is the timestamp when this row was produced (ISO-8601).
 	JudgedAt string `json:"judged_at,omitempty"`
+	// Provenance tags the row with the eval/gold/scorer identity required for
+	// campaign-to-campaign comparisons.
+	Provenance ScoreProvenance `json:"provenance,omitempty"`
 }
 
 // HypothesisLine is one line in the LongMemEval-compatible hypotheses.jsonl output.

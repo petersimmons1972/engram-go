@@ -111,6 +111,7 @@ func writeRunManifest(
 	completeness := scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores)
 	questionProjects, projectWarningTotal := questionProjectProvenanceFromIngestMap(cfg.RunID, ingestMap)
 	exe, _ := os.Executable()
+	provenance := scoreProvenanceForConfig(cfg)
 	manifest := map[string]any{
 		"run_id":                cfg.RunID,
 		"stage":                 stage,
@@ -132,6 +133,8 @@ func writeRunManifest(
 		"llm_model":             cfg.LLMModel,
 		"scorer_url":            redactURL(cfg.ScorerURL),
 		"scorer_model":          cfg.ScorerModel,
+		"provenance":            provenance,
+		"scorer_lock":           cfg.ScorerLockPath,
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -153,6 +156,7 @@ func writeRunManifest(
 func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exitCode int, commandLine []string) {
 	snapshot := collectRunStatusSnapshot(cfg)
 	exe, _ := os.Executable()
+	provenance := scoreProvenanceForConfig(cfg)
 	status := map[string]any{
 		"run_id":                cfg.RunID,
 		"stage":                 stage,
@@ -185,6 +189,8 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		"cleanup_policy":        cfg.CleanupPolicy,
 		"recall_topk":           cfg.RecallTopK,
 		"context_topk":          cfg.ContextTopKOverride,
+		"provenance":            provenance,
+		"scorer_lock":           cfg.ScorerLockPath,
 		"route_snapshot": map[string]any{
 			"server_url":   redactURL(cfg.ServerURL),
 			"llm_url":      redactURL(cfg.LLMBaseURL),

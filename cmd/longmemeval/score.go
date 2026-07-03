@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -122,7 +123,7 @@ func scoreWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan l
 	for runEntry := range work {
 		item, ok := itemMap[runEntry.QuestionID]
 		if !ok {
-			entry := longmemeval.ScoreEntry{QuestionID: runEntry.QuestionID, Status: "error", Error: "item not in data file"}
+			entry := longmemeval.ScoreEntry{QuestionID: runEntry.QuestionID, Status: "error", Error: "item not in data file", Provenance: scoreProvenanceForConfig(cfg)}
 			out <- entry
 			stats <- entry
 			continue
@@ -135,12 +136,14 @@ func scoreWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan l
 }
 
 func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longmemeval.RunEntry) (entry longmemeval.ScoreEntry) {
+	provenance := scoreProvenanceForConfig(cfg)
 	defer func() {
 		if r := recover(); r != nil {
 			entry = longmemeval.ScoreEntry{
 				QuestionID: item.QuestionID,
 				Status:     "error",
 				Error:      fmt.Sprintf("panic: %v", r),
+				Provenance: provenance,
 			}
 		}
 	}()
@@ -159,6 +162,7 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 			Hypothesis:   run.Hypothesis,
 			Status:       "error",
 			Error:        err.Error(),
+			Provenance:   provenance,
 		}
 	}
 	return longmemeval.ScoreEntry{
@@ -168,6 +172,7 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 		ScoreLabel:   result.Label,
 		Explanation:  result.Explanation,
 		Status:       "done",
+		Provenance:   provenance,
 	}
 }
 
@@ -447,8 +452,22 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 
 	overall := &scoreReportCounts{}
 	byQType := make(map[string]*scoreReportCounts)
+	for _, qtype := range weakTypesInOrder() {
+		byQType[qtype] = &scoreReportCounts{}
+	}
+	errorItems := make([]map[string]any, 0)
 
-	for _, s := range deduped {
+	for _, questionID := range sortedScoreQuestionIDs(deduped) {
+		s := deduped[questionID]
+		if s.Status != "done" {
+			errorItems = append(errorItems, map[string]any{
+				"question_id":   s.QuestionID,
+				"question_type": s.QuestionType,
+				"error":         s.Error,
+				"score_label":   s.ScoreLabel,
+			})
+			continue
+		}
 		if s.Status != "done" {
 			continue
 		}
@@ -488,10 +507,8 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 	}
 
 	scorerURL := redactURL(cfg.ScorerURL)
-	scorerMaxTokens := cfg.ScorerMaxTokens
-	if scorerMaxTokens <= 0 {
-		scorerMaxTokens = longmemeval.DefaultScorerMaxTokens
-	}
+	scorerMaxTokens := effectiveScorerMaxTokens(cfg)
+	provenance := scoreProvenanceForConfig(cfg)
 
 	report := map[string]any{
 		"overall":               overall,
@@ -510,6 +527,9 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		"scorer_thinking":       cfg.ScorerThinking,
 		"scorer_max_tokens":     scorerMaxTokens,
 		"judged_at":             judgedAt().Format(time.RFC3339),
+		"provenance":            provenance,
+		"error_items":           errorItems,
+		"baseline_comparison":   buildBaselineComparison(overall),
 	}
 	if len(diagByQID) > 0 {
 		report["diag"] = aggregateDiagStats(deduped, diagByQID)
@@ -599,4 +619,13 @@ func accuracyRatio(creditedCorrect, total int) float64 {
 // and upper-cases the remainder. Empty input returns empty output.
 func normalizeLabel(s string) string {
 	return strings.ToUpper(strings.TrimSpace(s))
+}
+
+func sortedScoreQuestionIDs(entries map[string]longmemeval.ScoreEntry) []string {
+	questionIDs := make([]string, 0, len(entries))
+	for questionID := range entries {
+		questionIDs = append(questionIDs, questionID)
+	}
+	sort.Strings(questionIDs)
+	return questionIDs
 }

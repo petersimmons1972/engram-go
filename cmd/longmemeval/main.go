@@ -45,9 +45,16 @@ type Config struct {
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
 	ScorerAPIKey    string // API key for score-efficient endpoint (env: LME_SCORER_API_KEY)
 	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
+	ScorerLockPath  string // path to a scorer lock manifest that owns scorer identity/settings
+	ScorerVersion   string // version resolved from the scorer lock manifest
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
 	ScorerThinking  bool   // enable scorer chain-of-thought (default true)
+	GoldVersion     string // frozen gold snapshot/version used for this evaluation
+	ItemSet         string // item cohort identifier (e.g. lme-s-500q)
+	System          string // system under test identifier
+	HarnessSHA      string // optional override; default is git rev-parse HEAD
+	FeatureFlags    map[string]any
 
 	// score-batch flags
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
@@ -161,6 +168,9 @@ type Config struct {
 	AtomOracleVariant string // --atom-oracle-variant: "atom-only" | "atom-plus-source"
 
 	Now func() time.Time
+
+	scorerThinkingSet  bool
+	scorerMaxTokensSet bool
 }
 
 func main() {
@@ -222,6 +232,16 @@ func parseFlagSet(fs *flag.FlagSet, args []string) int {
 	return -1
 }
 
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			passed = true
+		}
+	})
+	return passed
+}
+
 // dispatch parses args and runs the requested subcommand. Returns the process
 // exit code. Extracted from main() so it is testable without spawning a
 // subprocess. Writers are injected so tests can capture output.
@@ -264,6 +284,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
 	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 	fs.StringVar(&cfg.ScoreOutput, "score-output", envOr("LME_SCORE_OUTPUT", "text"), "score summary stdout mode: text, json, or quiet")
+	fs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+	fs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+	fs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
 	fs.IntVar(&cfg.EmbedRecallTimeoutMS, "embed-recall-timeout-ms", envInt("LME_EMBED_RECALL_TIMEOUT_MS", 1500), "MCP memory_recall embed timeout in ms (0 = no timeout; parent context governs)")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
@@ -392,13 +415,19 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
 		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
+		sefs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; when set, scorer URL/model/thinking/max_tokens are taken from the manifest")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sefs.BoolVar(&cfg.ScorerThinking, "scorer-thinking", true, "enable chain-of-thought for scorers that support it (default true)")
+		sefs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+		sefs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+		sefs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 		sefs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "context window size used during run (for H-DIAG diagnostics; 0 = read from RUN_STATUS.json)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
 		}
+		cfg.scorerThinkingSet = flagPassed(sefs, "scorer-thinking")
+		cfg.scorerMaxTokensSet = flagPassed(sefs, "scorer-max-tokens")
 		if cfg.Now == nil {
 			cfg.Now = func() time.Time {
 				return time.Now().UTC()
@@ -411,6 +440,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
 		}
+		if err := applyScorerLock(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := validateScoreProvenance(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
 		return runScoreEfficient(cfg)
 	}
 
@@ -421,9 +458,13 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
 		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
 		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
+		sbfs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; scorer metadata is stamped from the manifest")
 		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sbfs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sbfs.StringVar(&cfg.ScorerBatchAPIKey, "api-key-anthropic", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key (env: ANTHROPIC_API_KEY)")
+		sbfs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+		sbfs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+		sbfs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 		if exit := parseFlagSet(sbfs, args[2:]); exit >= 0 {
 			return exit
 		}
@@ -433,6 +474,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		}
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
+		}
+		if err := applyScorerLock(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := validateScoreProvenance(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
 		}
 		return runScoreBatch(cfg)
 	}
@@ -591,6 +640,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	cfg.Output = stdout
+	if err := validateScoreProvenance(cfg); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	switch cfg.ScoreOutput {
 	case "", "text", "json", "quiet":
