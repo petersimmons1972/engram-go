@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -129,22 +130,34 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 
 	memoryMap := make(map[string]string, len(sessions))
 	for i, s := range sessions {
-		id, err := restClient.QuickStore(ctx, project, s.item.Content, s.item.Tags, expiresAt)
-		if err != nil {
-			return longmemeval.IngestEntry{
-				QuestionID: item.QuestionID,
-				Project:    project,
-				Status:     "error",
-				Error:      fmt.Sprintf("quick-store offset %d: %v", i, err),
-			}
+		contents := []string{s.item.Content}
+		if cfg.BlockOverlapChars > 0 {
+			const charsPerToken = 4
+			contents = chunk.ChunkText(
+				s.item.Content,
+				chunk.LazyChunkThreshold/charsPerToken,
+				cfg.BlockOverlapChars/charsPerToken,
+			)
 		}
-		memoryMap[id] = s.sessionID
+
+		for j, content := range contents {
+			id, err := restClient.QuickStore(ctx, project, content, s.item.Tags, expiresAt)
+			if err != nil {
+				return longmemeval.IngestEntry{
+					QuestionID: item.QuestionID,
+					Project:    project,
+					Status:     "error",
+					Error:      fmt.Sprintf("quick-store session %d chunk %d: %v", i, j, err),
+				}
+			}
+			memoryMap[id] = s.sessionID
+		}
 	}
 
 	return longmemeval.IngestEntry{
 		QuestionID:   item.QuestionID,
 		Project:      project,
-		SessionCount: len(memoryMap),
+		SessionCount: len(sessions),
 		MemoryMap:    memoryMap,
 		Status:       "done",
 	}

@@ -232,6 +232,27 @@ func TestDispatchRejectsInvalidScoreOutputMode(t *testing.T) {
 	}
 }
 
+func TestConfig_OverlapGuardRejectsHalfOrMore(t *testing.T) {
+	for _, value := range []string{"4000", "4001"} {
+		t.Run(value, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exit := dispatch([]string{
+				"longmemeval",
+				"ingest",
+				"--data", "questions.json",
+				"--block-overlap-chars", value,
+			}, &stdout, &stderr)
+
+			if exit == 0 {
+				t.Fatalf("dispatch accepted --block-overlap-chars=%s", value)
+			}
+			if !strings.Contains(stderr.String(), "--block-overlap-chars must be < 4000") {
+				t.Fatalf("stderr = %q, want overlap guard message", stderr.String())
+			}
+		})
+	}
+}
+
 func writeClaudeMCPConfig(t *testing.T, home, token string) {
 	t.Helper()
 	dir := filepath.Join(home, ".claude")

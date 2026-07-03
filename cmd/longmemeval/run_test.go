@@ -13,6 +13,110 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+// ---------------------------------------------------------------------------
+// resolveContextTopK / resolveSessionDiversityOverride (issue #1176:
+// per-session retrieval diversity cap + per-type context_topk override for
+// single-session-preference).
+// ---------------------------------------------------------------------------
+
+// TestResolveContextTopK_SSPrefOverrideAppliesOnlyToSSPref verifies that
+// --ss-pref-context-topk raises the window only for single-session-preference
+// questions; other types keep using ContextTopKForTypeWithBump.
+func TestResolveContextTopK_SSPrefOverrideAppliesOnlyToSSPref(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	cases := []struct {
+		questionType string
+		want         int
+	}{
+		{"single-session-preference", 25},
+		{"single-session-user", 15},
+		{"multi-session", 15},
+		{"knowledge-update", 8},
+	}
+	for _, c := range cases {
+		got := resolveContextTopK(cfg, c.questionType, false, 1000)
+		if got != c.want {
+			t.Errorf("resolveContextTopK(%q) = %d, want %d", c.questionType, got, c.want)
+		}
+	}
+}
+
+// TestResolveContextTopK_SSPrefOverrideOffIsNoOp verifies default (0) leaves
+// single-session-preference at the existing per-type default (15) — no
+// behavior change when the flag is unset (baseline-safe).
+func TestResolveContextTopK_SSPrefOverrideOffIsNoOp(t *testing.T) {
+	cfg := &Config{}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 1000)
+	if got != 15 {
+		t.Errorf("resolveContextTopK() = %d, want 15 (unchanged baseline)", got)
+	}
+}
+
+// TestResolveContextTopK_GlobalOverrideWinsOverSSPref verifies --context-topk
+// (the existing global override) still takes priority over the new
+// --ss-pref-context-topk knob — the global "kitchen sink" flag must not be
+// silently shadowed by the narrower one.
+func TestResolveContextTopK_GlobalOverrideWinsOverSSPref(t *testing.T) {
+	cfg := &Config{ContextTopKOverride: 30, SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 1000)
+	if got != 30 {
+		t.Errorf("resolveContextTopK() = %d, want 30 (global override wins)", got)
+	}
+}
+
+// TestResolveContextTopK_FullAggregationWinsOverSSPref verifies the
+// full-aggregation-context path (H8) still takes priority over the new
+// ss-pref override.
+func TestResolveContextTopK_FullAggregationWinsOverSSPref(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", true, 42)
+	if got != 42 {
+		t.Errorf("resolveContextTopK() = %d, want 42 (full-aggregation retrieved count)", got)
+	}
+}
+
+// TestResolveContextTopK_ClampsToRetrievedCount verifies the result never
+// exceeds how many IDs were actually retrieved, matching the existing
+// clamp behavior in runItem's inline contextLimit logic.
+func TestResolveContextTopK_ClampsToRetrievedCount(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: 25}
+	got := resolveContextTopK(cfg, "single-session-preference", false, 3)
+	if got != 3 {
+		t.Errorf("resolveContextTopK() = %d, want 3 (clamped to retrieved count)", got)
+	}
+}
+
+// TestResolveSessionDiversityOverride_SSPrefOnly verifies the override value
+// is returned only for single-session-preference questions.
+func TestResolveSessionDiversityOverride_SSPrefOnly(t *testing.T) {
+	cfg := &Config{SSPrefSessionDiversityN: 1}
+	cases := []struct {
+		questionType string
+		want         int
+	}{
+		{"single-session-preference", 1},
+		{"single-session-user", 0},
+		{"multi-session", 0},
+		{"", 0},
+	}
+	for _, c := range cases {
+		got := resolveSessionDiversityOverride(cfg, c.questionType)
+		if got != c.want {
+			t.Errorf("resolveSessionDiversityOverride(%q) = %d, want %d", c.questionType, got, c.want)
+		}
+	}
+}
+
+// TestResolveSessionDiversityOverride_OffByDefault verifies the flag is
+// baseline-safe: when SSPrefSessionDiversityN is 0 (unset), no override is
+// ever applied, regardless of question type.
+func TestResolveSessionDiversityOverride_OffByDefault(t *testing.T) {
+	cfg := &Config{}
+	if got := resolveSessionDiversityOverride(cfg, "single-session-preference"); got != 0 {
+		t.Errorf("resolveSessionDiversityOverride() = %d, want 0 (flag unset)", got)
+	}
+}
+
 // TestRunLogFormat_ErrorIncludesCause verifies that when runOne returns an
 // error entry, the log message format string produced by runWorker would
 // include the error cause — not just hypothesis_len=0.
@@ -148,6 +252,57 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 		if input[i] != orig[i] {
 			t.Errorf("input slice was mutated at index %d", i)
 		}
+	}
+}
+
+func TestContextMetadata_HeaderFormat(t *testing.T) {
+	got := formatContextBlock("user prefers Hyatt", "s42", "2024-03-18")
+	want := "[Session: s42 | Date: 2024-03-18]\nuser prefers Hyatt"
+	if got != want {
+		t.Fatalf("formatContextBlock() = %q, want %q", got, want)
+	}
+}
+
+func TestContextMetadata_EmptySessionID(t *testing.T) {
+	got := formatContextBlock("some text", "", "2024-01-01")
+	if !strings.Contains(got, "[Date: 2024-01-01]\nsome text") {
+		t.Fatalf("formatContextBlock() missing date-only header: %q", got)
+	}
+	if strings.Contains(got, "Session:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Session field: %q", got)
+	}
+}
+
+func TestContextMetadata_EmptyDate(t *testing.T) {
+	got := formatContextBlock("some text", "s1", "")
+	if !strings.Contains(got, "[Session: s1]\nsome text") {
+		t.Fatalf("formatContextBlock() missing session-only header: %q", got)
+	}
+	if strings.Contains(got, "Date:") {
+		t.Fatalf("formatContextBlock() unexpectedly included Date field: %q", got)
+	}
+}
+
+func TestContextMetadata_BothEmpty(t *testing.T) {
+	got := formatContextBlock("some text", "", "")
+	if got != "some text" {
+		t.Fatalf("formatContextBlock() = %q, want raw chunk text", got)
+	}
+}
+
+func TestContextMetadata_MultipleResults(t *testing.T) {
+	got := formatContextBlocks([]contextBlock{
+		{SessionID: "s1", Date: "2024-01-01", Content: "first chunk"},
+		{SessionID: "s2", Date: "2024-02-02", Content: "second chunk"},
+		{SessionID: "s3", Date: "2024-03-03", Content: "third chunk"},
+	})
+	want := []string{
+		"[Session: s1 | Date: 2024-01-01]\nfirst chunk",
+		"[Session: s2 | Date: 2024-02-02]\nsecond chunk",
+		"[Session: s3 | Date: 2024-03-03]\nthird chunk",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("formatContextBlocks() = %#v, want %#v", got, want)
 	}
 }
 
@@ -319,6 +474,33 @@ func TestQueryParaphrasePassesFlag_DefaultThree(t *testing.T) {
 	// Phase 0 (P0): default changed 0→3. The flag registration must use default 3.
 	if !strings.Contains(string(src), `"query-paraphrase-passes", 3`) {
 		t.Error("main.go: --query-paraphrase-passes P0 default must be 3; update the flag registration or this test")
+	}
+}
+
+func TestDualPreferenceRecallFlag_DefaultOff(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(src), `"dual-preference-recall", false`) {
+		t.Error("main.go: --dual-preference-recall must be opt-in (default false)")
+	}
+}
+
+// TestSSPrefFlags_DefaultOff verifies both issue #1176 flags are registered
+// as opt-in (default 0) so an unmodified `run` invocation is byte-identical
+// to pre-#1176 behavior.
+func TestSSPrefFlags_DefaultOff(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, `"ss-pref-session-diversity-n", 0`) {
+		t.Error("main.go: --ss-pref-session-diversity-n must be opt-in (default 0)")
+	}
+	if !strings.Contains(text, `"ss-pref-context-topk", 0`) {
+		t.Error("main.go: --ss-pref-context-topk must be opt-in (default 0)")
 	}
 }
 
@@ -757,13 +939,13 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	since := time.Date(2023, 5, 8, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2023, 5, 11, 0, 0, 0, 0, time.UTC)
 	var calls []string
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		if callSince != nil || callBefore != nil {
 			calls = append(calls, "filtered")
-			return []string{"dated-a", "dated-b"}, nil
+			return longmemeval.RecallResult{IDs: []string{"dated-a", "dated-b"}}, nil
 		}
 		calls = append(calls, "unfiltered")
-		return []string{"undated-answer", "dated-a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"undated-answer", "dated-a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("recent concert", 10, &since, &before, recall)
@@ -773,7 +955,7 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 	if got, want := strings.Join(calls, ","), "filtered,unfiltered"; got != want {
 		t.Fatalf("calls = %s, want %s", got, want)
 	}
-	if got, want := strings.Join(retrieved, ","), "dated-a,dated-b,undated-answer"; got != want {
+	if got, want := strings.Join(retrieved.IDs, ","), "dated-a,dated-b,undated-answer"; got != want {
 		t.Fatalf("retrieved = %s, want %s", got, want)
 	}
 	if got, want := strings.Join(secondary, ","), "undated-answer,dated-a"; got != want {
@@ -783,12 +965,12 @@ func TestRecallWithTemporalFallbackAddsUnfilteredSafetyLane(t *testing.T) {
 
 func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T) {
 	var calls int
-	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
+	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		calls++
 		if callSince != nil || callBefore != nil {
 			t.Fatal("non-temporal recall should not pass date bounds")
 		}
-		return []string{"a"}, nil
+		return longmemeval.RecallResult{IDs: []string{"a"}}, nil
 	}
 
 	retrieved, secondary, err := recallWithTemporalFallback("plain query", 10, nil, nil, recall)
@@ -798,7 +980,7 @@ func TestRecallWithTemporalFallbackSkipsSafetyLaneWithoutDateBounds(t *testing.T
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
-	if got := strings.Join(retrieved, ","); got != "a" {
+	if got := strings.Join(retrieved.IDs, ","); got != "a" {
 		t.Fatalf("retrieved = %s, want a", got)
 	}
 	if len(secondary) != 0 {

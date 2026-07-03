@@ -155,6 +155,35 @@ func (b *PostgresBackend) GetMemoryByID(ctx context.Context, id string) (*types.
 	return m, nil
 }
 
+// GetMemoryByIDInProject retrieves a memory by ID scoped to the given project.
+// Returns nil, nil if not found.
+func (b *PostgresBackend) GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error) {
+	row, err := b.pool.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL", id, project)
+	if err != nil {
+		return nil, err
+	}
+	m, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Integrity check
+	if m.ContentHash != nil {
+		expected := ContentHash(m.Content)
+		if *m.ContentHash != expected {
+			slog.Warn("INTEGRITY: content_hash mismatch",
+				"id", m.ID,
+				"stored", (*m.ContentHash)[:8],
+				"expected", expected[:8],
+			)
+		}
+	}
+	return m, nil
+}
+
 func (b *PostgresBackend) GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -326,6 +355,24 @@ func (b *PostgresBackend) MergeMemoriesAtomic(ctx context.Context, project, winn
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	row, err := tx.Query(ctx,
+		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
+		winnerID, project,
+	)
+	if err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic lock winner: %w", err)
+	}
+	winner, err := pgx.CollectOneRow(row, rowToMemory)
+	if err == pgx.ErrNoRows {
+		return fmt.Errorf("MergeMemoriesAtomic winner %s not found", winnerID)
+	}
+	if err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic lock winner: %w", err)
+	}
+	if err := b.versionMemoryTx(ctx, tx, winner, types.VersionChangeUpdate, ""); err != nil {
+		return fmt.Errorf("MergeMemoriesAtomic version winner: %w", err)
+	}
+
 	if newContent != "" {
 		now := time.Now().UTC()
 		hash := ContentHash(newContent)
@@ -405,8 +452,8 @@ func (b *PostgresBackend) ListMemories(ctx context.Context, project string, opts
 
 func (b *PostgresBackend) TouchMemory(ctx context.Context, id string) error {
 	_, err := b.pool.Exec(ctx,
-		"UPDATE memories SET access_count=access_count+1, last_accessed=$1 WHERE id=$2",
-		time.Now().UTC(), id,
+		"UPDATE memories SET access_count=access_count+1, last_accessed=$1 WHERE id=$2 AND project=$3",
+		time.Now().UTC(), id, b.project,
 	)
 	return err
 }
@@ -505,6 +552,33 @@ func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, rea
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	ok, err := b.softDeleteMemoryExec(ctx, tx, project, id, reason)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// SoftDeleteMemoryTx is like SoftDeleteMemory but runs inside an existing
+// transaction. The caller is responsible for commit/rollback.
+func (b *PostgresBackend) SoftDeleteMemoryTx(ctx context.Context, tx Tx, project, id, reason string) (bool, error) {
+	raw, err := unwrapTx(tx)
+	if err != nil {
+		return false, err
+	}
+	return b.softDeleteMemoryExec(ctx, raw, project, id, reason)
+}
+
+// softDeleteMemoryExec contains the core logic for SoftDeleteMemory, operating
+// on an arbitrary pgx.Tx so it can be called from both SoftDeleteMemory (which
+// owns its own tx) and SoftDeleteMemoryTx (caller-owned tx).
+func (b *PostgresBackend) softDeleteMemoryExec(ctx context.Context, tx pgx.Tx, project, id, reason string) (bool, error) {
 	row, err := tx.Query(ctx,
 		"SELECT * FROM memories WHERE id=$1 AND project=$2 AND valid_to IS NULL FOR UPDATE",
 		id, project,
@@ -537,10 +611,6 @@ func (b *PostgresBackend) SoftDeleteMemory(ctx context.Context, project, id, rea
 		now, reasonPtr, id, project,
 	)
 	if err != nil {
-		return false, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return true, nil

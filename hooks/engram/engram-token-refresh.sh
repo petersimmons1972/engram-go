@@ -88,7 +88,10 @@ fi
 
 # ── 3. Write token to both MCP config files (atomic) ────────────────────────
 _write_token() {
-  python3 - "$1" <<PYEOF
+  # Pass TOKEN and ENDPOINT as positional args so the quoted heredoc ('PYEOF')
+  # never shell-expands them.  A backtick, $(...), newline, or quote in either
+  # value cannot escape into the Python source this way.  (#1213)
+  python3 - "$1" "$TOKEN" "$ENDPOINT" <<'PYEOF'
 import json, os, sys, tempfile
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
@@ -100,7 +103,10 @@ def merge_url(existing: str, new: str) -> str:
     q = urlencode({k: v[0] for k, v in merged.items()})
     return urlunparse((np.scheme, np.netloc, np.path, '', q, ''))
 
-path = sys.argv[1]
+path     = sys.argv[1]
+token    = sys.argv[2]
+endpoint = sys.argv[3]
+
 if not os.path.exists(path):
     sys.exit(0)
 
@@ -108,17 +114,16 @@ with open(path) as f:
     cfg = json.load(f)
 
 # For .claude.json: only update if engram key already present (#395)
-is_claude_json = "mcpServers" in cfg
 servers = cfg.setdefault("mcpServers", {})
 
 if os.path.basename(path) == ".claude.json" and "engram" not in servers:
     sys.exit(0)
 
-existing_url = servers.get("engram", {}).get("url", "$ENDPOINT")
+existing_url = servers.get("engram", {}).get("url", endpoint)
 servers["engram"] = {
     "type": "sse",
-    "url": merge_url(existing_url, "$ENDPOINT"),
-    "headers": {"Authorization": "Bearer $TOKEN"}
+    "url": merge_url(existing_url, endpoint),
+    "headers": {"Authorization": "Bearer " + token}
 }
 
 dir_ = os.path.dirname(path) or "."

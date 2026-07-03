@@ -25,7 +25,7 @@ Optional:
 - `SCORER_LOCK=<path>`: scorer lock manifest for the `qwen3` path. Default: `docs/lme-campaign/scorer-lock.json`.
 - `SYSTEM=<name>`: system-under-test identifier stamped onto every score row.
 - `WORKERS=<n>`: worker count (environment override).
-- `SCORER_MAX_TOKENS=<n>`: score request budget.
+- `SCORER_MAX_TOKENS=<n>`: score request budget for unlocked presets such as `gpt4o`.
 
 ## Locked scorer workflow
 
@@ -66,7 +66,12 @@ Use for the locked honest baseline and cheap wave-over-wave scoring:
 - scorer version: `tier1-qwen3-2026-06-22`
 - API key: none
 
-Qwen3 lock settings are fixed by the manifest so same-scorer comparisons stay honest.
+Qwen3 is a reasoning model and can be slower when chain-of-thought is enabled.
+Qwen3 lock settings are fixed by the manifest (`docs/lme-campaign/scorer-lock.json`)
+so same-scorer comparisons stay honest: the lock is the single source of truth
+for lock-owned settings such as `scorer_url`, `scorer_model`, `scorer_thinking`,
+and `scorer_max_tokens`, so `lme-judge.sh` does not forward manual overrides for
+those flags on this preset.
 
 ### gpt-4o (comparability)
 
@@ -82,8 +87,8 @@ Use for published comparability snapshots:
 
 `lme-judge.sh` maps judge preset selection to:
 
-- `qwen3`: `--scorer-lock`, `--gold-version`, `--item-set`, `--system`
-- `gpt4o`: `--scorer-url`, `--scorer-model`, `--scorer-api-key` (optional), `--scorer-thinking`, `--scorer-max-tokens`, `--preserve-correct`
+- `qwen3`: `--scorer-lock`, `--gold-version`, `--item-set`, `--system` (scorer URL/model/thinking/max_tokens all come from the lock manifest; unlocked-preset flags below are not forwarded)
+- `gpt4o`: `--scorer-url`, `--scorer-model`, `--scorer-api-key` (optional), `--scorer-thinking`, `--scorer-max-tokens`, `--preserve-correct` (resume-friendly)
 
 ## Accounting: strict vs lenient
 
@@ -91,6 +96,17 @@ The judge report is scored in two ways:
 
 - `strict`: `CORRECT / total`
 - `lenient`: `(CORRECT + PARTIALLY_CORRECT) / total`
+
+`score_report.json` now records both summaries in machine-readable form under
+`overall.{strict,lenient}` and `by_type.<question_type>.{strict,lenient}`. This
+keeps the frozen phase-0 strict counts intact while exposing a separate
+partial-credit baseline for categories such as `single-session-preference`.
+
+When publishing benchmark updates:
+
+- Keep the original strict baseline for backward comparability.
+- Treat the lenient/partial-credit view as a new baseline artifact, not a
+  rewrite of the existing phase-0 scores.
 
 Use both when comparing checkpoints, and keep `compare` deltas in CI notes.
 

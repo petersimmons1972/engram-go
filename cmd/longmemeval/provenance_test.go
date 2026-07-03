@@ -110,14 +110,14 @@ func TestWriteScoreReportIncludesWeakTypeCoverageErrorsAndBaselineComparison(t *
 		{QuestionID: "q-err", QuestionType: "single-session-user", Status: "error", Error: "judge unavailable", Provenance: provenance},
 	}
 
-	writeScoreReportWithCompleteness(cfg, scores, scoreCompleteness{
+	writeScoreReportWithCompleteness(cfg, scores, nil, scoreCompleteness{
 		ExpectedTotal:       4,
 		IngestDoneTotal:     4,
 		CompletedRunTotal:   4,
 		CompletedScoreTotal: 3,
 		ScoreErrorTotal:     1,
 		Complete:            false,
-	})
+	}, nil)
 
 	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
 	if err != nil {

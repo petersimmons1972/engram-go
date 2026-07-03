@@ -121,13 +121,14 @@ check-env:
 	@# #701: route diagnostic to stderr so `make up > /dev/null` is clean
 	@echo "✓ .env credentials look set" >&2
 
-## Configure MCP client — fetches current bearer token and writes mcpServers.engram to ~/.claude.json and ~/.claude/mcp_servers.json
+## Configure MCP client for https://engram.petersimmons.com; use --url for local Docker.
+## Writes ~/.claude/mcp_servers.json and updates ~/.claude.json only when it already has mcpServers.
 ## Run this after: first install, container restart (if key changed), or key rotation.
 ## After setup, run /mcp in Claude Code to reconnect.
 setup:
 	go run ./cmd/engram-setup
 
-## Preview MCP config changes without writing ~/.claude.json
+## Preview effective server, endpoint, and MCP config targets without writing files.
 setup-dry-run:
 	go run ./cmd/engram-setup --dry-run
 

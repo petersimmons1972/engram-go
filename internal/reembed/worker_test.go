@@ -27,11 +27,47 @@ func (f *fakeEmbedder) Name() string    { return "fake" }
 func (f *fakeEmbedder) Dimensions() int { return f.dims }
 
 func TestWorker_StartsAndStops(t *testing.T) {
-	w := reembed.NewWorker(nil, &fakeEmbedder{dims: 768}, "proj", false)
+	w := reembed.NewWorker(noopBackend{}, &fakeEmbedder{dims: 768}, "proj", false)
 	w.Start()
 	time.Sleep(20 * time.Millisecond)
 	w.Stop()
 	// reached here without hanging
+}
+
+func TestWorker_ConcurrentNotifyIsActive_NoRace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w := reembed.NewWorker(noopBackend{}, &fakeEmbedder{dims: 768}, "proj", false)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(3)
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				w.StartWithContext(ctx)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				w.Notify()
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = w.IsActive()
+			}
+		}()
+	}
+
+	wg.Wait()
+	w.Stop()
 }
 
 // TestNewWorkerFromMeta_ActivatesOnPendingChunks verifies that NewWorkerFromMeta
@@ -96,6 +132,9 @@ func (noopBackend) StoreMemory(_ context.Context, _ *types.Memory) error        
 func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) error  { return nil }
 func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error)     { return nil, nil }
 func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
+func (noopBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
+	return nil, nil
+}
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }
@@ -155,6 +194,12 @@ func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, e
 	return 0, nil
 }
 func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
+func (noopBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (noopBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
 }

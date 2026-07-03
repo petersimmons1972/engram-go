@@ -88,23 +88,23 @@ func TestValidateProjectName_RejectsBidiControlChars(t *testing.T) {
 // ── toStringSlice ────────────────────────────────────────────────────────────
 
 func TestToStringSlice_AcceptsNormal(t *testing.T) {
-	input := []any{"go", "tdd", "engram", "tag with spaces"}
-	got, err := toStringSlice(input)
+	args := map[string]any{"tags": []any{"go", "tdd", "engram", "tag with spaces"}}
+	got, err := toStringSlice(args, "tags")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go", "tdd", "engram", "tag with spaces"}, got)
 }
 
 func TestToStringSlice_AcceptsTabLFCR(t *testing.T) {
 	// HT (0x09), LF (0x0A), CR (0x0D) are explicitly allowed.
-	input := []any{"tag\twith\ttabs", "tag\nwith\nnewline", "tag\rwith\rCR"}
-	got, err := toStringSlice(input)
+	args := map[string]any{"tags": []any{"tag\twith\ttabs", "tag\nwith\nnewline", "tag\rwith\rCR"}}
+	got, err := toStringSlice(args, "tags")
 	require.NoError(t, err)
 	assert.Len(t, got, 3)
 }
 
 func TestToStringSlice_RejectsNUL(t *testing.T) {
-	input := []any{"valid", "bad\x00tag"}
-	_, err := toStringSlice(input)
+	args := map[string]any{"tags": []any{"valid", "bad\x00tag"}}
+	_, err := toStringSlice(args, "tags")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disallowed control character")
 }
@@ -113,21 +113,27 @@ func TestToStringSlice_RejectsC0ControlChars(t *testing.T) {
 	controlCases := []byte{0x01, 0x07, 0x08, 0x0B, 0x0C, 0x0E, 0x1F}
 	for _, b := range controlCases {
 		t.Run(string(rune(b)), func(t *testing.T) {
-			input := []any{"good", "bad" + string([]byte{b}) + "tag"}
-			_, err := toStringSlice(input)
+			args := map[string]any{"tags": []any{"good", "bad" + string([]byte{b}) + "tag"}}
+			_, err := toStringSlice(args, "tags")
 			require.Error(t, err, "expected error for byte 0x%02X", b)
 		})
 	}
 }
 
 func TestToStringSlice_RejectsDEL(t *testing.T) {
-	input := []any{"tag\x7fwith-del"}
-	_, err := toStringSlice(input)
+	args := map[string]any{"tags": []any{"tag\x7fwith-del"}}
+	_, err := toStringSlice(args, "tags")
 	require.Error(t, err)
 }
 
 func TestToStringSlice_NilInput(t *testing.T) {
-	got, err := toStringSlice(nil)
+	got, err := toStringSlice(map[string]any{"tags": nil}, "tags")
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+func TestToStringSlice_AbsentKey(t *testing.T) {
+	got, err := toStringSlice(map[string]any{}, "tags")
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
@@ -137,7 +143,8 @@ func TestToStringSlice_RespectsMaxTagCount(t *testing.T) {
 	for i := 0; i < maxTagCount+10; i++ {
 		input = append(input, "tag")
 	}
-	got, err := toStringSlice(input)
+	args := map[string]any{"tags": input}
+	got, err := toStringSlice(args, "tags")
 	require.NoError(t, err)
 	assert.Len(t, got, maxTagCount)
 }

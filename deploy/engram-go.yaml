@@ -1,0 +1,141 @@
+# engram-go.yaml — Deployment manifest for the engram-go service
+#
+# Captured from live cluster: 2026-06-27
+# Image pinned to digest: main-ab5aff4@sha256:95778bfcd2a26d7291c02399b7fdeb4de5f5f81ad17f9d5aa0c9a47188f7797c
+#
+# The restartedAt annotation on the pod template is faithfully reproduced from
+# the live cluster for zero kubectl diff. It will diverge after future rollout
+# restarts — that is expected behavior and does not require updating this file
+# unless a permanent state change is being recorded.
+#
+# FOLLOW-UP NOTE (do not fix here): container securityContext is missing
+# allowPrivilegeEscalation:false, capabilities.drop:[ALL], and seccompProfile.
+# These are pre-existing PodSecurity warnings present on the live object and are
+# tracked for a separate hardening PR. Do not add them here — this manifest
+# captures live state verbatim; hardening is a separate intentional change.
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engram-go
+  namespace: engram
+  labels:
+    app: engram-go
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: engram-go
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-06-19T08:45:20-04:00"
+      labels:
+        app: engram-go
+    spec:
+      containers:
+        - name: engram-go
+          image: registry.petersimmons.com/engram/engram-go:main-d0df9dc-20260703061514@sha256:14cc2f31f2469188ab832e176d4bd801dae4b119bc0a1969748253d8e78d2d3f
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: engram-app-secret
+                  key: DATABASE_URL
+            - name: ENGRAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: engram-app-secret
+                  key: ENGRAM_API_KEY
+            - name: ENGRAM_ROUTER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: engram-app-secret
+                  key: ENGRAM_ROUTER_URL
+            - name: ENGRAM_EMBED_URL
+              value: http://olla.ai-fleet.svc.cluster.local:80/olla/openai
+            - name: ENGRAM_EMBED_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: engram-embed-model
+                  key: ENGRAM_EMBED_MODEL
+            - name: ENGRAM_EMBED_DIMENSIONS
+              value: "1024"
+            - name: ENGRAM_HOST
+              value: 0.0.0.0
+            - name: ENGRAM_BASE_URL
+              value: https://engram.petersimmons.com
+            - name: ENGRAM_SUMMARIZE_MODEL
+              value: qwen3-14b-awq
+            - name: ENGRAM_SUMMARIZE_ENABLED
+              value: "false"
+            - name: ENGRAM_REEMBED_BATCH_SIZE
+              value: "0"
+            - name: ENGRAM_SESSION_DIVERSITY_N
+              value: "0"
+            - name: ENGRAM_PREWARM_PROJECTS
+              value: "0"
+            - name: ENGRAM_RATE_LIMIT_RPS
+              value: "500"
+            - name: ENGRAM_RATE_LIMIT_BURST
+              value: "2000"
+            - name: ENGRAM_EMBED_RECALL_TIMEOUT_MS
+              value: "1500"
+          ports:
+            - containerPort: 8788
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8788
+              scheme: HTTP
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8788
+              scheme: HTTP
+            failureThreshold: 12
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8788
+              scheme: HTTP
+            failureThreshold: 30
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+      terminationGracePeriodSeconds: 30

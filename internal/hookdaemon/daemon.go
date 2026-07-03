@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -137,7 +138,9 @@ func (d *Daemon) setToken(tok string) {
 	}
 	d.mu.Unlock()
 	if changed && d.cfg.Tokens != nil {
-		_ = d.cfg.Tokens.Store(tok)
+		if err := d.cfg.Tokens.Store(tok); err != nil {
+			slog.Warn("hookdaemon: Tokens.Store failed — token not persisted; next session may have stale auth", "err", err)
+		}
 	}
 }
 

@@ -1,0 +1,1721 @@
+{
+  "experiment": "events-as-index",
+  "n_deep_items": 47,
+  "embed_all_gold_in_top15": 0,
+  "event_index_all_gold_in_top15": 10,
+  "lifted_into_top15": 10,
+  "verdict": "GO",
+  "total_cache_files": 2919,
+  "items": [
+    {
+      "question_id": "8e91e7d9",
+      "question": "What is the total number of siblings I have?",
+      "gold_session_ids": [
+        "answer_477ae455_2",
+        "answer_477ae455_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_477ae455_2": 5,
+        "answer_477ae455_1": 190
+      },
+      "max_gold_embed_rank": 190,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "ba358f49",
+      "question": "How many years will I be when my friend Rachel gets married?",
+      "gold_session_ids": [
+        "answer_cbd08e3c_1",
+        "answer_cbd08e3c_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_cbd08e3c_1": 1,
+        "answer_cbd08e3c_2": 100
+      },
+      "max_gold_embed_rank": 100,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "92a0aa75",
+      "question": "How long have I been working in my current role?",
+      "gold_session_ids": [
+        "answer_6cb8f792_2",
+        "answer_6cb8f792_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_6cb8f792_2": 9999,
+        "answer_6cb8f792_1": 44
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "e66b632c",
+      "question": "What was my previous personal best time for the charity 5K run?",
+      "gold_session_ids": [
+        "answer_ac0140ce_1",
+        "answer_ac0140ce_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_ac0140ce_1": 16,
+        "answer_ac0140ce_2": 0
+      },
+      "max_gold_embed_rank": 16,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "157a136e",
+      "question": "How many years older is my grandma than me?",
+      "gold_session_ids": [
+        "answer_8de18468_1",
+        "answer_8de18468_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_8de18468_1": 106,
+        "answer_8de18468_2": 5
+      },
+      "max_gold_embed_rank": 106,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "031748ae_abs",
+      "question": "How many engineers do I lead when I just started my new role as Software Engineer Manager?",
+      "gold_session_ids": [
+        "answer_8748f791_abs_1",
+        "answer_8748f791_abs_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_8748f791_abs_1": 0,
+        "answer_8748f791_abs_2": 45
+      },
+      "max_gold_embed_rank": 45,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "2133c1b5_abs",
+      "question": "How long have I been living in my current apartment in Shinjuku?",
+      "gold_session_ids": [
+        "answer_52382508_abs_1",
+        "answer_52382508_abs_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_52382508_abs_1": 173,
+        "answer_52382508_abs_2": 2
+      },
+      "max_gold_embed_rank": 173,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_1916e0ea",
+      "question": "How many days passed between the day I cancelled my FarmFresh subscription and the day I did my online grocery shopping ",
+      "gold_session_ids": [
+        "answer_447052a5_2",
+        "answer_447052a5_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_447052a5_2": 158,
+        "answer_447052a5_1": 4
+      },
+      "max_gold_embed_rank": 158,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_a1b77f9c",
+      "question": "How many weeks in total do I spent on reading 'The Nightingale' and listening to 'Sapiens: A Brief History of Humankind'",
+      "gold_session_ids": [
+        "answer_e9ad5914_1",
+        "answer_e9ad5914_2",
+        "answer_e9ad5914_3",
+        "answer_e9ad5914_4",
+        "answer_e9ad5914_5",
+        "answer_e9ad5914_6"
+      ],
+      "gold_embed_ranks": {
+        "answer_e9ad5914_1": 18,
+        "answer_e9ad5914_2": 21,
+        "answer_e9ad5914_3": 4,
+        "answer_e9ad5914_4": 2,
+        "answer_e9ad5914_5": 3,
+        "answer_e9ad5914_6": 0
+      },
+      "max_gold_embed_rank": 21,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_d6585ce8",
+      "question": "What is the order of the concerts and musical events I attended in the past two months, starting from the earliest?",
+      "gold_session_ids": [
+        "answer_f999b05b_1",
+        "answer_f999b05b_4",
+        "answer_f999b05b_2",
+        "answer_f999b05b_5",
+        "answer_f999b05b_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_f999b05b_1": 108,
+        "answer_f999b05b_4": 3,
+        "answer_f999b05b_2": 30,
+        "answer_f999b05b_5": 2,
+        "answer_f999b05b_3": 5
+      },
+      "max_gold_embed_rank": 108,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6,
+          "event_index": 0.4,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6,
+          "event_index": 0.6,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6,
+          "event_index": 0.6,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_f420262c",
+      "question": "What is the order of airlines I flew with from earliest to latest before today?",
+      "gold_session_ids": [
+        "answer_d8a1af6b_1",
+        "answer_d8a1af6b_2",
+        "answer_d8a1af6b_3",
+        "answer_d8a1af6b_4",
+        "answer_d8a1af6b_5"
+      ],
+      "gold_embed_ranks": {
+        "answer_d8a1af6b_1": 44,
+        "answer_d8a1af6b_2": 4,
+        "answer_d8a1af6b_3": 2,
+        "answer_d8a1af6b_4": 0,
+        "answer_d8a1af6b_5": 6
+      },
+      "max_gold_embed_rank": 44,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.8,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@15": {
+          "embedding": 0.8,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 0.8,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_e061b84f",
+      "question": "What is the order of the three sports events I participated in during the past month, from earliest to latest?",
+      "gold_session_ids": [
+        "answer_8c64ce25_2",
+        "answer_8c64ce25_1",
+        "answer_8c64ce25_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_8c64ce25_2": 81,
+        "answer_8c64ce25_1": 9999,
+        "answer_8c64ce25_3": 74
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 63,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_7abb270c",
+      "question": "What is the order of the six museums I visited from earliest to latest?",
+      "gold_session_ids": [
+        "answer_7093d898_1",
+        "answer_7093d898_2",
+        "answer_7093d898_3",
+        "answer_7093d898_4",
+        "answer_7093d898_5",
+        "answer_7093d898_6"
+      ],
+      "gold_embed_ranks": {
+        "answer_7093d898_1": 4,
+        "answer_7093d898_2": 18,
+        "answer_7093d898_3": 106,
+        "answer_7093d898_4": 13,
+        "answer_7093d898_5": 1,
+        "answer_7093d898_6": 0
+      },
+      "max_gold_embed_rank": 106,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.8333333333333334,
+          "event_index": 0.8333333333333334,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_d6585ce9",
+      "question": "Who did I go with to the music event last Saturday?",
+      "gold_session_ids": [
+        "answer_f999b05c_1",
+        "answer_f999b05c_4",
+        "answer_f999b05c_2",
+        "answer_f999b05c_5",
+        "answer_f999b05c_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_f999b05c_1": 134,
+        "answer_f999b05c_4": 4,
+        "answer_f999b05c_2": 43,
+        "answer_f999b05c_5": 1,
+        "answer_f999b05c_3": 10
+      },
+      "max_gold_embed_rank": 134,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.4,
+          "event_index": 0.4,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_e061b84g",
+      "question": "I mentioned participating in a sports event two weeks ago. What was the event?",
+      "gold_session_ids": [
+        "answer_8c64ce26_2",
+        "answer_8c64ce26_1",
+        "answer_8c64ce26_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_8c64ce26_2": 9999,
+        "answer_8c64ce26_1": 9999,
+        "answer_8c64ce26_3": 38
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 62,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_e414231f",
+      "question": "Which bike did I fixed or serviced the past weekend?",
+      "gold_session_ids": [
+        "answer_e28c1f0e_1",
+        "answer_e28c1f0e_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_e28c1f0e_1": 0,
+        "answer_e28c1f0e_2": 57
+      },
+      "max_gold_embed_rank": 57,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_59149c78",
+      "question": "I mentioned that I participated in an art-related event two weeks ago. Where was that event held at?",
+      "gold_session_ids": [
+        "answer_d00ba6d1_1",
+        "answer_d00ba6d1_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_d00ba6d1_1": 9999,
+        "answer_d00ba6d1_2": 23
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_1e4a8aec",
+      "question": "What gardening-related activity did I do two weeks ago?",
+      "gold_session_ids": [
+        "answer_16bd5ea6_1",
+        "answer_16bd5ea6_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_16bd5ea6_1": 109,
+        "answer_16bd5ea6_2": 3
+      },
+      "max_gold_embed_rank": 109,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "eac54add",
+      "question": "What was the significant buisiness milestone I mentioned four weeks ago?",
+      "gold_session_ids": [
+        "answer_0d4d0348_1",
+        "answer_0d4d0348_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_0d4d0348_1": 9999,
+        "answer_0d4d0348_2": 5
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "9a707b82",
+      "question": "I mentioned cooking something for my friend a couple of days ago. What was it?",
+      "gold_session_ids": [
+        "answer_dba89488_2",
+        "answer_dba89488_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_dba89488_2": 17,
+        "answer_dba89488_1": 19
+      },
+      "max_gold_embed_rank": 19,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "4dfccbf8",
+      "question": "What did I do with Rachel on the Wednesday two months ago?",
+      "gold_session_ids": [
+        "answer_4bebc783_1",
+        "answer_4bebc783_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_4bebc783_1": 3,
+        "answer_4bebc783_2": 9999
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_93159ced",
+      "question": "How long have I been working before I started my current job at NovaTech?",
+      "gold_session_ids": [
+        "answer_e5131a1b_2",
+        "answer_e5131a1b_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_e5131a1b_2": 2,
+        "answer_e5131a1b_1": 121
+      },
+      "max_gold_embed_rank": 121,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_68e94288",
+      "question": "What was the social media activity I participated 5 days ago?",
+      "gold_session_ids": [
+        "answer_9793daa4_2",
+        "answer_9793daa4_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_9793daa4_2": 9999,
+        "answer_9793daa4_1": 5
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_4929293b",
+      "question": "What was the the life event of one of my relatives that I participated in a week ago?",
+      "gold_session_ids": [
+        "answer_add9b013_2",
+        "answer_add9b013_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_add9b013_2": 9999,
+        "answer_add9b013_1": 38
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "a3838d2b",
+      "question": "How many charity events did I participate in before the 'Run for the Cure' event?",
+      "gold_session_ids": [
+        "answer_4ffa04a2_1",
+        "answer_4ffa04a2_3",
+        "answer_4ffa04a2_4",
+        "answer_4ffa04a2_6",
+        "answer_4ffa04a2_5",
+        "answer_4ffa04a2_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_4ffa04a2_1": 0,
+        "answer_4ffa04a2_3": 4,
+        "answer_4ffa04a2_4": 11,
+        "answer_4ffa04a2_6": 1,
+        "answer_4ffa04a2_5": 21,
+        "answer_4ffa04a2_2": 3
+      },
+      "max_gold_embed_rank": 21,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.8333333333333334,
+          "event_index": 0.8333333333333334,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "6e984302",
+      "question": "I mentioned an investment for a competition four weeks ago? What did I buy?",
+      "gold_session_ids": [
+        "answer_88841f27_1",
+        "answer_88841f27_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_88841f27_1": 9999,
+        "answer_88841f27_2": 35
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "0bc8ad93",
+      "question": "I mentioned visiting a museum two months ago. Did I visit with a friend or not?",
+      "gold_session_ids": [
+        "answer_f4ea84fc_3",
+        "answer_f4ea84fc_2",
+        "answer_f4ea84fc_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_f4ea84fc_3": 24,
+        "answer_f4ea84fc_2": 1,
+        "answer_f4ea84fc_1": 21
+      },
+      "max_gold_embed_rank": 24,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.3333333333333333,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@15": {
+          "embedding": 0.3333333333333333,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "2ebe6c92",
+      "question": "Which book did I finish a week ago?",
+      "gold_session_ids": [
+        "answer_c9d35c00_1",
+        "answer_c9d35c00_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_c9d35c00_1": 27,
+        "answer_c9d35c00_2": 1
+      },
+      "max_gold_embed_rank": 27,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_f2262a51",
+      "question": "How many different doctors did I visit?",
+      "gold_session_ids": [
+        "answer_55a6940c_2",
+        "answer_55a6940c_1",
+        "answer_55a6940c_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_55a6940c_2": 119,
+        "answer_55a6940c_1": 44,
+        "answer_55a6940c_3": 10
+      },
+      "max_gold_embed_rank": 119,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.3333333333333333,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.3333333333333333,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "88432d0a",
+      "question": "How many times did I bake something in the past two weeks?",
+      "gold_session_ids": [
+        "answer_733e443a_4",
+        "answer_733e443a_3",
+        "answer_733e443a_2",
+        "answer_733e443a_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_733e443a_4": 17,
+        "answer_733e443a_3": 16,
+        "answer_733e443a_2": 72,
+        "answer_733e443a_1": 103
+      },
+      "max_gold_embed_rank": 103,
+      "n_candidates": 62,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_2ba83207",
+      "question": "Which grocery store did I spend the most money at in the past month?",
+      "gold_session_ids": [
+        "answer_6a3b5c13_2",
+        "answer_6a3b5c13_4",
+        "answer_6a3b5c13_1",
+        "answer_6a3b5c13_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_6a3b5c13_2": 1,
+        "answer_6a3b5c13_4": 2,
+        "answer_6a3b5c13_1": 4,
+        "answer_6a3b5c13_3": 17
+      },
+      "max_gold_embed_rank": 17,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.75,
+          "event_index": 0.75,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.75,
+          "event_index": 0.75,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "d682f1a2",
+      "question": "How many different types of food delivery services have I used recently?",
+      "gold_session_ids": [
+        "answer_c008e5df_2",
+        "answer_c008e5df_1",
+        "answer_c008e5df_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_c008e5df_2": 75,
+        "answer_c008e5df_1": 1,
+        "answer_c008e5df_3": 0
+      },
+      "max_gold_embed_rank": 75,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "7024f17c",
+      "question": "How many hours of jogging and yoga did I do last week?",
+      "gold_session_ids": [
+        "answer_a21f3697_1",
+        "answer_a21f3697_2",
+        "answer_a21f3697_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_a21f3697_1": 21,
+        "answer_a21f3697_2": 12,
+        "answer_a21f3697_3": 5
+      },
+      "max_gold_embed_rank": 21,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.3333333333333333,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "3a704032",
+      "question": "How many plants did I acquire in the last month?",
+      "gold_session_ids": [
+        "answer_c2204106_3",
+        "answer_c2204106_1",
+        "answer_c2204106_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_c2204106_3": 41,
+        "answer_c2204106_1": 34,
+        "answer_c2204106_2": 84
+      },
+      "max_gold_embed_rank": 84,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.0,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_194be4b3",
+      "question": "How many musical instruments do I currently own?",
+      "gold_session_ids": [
+        "answer_3826dc55_5",
+        "answer_3826dc55_4",
+        "answer_3826dc55_3",
+        "answer_3826dc55_1",
+        "answer_3826dc55_2"
+      ],
+      "gold_embed_ranks": {
+        "answer_3826dc55_5": 0,
+        "answer_3826dc55_4": 36,
+        "answer_3826dc55_3": 4,
+        "answer_3826dc55_1": 14,
+        "answer_3826dc55_2": 7
+      },
+      "max_gold_embed_rank": 36,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6,
+          "event_index": 0.4,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.8,
+          "event_index": 0.6,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.8,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_e05b82a6",
+      "question": "How many times did I ride rollercoasters across all the events I attended from July to October?",
+      "gold_session_ids": [
+        "answer_6350aa4f_2",
+        "answer_6350aa4f_1",
+        "answer_6350aa4f_3",
+        "answer_6350aa4f_4"
+      ],
+      "gold_embed_ranks": {
+        "answer_6350aa4f_2": 1,
+        "answer_6350aa4f_1": 38,
+        "answer_6350aa4f_3": 2,
+        "answer_6350aa4f_4": 0
+      },
+      "max_gold_embed_rank": 38,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.75,
+          "event_index": 0.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.75,
+          "event_index": 0.75,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.75,
+          "event_index": 0.75,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_31ff4165",
+      "question": "How many health-related devices do I use in a day?",
+      "gold_session_ids": [
+        "answer_02b63d04_3",
+        "answer_02b63d04_1",
+        "answer_02b63d04_2",
+        "answer_02b63d04_4",
+        "answer_02b63d04_5"
+      ],
+      "gold_embed_ranks": {
+        "answer_02b63d04_3": 0,
+        "answer_02b63d04_1": 1,
+        "answer_02b63d04_2": 19,
+        "answer_02b63d04_4": 119,
+        "answer_02b63d04_5": 5
+      },
+      "max_gold_embed_rank": 119,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6,
+          "event_index": 0.2,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6,
+          "event_index": 0.6,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.8,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "d23cf73b",
+      "question": "How many different cuisines have I learned to cook or tried out in the past few months?",
+      "gold_session_ids": [
+        "answer_5a0d28f8_1",
+        "answer_5a0d28f8_4",
+        "answer_5a0d28f8_2",
+        "answer_5a0d28f8_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_5a0d28f8_1": 0,
+        "answer_5a0d28f8_4": 2,
+        "answer_5a0d28f8_2": 22,
+        "answer_5a0d28f8_3": 16
+      },
+      "max_gold_embed_rank": 22,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_15e38248",
+      "question": "How many pieces of furniture did I buy, assemble, sell, or fix in the past few months?",
+      "gold_session_ids": [
+        "answer_8858d9dc_1",
+        "answer_8858d9dc_2",
+        "answer_8858d9dc_4",
+        "answer_8858d9dc_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_8858d9dc_1": 9999,
+        "answer_8858d9dc_2": 2,
+        "answer_8858d9dc_4": 4,
+        "answer_8858d9dc_3": 23
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.75,
+          "event_index": 0.75,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_ab202e7f",
+      "question": "How many kitchen items did I replace or fix?",
+      "gold_session_ids": [
+        "answer_728deb4d_1",
+        "answer_728deb4d_3",
+        "answer_728deb4d_2",
+        "answer_728deb4d_5",
+        "answer_728deb4d_4"
+      ],
+      "gold_embed_ranks": {
+        "answer_728deb4d_1": 77,
+        "answer_728deb4d_3": 0,
+        "answer_728deb4d_2": 4,
+        "answer_728deb4d_5": 2,
+        "answer_728deb4d_4": 3
+      },
+      "max_gold_embed_rank": 77,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.8,
+          "event_index": 0.6,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.8,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 0.8,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "129d1232",
+      "question": "How much money did I raise in total through all the charity events I participated in?",
+      "gold_session_ids": [
+        "answer_1de862d6_2",
+        "answer_1de862d6_3",
+        "answer_1de862d6_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_1de862d6_2": 5,
+        "answer_1de862d6_3": 3,
+        "answer_1de862d6_1": 25
+      },
+      "max_gold_embed_rank": 25,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_7f6b06db",
+      "question": "What is the order of the three trips I took in the past three months, from earliest to latest?",
+      "gold_session_ids": [
+        "answer_5d8c99d3_1",
+        "answer_5d8c99d3_2",
+        "answer_5d8c99d3_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_5d8c99d3_1": 9999,
+        "answer_5d8c99d3_2": 3,
+        "answer_5d8c99d3_3": 25
+      },
+      "max_gold_embed_rank": 9999,
+      "n_candidates": 61,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.3333333333333333,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.3333333333333333,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "10d9b85a",
+      "question": "How many days did I spend attending workshops, lectures, and conferences in April?",
+      "gold_session_ids": [
+        "answer_e0585cb5_2",
+        "answer_e0585cb5_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_e0585cb5_2": 2,
+        "answer_e0585cb5_1": 32
+      },
+      "max_gold_embed_rank": 32,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.5,
+          "event_index": 0.5,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_372c3eed",
+      "question": "How many years in total did I spend in formal education from high school to the completion of my Bachelor's degree?",
+      "gold_session_ids": [
+        "answer_35c5419d_2",
+        "answer_35c5419d_3",
+        "answer_35c5419d_1"
+      ],
+      "gold_embed_ranks": {
+        "answer_35c5419d_2": 33,
+        "answer_35c5419d_3": 2,
+        "answer_35c5419d_1": 5
+      },
+      "max_gold_embed_rank": 33,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "81507db6",
+      "question": "How many graduation ceremonies have I attended in the past three months?",
+      "gold_session_ids": [
+        "answer_da3c1266_3",
+        "answer_da3c1266_2",
+        "answer_da3c1266_4",
+        "answer_da3c1266_1",
+        "answer_da3c1266_5"
+      ],
+      "gold_embed_ranks": {
+        "answer_da3c1266_3": 20,
+        "answer_da3c1266_2": 0,
+        "answer_da3c1266_4": 6,
+        "answer_da3c1266_1": 2,
+        "answer_da3c1266_5": 3
+      },
+      "max_gold_embed_rank": 20,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.8,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.8,
+          "event_index": 0.8,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    },
+    {
+      "question_id": "gpt4_372c3eed_abs",
+      "question": "How many years in total did I spend in formal education from high school to the completion of my Master's degree?",
+      "gold_session_ids": [
+        "answer_35c5419d_abs_1",
+        "answer_35c5419d_abs_2",
+        "answer_35c5419d_abs_3"
+      ],
+      "gold_embed_ranks": {
+        "answer_35c5419d_abs_1": 1,
+        "answer_35c5419d_abs_2": 50,
+        "answer_35c5419d_abs_3": 5
+      },
+      "max_gold_embed_rank": 50,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.3333333333333333,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@15": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        },
+        "recall@30": {
+          "embedding": 0.6666666666666666,
+          "event_index": 0.6666666666666666,
+          "embedding_all_gold": false,
+          "event_index_all_gold": false
+        }
+      }
+    },
+    {
+      "question_id": "e3038f8c",
+      "question": "How many rare items do I have in total?",
+      "gold_session_ids": [
+        "answer_b6018747_3",
+        "answer_b6018747_2",
+        "answer_b6018747_1",
+        "answer_b6018747_4"
+      ],
+      "gold_embed_ranks": {
+        "answer_b6018747_3": 16,
+        "answer_b6018747_2": 13,
+        "answer_b6018747_1": 1,
+        "answer_b6018747_4": 0
+      },
+      "max_gold_embed_rank": 16,
+      "n_candidates": 60,
+      "metrics": {
+        "recall@8": {
+          "embedding": 0.5,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@15": {
+          "embedding": 0.75,
+          "event_index": 1.0,
+          "embedding_all_gold": false,
+          "event_index_all_gold": true
+        },
+        "recall@30": {
+          "embedding": 1.0,
+          "event_index": 1.0,
+          "embedding_all_gold": true,
+          "event_index_all_gold": true
+        }
+      }
+    }
+  ]
+}

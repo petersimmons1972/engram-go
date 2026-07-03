@@ -119,6 +119,9 @@ func (noopBackend) StoreMemory(_ context.Context, _ *types.Memory) error        
 func (noopBackend) StoreMemoryTx(_ context.Context, _ db.Tx, _ *types.Memory) error  { return nil }
 func (noopBackend) GetMemory(_ context.Context, _ string) (*types.Memory, error)     { return nil, nil }
 func (noopBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) { return nil, nil }
+func (noopBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
+	return nil, nil
+}
 func (noopBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
 	return nil, nil
 }
@@ -179,7 +182,13 @@ func (noopBackend) ChunkEmbeddingDistance(_ context.Context, _, _ string) (float
 func (noopBackend) UpdateChunkLastMatched(_ context.Context, _ string) error          { return nil }
 func (noopBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int, error) { return 0, nil }
 func (noopBackend) EnqueueChunkLeases(_ context.Context, _ []string) error            { return nil }
-func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error  { return nil }
+func (noopBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
+func (noopBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (noopBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (noopBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
 }

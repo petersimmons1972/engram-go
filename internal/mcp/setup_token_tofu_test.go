@@ -30,7 +30,8 @@ func newTOFUTestServer(t *testing.T, apiKey string) *Server {
 
 // buildSetupTokenTOFUHandler returns the TOFU-aware handler for /setup-token.
 func buildSetupTokenTOFUHandler(s *Server, apiKey string) http.Handler {
-	return s.setupTokenTOFUHandler(context.Background(), apiKey)
+	// Tests that use this helper don't check the endpoint URL, so advertised is "".
+	return s.setupTokenTOFUHandler(context.Background(), apiKey, "")
 }
 
 // TestSetupToken_TOFUFirstLocalhostSucceeds verifies that the very first
@@ -151,6 +152,43 @@ func TestSetupToken_TOFUConcurrentRequests(t *testing.T) {
 		"exactly one concurrent unauthenticated TOFU request must succeed; got %d", successes)
 }
 
+// TestSetupToken_XFFBypassBlocked verifies that a remote caller cannot bypass the
+// /setup-token rate limiter by rotating the X-Forwarded-For header.  Pre-fix,
+// s.clientIP(r) keyed the rate-limit bucket, so each new XFF value minted a fresh
+// bucket; post-fix the bucket key is the physical r.RemoteAddr. (#1209)
+func TestSetupToken_XFFBypassBlocked(t *testing.T) {
+	const apiKey = "test-api-key-xff-bypass"
+	s := newTOFUTestServer(t, apiKey)
+	s.trustProxy = true // honour X-Forwarded-For so clientIP() diverges from RemoteAddr
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Build a limiter and exhaust the setup-token budget for the physical peer "10.0.0.1".
+	// allowSetupToken burst is 3 (see server.go — rate.Every(setupTokenWindow), burst 3).
+	rl := newRateLimiter(ctx)
+	rl.allowSetupToken("10.0.0.1") // #1
+	rl.allowSetupToken("10.0.0.1") // #2
+	rl.allowSetupToken("10.0.0.1") // #3 — budget exhausted
+	if rl.allowSetupToken("10.0.0.1") {
+		t.Fatal("test setup: expected budget to be exhausted after 3 calls but still has tokens")
+	}
+
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, "", rl)
+
+	// Attacker is physically at 10.0.0.1 but rotates X-Forwarded-For to "5.5.5.5".
+	// Pre-fix: clientIP(r)="5.5.5.5" → new bucket → not rate-limited → TOFU/auth logic runs.
+	// Post-fix: physical peer="10.0.0.1" → exhausted bucket → 429.
+	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "5.5.5.5") // spoofed IP — must not mint a new RL bucket
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusTooManyRequests, w.Code,
+		"XFF rotation must not bypass /setup-token rate limit: physical peer 10.0.0.1 is exhausted (#1209)")
+}
+
 // TestSetupToken_TOFURateLimitRunsFirst verifies that rate-limit enforcement (429)
 // takes priority over TOFU grant when the setupLimiter budget is exhausted.
 func TestSetupToken_TOFURateLimitRunsFirst(t *testing.T) {
@@ -165,8 +203,7 @@ func TestSetupToken_TOFURateLimitRunsFirst(t *testing.T) {
 	}
 
 	// Build the handler using the test-only variant that accepts an external limiter.
-	// setupTokenTOFUHandlerWithLimiter doesn't exist yet — COMPILE FAIL (red phase).
-	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, rl)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, "", rl)
 
 	req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
 	req.RemoteAddr = ip + ":55555"
@@ -175,4 +212,51 @@ func TestSetupToken_TOFURateLimitRunsFirst(t *testing.T) {
 
 	require.Equal(t, http.StatusTooManyRequests, w.Code,
 		"exhausted rate limiter must return 429 before TOFU logic runs")
+}
+
+// TestSetupToken_EndpointURLContainsAdvertisedBase verifies that /setup-token
+// returns the full advertised URL in the "endpoint" field, not a bare "/mcp"
+// path. This is the regression test for #1214: the production handler and the
+// test helper now share a single implementation that accepts advertised.
+func TestSetupToken_EndpointURLContainsAdvertisedBase(t *testing.T) {
+	const apiKey = "test-api-key-endpoint-url"
+	const advertised = "https://engram.example.com"
+	s := newTOFUTestServer(t, apiKey)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rl := newRateLimiter(ctx)
+	handler := s.setupTokenTOFUHandlerWithLimiter(apiKey, advertised, rl)
+
+	t.Run("tofu_returns_full_endpoint", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+		req.RemoteAddr = "127.0.0.1:54399"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "TOFU grant must return 200")
+		body := w.Body.String()
+		require.Contains(t, body, advertised+"/mcp",
+			"endpoint must be advertised+/mcp, not a bare /mcp path (#1214)")
+	})
+
+	t.Run("authed_returns_full_endpoint", func(t *testing.T) {
+		// Use a fresh server (tofuGranted was consumed above).
+		s2 := newTOFUTestServer(t, apiKey)
+		s2.tofuGranted.Store(true) // TOFU already consumed
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		defer cancel2()
+		h2 := s2.setupTokenTOFUHandlerWithLimiter(apiKey, advertised, newRateLimiter(ctx2))
+
+		req := httptest.NewRequest(http.MethodGet, "/setup-token", nil)
+		req.RemoteAddr = "127.0.0.1:54400"
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		w := httptest.NewRecorder()
+		h2.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "authenticated request must return 200")
+		body := w.Body.String()
+		require.Contains(t, body, advertised+"/mcp",
+			"authenticated endpoint must be advertised+/mcp (#1214)")
+	})
 }

@@ -275,11 +275,52 @@ func TestConfigFormatFlag(t *testing.T) {
 	})
 }
 
-// TestDefaultEndpointIsK8s verifies that the default server URL points to the
-// remote ingress, not the retired local Docker address (#engram-setup-k8s).
-func TestDefaultEndpointIsK8s(t *testing.T) {
-	if defaultServerURL != "https://engram.petersimmons.com" {
-		t.Errorf("defaultServerURL = %q, want %q", defaultServerURL, "https://engram.petersimmons.com")
+func TestDryRunExplainsEffectiveTargets(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	setup := &setupResponse{
+		Token:    "token-123456789012345678901234567890",
+		Endpoint: "https://engram.petersimmons.com/mcp",
+		Name:     "engram",
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := configureWithSetup(defaultServerURL, "engram", true, "text", setup)
+
+	w.Close()
+	os.Stdout = oldStdout
+	output, _ := io.ReadAll(r)
+	outputStr := string(output)
+
+	if err != nil {
+		t.Fatalf("configureWithSetup returned error: %v", err)
+	}
+
+	expected := []string{
+		"server:   http://localhost:8788",
+		"endpoint: https://engram.petersimmons.com/mcp",
+		filepath.Join(tmpHome, ".claude", "mcp_servers.json") + " (create or update)",
+		filepath.Join(tmpHome, ".claude.json") + " (update only when the file already has mcpServers; otherwise skip)",
+	}
+	for _, want := range expected {
+		if !strings.Contains(outputStr, want) {
+			t.Errorf("dry-run output missing %q\noutput was:\n%s", want, outputStr)
+		}
+	}
+}
+
+// TestDefaultEndpointIsLocalhost verifies that the default server URL points
+// to localhost:8788 for single-host installs (#1207).
+func TestDefaultEndpointIsLocalhost(t *testing.T) {
+	if defaultServerURL != "http://localhost:8788" {
+		t.Errorf("defaultServerURL = %q, want %q", defaultServerURL, "http://localhost:8788")
 	}
 }
 

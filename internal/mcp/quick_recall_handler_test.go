@@ -181,3 +181,42 @@ func TestHandleQuickRecall_InvalidProjectName(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeRecallMode_AllValidModes verifies that all documented modes
+// are accepted and that an unknown mode is rejected.
+func TestNormalizeRecallMode_AllValidModes(t *testing.T) {
+	valid := []string{"", "handle", "full", "summary", "id_only",
+		"SUMMARY", "ID_ONLY", "  full  "}
+	for _, raw := range valid {
+		got, err := normalizeRecallMode(raw)
+		require.NoErrorf(t, err, "mode %q should be valid", raw)
+		_ = got
+	}
+
+	_, err := normalizeRecallMode("unknown_mode")
+	require.Error(t, err, "unknown mode should be rejected")
+	require.Contains(t, err.Error(), "id_only", "error should list id_only as a valid mode")
+}
+
+// TestHandleQuickRecall_SummaryMode verifies that mode "summary" is accepted
+// and returns 200 with a results array (fixes bug: normalizeRecallMode rejected "summary").
+func TestHandleQuickRecall_SummaryMode(t *testing.T) {
+	s := newQuickRecallServer(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"query":   "test query",
+		"project": "clearwatch",
+		"mode":    "summary",
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-recall", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickRecall(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "mode=summary should return 200, not 400")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	_, ok := resp["results"]
+	require.True(t, ok, "response must contain 'results' key")
+}

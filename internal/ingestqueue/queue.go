@@ -39,6 +39,11 @@ type Config struct {
 
 var ErrQueueFull = fmt.Errorf("ingestion queue full — retry after current jobs complete")
 
+var (
+	resultTTL              = 5 * time.Minute
+	resultEvictionInterval = time.Minute
+)
+
 type Queue struct {
 	ch       chan *Job
 	results  sync.Map
@@ -54,6 +59,8 @@ func New(ctx context.Context, cfg Config) *Queue {
 		cfg.Workers = 4
 	}
 	q := &Queue{ch: make(chan *Job, cfg.Depth)}
+	q.wg.Add(1)
+	go q.evictLoop(ctx)
 	for i := 0; i < cfg.Workers; i++ {
 		q.wg.Add(1)
 		go q.worker(ctx)
@@ -83,9 +90,7 @@ func (q *Queue) Status(jobID string) *JobResult {
 	return jr
 }
 
-func (q *Queue) Depth() int    { return len(q.ch) }
-func (q *Queue) Inflight() int { return int(q.inflight.Load()) }
-
+func (q *Queue) Depth() int { return len(q.ch) }
 func (q *Queue) worker(ctx context.Context) {
 	defer q.wg.Done()
 	for {
@@ -104,16 +109,52 @@ func (q *Queue) worker(ctx context.Context) {
 }
 
 func (q *Queue) run(ctx context.Context, job *Job) {
-	r := &JobResult{JobID: job.ID, Status: StatusProcessing, StartedAt: time.Now()}
-	q.results.Store(job.ID, r)
+	startedAt := time.Now()
 	err := job.Work(ctx)
-	r.DoneAt = time.Now()
+	finalResult := JobResult{
+		JobID:     job.ID,
+		StartedAt: startedAt,
+		DoneAt:    time.Now(),
+	}
 	if err != nil {
-		r.Status = StatusFailed
-		r.Error = err.Error()
+		finalResult.Status = StatusFailed
+		finalResult.Error = err.Error()
 		slog.Warn("ingest job failed", "job_id", job.ID, "project", job.Project, "err", err)
 	} else {
-		r.Status = StatusDone
+		finalResult.Status = StatusDone
 	}
-	q.results.Store(job.ID, r)
+	q.results.Store(job.ID, &finalResult)
+}
+
+func (q *Queue) evictLoop(ctx context.Context) {
+	defer q.wg.Done()
+
+	ticker := time.NewTicker(resultEvictionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			q.evictCompletedResults(time.Now())
+		}
+	}
+}
+
+func (q *Queue) evictCompletedResults(now time.Time) {
+	q.results.Range(func(key, value any) bool {
+		result, ok := value.(*JobResult)
+		if !ok {
+			return true
+		}
+		if result.Status != StatusDone && result.Status != StatusFailed {
+			return true
+		}
+		if result.DoneAt.IsZero() || now.Sub(result.DoneAt) < resultTTL {
+			return true
+		}
+		q.results.Delete(key)
+		return true
+	})
 }
