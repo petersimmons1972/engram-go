@@ -113,6 +113,9 @@ type Config struct {
 
 	// H-PG: grounded preference generation for ss-preference.
 	PreferenceGround bool // forbid unsupported specific additions in preference answers (default off)
+
+	// H-KUR: knowledge-update recency generation prompt (issue #1178).
+	KURecencyPrompt bool // instruct the model to answer with the most-recent-session value when multiple values for the same attribute appear across sessions (default off)
 	// Retrieval-fusion flags for issue #938.
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
@@ -296,6 +299,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.PreferenceEnumerate, "preference-enumerate", false, "H-PE: inject exhaustive named-item enumeration instruction for single-session-preference questions; lists every specific item/brand/attribute from context rather than abstractly summarising (default off)")
 	// H-PG: grounded preference generation (issue #1183)
 	fs.BoolVar(&cfg.PreferenceGround, "preference-ground", false, "H-PG: for single-session-preference answers, forbid specific brands/titles/cuisines/ingredients/genres unless they appear explicitly in retrieved context; prefer a short grounded answer over padded specifics (default off)")
+	// H-KUR: knowledge-update recency generation prompt (issue #1178)
+	fs.BoolVar(&cfg.KURecencyPrompt, "ku-recency-prompt", false, "H-KUR: for knowledge-update answers, instruct the model to answer with the value from the most recent session (latest date) when multiple values for the same attribute appear across sessions in context (default off)")
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")

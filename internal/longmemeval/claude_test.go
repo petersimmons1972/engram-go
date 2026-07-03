@@ -512,6 +512,92 @@ func TestGenerationPrompt_PreferenceGround_DefaultsToStandardPreferencePrompt(t 
 	}
 }
 
+// TestGenerationPrompt_KURecency_InstructsMostRecentValue verifies the H-KUR
+// (issue #1178) knowledge-update recency prompt tells the model to prefer the
+// most recent session's value when multiple values for the same attribute
+// appear across sessions in the retrieved context.
+func TestGenerationPrompt_KURecency_InstructsMostRecentValue(t *testing.T) {
+	prompt := longmemeval.GenerationPromptForTypeKURecency(
+		"What is the user's current phone number?",
+		"knowledge-update",
+		"2024-03-15",
+		[]string{
+			"Session date: 2024-01-05\nUser said their phone number is 555-1234.",
+			"Session date: 2024-02-20\nUser said their new phone number is 555-9876.",
+		},
+		true,
+	)
+	lower := strings.ToLower(prompt)
+	for _, want := range []string{
+		"most recent",
+		"latest date",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("KU recency prompt must contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+// TestGenerationPrompt_KURecency_FlagOffDefaultsToStandardPrompt verifies that
+// when kuRecencyPrompt is false, GenerationPromptForTypeKURecency is byte-identical
+// to the standard GenerationPromptForType output for knowledge-update questions.
+func TestGenerationPrompt_KURecency_FlagOffDefaultsToStandardPrompt(t *testing.T) {
+	question := "What is the user's current phone number?"
+	questionDate := "2024-03-15"
+	context := []string{
+		"Session date: 2024-01-05\nUser said their phone number is 555-1234.",
+		"Session date: 2024-02-20\nUser said their new phone number is 555-9876.",
+	}
+	got := longmemeval.GenerationPromptForTypeKURecency(question, "knowledge-update", questionDate, context, false)
+	want := longmemeval.GenerationPromptForType(question, "knowledge-update", questionDate, context)
+	if got != want {
+		t.Errorf("KU recency flag off should preserve standard knowledge-update prompt\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+// TestGenerationPrompt_KURecency_NonKUTypeUnaffected verifies the KU recency
+// flag is a no-op for non-knowledge-update question types even when true,
+// mirroring the type-gating pattern used by GenerationPromptForTypePreferenceGround.
+func TestGenerationPrompt_KURecency_NonKUTypeUnaffected(t *testing.T) {
+	question := "When did the user buy their camera?"
+	questionDate := "2024-03-15"
+	context := []string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."}
+	got := longmemeval.GenerationPromptForTypeKURecency(question, "single-session-user", questionDate, context, true)
+	want := longmemeval.GenerationPromptForType(question, "single-session-user", questionDate, context)
+	if got != want {
+		t.Errorf("KU recency flag must not affect non-knowledge-update question types\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+// TestGenerationPromptKnowledgeUpdate_ContainsRecencyInstructionAndContext
+// verifies the underlying prompt builder (named per issue #1178's acceptance
+// criteria: GenerationPromptKnowledgeUpdate) embeds both the recency rule and
+// the supplied context/question so the model has both a rule and evidence.
+func TestGenerationPromptKnowledgeUpdate_ContainsRecencyInstructionAndContext(t *testing.T) {
+	prompt := longmemeval.GenerationPromptKnowledgeUpdate(
+		"What is the user's current phone number?",
+		"2024-03-15",
+		[]string{"Session date: 2024-02-20\nUser said their new phone number is 555-9876."},
+	)
+	lower := strings.ToLower(prompt)
+	if !strings.Contains(lower, "most recent session") {
+		t.Errorf("KU recency prompt must instruct use of the most recent session's value, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "555-9876") {
+		t.Errorf("KU recency prompt must include the supplied context, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "What is the user's current phone number?") {
+		t.Errorf("KU recency prompt must include the question, got:\n%s", prompt)
+	}
+	// QA blocker on #1258: issue #1178's acceptance bar is the Strict metric,
+	// which credits only judge-label CORRECT (not PARTIALLY_CORRECT/hedged), so
+	// the KU prompt must carry the same anti-hedge instruction as every other
+	// direct-answer prompt in this file (see GenerationPrompt).
+	if !strings.Contains(prompt, `never say "not mentioned", "not found in context", "cannot be determined", "not explicitly stated", or any similar refusal`) {
+		t.Errorf("KU recency prompt must include the anti-hedge instruction, got:\n%s", prompt)
+	}
+}
+
 func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
 	// Non-preference types must still use the original generic prompt.
 	prompt := longmemeval.GenerationPromptForType(

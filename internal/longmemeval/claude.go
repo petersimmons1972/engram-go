@@ -564,6 +564,50 @@ GROUNDING RULE:
 - Prefer a short grounded answer over a padded one.`, questionDate, ctx, questionDate, question)
 }
 
+// GenerationPromptForTypeKURecency (H-KUR, issue #1178) is like
+// GenerationPromptForType but, when kuRecencyPrompt is true for
+// "knowledge-update" questions, routes to GenerationPromptKnowledgeUpdate — a
+// dedicated prompt that instructs the model to answer with the most recent
+// session's value when multiple values for the same attribute appear across
+// sessions in the retrieved context. Targets the KU failure mode where ~18
+// items on LME-M pick the stale value when both old and new appear in
+// context, despite gold_visible ≈0.99 and avg_rank ≈2.0 (retrieval already
+// solved; this is purely a generation-time disambiguation problem).
+//
+// For all other question types, or when kuRecencyPrompt is false, the
+// standard GenerationPromptForType output is returned unchanged.
+// Activated by --ku-recency-prompt (Config.KURecencyPrompt). Off by default.
+func GenerationPromptForTypeKURecency(question, questionType, questionDate string, contextBlocks []string, kuRecencyPrompt bool) string {
+	if !kuRecencyPrompt || questionType != "knowledge-update" {
+		return GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+	}
+	return GenerationPromptKnowledgeUpdate(question, questionDate, contextBlocks)
+}
+
+// GenerationPromptKnowledgeUpdate (H-KUR, issue #1178) returns a generation
+// prompt for knowledge-update questions that instructs the model to answer
+// using the value from the most recent session (by "Session date:" header)
+// when multiple values for the same attribute appear across sessions in the
+// retrieved context. Knowledge-update questions test whether the model
+// correctly tracks facts that change over time (e.g. a phone number or job
+// title updated in a later session); without an explicit recency rule the
+// model has no principled way to choose between a stale and a current value
+// when both are visible in context.
+func GenerationPromptKnowledgeUpdate(question, questionDate string, contextBlocks []string) string {
+	ctx := strings.Join(contextBlocks, "\n\n---\n\n")
+	return fmt.Sprintf(`You are answering a question about a person's conversation history, where facts may have changed over time across sessions.
+
+Each memory block may begin with a "Session date: YYYY-MM-DD" header. Use these dates to determine which session is most recent. The question was asked on %s.
+
+Relevant memory context:
+%s
+
+Question (asked on %s): %s
+
+RECENCY RULE: When multiple values exist for the same attribute across sessions, answer with the value from the most recent session (latest date). Ignore earlier, superseded values — they are stale and must not be used in your answer.
+
+Answer in one sentence using only the facts directly required by the question. Do not restate the question. Do not add context the user did not ask for. If the answer is a number, date, name, or short phrase, return only that value with minimal framing. IMPORTANT: You MUST always provide a specific answer — never say "not mentioned", "not found in context", "cannot be determined", "not explicitly stated", or any similar refusal. If the answer is not directly stated, infer the most likely answer from the available context clues and state it directly. Output only the answer with no uncertainty hedging.`, questionDate, ctx, questionDate, question)
+}
 
 // GenerationPromptForTypeEnumerate (H12) is like GenerationPromptForType but
 // prepends an enumerate-first instruction when enumerateFirst is true and the
