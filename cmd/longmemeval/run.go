@@ -527,6 +527,12 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	// Issue #1176: per-type session-diversity override for single-session-preference
+	// only. Computed once per item and threaded into the plain (non-atom,
+	// non-exact-signal-boost) recall closures below, which cover the default LME
+	// run configuration. Zero (the common case) preserves exact baseline behavior.
+	ssPrefDiversityOverride := resolveSessionDiversityOverride(cfg, item.QuestionType)
+
 	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		if cfg.AtomMode {
 			return mcpClient.RecallWithAtomRecall(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost, cfg.ExactSignalBoost, atomRecallAsOf)
@@ -535,14 +541,14 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			ids, err := mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
 			return longmemeval.RecallResult{IDs: ids}, err
 		}
-		ids, err := mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+		ids, err := mcpClient.RecallWithDiversityOverride(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost, ssPrefDiversityOverride)
 		return longmemeval.RecallResult{IDs: ids}, err
 	}
 	recallScoredDefault := func(query string, topK int) ([]longmemeval.ScoredMemoryID, error) {
 		if cfg.ExactSignalBoost {
 			return mcpClient.RecallScoredWithExactBoost(ctx, ingest.Project, query, topK, since, before)
 		}
-		return mcpClient.RecallScoredWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		return mcpClient.RecallScoredWithDiversityOverride(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost, ssPrefDiversityOverride)
 	}
 	recallDefault := func(query string, topK int) (longmemeval.RecallResult, error) {
 		if cfg.AtomMode {
@@ -552,7 +558,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			ids, err := mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
 			return longmemeval.RecallResult{IDs: ids}, err
 		}
-		ids, err := mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		ids, err := mcpClient.RecallWithDiversityOverride(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost, ssPrefDiversityOverride)
 		return longmemeval.RecallResult{IDs: ids}, err
 	}
 
@@ -673,17 +679,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 
 	// Fetch content for top contextLimit memories.
 	// --context-topk overrides per-type default; 0 means use per-type default.
-	var contextLimit int
-	if cfg.ContextTopKOverride > 0 {
-		contextLimit = cfg.ContextTopKOverride
-	} else if runOpts.UseFullAggregationContext(item.Question) {
-		contextLimit = len(retrievedIDs)
-	} else {
-		contextLimit = longmemeval.ContextTopKForTypeWithBump(item.QuestionType, cfg.ContextTopKBump)
-	}
-	if contextLimit > len(retrievedIDs) {
-		contextLimit = len(retrievedIDs)
-	}
+	// See resolveContextTopK for the full priority chain, including the
+	// issue #1176 --ss-pref-context-topk knob.
+	contextLimit := resolveContextTopK(cfg, item.QuestionType, runOpts.UseFullAggregationContext(item.Question), len(retrievedIDs))
 	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
 	sessionDateByID := haystackDateBySessionID(item)
 	contextBlocks := make([]string, 0, contextLimit)
@@ -869,6 +867,54 @@ func orderContextEvidenceFirst(blocks []string, question string) []string {
 		return scoreExactSignals(stripContextMetadataHeader(out[i]), question) > scoreExactSignals(stripContextMetadataHeader(out[j]), question)
 	})
 	return out
+}
+
+// resolveContextTopK computes the effective context window size (contextLimit)
+// for a single LME item (issue #1176). Priority chain, highest first:
+//
+//  1. cfg.ContextTopKOverride (--context-topk) — the existing global
+//     "kitchen sink" override; applies to every question type.
+//  2. useFullAggregation (H8 exhaustive-aggregation) — uses every retrieved ID.
+//  3. cfg.SSPrefContextTopK (--ss-pref-context-topk) — applies ONLY to
+//     single-session-preference questions; other types are unaffected.
+//  4. longmemeval.ContextTopKForTypeWithBump — the existing per-type default.
+//
+// The result is always clamped to retrievedCount, matching the previous
+// inline clamp in runOne. Default (SSPrefContextTopK == 0) is a no-op:
+// behavior is byte-identical to the pre-#1176 inline logic.
+func resolveContextTopK(cfg *Config, questionType string, useFullAggregation bool, retrievedCount int) int {
+	var limit int
+	switch {
+	case cfg.ContextTopKOverride > 0:
+		limit = cfg.ContextTopKOverride
+	case useFullAggregation:
+		limit = retrievedCount
+	case cfg.SSPrefContextTopK > 0 && questionType == "single-session-preference":
+		limit = cfg.SSPrefContextTopK
+	default:
+		limit = longmemeval.ContextTopKForTypeWithBump(questionType, cfg.ContextTopKBump)
+	}
+	if limit > retrievedCount {
+		limit = retrievedCount
+	}
+	return limit
+}
+
+// resolveSessionDiversityOverride returns the explicit per-call
+// session_diversity_n override to use for this item's recall calls, or 0 to
+// fall back to the server-wide ENGRAM_SESSION_DIVERSITY_N default (issue
+// #1176). Only single-session-preference questions ever receive a non-zero
+// override, and only when --ss-pref-session-diversity-n is set — default is a
+// no-op, preserving baseline-identity behavior for every other question type.
+//
+// Deliberately generator-agnostic (LME issue #1176 acceptance criterion): the
+// gate is keyed on question_type alone, with no dependency on which model
+// processes the item downstream.
+func resolveSessionDiversityOverride(cfg *Config, questionType string) int {
+	if cfg.SSPrefSessionDiversityN > 0 && questionType == "single-session-preference" {
+		return cfg.SSPrefSessionDiversityN
+	}
+	return 0
 }
 
 func selectContextIDs(retrievedIDs, secondaryIDs []string, limit int) []string {

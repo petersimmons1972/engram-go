@@ -421,11 +421,41 @@ func (c *Client) RecallWithOptsResult(ctx context.Context, project, query string
 	})
 }
 
+// RecallScoredWithOpts reads ENGRAM_SESSION_DIVERSITY_N and sends it as
+// session_diversity_n on every call — a single server-wide value applied
+// uniformly to all question types. It delegates to
+// RecallScoredWithDiversityOverride with override=0 so its behavior is
+// unchanged (this preserves the LEVER-9 baseline contract).
 func (c *Client) RecallScoredWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]ScoredMemoryID, error) {
-	diversityN := 0
-	if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			diversityN = n
+	return c.RecallScoredWithDiversityOverride(ctx, project, query, topK, since, before, topicAnchorBoost, 0)
+}
+
+// RecallWithDiversityOverride is the []string-returning sibling of
+// RecallScoredWithDiversityOverride (issue #1176).
+func (c *Client) RecallWithDiversityOverride(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool, diversityNOverride int) ([]string, error) {
+	hits, err := c.RecallScoredWithDiversityOverride(ctx, project, query, topK, since, before, topicAnchorBoost, diversityNOverride)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+// RecallScoredWithDiversityOverride is like RecallScoredWithOpts but lets the
+// caller force a specific session_diversity_n instead of always reading
+// ENGRAM_SESSION_DIVERSITY_N (issue #1176: per-type session-diversity gating
+// for single-session-preference, independent of the server-wide default used
+// by other question types).
+//
+// diversityNOverride == 0 falls back to the ENGRAM_SESSION_DIVERSITY_N
+// env-var default — byte-identical to RecallScoredWithOpts. A positive value
+// is sent as-is and takes priority over the env var for this call only.
+func (c *Client) RecallScoredWithDiversityOverride(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool, diversityNOverride int) ([]ScoredMemoryID, error) {
+	diversityN := diversityNOverride
+	if diversityN == 0 {
+		if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				diversityN = n
+			}
 		}
 	}
 	return c.recallScoredWithParams(ctx, recallParams{

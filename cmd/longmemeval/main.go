@@ -64,8 +64,26 @@ type Config struct {
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
-	BlockOverlapChars   int  // ingest-time pre-chunk overlap in chars; 0 = disabled
-	RepairPreset        string
+
+	// Issue #1176: per-type retrieval hygiene for single-session-preference
+	// (ss-pref). Both default to 0 = off (baseline-identity, no behavior
+	// change unless explicitly set). Scoped to single-session-preference only
+	// — question_type is an eval-only artifact (FM-77; see
+	// internal/search/session_diversity.go), so this gating lives entirely in
+	// the eval harness client, never in internal/search/engine.go.
+	//
+	// SSPrefContextTopK overrides ContextTopKForTypeWithBump's per-type
+	// default (15) for single-session-preference questions only; other types
+	// are unaffected. Lower priority than the existing global
+	// --context-topk/ContextTopKOverride flag.
+	SSPrefContextTopK int
+	// SSPrefSessionDiversityN caps chunks-per-session (via the MCP
+	// session_diversity_n arg) for single-session-preference recall calls
+	// only, independent of the server-wide ENGRAM_SESSION_DIVERSITY_N
+	// default used by --session-diversity-n/SessionDiversityN.
+	SSPrefSessionDiversityN int
+	BlockOverlapChars       int // ingest-time pre-chunk overlap in chars; 0 = disabled
+	RepairPreset            string
 
 	// H16: question_date injection
 	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
@@ -297,6 +315,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fs.IntVar(&cfg.SessionDiversityN, "session-diversity-n", defaultDiversityN, "LEVER-9: expected per-session chunk cap on the server (0 = off; reads ENGRAM_SESSION_DIVERSITY_N as default)")
+	// Issue #1176: per-type retrieval hygiene, scoped to single-session-preference
+	// only. Both default to 0 (off) — no behavior change unless explicitly set.
+	// Unlike --session-diversity-n (which only documents the server-wide env-var
+	// default), --ss-pref-session-diversity-n is actually sent as an explicit
+	// per-call session_diversity_n override for ss-pref questions, via
+	// Client.RecallScoredWithDiversityOverride.
+	fs.IntVar(&cfg.SSPrefSessionDiversityN, "ss-pref-session-diversity-n", 0, "issue #1176: per-session chunk cap applied ONLY to single-session-preference recall calls (0 = off; independent of --session-diversity-n)")
+	fs.IntVar(&cfg.SSPrefContextTopK, "ss-pref-context-topk", 0, "issue #1176: context topK applied ONLY to single-session-preference questions (0 = use the per-type default of 15; overridden by --context-topk if set)")
 	// #749: contention guard. --no-exclusive-backend is the negation flag.
 	// Default is exclusive=true; --no-exclusive-backend sets it false.
 	var noExclusiveBackend bool

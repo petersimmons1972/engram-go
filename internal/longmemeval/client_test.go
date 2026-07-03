@@ -388,6 +388,104 @@ func TestRecallWithOpts_SendsSessionDiversityN(t *testing.T) {
 	}
 }
 
+// TestRecallScoredWithDiversityOverride_ExplicitValueWins verifies that an
+// explicit diversityNOverride is sent as session_diversity_n even when
+// ENGRAM_SESSION_DIVERSITY_N is unset — this is the mechanism issue #1176
+// uses to cap single-session-preference retrieval at N=1 without touching
+// the server-wide env-var default used by other question types.
+func TestRecallScoredWithDiversityOverride_ExplicitValueWins(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got, ok := args["session_diversity_n"].(float64); !ok || got != 1 {
+				t.Fatalf("session_diversity_n = %#v, want 1", args["session_diversity_n"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-aaa", "score": 0.8}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := c.RecallScoredWithDiversityOverride(ctx, "proj", "query", 5, nil, nil, false, 1); err != nil {
+		t.Fatalf("RecallScoredWithDiversityOverride: %v", err)
+	}
+}
+
+// TestRecallScoredWithDiversityOverride_ZeroFallsBackToEnv verifies that
+// passing diversityNOverride=0 preserves the existing RecallScoredWithOpts
+// behavior of reading ENGRAM_SESSION_DIVERSITY_N — non-ss-pref question
+// types must be byte-identical to baseline when no override is supplied.
+func TestRecallScoredWithDiversityOverride_ZeroFallsBackToEnv(t *testing.T) {
+	t.Setenv("ENGRAM_SESSION_DIVERSITY_N", "2")
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got, ok := args["session_diversity_n"].(float64); !ok || got != 2 {
+				t.Fatalf("session_diversity_n = %#v, want 2 (from env)", args["session_diversity_n"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-aaa", "score": 0.8}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := c.RecallScoredWithDiversityOverride(ctx, "proj", "query", 5, nil, nil, false, 0); err != nil {
+		t.Fatalf("RecallScoredWithDiversityOverride: %v", err)
+	}
+}
+
+// TestRecallWithDiversityOverride_SendsExplicitValue is the []string-returning
+// sibling of RecallScoredWithDiversityOverride, used by the recall/recallDefault
+// closures in cmd/longmemeval/run.go.
+func TestRecallWithDiversityOverride_SendsExplicitValue(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got, ok := args["session_diversity_n"].(float64); !ok || got != 1 {
+				t.Fatalf("session_diversity_n = %#v, want 1", args["session_diversity_n"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-aaa", "score": 0.8}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	ids, err := c.RecallWithDiversityOverride(ctx, "proj", "query", 5, nil, nil, false, 1)
+	if err != nil {
+		t.Fatalf("RecallWithDiversityOverride: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "h-aaa" {
+		t.Fatalf("ids = %v, want [h-aaa]", ids)
+	}
+}
+
 // TestFetchContent_HappyPath verifies content fetching.
 func TestFetchContent_HappyPath(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
