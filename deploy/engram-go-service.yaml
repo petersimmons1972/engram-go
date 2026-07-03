@@ -1,0 +1,18 @@
+# engram-go-service.yaml — Service manifest for the engram-go service
+#
+# Captured from live cluster: 2026-06-27
+# clusterIP is intentionally omitted — it is cluster-assigned and must not be
+# committed to source to avoid conflicts when applying to a different cluster.
+#
+apiVersion: v1
+kind: Service
+metadata:
+  name: engram-go
+  namespace: engram
+spec:
+  ports:
+    - port: 8788
+      targetPort: 8788
+  selector:
+    app: engram-go
+  type: ClusterIP

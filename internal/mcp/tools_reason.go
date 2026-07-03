@@ -168,8 +168,8 @@ type exploreMemFetcher struct {
 	backend backendFetcher
 }
 
-func (f *exploreMemFetcher) FetchMemory(ctx context.Context, _ string, id string) (*types.Memory, error) {
-	return f.backend.GetMemoryByID(ctx, id)
+func (f *exploreMemFetcher) FetchMemory(ctx context.Context, project, id string) (*types.Memory, error) {
+	return f.backend.GetMemoryByIDInProject(ctx, id, project)
 }
 
 // parseExploreScope extracts the optional scope sub-object from MCP args.
@@ -183,7 +183,7 @@ func parseExploreScope(args map[string]any) claude.ExploreScope {
 		return claude.ExploreScope{}
 	}
 	var scope claude.ExploreScope
-	scope.Tags, _ = toStringSlice(scopeMap["tags"]) // ignore control-char error in optional scope
+	scope.Tags, _ = toStringSlice(scopeMap, "tags") // ignore control-char error in optional scope
 	scope.EpisodeID = getString(scopeMap, "episode_id", "")
 	if since := getString(scopeMap, "since", ""); since != "" {
 		if t, err := time.Parse(time.RFC3339, since); err == nil {

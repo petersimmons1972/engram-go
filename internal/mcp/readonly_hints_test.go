@@ -65,6 +65,11 @@ func TestReadOnlyToolAnnotations(t *testing.T) {
 		"memory_delete_project",
 		"memory_consolidate",
 		"memory_feedback",
+		// Regression guard for #1264: memory_audit_run persists a new snapshot
+		// to audit_snapshots via AuditWorker.RunProjectAudit -> runQuerySnapshot,
+		// so it must NOT carry ReadOnlyHint=true even though it was previously
+		// (incorrectly) listed in readOnlyToolNames().
+		"memory_audit_run",
 	}
 	for _, name := range mutators {
 		ann, ok := annotations[name]
@@ -161,11 +166,14 @@ func TestReadOnlyHiddenOverlapIsStable(t *testing.T) {
 
 	// Known stable overlap as of feat/mcp-slim-profile.
 	// When this list changes, update it deliberately — don't just fix the test.
+	//
+	// #1264: memory_audit_run was removed from readOnlyToolNames() (it persists
+	// a snapshot to audit_snapshots, so it is not read-only) while remaining in
+	// hiddenToolNames(). It therefore drops out of this overlap.
 	want := []string{
 		"memory_aggregate",
 		"memory_audit_compare",
 		"memory_audit_list_queries",
-		"memory_audit_run",
 		"memory_diagnose",
 		"memory_embedding_eval",
 		"memory_episode_list",

@@ -207,8 +207,9 @@ func NewPostgresBackend(ctx context.Context, project, dsn string) (*PostgresBack
 // The password value is intentionally omitted from the error message to prevent clear-text logging
 // of credentials (CWE-312).
 func rejectDefaultPassword(cfg *pgxpool.Config) error {
-	if cfg.ConnConfig.Password == "engram" || cfg.ConnConfig.Password == "postgres" {
-		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default password — " +
+	switch cfg.ConnConfig.Password {
+	case "", "engram", "postgres", "change_me_to_a_strong_password":
+		return fmt.Errorf("SECURITY: PostgreSQL is using a well-known default or unset password — " +
 			"set a strong POSTGRES_PASSWORD in your environment before starting engram")
 	}
 	return nil
@@ -237,11 +238,13 @@ func (b *PostgresBackend) PgxPool() *pgxpool.Pool {
 }
 
 func (b *PostgresBackend) runMigrations(ctx context.Context) error {
-	// Serialize concurrent project initialization with a per-project advisory lock (#105).
-	// Two backends for the same project initializing simultaneously would both pass the
-	// "migration already applied?" check and then race to apply the same DDL.
-	// Lock class 1986753120 is an arbitrary constant reserved for engram schema migrations.
-	const lockClass = 1986753120
+	// Serialize ALL concurrent migration runs with a database-global advisory lock (#1140).
+	// Schema migrations are database-global DDL; a per-project lock (the old behaviour)
+	// allowed test packages using different project slugs to race on shared CREATE TABLE
+	// statements, causing pg_type duplicate-key failures (SQLSTATE 23505).
+	// Lock constant 1986753120 (cast to int64 for the single-arg bigint overload) is
+	// reserved for engram schema migrations.
+	const lockClass = int64(1986753120)
 	conn, err := b.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection for advisory lock: %w", err)
@@ -262,14 +265,12 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		return fmt.Errorf("set lock_timeout: %w", err)
 	}
 	if _, err := conn.Exec(ctx,
-		`SELECT pg_advisory_lock($1, hashtext($2::text))`, lockClass, b.project,
+		`SELECT pg_advisory_lock($1)`, lockClass,
 	); err != nil {
-		return fmt.Errorf("acquire advisory lock for project %q: %w", b.project, err)
+		return fmt.Errorf("acquire global migration lock: %w", err)
 	}
 	defer func() {
-		_, _ = conn.Exec(ctx,
-			`SELECT pg_advisory_unlock($1, hashtext($2::text))`, lockClass, b.project,
-		)
+		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, lockClass)
 	}()
 
 	// Ensure the migration tracking table exists. This is always idempotent.
@@ -331,13 +332,13 @@ func (b *PostgresBackend) runMigrations(ctx context.Context) error {
 		// 023_null_embed_covering_idx.sql and 024_reembed_null_partial_index.sql
 		// use CREATE INDEX CONCURRENTLY, which also must run outside a transaction block.
 		if name == "003_pgvector.sql" || name == "023_null_embed_covering_idx.sql" || name == "024_reembed_null_partial_index.sql" {
-			// 003_pgvector.sql calls CREATE EXTENSION, a database-global operation.
-			// The per-project advisory lock above only serializes within a project;
-			// concurrent backends for different projects can race on CREATE EXTENSION
-			// and hit pg_type_typname_nsp_index duplicate-key errors (issue #1104).
-			// Acquire a separate global advisory lock (single-arg form, no project
-			// key) that covers only extension-creating migrations.
-			// Lock constant 1986753121 = lockClass+1, reserved for global extension ops.
+			// 003_pgvector.sql calls CREATE EXTENSION which must run outside a transaction
+			// and needs its own inner lock to cover the backfill that follows (#292).
+			// The outer global advisory lock (1986753120) already serializes all migrations
+			// across projects; lock 1986753121 (= outer+1) is retained here solely to
+			// bound the backfill duration on the same connection (#292). It is NOT used
+			// to fix cross-project races — the outer lock handles that (#1140).
+			// Lock constant 1986753121 is reserved for extension migration + backfill ops.
 			if name == "003_pgvector.sql" {
 				if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(1986753121)`); err != nil {
 					return fmt.Errorf("acquire global extension lock for %s: %w", name, err)

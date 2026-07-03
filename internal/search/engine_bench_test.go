@@ -185,6 +185,10 @@ func (s *stubBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory,
 	return nil, nil
 }
 
+func (s *stubBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
+	return nil, nil
+}
+
 func (s *stubBackend) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
@@ -261,6 +265,12 @@ func (s *stubBackend) GetPendingEmbeddingCount(_ context.Context, _ string) (int
 func (s *stubBackend) EnqueueChunkLeases(_ context.Context, _ []string) error { return nil }
 
 func (s *stubBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error { return nil }
+func (s *stubBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (s *stubBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
+}
 
 func (s *stubBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil

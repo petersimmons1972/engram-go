@@ -34,15 +34,17 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	}
 
 	// Resolve the Ollama URL for this operation: caller may supply ollama_url to
-	// override the server default; if present, apply the same SSRF guard used at
-	// startup (#291). Only literal private IPs are blocked — hostnames are allowed
-	// because they resolve to container IPs by design and are not attacker-controlled.
+	// override the server default; if present, validate it up front and then
+	// re-resolve it again at dial time so short-TTL DNS rebinding cannot swap a
+	// public hostname to a private/reserved address after the initial check.
 	ollamaURL := cfg.RouterURL
+	validatedUpstreamURL := ""
 	if raw := getString(args, "ollama_url", ""); raw != "" {
 		if err := netutil.ValidateUpstreamURL(raw); err != nil {
 			return nil, fmt.Errorf("invalid ollama_url %q: %w", raw, err)
 		}
 		ollamaURL = raw
+		validatedUpstreamURL = raw
 	}
 
 	// Extract new safety-guard args early — dry_run must bypass the dimension
@@ -55,32 +57,35 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.
 	// Skipped for dry_run (informational only — no nulling will occur).
 	if !dryRun {
-	if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
-		var probeFunc func(ctx context.Context, baseURL, model string) (embed.Client, error)
-		if cfg.testHooks != nil {
-			probeFunc = cfg.testHooks.embedProbe
-		}
-		if probeFunc == nil {
-			targetDims := cfg.EmbedDimensions
-			probeFunc = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
-				return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
+		if storedDimsStr, ok, metaErr := h.Engine.Backend().GetMeta(ctx, project, "embedder_dimensions"); metaErr == nil && ok && storedDimsStr != "" {
+			var probeFunc func(ctx context.Context, baseURL, model string) (embed.Client, error)
+			if cfg.testHooks != nil {
+				probeFunc = cfg.testHooks.embedProbe
+			}
+			if probeFunc == nil {
+				targetDims := cfg.EmbedDimensions
+				probeFunc = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
+					if validatedUpstreamURL != "" {
+						return embed.NewLiteLLMClientForValidatedUpstream(ctx, baseURL, model, "", targetDims)
+					}
+					return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
+				}
+			}
+			probeClient, probeErr := probeFunc(ctx, ollamaURL, newModel)
+			if probeErr != nil {
+				return nil, fmt.Errorf("cannot verify new embedder model dimensions: %w", probeErr)
+			}
+			newDims := probeClient.Dimensions()
+			var storedDims int
+			if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
+				if newDims != storedDims {
+					return nil, fmt.Errorf(
+						"dimension mismatch: current model stores %d-dim vectors, new model %q produces %d-dim vectors — pgvector column must be rebuilt first",
+						storedDims, newModel, newDims,
+					)
+				}
 			}
 		}
-		probeClient, probeErr := probeFunc(ctx, ollamaURL, newModel)
-		if probeErr != nil {
-			return nil, fmt.Errorf("cannot verify new embedder model dimensions: %w", probeErr)
-		}
-		newDims := probeClient.Dimensions()
-		var storedDims int
-		if _, scanErr := fmt.Sscanf(storedDimsStr, "%d", &storedDims); scanErr == nil && storedDims > 0 {
-			if newDims != storedDims {
-				return nil, fmt.Errorf(
-					"dimension mismatch: current model stores %d-dim vectors, new model %q produces %d-dim vectors — pgvector column must be rebuilt first",
-					storedDims, newModel, newDims,
-				)
-			}
-		}
-	}
 	} // end if !dryRun
 
 	// Resolve new model's dimension from the probe client (already probed above).
@@ -97,6 +102,9 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 		if probeForDims == nil {
 			targetDims := cfg.EmbedDimensions
 			probeForDims = func(ctx context.Context, baseURL, model string) (embed.Client, error) {
+				if validatedUpstreamURL != "" {
+					return embed.NewLiteLLMClientForValidatedUpstream(ctx, baseURL, model, "", targetDims)
+				}
 				return embed.NewLiteLLMClient(ctx, baseURL, model, "", targetDims)
 			}
 		}
@@ -107,11 +115,12 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	}
 
 	p := search.MigrateParams{
-		NewModel: newModel,
-		NewDims:  newDims,
-		Force:    force,
-		DryRun:   dryRun,
-		Confirm:  confirm,
+		NewModel:             newModel,
+		NewDims:              newDims,
+		Force:                force,
+		DryRun:               dryRun,
+		Confirm:              confirm,
+		ValidatedUpstreamURL: validatedUpstreamURL,
 	}
 
 	var result map[string]any

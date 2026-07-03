@@ -1,0 +1,8 @@
+{
+  "version": "tier1-qwen3-2026-06-22",
+  "scorer_url": "http://192.168.0.138:30411/olla/openai/v1",
+  "scorer_model": "inference",
+  "scorer_thinking": false,
+  "scorer_max_tokens": 2048,
+  "notes": "Tier-1 locked scorer manifest for honest LME-S baseline comparisons. Judge URL/model/thinking/max_tokens are owned by this manifest."
+}

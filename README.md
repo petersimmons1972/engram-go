@@ -1,5 +1,4 @@
-<!-- verify: review-gate-relaxed 2026-05-24 -->
-![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white) ![License](https://img.shields.io/badge/License-GPL%20v3-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-SSE-purple) ![Version](https://img.shields.io/badge/Version-3.1.0-green)
+![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go&logoColor=white) ![License](https://img.shields.io/badge/License-GPL%20v3-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-SSE-purple) ![Version](https://img.shields.io/badge/Version-3.1.0-green)
 
 <p align="center"><img src="docs/hero.svg" alt="Engram — Persistent Memory for AI Agents" width="100%"></p>
 
@@ -35,11 +34,13 @@ Both setups share the same PostgreSQL backend, API contract, and tool set. Swap 
 ```bash
 # Fresh-clone default: Local-only (zero external dependencies)
 make init
+docker volume create engram_pgdata
+docker volume create ollama_ollama_storage
 make build-postgres
 docker compose -f docker-compose.local.yml up -d
-make setup
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
-# Hybrid path for operator environments
+# Default home-network endpoint
 make init
 make up
 make setup
@@ -77,17 +78,15 @@ make init
 # Fresh-clone first run (recommended): local-only / no external backend
 make build-postgres
 docker compose -f docker-compose.local.yml up -d
-make setup
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
-# Hybrid startup (requires ENGRAM_ROUTER_URL)
+# Default home-network endpoint (requires operator environment)
 make init
 make up
 make setup
 ```
 
-`make setup` uses `engram-setup` defaults, which target `https://engram.petersimmons.com` unless you override `--url` (for example `http://127.0.0.1:8788` during local-only startup).
-
-Both setups expose the server at `http://localhost:8788`. Cold start: ~200ms. Idle memory: 18 MB.
+Local Docker profiles listen at `http://localhost:8788`. `make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host when you want Claude Code connected to an external server. Cold start: ~200ms. Idle memory: 18 MB.
 
 ### Environment Configuration
 
@@ -106,13 +105,30 @@ If you prefer to author `.env` manually rather than using `make init`, see `.env
 
 ### Connect to Claude Code
 
-After `make setup`:
+After setup:
 
 ```bash
 /mcp
 ```
 
 All <!-- count:visible-default -->18<!-- /count --> visible tools (+ <!-- count:hidden -->28<!-- /count --> hidden maintenance tools, callable via `tools/call`) activate immediately. Four optional AI-enhanced tools (`memory_ask`, `memory_reason`, `memory_explore`, `memory_query_document`) activate when `ANTHROPIC_API_KEY` is set in `.env`. `memory_diagnose` is a built-in hidden tool, not AI-gated.
+
+### Setup Target and Config Writes
+
+`make setup` defaults to `http://localhost:8788`; pass `--url` to point at a remote host. For local-only Docker, run the setup tool directly:
+
+```bash
+go run ./cmd/engram-setup --url http://127.0.0.1:8788
+```
+
+The setup tool health-checks the effective server URL, calls `/setup-token`, and writes the bearer-token MCP entry for Claude Code. Dry-run output redacts the token before printing. If `/setup-token` is unavailable during bootstrap, it validates fallback credentials from `~/.config/engram/api_key` first and `~/projects/engram-go/.env` (`ENGRAM_API_KEY`) second before writing anything.
+
+Config files touched:
+
+- `~/.claude/mcp_servers.json` — created or updated with `mcpServers.engram`.
+- `~/.claude.json` — updated only when the file already has a `mcpServers` block; otherwise skipped.
+
+Use `make setup-dry-run` or `go run ./cmd/engram-setup --dry-run` to print the effective server, endpoint, redacted entry, and target plan without writing files.
 
 ### Important: RFC1918 and `/setup-token`
 
@@ -212,9 +228,14 @@ memory_aggregate(by="failure_class")
 
 When `memory_recall` returns nothing useful, log the miss with a failure class. This feeds the retrieval quality benchmark and makes future recall better.
 
+`event_id` only appears in `memory_recall`'s response when the call passes `record_event=true` (off by default so plain recall stays side-effect free). Pass it through when you plan to follow up with `memory_feedback`:
+
 ```python
+memory_recall(query="deployment runbook", project="myapp", record_event=True)
+# → {..., event_id: "0197f3c1-...", feedback_hint: "Call memory_feedback with this event_id and the memory_ids you used"}
+
 memory_feedback(
-    event_id="<id from recall>",
+    event_id="<event_id from recall>",
     memory_ids=[],
     failure_class="vocabulary_mismatch"  # or: aggregation_failure, stale_ranking,
                                           #     missing_content, scope_mismatch, other

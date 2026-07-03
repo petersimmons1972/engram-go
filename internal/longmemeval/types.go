@@ -56,14 +56,30 @@ type IngestEntry struct {
 
 // RunEntry is one line written to checkpoint-run.jsonl.
 type RunEntry struct {
-	QuestionID   string   `json:"question_id"`
-	Hypothesis   string   `json:"hypothesis"`
-	RetrievedIDs []string `json:"retrieved_ids"` // memory IDs in ranked order
-	Status       string   `json:"status"`
-	Error        string   `json:"error,omitempty"`
+	QuestionID            string   `json:"question_id"`
+	Hypothesis            string   `json:"hypothesis"`
+	RetrievedIDs          []string `json:"retrieved_ids"` // memory IDs in ranked order
+	SessionDominanceRatio float64  `json:"session_dominance_ratio"`
+	ContextSessionCount   int      `json:"context_session_count"`
+	Status                string   `json:"status"`
+	Error                 string   `json:"error,omitempty"`
+	AtomRetrieved         bool     `json:"atom_retrieved,omitempty"`
+	AtomInContext         bool     `json:"atom_in_context,omitempty"`
 	// Oracle probe fields (--atom-oracle, Phase 2A #1079). Omitted when zero/false.
 	OracleZeroAtoms bool `json:"oracle_zero_atoms,omitempty"` // set when --atom-oracle extracted zero atoms
 	OracleAtomCount int  `json:"oracle_atom_count,omitempty"` // atoms extracted and injected
+}
+
+// ScoreProvenance records the measurement provenance required to compare
+// LongMemEval scoring runs honestly across campaigns.
+type ScoreProvenance struct {
+	GoldVersion   string         `json:"gold_version,omitempty"`
+	ScorerVersion string         `json:"scorer_version,omitempty"`
+	FeatureFlags  map[string]any `json:"feature_flags,omitempty"`
+	System        string         `json:"system,omitempty"`
+	ItemSet       string         `json:"item_set,omitempty"`
+	RunID         string         `json:"run_id,omitempty"`
+	HarnessSHA    string         `json:"harness_sha,omitempty"`
 }
 
 // ScoreEntry is one line written to checkpoint-score.jsonl.
@@ -81,8 +97,15 @@ type ScoreEntry struct {
 	ScorerThinking bool `json:"scorer_thinking"`
 	// ScorerMaxTokens is the max_tokens value sent to the scoring request.
 	ScorerMaxTokens int `json:"scorer_max_tokens"`
+	// Truncated reports whether the hypothesis was truncated to fit the context window.
+	// When true, the graded answer is from a tail-truncated hypothesis (answers appear at end
+	// with --enumerate-first), so verdicts are reproducible from checkpoints.
+	Truncated bool `json:"truncated,omitempty"`
 	// JudgedAt is the timestamp when this row was produced (ISO-8601).
 	JudgedAt string `json:"judged_at,omitempty"`
+	// Provenance tags the row with the eval/gold/scorer identity required for
+	// campaign-to-campaign comparisons.
+	Provenance ScoreProvenance `json:"provenance,omitempty"`
 }
 
 // HypothesisLine is one line in the LongMemEval-compatible hypotheses.jsonl output.

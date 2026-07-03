@@ -141,6 +141,115 @@ func TestRunScoreEfficient_FailsClosedWhenScorerUnavailable(t *testing.T) {
 	}
 }
 
+func TestRunScoreEfficient_WritesRowLevelProvenance(t *testing.T) {
+	dir := t.TempDir()
+	items := []longmemeval.Item{
+		{
+			QuestionID:       "q001",
+			QuestionType:     "single-session-user",
+			Question:         "Who won?",
+			Answer:           "Alice",
+			AnswerSessionIDs: []string{"sid-a"},
+		},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{
+			QuestionID: "q001",
+			Status:     "done",
+			MemoryMap:  map[string]string{"m1": "sid-a"},
+		},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{
+			QuestionID:   "q001",
+			Hypothesis:   "Alice",
+			Status:       "done",
+			RetrievedIDs: []string{"m1"},
+		},
+	})
+
+	lockPath := filepath.Join(dir, "scorer-lock.json")
+	if err := os.WriteFile(lockPath, []byte(`{
+  "version": "tier1-qwen3-2026-06-22",
+  "scorer_url": "LOCKED_BY_TEST",
+  "scorer_model": "test-model",
+  "scorer_thinking": false,
+  "scorer_max_tokens": 1536
+}`), 0o600); err != nil {
+		t.Fatalf("write scorer-lock.json: %v", err)
+	}
+
+	scorer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+		case "/chat/completions":
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"CORRECT\nExact match."}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer scorer.Close()
+
+	cfg := &Config{
+		DataFile:        dataPath,
+		OutDir:          dir,
+		Workers:         1,
+		Retries:         0,
+		RunID:           "locked-run",
+		ScorerLockPath:  lockPath,
+		GoldVersion:     "gold-zfs-2026-07-03",
+		ItemSet:         "lme-s-500q",
+		System:          "engram-go-main",
+		PreserveCorrect: true,
+	}
+	if err := applyScorerLock(cfg); err != nil {
+		t.Fatalf("applyScorerLock: %v", err)
+	}
+	// The manifest is authoritative for scorer identity, but the test server
+	// must supply the live URL after lock validation.
+	cfg.ScorerURL = scorer.URL
+
+	if exit := runScoreEfficient(cfg); exit != 0 {
+		t.Fatalf("runScoreEfficient exit = %d, want 0", exit)
+	}
+
+	rows, err := longmemeval.ReadAllScore(filepath.Join(dir, "checkpoint-score.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadAllScore: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("score rows = %d, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.Provenance.GoldVersion != "gold-zfs-2026-07-03" {
+		t.Fatalf("row.Provenance.GoldVersion = %q, want locked gold version", row.Provenance.GoldVersion)
+	}
+	if row.Provenance.ScorerVersion != "tier1-qwen3-2026-06-22" {
+		t.Fatalf("row.Provenance.ScorerVersion = %q, want lock version", row.Provenance.ScorerVersion)
+	}
+	if row.Provenance.ItemSet != "lme-s-500q" {
+		t.Fatalf("row.Provenance.ItemSet = %q, want lme-s-500q", row.Provenance.ItemSet)
+	}
+	if row.Provenance.RunID != "locked-run" {
+		t.Fatalf("row.Provenance.RunID = %q, want locked-run", row.Provenance.RunID)
+	}
+	if row.Provenance.System != "engram-go-main" {
+		t.Fatalf("row.Provenance.System = %q, want engram-go-main", row.Provenance.System)
+	}
+	if row.Provenance.HarnessSHA == "" {
+		t.Fatal("row.Provenance.HarnessSHA is empty")
+	}
+	if got := row.Provenance.FeatureFlags["preserve_correct"]; got != true {
+		t.Fatalf("row.Provenance.FeatureFlags[preserve_correct] = %v, want true", got)
+	}
+}
+
 func TestScoreErrorRetriedThenCounted(t *testing.T) {
 	dir := t.TempDir()
 	items := []longmemeval.Item{
@@ -218,5 +327,14 @@ func TestScoreErrorRetriedThenCounted(t *testing.T) {
 	}
 	if int(scoreErrorTotal) != 1 {
 		t.Errorf("score_error_total = %v, want 1", scoreErrorTotal)
+	}
+}
+
+// TestScorerHTTPClientHasTimeout verifies the package-level scorerHTTPClient has
+// a non-zero transport-layer timeout so a stalled health-check endpoint cannot
+// hold the health-check goroutine open indefinitely (#1107).
+func TestScorerHTTPClientHasTimeout(t *testing.T) {
+	if scorerHTTPClient.Timeout == 0 {
+		t.Fatal("scorerHTTPClient.Timeout is zero: stalled gateway will block ollaHealthCheck forever")
 	}
 }

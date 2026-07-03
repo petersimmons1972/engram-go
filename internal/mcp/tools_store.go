@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -24,6 +25,10 @@ import (
 //
 // Declared as a var (not const) so tests can substitute a shorter duration.
 var storeTimeout = 10 * time.Second
+
+type atomJobEnqueuer interface {
+	EnqueueAtomExtractionJob(ctx context.Context, memoryID, project string) error
+}
 
 func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
@@ -56,11 +61,17 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 			memType = types.MemoryTypePreference
 		}
 	}
-	importance := getInt(args, "importance", 2)
+	importance, importancePresent, importanceErr := requireOptionalInt(args, "importance")
+	if importanceErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance: %v", importanceErr)), nil
+	}
+	if !importancePresent {
+		importance = 2
+	}
 	if importance < 0 || importance > 4 {
 		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
-	tags, err := toStringSlice(args["tags"])
+	tags, err := toStringSlice(args, "tags")
 	if err != nil {
 		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
@@ -105,6 +116,7 @@ func handleMemoryStore(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		}
 		return nil, err
 	}
+	enqueueAtomExtractionJob(ctx, h.Engine.Backend(), m.ID, project)
 
 	// Preference extraction: when the memory is not already typed as a preference,
 	// run the extractor and store each discovered fact as a separate short preference
@@ -175,12 +187,18 @@ func handleMemoryStoreDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if !types.ValidateMemoryType(memType) {
 		return mcpgo.NewToolResultError(fmt.Sprintf("invalid memory_type %q; valid values: decision, pattern, error, context, architecture, preference", memType)), nil
 	}
-	importance := getInt(args, "importance", 2)
+	importance, importancePresent, importanceErr := requireOptionalInt(args, "importance")
+	if importanceErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("importance: %v", importanceErr)), nil
+	}
+	if !importancePresent {
+		importance = 2
+	}
 	if importance < 0 || importance > 4 {
 		return mcpgo.NewToolResultError(fmt.Sprintf("importance must be 0–4, got %d", importance)), nil
 	}
 	maxDoc, rawMax := configOrDefaults(cfg)
-	docTags, err := toStringSlice(args["tags"])
+	docTags, err := toStringSlice(args, "tags")
 	if err != nil {
 		return mcpgo.NewToolResultError(fmt.Sprintf("tags: %v", err)), nil
 	}
@@ -234,7 +252,27 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		return nil, err
 	}
 	const maxBatchItems = 100 // guard against CPU/DB overload (#144)
-	items, _ := args["memories"].([]any)
+	rawMemories, memoriesPresent := args["memories"]
+	if !memoriesPresent || rawMemories == nil {
+		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
+	}
+	items, ok := rawMemories.([]any)
+	if !ok {
+		// Defense-in-depth (#1281): tolerate a client that still JSON-encodes the
+		// array as a string despite the declared schema, but never silently treat
+		// a wrongly-typed value as "no memories provided" — that shape (a
+		// success response reporting count:0) is the worst variant of the
+		// #1281 bug: a bulk write that looks done but wrote nothing.
+		s, isStr := rawMemories.(string)
+		if !isStr {
+			return mcpgo.NewToolResultError(fmt.Sprintf("memories must be an array of objects, got %T", rawMemories)), nil
+		}
+		var decoded []any
+		if jsonErr := json.Unmarshal([]byte(s), &decoded); jsonErr != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("memories must be an array of objects, got a string that is not valid JSON: %v", jsonErr)), nil
+		}
+		items = decoded
+	}
 	if len(items) == 0 {
 		return toolResult(map[string]any{"ids": []string{}, "count": 0, "warning": "no memories provided"})
 	}
@@ -274,12 +312,19 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 			validErrs = append(validErrs, fmt.Sprintf("item %d: invalid memory_type %q", idx, memType))
 			continue
 		}
-		importance := getInt(mmap, "importance", 2)
+		importance, importancePresent, importanceErr := requireOptionalInt(mmap, "importance")
+		if importanceErr != nil {
+			validErrs = append(validErrs, fmt.Sprintf("item %d: importance: %v", idx, importanceErr))
+			continue
+		}
+		if !importancePresent {
+			importance = 2
+		}
 		if importance < 0 || importance > 4 {
 			validErrs = append(validErrs, fmt.Sprintf("item %d: importance must be 0–4, got %d", idx, importance))
 			continue
 		}
-		itemTags, tagErr := toStringSlice(mmap["tags"])
+		itemTags, tagErr := toStringSlice(mmap, "tags")
 		if tagErr != nil {
 			validErrs = append(validErrs, fmt.Sprintf("item %d: tags: %v", idx, tagErr))
 			continue
@@ -335,6 +380,9 @@ func handleMemoryStoreBatch(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 		}
 		return nil, err
 	}
+	for _, m := range memories {
+		enqueueAtomExtractionJob(ctx, h.Engine.Backend(), m.ID, project)
+	}
 
 	ids := make([]string, len(memories))
 	for i, m := range memories {
@@ -376,8 +424,18 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		content = &c
 	}
 	var importance *int
-	if v, ok := args["importance"].(float64); ok {
-		n := int(v)
+	if raw, exists := args["importance"]; exists && raw != nil {
+		f, coerceOK := coerceToFloat(raw)
+		if !coerceOK {
+			// A present-but-wrongly-typed importance must be a loud error, not
+			// silently treated as "omitted" (which would leave the field
+			// unchanged and mask the caller's intent) — see #1279, #1281.
+			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be a number, got %T", raw)), nil
+		}
+		// int(f) truncates rather than rounds — this is the pre-existing,
+		// intentionally-unchanged behavior for memory_correct (unlike
+		// memory_store's getInt, which rounds). See TestImportanceFieldUnchangedBehavior.
+		n := int(f)
 		if n < highestImportanceLevel || n > lowestImportanceLevel {
 			return mcpgo.NewToolResultError(fmt.Sprintf("importance must be %d–%d, got %d", highestImportanceLevel, lowestImportanceLevel, n)), nil
 		}
@@ -396,7 +454,7 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		}
 		patternConfidence = &validated
 	}
-	correctTags, err := toStringSlice(args["tags"])
+	correctTags, err := toStringSlice(args, "tags")
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}
@@ -410,6 +468,28 @@ func handleMemoryCorrect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return nil, fmt.Errorf("memory %q not found or has been soft-deleted", id)
 	}
 	return toolResult(updated)
+}
+
+func enqueueAtomExtractionJob(ctx context.Context, backend interface{}, memoryID, project string) {
+	if !atomExtractionEnabled() {
+		return
+	}
+	enqueuer, ok := backend.(atomJobEnqueuer)
+	if !ok {
+		return
+	}
+	if err := enqueuer.EnqueueAtomExtractionJob(ctx, memoryID, project); err != nil {
+		slog.Warn("failed to enqueue atom extraction job", "memory_id", memoryID, "project", project, "err", err)
+	}
+}
+
+func atomExtractionEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_ATOM_EXTRACTION_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleMemoryForget soft-deletes a memory by ID (sets valid_to=NOW(), preserves history).

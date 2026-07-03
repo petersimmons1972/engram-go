@@ -153,9 +153,6 @@ func isTemporalQuery(query string) bool {
 	return containsSignalFrom(query, temporalQuerySignals)
 }
 
-// IsTemporalQuery is the exported form of isTemporalQuery.
-func IsTemporalQuery(query string) bool { return isTemporalQuery(query) }
-
 // knowledgeUpdateQuerySignals detect queries asking about the current or changed
 // state of a mutable fact ("where does X live currently?", "does X still work there?").
 // Conservative set — only words that rarely appear outside KU-shaped questions.
@@ -169,9 +166,6 @@ var knowledgeUpdateQuerySignals = map[string]struct{}{
 func isKnowledgeUpdateQuery(query string) bool {
 	return containsSignalFrom(query, knowledgeUpdateQuerySignals)
 }
-
-// IsKnowledgeUpdateQuery is the exported form of isKnowledgeUpdateQuery.
-func IsKnowledgeUpdateQuery(query string) bool { return isKnowledgeUpdateQuery(query) }
 
 // ---------------------------------------------------------------------------
 // H-TAB — Topic-anchor boost helpers (LME experiment #3, issue #938 imp. #2)

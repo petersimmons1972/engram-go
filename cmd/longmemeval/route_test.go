@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -182,5 +186,62 @@ func TestDiscoverRouteSkipsStoppedFleetModels(t *testing.T) {
 	}
 	if result.LLMModel != "ready" {
 		t.Fatalf("LLMModel = %q, want ready", result.LLMModel)
+	}
+}
+
+// TestRouteDiscoverClientHasTimeout verifies the package-level routeDiscoverClient
+// has a non-zero transport-layer timeout so a stalled gateway cannot block route
+// discovery indefinitely (#1107).
+func TestRouteDiscoverClientHasTimeout(t *testing.T) {
+	if routeDiscoverClient.Timeout == 0 {
+		t.Fatal("routeDiscoverClient.Timeout is zero: stalled gateway will block forever")
+	}
+}
+
+// TestRouteHTTPClientTLSHasTimeout verifies that the mTLS path in routeHTTPClient
+// returns a client with a non-zero Timeout (#1107). Generates a self-signed
+// cert+key pair inline so tls.LoadX509KeyPair can exercise the production code path.
+func TestRouteHTTPClientTLSHasTimeout(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+
+	// Pull a valid cert+key from the httptest TLS server's internal fixtures.
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+
+	// httptest.NewTLSServer uses localhostCert/localhostKey from net/http/internal/testcert.
+	// We can't import that package directly, but we can export the cert via tls.Config
+	// and reconstruct PEM for the test.
+	tlsConfig := ts.TLS
+	if len(tlsConfig.Certificates) == 0 {
+		t.Skip("httptest server has no TLS certificate")
+	}
+	// Write the raw DER cert as PEM.
+	certDER := tlsConfig.Certificates[0].Certificate[0]
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert PEM: %v", err)
+	}
+	// Export the private key as PKCS8 PEM.
+	privKey := tlsConfig.Certificates[0].PrivateKey
+	keyDER, err := x509.MarshalPKCS8PrivateKey(privKey)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key PEM: %v", err)
+	}
+
+	client, err := routeHTTPClient(routeDiscoverConfig{
+		FleetCert: certPath,
+		FleetKey:  keyPath,
+	})
+	if err != nil {
+		t.Fatalf("routeHTTPClient (TLS): %v", err)
+	}
+	if client.Timeout == 0 {
+		t.Fatal("routeHTTPClient TLS branch returned client with zero Timeout: stalled gateway will block forever (#1107)")
 	}
 }

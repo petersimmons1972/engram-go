@@ -10,6 +10,7 @@ via `git add -f`. The currently-tracked files are:
 - `next-campaign-manifest.md` — next-campaign starting point + post-campaign outcomes block
 - `layerb-corruption-probe.md` — Layer B additive-schema integrity probe for issue #1289
 - `wisdom/bottleneck-symmetry.md` — durable pattern doc: bottleneck symmetry analysis
+- `wisdom/ss-pref-model-recommendations-2026-06-27.md` — durable model-selection memo for ss-pref benchmarking
 - `wisdom/temporal-reasoning-mechanism-analysis.md` — durable pattern doc: temporal reasoning failure mechanisms
 
 ## When to commit a file under `results/`

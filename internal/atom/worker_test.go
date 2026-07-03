@@ -173,3 +173,34 @@ func TestWorker_MarkJobCompleteOnSuccess(t *testing.T) {
 	assert.True(t, seen, "job should be marked complete")
 	assert.NoError(t, jobErr)
 }
+
+func TestWorkerSetsObservedAt(t *testing.T) {
+	backend := newStubBackend()
+	createdAt := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	backend.jobs = []atom.ExtractionJob{{ID: "job-observed", MemoryID: "mem-observed", Project: "proj"}}
+	backend.memories["mem-observed"] = &types.Memory{
+		ID:        "mem-observed",
+		Content:   "I prefer mint tea.",
+		CreatedAt: createdAt,
+	}
+	ext := &stubExtractor{atoms: []atom.Atom{
+		{
+			Type: atom.TypePreference, Subject: "the user", Predicate: "prefers",
+			Value: "mint tea", Statement: "The user prefers mint tea.", Scope: atom.ScopeGlobal, Confidence: 0.9,
+		},
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w := atom.NewWorker(backend, ext, atom.WorkerConfig{
+		PollInterval: time.Millisecond,
+		Projects:     []string{"proj"},
+	})
+	go w.Run(ctx)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	require.NotEmpty(t, backend.inserted)
+	require.NotNil(t, backend.inserted[0].ObservedAt)
+	assert.True(t, backend.inserted[0].ObservedAt.Equal(createdAt))
+}

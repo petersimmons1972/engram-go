@@ -15,38 +15,23 @@ import (
 
 func handleMemoryProjects(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
-	// Use any project to get a backend connection for the cross-project query.
-	anchorProject, err := getProject(args, "default")
+	project, err := getProject(args, "default")
 	if err != nil {
 		return nil, err
 	}
-	h, err := pool.Get(ctx, anchorProject)
+	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	projects, err := h.Engine.Backend().ListAllProjects(ctx)
+	stats, err := h.Engine.Status(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Enrich with per-project stats.
 	type projectInfo struct {
 		Project string `json:"project"`
 		Count   int    `json:"count"`
 	}
-	out := make([]projectInfo, 0, len(projects))
-	for _, p := range projects {
-		ph, err := pool.Get(ctx, p)
-		if err != nil {
-			out = append(out, projectInfo{Project: p})
-			continue
-		}
-		stats, err := ph.Engine.Status(ctx)
-		if err != nil {
-			out = append(out, projectInfo{Project: p})
-			continue
-		}
-		out = append(out, projectInfo{Project: p, Count: stats.TotalMemories})
-	}
+	out := []projectInfo{{Project: project, Count: stats.TotalMemories}}
 	return toolResult(map[string]any{"projects": out, "count": len(out)})
 }
 
@@ -148,7 +133,7 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	if err != nil {
 		return nil, err
 	}
-	ids, err := toStringSlice(args["memory_ids"])
+	ids, err := toStringSlice(args, "memory_ids")
 	if err != nil {
 		return nil, fmt.Errorf("memory_ids: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -24,29 +25,31 @@ type Worker struct {
 	backend   db.Backend
 	embedder  embed.Client
 	project   string
-	active    bool
+	active    atomic.Bool
 	cancel    context.CancelFunc
 	done      chan struct{}
 	notify    chan struct{} // wakes the poll loop early; buffered size 1
 	startOnce sync.Once     // ensures the goroutine starts exactly once
+	mu        sync.Mutex
 	parentCtx context.Context
 }
 
 // NewWorker creates a Worker. If active=false, the goroutine starts only when
 // Notify() is first called (lazy activation for new projects).
 func NewWorker(backend db.Backend, embedder embed.Client, project string, active bool) *Worker {
-	return &Worker{
+	w := &Worker{
 		backend:  backend,
 		embedder: embedder,
 		project:  project,
-		active:   active,
 		done:     make(chan struct{}),
 		notify:   make(chan struct{}, 1),
 	}
+	w.active.Store(active)
+	return w
 }
 
 // IsActive reports whether the worker will process chunks when started.
-func (w *Worker) IsActive() bool { return w.active }
+func (w *Worker) IsActive() bool { return w.active.Load() }
 
 // NewWorkerFromMeta creates a Worker and reads the migration flag from project_meta.
 // It also activates if there are chunks with NULL embeddings — this handles Ollama
@@ -82,14 +85,14 @@ func (w *Worker) Start() {
 // If active=false at construction time, the goroutine starts lazily on the
 // first Notify() call instead of immediately.
 func (w *Worker) StartWithContext(ctx context.Context) {
+	w.mu.Lock()
 	w.parentCtx = ctx
-	if !w.active {
+	w.mu.Unlock()
+	if !w.active.Load() {
 		return
 	}
 	w.startOnce.Do(func() {
-		runCtx, cancel := context.WithCancel(ctx)
-		w.cancel = cancel
-		go w.run(runCtx)
+		w.start(ctx)
 	})
 }
 
@@ -97,12 +100,13 @@ func (w *Worker) StartWithContext(ctx context.Context) {
 // chunks. If the worker was not yet started (inactive project at startup),
 // it is lazily activated now. Safe to call from any goroutine.
 func (w *Worker) Notify() {
-	w.active = true
-	if w.parentCtx != nil {
+	w.active.Store(true)
+	w.mu.Lock()
+	parentCtx := w.parentCtx
+	w.mu.Unlock()
+	if parentCtx != nil {
 		w.startOnce.Do(func() {
-			runCtx, cancel := context.WithCancel(w.parentCtx)
-			w.cancel = cancel
-			go w.run(runCtx)
+			w.start(parentCtx)
 		})
 	}
 	select {
@@ -115,8 +119,11 @@ func (w *Worker) Notify() {
 // If the goroutine was never started (inactive project, no Notify() called),
 // Stop returns immediately.
 func (w *Worker) Stop() {
-	if w.cancel != nil {
-		w.cancel()
+	w.mu.Lock()
+	cancel := w.cancel
+	w.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	} else {
 		// Goroutine never started; close done so callers don't block.
 		w.startOnce.Do(func() { close(w.done) })
@@ -130,6 +137,14 @@ func (w *Worker) Stop() {
 }
 
 const batchTimeout = 5 * time.Minute // max time for one runBatch iteration (#120)
+
+func (w *Worker) start(ctx context.Context) {
+	runCtx, cancel := context.WithCancel(ctx)
+	w.mu.Lock()
+	w.cancel = cancel
+	w.mu.Unlock()
+	go w.run(runCtx)
+}
 
 func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)

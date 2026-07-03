@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/search"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 // Client wraps the MCP Streamable HTTP client with retry logic for eval use.
@@ -264,9 +269,104 @@ func (c *Client) Recall(ctx context.Context, project, query string, topK int) ([
 }
 
 func (c *Client) RecallWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithDateRange(ctx, project, query, topK, since, before)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithDateRangeResult(ctx context.Context, project, query string, topK int, since, before *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 	})
+}
+
+func (c *Client) RecallScored(ctx context.Context, project, query string, topK int) ([]ScoredMemoryID, error) {
+	return c.RecallScoredWithDateRange(ctx, project, query, topK, nil, nil)
+}
+
+func (c *Client) RecallScoredWithDateRange(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]ScoredMemoryID, error) {
+	return c.recallScoredWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+	})
+}
+
+// ScoredMemoryID is one recall hit with its server-provided score.
+type ScoredMemoryID struct {
+	ID    string
+	Score float64
+}
+
+// IDsFromScoredRecall strips scores while preserving ranked order.
+func IDsFromScoredRecall(hits []ScoredMemoryID) []string {
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if hit.ID != "" {
+			ids = append(ids, hit.ID)
+		}
+	}
+	return ids
+}
+
+// MergeScoredRecall unions recall hits by memory ID, keeps the maximum score
+// per ID, and re-ranks the merged slice by score descending.
+func MergeScoredRecall(primary, secondary []ScoredMemoryID) []ScoredMemoryID {
+	type mergedHit struct {
+		hit   ScoredMemoryID
+		order int
+	}
+	merged := make(map[string]mergedHit, len(primary)+len(secondary))
+	order := 0
+	for _, batch := range [][]ScoredMemoryID{primary, secondary} {
+		for _, hit := range batch {
+			if hit.ID == "" {
+				continue
+			}
+			current, ok := merged[hit.ID]
+			if !ok {
+				merged[hit.ID] = mergedHit{hit: hit, order: order}
+				order++
+				continue
+			}
+			if hit.Score > current.hit.Score {
+				current.hit.Score = hit.Score
+				merged[hit.ID] = current
+			}
+		}
+	}
+	out := make([]mergedHit, 0, len(merged))
+	for _, hit := range merged {
+		out = append(out, hit)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].hit.Score == out[j].hit.Score {
+			return out[i].order < out[j].order
+		}
+		return out[i].hit.Score > out[j].hit.Score
+	})
+	flattened := make([]ScoredMemoryID, 0, len(out))
+	for _, hit := range out {
+		flattened = append(flattened, hit.hit)
+	}
+	return flattened
+}
+
+// RecallResult is the structured memory_recall response used by LongMemEval
+// when auxiliary metadata such as atom preambles must survive transport.
+type RecallResult struct {
+	IDs          []string
+	AtomPreamble string
+	// Hits carries the scored recall results for callers that need score-based
+	// merging (e.g. H15 dual preference recall). IDsFromScoredRecall(Hits) == IDs.
+	Hits []ScoredMemoryID
+	// MemoryMap maps memory ID to session ID extracted from handle-mode tags.
+	// Populated when handle-mode recall returns tags with a "session:<id>" entry.
+	MemoryMap map[string]string
+	// Results carries the full SearchResult objects when recall was issued in
+	// "full" mode. Populated by RecallResultsWith* wrappers for callers that
+	// need access to memory tags (e.g. session dominance diagnostics).
+	Results []types.SearchResult
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -275,56 +375,166 @@ func (c *Client) RecallWithDateRange(ctx context.Context, project, query string,
 // are advisory — the server falls back to baseline single-pass recall when no window
 // resolves (e.g. "how many X ago").
 func (c *Client) RecallWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.recallScoredWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK,
+		temporalWindow: true, questionText: questionText, questionDate: questionDate,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithTemporalWindowResult(ctx context.Context, project, query string, topK int, questionText, questionDate string) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK,
 		temporalWindow: true, questionText: questionText, questionDate: questionDate,
 	})
 }
 
+func (c *Client) RecallResultsWithTemporalWindow(ctx context.Context, project, query string, topK int, questionText, questionDate string) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK,
+		temporalWindow: true, questionText: questionText, questionDate: questionDate,
+		mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
 // RecallWithOpts calls memory_recall with additional server-side options.
 // topicAnchorBoost=true sets topic_anchor_boost on the server (H-TAB, LME exp #3).
 func (c *Client) RecallWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithOpts(ctx, project, query, topK, since, before, topicAnchorBoost)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithOptsResult(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 		topicAnchorBoost: topicAnchorBoost,
 	})
 }
 
-// recallParams carries the optional knobs for a single memory_recall call.
-type recallParams struct {
-	project          string
-	query            string
-	topK             int
-	since            *time.Time
-	before           *time.Time
-	temporalWindow   bool
-	questionText     string
-	questionDate     string
-	exactFactBoost   bool
-	topicAnchorBoost bool
+// RecallScoredWithOpts reads ENGRAM_SESSION_DIVERSITY_N and sends it as
+// session_diversity_n on every call — a single server-wide value applied
+// uniformly to all question types. It delegates to
+// RecallScoredWithDiversityOverride with override=0 so its behavior is
+// unchanged (this preserves the LEVER-9 baseline contract).
+func (c *Client) RecallScoredWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]ScoredMemoryID, error) {
+	return c.RecallScoredWithDiversityOverride(ctx, project, query, topK, since, before, topicAnchorBoost, 0)
 }
 
-func (c *Client) recallWithParams(ctx context.Context, p recallParams) ([]string, error) {
+// RecallWithDiversityOverride is the []string-returning sibling of
+// RecallScoredWithDiversityOverride (issue #1176).
+func (c *Client) RecallWithDiversityOverride(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool, diversityNOverride int) ([]string, error) {
+	hits, err := c.RecallScoredWithDiversityOverride(ctx, project, query, topK, since, before, topicAnchorBoost, diversityNOverride)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+// RecallScoredWithDiversityOverride is like RecallScoredWithOpts but lets the
+// caller force a specific session_diversity_n instead of always reading
+// ENGRAM_SESSION_DIVERSITY_N (issue #1176: per-type session-diversity gating
+// for single-session-preference, independent of the server-wide default used
+// by other question types).
+//
+// diversityNOverride == 0 falls back to the ENGRAM_SESSION_DIVERSITY_N
+// env-var default — byte-identical to RecallScoredWithOpts. A positive value
+// is sent as-is and takes priority over the env var for this call only.
+func (c *Client) RecallScoredWithDiversityOverride(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool, diversityNOverride int) ([]ScoredMemoryID, error) {
+	diversityN := diversityNOverride
+	if diversityN == 0 {
+		if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				diversityN = n
+			}
+		}
+	}
+	return c.recallScoredWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost:  topicAnchorBoost,
+		sessionDiversityN: diversityN,
+	})
+}
+
+// RecallWithAtomRecall calls memory_recall and preserves any returned atom preamble.
+func (c *Client) RecallWithAtomRecall(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost, exactFactBoost bool, atomRecallAsOf *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost,
+		exactFactBoost:   exactFactBoost,
+		atomRecall:       true,
+		atomRecallAsOf:   atomRecallAsOf,
+	})
+}
+
+func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query string, topK int, since, before *time.Time, topicAnchorBoost bool) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		topicAnchorBoost: topicAnchorBoost, mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+
+// recallParams carries the optional knobs for a single memory_recall call.
+type recallParams struct {
+	project           string
+	query             string
+	topK              int
+	mode              string
+	since             *time.Time
+	before            *time.Time
+	temporalWindow    bool
+	questionText      string
+	questionDate      string
+	exactFactBoost    bool
+	topicAnchorBoost  bool
+	atomRecall        bool
+	atomRecallAsOf    *time.Time
+	sessionDiversityN int
+}
+
+func (c *Client) recallResultWithParams(ctx context.Context, p recallParams) (RecallResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
 			// Reconnect — previous connection may be dead (SSE drop race).
 			if err := c.Connect(ctx); err != nil {
-				return nil, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
+				return RecallResult{}, fmt.Errorf("reconnect on retry %d: %w", attempt, err)
 			}
 			select {
 			case <-time.After(5 * time.Second):
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return RecallResult{}, ctx.Err()
 			}
 		}
-		ids, err := c.recall(ctx, p)
+		result, err := c.recall(ctx, p)
 		if err == nil {
-			return ids, nil
+			return result, nil
 		}
 		lastErr = err
 	}
-	return nil, lastErr
+	return RecallResult{}, lastErr
+}
+
+func (c *Client) recallScoredWithParams(ctx context.Context, p recallParams) ([]ScoredMemoryID, error) {
+	result, err := c.recallResultWithParams(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return result.Hits, nil
 }
 
 // RecallOpts holds optional parameters for the LongMemEval recall client.
@@ -337,13 +547,39 @@ type RecallOpts struct {
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.
 // Convenience wrapper for the longmemeval run command.
 func (c *Client) RecallWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]string, error) {
-	return c.recallWithParams(ctx, recallParams{
+	hits, err := c.RecallScoredWithExactBoost(ctx, project, query, topK, since, before)
+	if err != nil {
+		return nil, err
+	}
+	return IDsFromScoredRecall(hits), nil
+}
+
+func (c *Client) RecallWithExactBoostResult(ctx context.Context, project, query string, topK int, since, before *time.Time) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
 		project: project, query: query, topK: topK, since: since, before: before,
 		exactFactBoost: true,
 	})
 }
 
-func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
+func (c *Client) RecallScoredWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]ScoredMemoryID, error) {
+	return c.recallScoredWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true,
+	})
+}
+
+func (c *Client) RecallResultsWithExactBoost(ctx context.Context, project, query string, topK int, since, before *time.Time) ([]types.SearchResult, error) {
+	result, err := c.recallResultWithParams(ctx, recallParams{
+		project: project, query: query, topK: topK, since: since, before: before,
+		exactFactBoost: true, mode: "full",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, error) {
 	args := map[string]any{
 		"query":   p.query,
 		"project": p.project,
@@ -352,11 +588,12 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 		// Benchmark retrieval must not mutate retrieval telemetry while
 		// measuring recall quality.
 		"record_event": false,
-		// Handle mode returns lightweight IDs + metadata instead of the
-		// full SearchResult graph. LongMemEval only needs ranked IDs, and
-		// this avoids oversized tool payloads on dense queries.
-		"mode": "handle",
 	}
+	mode := p.mode
+	if mode == "" {
+		mode = "handle"
+	}
+	args["mode"] = mode
 	if p.exactFactBoost {
 		args["exact_fact_boost"] = true
 	}
@@ -375,6 +612,15 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	if p.topicAnchorBoost {
 		args["topic_anchor_boost"] = true
 	}
+	if p.atomRecall {
+		args["atom_recall"] = true
+	}
+	if p.atomRecallAsOf != nil {
+		args["atom_recall_as_of"] = p.atomRecallAsOf.UTC().Format(time.RFC3339)
+	}
+	if p.sessionDiversityN > 0 {
+		args["session_diversity_n"] = p.sessionDiversityN
+	}
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      "memory_recall",
@@ -382,17 +628,17 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 		},
 	})
 	if err != nil {
-		return nil, err
+		return RecallResult{}, err
 	}
 	if result.IsError {
-		return nil, toolErrorMsg(result, "memory_recall")
+		return RecallResult{}, toolErrorMsg(result, "memory_recall")
 	}
 	if len(result.Content) == 0 {
-		return nil, fmt.Errorf("memory_recall returned no content")
+		return RecallResult{}, fmt.Errorf("memory_recall returned no content")
 	}
 	tc, ok := result.Content[0].(mcp.TextContent)
 	if !ok {
-		return nil, fmt.Errorf("unexpected content type from memory_recall: %T", result.Content[0])
+		return RecallResult{}, fmt.Errorf("unexpected content type from memory_recall: %T", result.Content[0])
 	}
 	if os.Getenv("LME_DEBUG_RECALL") != "" {
 		preview := tc.Text
@@ -407,32 +653,33 @@ func (c *Client) recall(ctx context.Context, p recallParams) ([]string, error) {
 	//   handle: {"handles":[{"id":"...","score":...}, ...]}
 	// Parse both and prefer whichever is populated.
 	var resp struct {
-		Results []struct {
-			Memory struct {
-				ID string `json:"id"`
-			} `json:"memory"`
-			Score float64 `json:"score"`
-		} `json:"results"`
-		Handles []struct {
-			ID    string  `json:"id"`
-			Score float64 `json:"score"`
+		AtomPreamble string               `json:"atom_preamble"`
+		Results      []types.SearchResult `json:"results"`
+		Handles      []struct {
+			ID    string   `json:"id"`
+			Score float64  `json:"score"`
+			Tags  []string `json:"tags"`
 		} `json:"handles"`
 	}
 	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
-		return nil, fmt.Errorf("parse recall response: %w", err)
+		return RecallResult{}, fmt.Errorf("parse recall response: %w", err)
 	}
-	ids := make([]string, 0, len(resp.Results)+len(resp.Handles))
+	hits := make([]ScoredMemoryID, 0, len(resp.Results)+len(resp.Handles))
+	memoryMap := make(map[string]string, len(resp.Handles))
 	for _, r := range resp.Results {
-		if r.Memory.ID != "" {
-			ids = append(ids, r.Memory.ID)
+		if r.Memory != nil && r.Memory.ID != "" {
+			hits = append(hits, ScoredMemoryID{ID: r.Memory.ID, Score: r.Score})
 		}
 	}
 	for _, h := range resp.Handles {
 		if h.ID != "" {
-			ids = append(ids, h.ID)
+			hits = append(hits, ScoredMemoryID{ID: h.ID, Score: h.Score})
+			if len(h.Tags) > 0 {
+				memoryMap[h.ID] = search.ExtractSessionID(h.Tags)
+			}
 		}
 	}
-	return ids, nil
+	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap, Results: resp.Results}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
@@ -520,10 +767,17 @@ type RestClient struct {
 	http    *http.Client
 }
 
+const (
+	restResponsePreviewBytes = 80
+	restBaseURLHint          = "is the base URL the server root rather than /mcp?"
+)
+
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
+// The URL is normalised with baseServerURL so callers may pass the server root,
+// an /mcp suffix, or an /sse suffix interchangeably.
 func NewRestClient(baseURL, token string) *RestClient {
 	return &RestClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseServerURL(baseURL),
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
@@ -575,23 +829,24 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 			OK    bool   `json:"ok"`
 			ID    string `json:"id"`
 			Error string `json:"error"`
+			Hint  string `json:"hint"`
 		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			lastErr = fmt.Errorf("quick-store decode: %w", decodeErr)
-			continue
+		if err := decodeRESTJSONObjectResponse(resp, req.Method, req.URL.String(), &result); err != nil {
+			return "", fmt.Errorf("quick-store decode: %w", err)
 		}
 		if resp.StatusCode == 429 {
-			lastErr = fmt.Errorf("quick-store rate limited (status 429)")
+			lastErr = restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 			continue
 		}
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("quick-store server error (status %d): %s", resp.StatusCode, result.Error)
+			lastErr = restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 			continue
 		}
+		if resp.StatusCode >= 400 {
+			return "", restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
+		}
 		if !result.OK || result.ID == "" {
-			return "", fmt.Errorf("quick-store failed: %s (status %d)", result.Error, resp.StatusCode)
+			return "", restStatusError("quick-store", resp.StatusCode, result.Error, result.Hint)
 		}
 		return result.ID, nil
 	}
@@ -620,15 +875,59 @@ func (r *RestClient) QuickRecall(ctx context.Context, project, query string, lim
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
-		IDs []string `json:"ids"`
+		IDs   []string `json:"ids"`
+		Error string   `json:"error"`
+		Hint  string   `json:"hint"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeRESTJSONObjectResponse(resp, req.Method, req.URL.String(), &result); err != nil {
 		return nil, fmt.Errorf("quick-recall decode: %w", err)
 	}
+	if resp.StatusCode >= 400 {
+		return nil, restStatusError("quick-recall", resp.StatusCode, result.Error, result.Hint)
+	}
 	return result.IDs, nil
+}
+
+func decodeRESTJSONObjectResponse(resp *http.Response, method, url string, dst any) error {
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read response body from %s %s: %w", method, url, err)
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	preview := responseBodyPreview(trimmed)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("unexpected non-object response from %s %s (status %d, first %d bytes: %q): %s",
+			method, url, resp.StatusCode, len(preview), preview, restBaseURLHint)
+	}
+	if err := json.Unmarshal(trimmed, dst); err != nil {
+		return fmt.Errorf("unexpected response object from %s %s (status %d, first %d bytes: %q): %v: %s",
+			method, url, resp.StatusCode, len(preview), preview, err, restBaseURLHint)
+	}
+	return nil
+}
+
+func responseBodyPreview(body []byte) string {
+	if len(body) > restResponsePreviewBytes {
+		body = body[:restResponsePreviewBytes]
+	}
+	return string(body)
+}
+
+func restStatusError(op string, status int, msg, hint string) error {
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	if msg == "" {
+		msg = "request failed"
+	}
+	if hint != "" {
+		return fmt.Errorf("%s failed: %s (status %d): %s", op, msg, status, hint)
+	}
+	return fmt.Errorf("%s failed: %s (status %d)", op, msg, status)
 }
 
 // SessionContent concatenates all turns of a session into a single string,

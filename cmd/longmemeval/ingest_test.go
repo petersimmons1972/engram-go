@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -189,5 +191,61 @@ func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	}
 	if _, ok := gotBody["expires_at"]; ok {
 		t.Error("expires_at must be absent from QuickStore body when ScratchTTL is 0")
+	}
+}
+
+func TestIngestOne_PreChunksWhenBlockOverlapSet(t *testing.T) {
+	var calls int
+	var contents []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		contents = append(contents, body.Content)
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "m-" + strings.Repeat("x", calls)})
+	}))
+	defer srv.Close()
+
+	var sb strings.Builder
+	for sb.Len() <= chunk.LazyChunkThreshold+500 {
+		sb.WriteString("This is a long session sentence that keeps the chunker busy. ")
+	}
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	cfg := &Config{
+		RunID:             "run-overlap",
+		Workers:           1,
+		BlockOverlapChars: 400,
+	}
+	item := longmemeval.Item{
+		QuestionID:         "q-overlap",
+		HaystackSessionIDs: []string{"sid-1"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "user", Content: sb.String()}},
+		},
+		HaystackDates: []string{"2024-01-01"},
+	}
+
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
+	}
+	if calls <= 1 {
+		t.Fatalf("expected pre-chunked ingest to issue multiple QuickStore calls, got %d", calls)
+	}
+	if entry.SessionCount != 1 {
+		t.Fatalf("session count = %d, want 1 source session", entry.SessionCount)
+	}
+	if len(entry.MemoryMap) != calls {
+		t.Fatalf("memory map entries = %d, want %d", len(entry.MemoryMap), calls)
+	}
+	for i, content := range contents {
+		if strings.TrimSpace(content) == "" {
+			t.Fatalf("chunk %d content is empty", i)
+		}
 	}
 }

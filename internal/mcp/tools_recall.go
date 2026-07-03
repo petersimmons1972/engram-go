@@ -34,10 +34,11 @@ func degradedMap(embedDegraded bool, reason string) map[string]any {
 
 func normalizeRecallMode(rawMode string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(rawMode))
-	if mode == "" || mode == "handle" || mode == "full" {
+	switch mode {
+	case "", "handle", "full", "summary", "id_only":
 		return mode, nil
 	}
-	return "", fmt.Errorf("mode must be one of: handle, full")
+	return "", fmt.Errorf("mode must be one of: handle, full, summary, id_only")
 }
 
 func federatedFailurePayload(failed []search.FailedFederatedProject) []map[string]any {
@@ -109,6 +110,15 @@ func sanitizeMemoryFloatFields(m *types.Memory) {
 	}
 }
 
+func atomPreambleForResults(results []types.SearchResult) string {
+	for _, r := range results {
+		if r.AtomPreamble != "" {
+			return r.AtomPreamble
+		}
+	}
+	return ""
+}
+
 func sanitizeRecallResults(results []types.SearchResult) {
 	for i := range results {
 		results[i].Score = finiteOrZero(results[i].Score)
@@ -131,8 +141,8 @@ func sanitizeConflictingResults(conflicts []types.ConflictingResult) {
 	}
 }
 
-func execFetch(ctx context.Context, f backendFetcher, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
-	m, err := f.GetMemoryByID(ctx, id)
+func execFetch(ctx context.Context, f backendFetcher, project, id, detail string, maxBytes int, requestedChunkIDs []string) (map[string]any, error) {
+	m, err := f.GetMemoryByIDInProject(ctx, id, project)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +222,7 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return errResult, nil
 	}
 	detail := getString(args, "detail", "summary")
-	chunkIDs, err := toStringSlice(args["chunk_ids"])
+	chunkIDs, err := toStringSlice(args, "chunk_ids")
 	if err != nil {
 		return nil, fmt.Errorf("chunk_ids: %w", err)
 	}
@@ -225,7 +235,7 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	result, err := execFetch(ctx, h.Engine.Backend(), id, detail, maxBytes, chunkIDs)
+	result, err := execFetch(ctx, h.Engine.Backend(), project, id, detail, maxBytes, chunkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -332,9 +342,15 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	temporalWindowRecall := getBool(args, "temporal_window_recall", false)
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
+	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
+	if err != nil {
+		return nil, err
+	}
+	opts.AtomRecallEnabled = getBool(args, "atom_recall", false)
+	opts.AtomRecallAsOf = atomRecallAsOf
 
 	// Federated path: "projects" overrides the single-project recall.
-	projectNames, err := toStringSlice(args["projects"])
+	projectNames, err := toStringSlice(args, "projects")
 	if err != nil {
 		return nil, fmt.Errorf("projects: %w", err)
 	}
@@ -428,6 +444,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if !ok {
 			addRecallDegradedWarning(out, cfg.RouterURL, reason)
 		}
+		attachSynthesisDirective(out, query)
 		return toolResult(out)
 	}
 
@@ -442,6 +459,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
 	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
+	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN)
 	opts.TemporalWindowRecall = temporalWindowRecall
 	opts.QuestionText = questionText
 	opts.QuestionDate = questionDate
@@ -459,10 +477,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		opts.Reranker = arReranker
 	}
 	// Cross-encoder reranker (LEVER-2): flag-gated via ENGRAM_CROSS_ENCODER_RERANK=true.
-	// When enabled, replaces any other reranker — cross-encoder is the stronger signal.
 	// ENGRAM_CROSS_ENCODER_URL must be set to the TEI /rerank endpoint.
+	// This reranks the dense/vector leg before hybrid fusion; it does not replace
+	// the final fused-result reranker.
 	if ceReranker := search.NewCrossEncoderRerankerFromEnv(); ceReranker != nil {
-		opts.Reranker = ceReranker
+		opts.DenseReranker = ceReranker
 	}
 	// Inject current session episode for same-session score boosting (Phase 3).
 	if id, ok := episodeIDFromContext(ctx); ok {
@@ -542,6 +561,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if opts.EvidenceFirstPack {
 		results = search.OrderResultsEvidenceFirst(results, query)
 	}
+	atomPreamble := atomPreambleForResults(results)
 
 	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
 	// surface a structured error instead of silently returning BM25 results.
@@ -560,6 +580,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
 		}
+		if atomPreamble != "" {
+			out["atom_preamble"] = atomPreamble
+		}
 		if embedDegraded {
 			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
 		}
@@ -575,6 +598,10 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		slog.Warn("layer_b recall post-pass failed", "project", project, "err", err)
 	} else if summary != nil {
 		out["layer_b"] = summary
+	}
+	attachSynthesisDirective(out, query)
+	if atomPreamble != "" {
+		out["atom_preamble"] = atomPreamble
 	}
 	if eventID != "" {
 		out["event_id"] = eventID
@@ -683,16 +710,28 @@ func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolR
 	if err != nil {
 		return nil, err
 	}
-	limit := getInt(args, "limit", 50)
+	limit, limitPresent, limitErr := requireOptionalInt(args, "limit")
+	if limitErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("limit: %v", limitErr)), nil
+	}
+	if !limitPresent {
+		limit = 50
+	}
 	if limit < 1 || limit > 500 {
 		limit = 50
 	}
-	offset := getInt(args, "offset", 0)
+	offset, offsetPresent, offsetErr := requireOptionalInt(args, "offset")
+	if offsetErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("offset: %v", offsetErr)), nil
+	}
+	if !offsetPresent {
+		offset = 0
+	}
 	var memType *string
 	if s := getString(args, "memory_type", ""); s != "" {
 		memType = &s
 	}
-	listTags, err := toStringSlice(args["tags"])
+	listTags, err := toStringSlice(args, "tags")
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}

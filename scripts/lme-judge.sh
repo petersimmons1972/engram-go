@@ -3,18 +3,25 @@ set -euo pipefail
 
 # Maintained judging harness for LongMemEval score reports.
 # - Supports bundled judge presets (qwen3 and gpt4o)
-# - Preserves CORRECT rows by default (resume-friendly)
+# - Preserves CORRECT rows by default on unlocked judges (resume-friendly)
+# - qwen3 is lock-backed; lock-owned scorer knobs must not be overridden here
 # - Emits strict and lenient percentages with optional comparison deltas
 
-REPO=${REPO:-/home/psimmons/projects/engram-go}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO=${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}
 BIN=${BIN:-$REPO/longmemeval}
 DATA=${DATA:-$REPO/testdata/longmemeval/longmemeval_m_cleaned.json}
+SCORER_LOCK=${SCORER_LOCK:-$REPO/docs/lme-campaign/scorer-lock.json}
+ITEM_SET=${ITEM_SET:-lme-s-500q}
+SYSTEM=${SYSTEM:-engram-go}
 WORKERS=${WORKERS:-4}
 COMPARE=
 RUN_DIR=
 JUDGE=
 THINKING=on
+GOLD_VERSION=
 BUNDLE=0
+SHOW_HELP=0
 SCORER_MAX_TOKENS=${SCORER_MAX_TOKENS:-2048}
 GPT4O_MODEL=${GPT4O_MODEL:-gpt-4o-2024-11-20}
 
@@ -26,6 +33,7 @@ Usage: lme-judge.sh --run <results-dir> --judge <qwen3|gpt4o> [--thinking off]
 Options:
   --run <dir>      LongMemEval output directory containing run checkpoints
   --judge <name>   Judge preset: qwen3 | gpt4o
+  --gold-version <tag>  Frozen gold snapshot/version tag (required)
   --thinking <on|off>  Scorer chain-of-thought flag (default: on)
   --compare <dir>   Also print delta against baseline score_report.json
   --bundle          Run both qwen3 (default thinking on) and gpt4o, writing suffix
@@ -43,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       JUDGE="$2"
       shift 2
       ;;
+    --gold-version)
+      GOLD_VERSION="$2"
+      shift 2
+      ;;
     --thinking)
       THINKING="$2"
       shift 2
@@ -56,8 +68,9 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --help|-h)
-      usage
-      exit 0
+      SHOW_HELP=1
+      shift 1
+      break
       ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
@@ -67,8 +80,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$SHOW_HELP" == "1" ]]; then
+  usage
+  help_exit=0
+  exit "$help_exit"
+fi
+
 if [[ -z "$RUN_DIR" ]]; then
   echo "ERROR: --run is required" >&2
+  usage >&2
+  exit 2
+fi
+if [[ -z "$GOLD_VERSION" ]]; then
+  echo "ERROR: --gold-version is required" >&2
   usage >&2
   exit 2
 fi
@@ -96,13 +120,13 @@ run_judge() {
   local scorer_model=""
   local scorer_api_key=""
   local scorer_thinking="--scorer-thinking=true"
+  local -a score_args=()
 
   case "$judge" in
     qwen3)
-      scorer_url="http://192.168.0.138:30411/olla/openai/v1"
-      scorer_model="inference"
-      if [[ "$THINKING" == "off" ]]; then
-        scorer_thinking="--scorer-thinking=false"
+      if [[ ! -f "$SCORER_LOCK" ]]; then
+        echo "ERROR: qwen3 scorer lock not found: $SCORER_LOCK" >&2
+        exit 1
       fi
       ;;
     gpt4o)
@@ -123,17 +147,31 @@ run_judge() {
   esac
 
   mkdir -p "$out_dir"
+  score_args=(
+    score-efficient
+    --data "$DATA"
+    --out "$out_dir"
+    --gold-version "$GOLD_VERSION"
+    --item-set "$ITEM_SET"
+    --system "$SYSTEM"
+    --workers "$WORKERS"
+  )
+  if [[ "$judge" == "qwen3" ]]; then
+    score_args+=(
+      --scorer-lock "$SCORER_LOCK"
+    )
+  else
+    score_args+=(
+      --scorer-url "$scorer_url"
+      --scorer-model "$scorer_model"
+      --scorer-api-key "$scorer_api_key"
+      "$scorer_thinking"
+      --scorer-max-tokens "$SCORER_MAX_TOKENS"
+      --preserve-correct
+    )
+  fi
   echo "==> score-efficient: $judge -> $out_dir"
-  "$BIN" score-efficient \
-    --data "$DATA" \
-    --out "$out_dir" \
-    --scorer-url "$scorer_url" \
-    --scorer-model "$scorer_model" \
-    --scorer-api-key "$scorer_api_key" \
-    --scorer-max-tokens "$SCORER_MAX_TOKENS" \
-    "$scorer_thinking" \
-    --workers "$WORKERS" \
-    --preserve-correct
+  "$BIN" "${score_args[@]}"
 }
 
 read_report() {
@@ -163,6 +201,14 @@ overall_lenient = ratio(correct + partial, total)
 print("Overall strict: %.2f%% (%d/%d)" % (overall_strict, correct, total))
 print("Overall lenient: %.2f%% (%d/%d)" % (overall_lenient, correct + partial, total))
 
+comparison = report.get("baseline_comparison", {})
+status = comparison.get("status")
+nearest = comparison.get("nearest_baseline")
+observed = comparison.get("observed_strict_pct")
+if status:
+    print("Baseline comparison: %s (nearest=%s, strict=%.2f%%)" %
+          (status, nearest, observed or 0.0))
+
 by_type = report.get("by_type", {})
 if by_type:
     print()
@@ -174,6 +220,13 @@ if by_type:
         t = row.get("total", 0)
         print("  %-28s strict %.2f%% (%d/%d) lenient %.2f%% (%d/%d)" %
               (qtype, ratio(c, t), c, t, ratio(c + p, t), c + p, t))
+
+error_items = report.get("error_items", [])
+if error_items:
+    print()
+    print("Error items:")
+    for row in error_items:
+        print("  %-28s %s" % (row.get("question_id", "?"), row.get("error", "")))
 PY
 }
 
@@ -195,20 +248,18 @@ if [[ "$BUNDLE" == "1" ]]; then
   if [[ -n "$COMPARE" ]]; then
     print_summary "$COMPARE/score_report.json" "compare baseline"
   fi
-  exit 0
-fi
+else
+  run_judge "$JUDGE" "$RUN_DIR"
+  print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
 
-run_judge "$JUDGE" "$RUN_DIR"
-print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
+  if [[ -n "$COMPARE" ]]; then
+    compare_path="$COMPARE/score_report.json"
+    if [[ ! -f "$compare_path" ]]; then
+      echo "ERROR: baseline report missing: $compare_path" >&2
+      exit 1
+    fi
 
-if [[ -n "$COMPARE" ]]; then
-  compare_path="$COMPARE/score_report.json"
-  if [[ ! -f "$compare_path" ]]; then
-    echo "ERROR: baseline report missing: $compare_path" >&2
-    exit 1
-  fi
-
-  python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
+    python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
 import json
 import sys
 
@@ -238,4 +289,5 @@ print("Delta vs baseline:")
 print("  strict:  %+0.2f%% (%+0.2f vs %+0.2f)" % (new_strict - old_strict, new_strict, old_strict))
 print("  lenient: %+0.2f%% (%+0.2f vs %+0.2f)" % (new_lenient - old_lenient, new_lenient, old_lenient))
 PY
+  fi
 fi

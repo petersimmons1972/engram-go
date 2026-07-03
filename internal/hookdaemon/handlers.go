@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -78,7 +79,9 @@ func (d *Daemon) injectRecall(ctx context.Context, tok string) {
 	if section == "" {
 		return
 	}
-	_ = d.cfg.Memory.WriteRecallSection(section)
+	if err := d.cfg.Memory.WriteRecallSection(section); err != nil {
+		slog.Warn("hookdaemon: WriteRecallSection failed — recall may be stale", "err", err)
+	}
 }
 
 // handleUserPromptSubmit ports engram-auth-check: a fast per-message auth check
@@ -151,7 +154,9 @@ func (d *Daemon) handleStop(ctx context.Context, _ Request) Response {
 				"tags":       []string{"session-end", "lifecycle"},
 				"importance": 1,
 			})
-			_ = d.cfg.Engram.QuickStore(ctx, tok, body)
+			if err := d.cfg.Engram.QuickStore(ctx, tok, body); err != nil {
+				slog.Warn("hookdaemon: QuickStore session-end marker failed — lifecycle event lost", "err", err)
+			}
 		}
 		summary = d.sessionSummary()
 	}

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/chunk"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -44,9 +45,16 @@ type Config struct {
 	ScorerModel     string // model name (env: LME_SCORER_MODEL)
 	ScorerAPIKey    string // API key for score-efficient endpoint (env: LME_SCORER_API_KEY)
 	ScorerMaxTokens int    // max_tokens for scoring requests (default 2048)
+	ScorerLockPath  string // path to a scorer lock manifest that owns scorer identity/settings
+	ScorerVersion   string // version resolved from the scorer lock manifest
 	PreserveCorrect bool   // skip re-scoring items already CORRECT (default true)
 	ForceRescore    bool   // ignore checkpoint, re-score everything
 	ScorerThinking  bool   // enable scorer chain-of-thought (default true)
+	GoldVersion     string // frozen gold snapshot/version used for this evaluation
+	ItemSet         string // item cohort identifier (e.g. lme-s-500q)
+	System          string // system under test identifier
+	HarnessSHA      string // optional override; default is git rev-parse HEAD
+	FeatureFlags    map[string]any
 
 	// score-batch flags
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
@@ -63,7 +71,26 @@ type Config struct {
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
-	RepairPreset        string
+
+	// Issue #1176: per-type retrieval hygiene for single-session-preference
+	// (ss-pref). Both default to 0 = off (baseline-identity, no behavior
+	// change unless explicitly set). Scoped to single-session-preference only
+	// — question_type is an eval-only artifact (FM-77; see
+	// internal/search/session_diversity.go), so this gating lives entirely in
+	// the eval harness client, never in internal/search/engine.go.
+	//
+	// SSPrefContextTopK overrides ContextTopKForTypeWithBump's per-type
+	// default (15) for single-session-preference questions only; other types
+	// are unaffected. Lower priority than the existing global
+	// --context-topk/ContextTopKOverride flag.
+	SSPrefContextTopK int
+	// SSPrefSessionDiversityN caps chunks-per-session (via the MCP
+	// session_diversity_n arg) for single-session-preference recall calls
+	// only, independent of the server-wide ENGRAM_SESSION_DIVERSITY_N
+	// default used by --session-diversity-n/SessionDiversityN.
+	SSPrefSessionDiversityN int
+	BlockOverlapChars       int // ingest-time pre-chunk overlap in chars; 0 = disabled
+	RepairPreset            string
 
 	// H16: question_date injection
 	InjectQuestionDate bool // prepend "Today's date is: {question_date}" to temporal-reasoning prompts (default off)
@@ -82,12 +109,20 @@ type Config struct {
 
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
-
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
 
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	EnumerateFirst bool // inject enumerate-then-total instruction for aggregation questions (default off)
+
+	// H-PE: preference-enumerate generation prompt
+	PreferenceEnumerate bool // inject exhaustive named-item enumeration instruction for single-session-preference questions (default off)
+
+	// H-PG: grounded preference generation for ss-preference.
+	PreferenceGround bool // forbid unsupported specific additions in preference answers (default off)
+
+	// H-KUR: knowledge-update recency generation prompt (issue #1178).
+	KURecencyPrompt bool // instruct the model to answer with the most-recent-session value when multiple values for the same attribute appear across sessions (default off)
 	// Retrieval-fusion flags for issue #938.
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
@@ -95,6 +130,13 @@ type Config struct {
 
 	// Phase 0: SessionNDCGAgg — RecallAny+NDCGAny for single-session types in retrieval_log.
 	SessionNDCGAgg bool // default true; use RecallAny/NDCGAny for single-session types
+
+	// LEVER-9: SessionDiversityN — per-session chunk cap in recall results.
+	// When non-zero, the server caps each session's chunk contribution to N.
+	// The server reads ENGRAM_SESSION_DIVERSITY_N directly; this field is for
+	// logging and documentation of the effective value at eval start.
+	// Set via ENGRAM_SESSION_DIVERSITY_N env var on the server; 0 = off (baseline).
+	SessionDiversityN int
 
 	// #749: contention guard
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
@@ -126,6 +168,9 @@ type Config struct {
 	AtomOracleVariant string // --atom-oracle-variant: "atom-only" | "atom-plus-source"
 
 	Now func() time.Time
+
+	scorerThinkingSet  bool
+	scorerMaxTokensSet bool
 }
 
 func main() {
@@ -187,6 +232,16 @@ func parseFlagSet(fs *flag.FlagSet, args []string) int {
 	return -1
 }
 
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			passed = true
+		}
+	})
+	return passed
+}
+
 // dispatch parses args and runs the requested subcommand. Returns the process
 // exit code. Extracted from main() so it is testable without spawning a
 // subprocess. Writers are injected so tests can capture output.
@@ -210,7 +265,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.Workers, "workers", 4, "Number of parallel workers")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Run ID (hex); auto-generated if empty")
 	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
-	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key")
+	// Default stays empty so `--help` never prints a resolved secret
+	// (TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey). The ENGRAM_API_KEY env
+	// fallback is applied post-parse by applySharedDefaults → defaultAPIKey()
+	// (envOr("ENGRAM_API_KEY", …)), letting the secret be supplied via the
+	// environment without ever reaching argv / `ps` (security rule: no secret on argv).
+	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
 	// v0.x: cleanup is now scoped to ephemeral projects only. Pass --cleanup-policy=always to restore prior unconditional deletion.
 	fs.StringVar((*string)(&cfg.CleanupPolicy), "cleanup-policy", string(CleanupPolicyAuto), "Project cleanup after run stage: auto (default, delete only projects created by this run), always (unconditional), never (preserve all)")
@@ -224,6 +284,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.EnableThinking, "enable-thinking", false, "Enable chain-of-thought reasoning (Qwen3 and compatible models; do NOT use with Nemotron v3)")
 	fs.IntVar(&cfg.LLMMaxTokens, "max-tokens", 0, "Output token budget for OAI endpoint; 0 = auto (2048 without thinking, 8192 with thinking)")
 	fs.StringVar(&cfg.ScoreOutput, "score-output", envOr("LME_SCORE_OUTPUT", "text"), "score summary stdout mode: text, json, or quiet")
+	fs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+	fs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+	fs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
 	fs.IntVar(&cfg.EmbedRecallTimeoutMS, "embed-recall-timeout-ms", envInt("LME_EMBED_RECALL_TIMEOUT_MS", 1500), "MCP memory_recall embed timeout in ms (0 = no timeout; parent context governs)")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
@@ -232,6 +295,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
+	fs.IntVar(&cfg.BlockOverlapChars, "block-overlap-chars", 0, "pre-chunk ingest sessions with this many overlap chars before QuickStore; 0 = disabled")
 	fs.StringVar(&cfg.RepairPreset, "repair-preset", "", "named LongMemEval repair preset to enable known repair switches: recall-repair")
 	// H16: prepend question_date as first line of temporal-reasoning prompts
 	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")
@@ -245,16 +309,21 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// to disable. Revert: set default back to 0.
 	fs.IntVar(&cfg.QueryParaphrasePasses, "query-paraphrase-passes", 3, "number of paraphrased query variants to generate per question and union with the primary recall pass; 0 = off; each variant is generated by Haiku emphasising different verbs and synonyms (P0 default: 3)")
 	// H15: dual-query preference recall (lme-h8h12h15 branch).
-	// Phase 0 (P0): default changed false→true; union of subject-anchor + primary
-	// recall reliably adds the gold preference session to ss-preference context.
-	// Use --no-dual-preference-recall to disable. Revert: set default to false.
-	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", true, "H15: run a second subject-anchor recall for preference questions and union both result sets (P0 default: on)")
+	// Opt-in only: when enabled, the harness issues a second recall call for
+	// inferred preference questions and unions results by memory ID using max(score).
+	fs.BoolVar(&cfg.DualPreferenceRecall, "dual-preference-recall", false, "H15: opt-in second recall pass for inferred preference questions using a cleaned subject anchor and score-aware union (default off)")
 	// H-TAB: topic-anchor boost (LME experiment #3)
 	fs.BoolVar(&cfg.TopicAnchorBoost, "topic-anchor-boost", false, "H-TAB: server-side topic-anchor scoring boost — preference memories containing domain tokens from the query score 1.25× higher; targets multi-preference-session distraction (default off, composable with --dual-preference-recall)")
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.EnumerateFirst, "enumerate-first", false, "H12: inject enumerate-then-total generation instruction for aggregation questions (default off)")
+	// H-PE: preference-enumerate generation prompt
+	fs.BoolVar(&cfg.PreferenceEnumerate, "preference-enumerate", false, "H-PE: inject exhaustive named-item enumeration instruction for single-session-preference questions; lists every specific item/brand/attribute from context rather than abstractly summarising (default off)")
+	// H-PG: grounded preference generation (issue #1183)
+	fs.BoolVar(&cfg.PreferenceGround, "preference-ground", false, "H-PG: for single-session-preference answers, forbid specific brands/titles/cuisines/ingredients/genres unless they appear explicitly in retrieved context; prefer a short grounded answer over padded specifics (default off)")
+	// H-KUR: knowledge-update recency generation prompt (issue #1178)
+	fs.BoolVar(&cfg.KURecencyPrompt, "ku-recency-prompt", false, "H-KUR: for knowledge-update answers, instruct the model to answer with the value from the most recent session (latest date) when multiple values for the same attribute appear across sessions in context (default off)")
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")
@@ -264,6 +333,24 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// which correctly matches the single-gold-session semantics. Default: true.
 	// Use --no-session-ndcg-agg to revert to RecallAll for all types.
 	fs.BoolVar(&cfg.SessionNDCGAgg, "session-ndcg-agg", true, "P0: use RecallAny+NDCGAny aggregation for single-session question types in retrieval_log (default: on)")
+	// LEVER-9: session-diversity-n — log the effective per-session chunk cap.
+	// The server reads ENGRAM_SESSION_DIVERSITY_N directly; this flag just records
+	// what value the caller expects for observability in run logs.
+	defaultDiversityN := 0
+	if v := os.Getenv("ENGRAM_SESSION_DIVERSITY_N"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			defaultDiversityN = n
+		}
+	}
+	fs.IntVar(&cfg.SessionDiversityN, "session-diversity-n", defaultDiversityN, "LEVER-9: expected per-session chunk cap on the server (0 = off; reads ENGRAM_SESSION_DIVERSITY_N as default)")
+	// Issue #1176: per-type retrieval hygiene, scoped to single-session-preference
+	// only. Both default to 0 (off) — no behavior change unless explicitly set.
+	// Unlike --session-diversity-n (which only documents the server-wide env-var
+	// default), --ss-pref-session-diversity-n is actually sent as an explicit
+	// per-call session_diversity_n override for ss-pref questions, via
+	// Client.RecallScoredWithDiversityOverride.
+	fs.IntVar(&cfg.SSPrefSessionDiversityN, "ss-pref-session-diversity-n", 0, "issue #1176: per-session chunk cap applied ONLY to single-session-preference recall calls (0 = off; independent of --session-diversity-n)")
+	fs.IntVar(&cfg.SSPrefContextTopK, "ss-pref-context-topk", 0, "issue #1176: context topK applied ONLY to single-session-preference questions (0 = use the per-type default of 15; overridden by --context-topk if set)")
 	// #749: contention guard. --no-exclusive-backend is the negation flag.
 	// Default is exclusive=true; --no-exclusive-backend sets it false.
 	var noExclusiveBackend bool
@@ -328,12 +415,19 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
 		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
+		sefs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; when set, scorer URL/model/thinking/max_tokens are taken from the manifest")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sefs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sefs.BoolVar(&cfg.ScorerThinking, "scorer-thinking", true, "enable chain-of-thought for scorers that support it (default true)")
+		sefs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+		sefs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+		sefs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
+		sefs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "context window size used during run (for H-DIAG diagnostics; 0 = read from RUN_STATUS.json)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
 		}
+		cfg.scorerThinkingSet = flagPassed(sefs, "scorer-thinking")
+		cfg.scorerMaxTokensSet = flagPassed(sefs, "scorer-max-tokens")
 		if cfg.Now == nil {
 			cfg.Now = func() time.Time {
 				return time.Now().UTC()
@@ -346,6 +440,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
 		}
+		if err := applyScorerLock(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := validateScoreProvenance(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
 		return runScoreEfficient(cfg)
 	}
 
@@ -356,9 +458,13 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sbfs.StringVar(&cfg.DataFile, "data", "", "path to longmemeval JSON (required)")
 		sbfs.StringVar(&cfg.OutDir, "out", ".", "output directory")
 		sbfs.StringVar(&cfg.ScorerModel, "scorer-model", "claude-haiku-4-5", "Anthropic model ID for batch scoring")
+		sbfs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; scorer metadata is stamped from the manifest")
 		sbfs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
 		sbfs.BoolVar(&cfg.ForceRescore, "force-rescore", false, "ignore checkpoint, re-score everything")
 		sbfs.StringVar(&cfg.ScorerBatchAPIKey, "api-key-anthropic", envOr("ANTHROPIC_API_KEY", ""), "Anthropic API key (env: ANTHROPIC_API_KEY)")
+		sbfs.StringVar(&cfg.GoldVersion, "gold-version", "", "frozen gold snapshot/version identifier for this scoring run")
+		sbfs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
+		sbfs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 		if exit := parseFlagSet(sbfs, args[2:]); exit >= 0 {
 			return exit
 		}
@@ -368,6 +474,14 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		}
 		if cfg.RunID == "" {
 			cfg.RunID = newRunID()
+		}
+		if err := applyScorerLock(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := validateScoreProvenance(cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
 		}
 		return runScoreBatch(cfg)
 	}
@@ -422,8 +536,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		rdfs := flag.NewFlagSet("route-discover", flag.ContinueOnError)
 		rdfs.SetOutput(stderr)
 		var rd routeDiscoverConfig
-		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", "https://ai-fleet.petersimmons.com"), "AI Flight Controller base URL")
-		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", "https://olla.petersimmons.com"), "Olla base URL")
+		rdfs.StringVar(&rd.FleetURL, "fleet-url", envOr("LME_FLEET_URL", ""), "AI Flight Controller base URL")
+		rdfs.StringVar(&rd.OllaURL, "olla-url", envOr("LME_OLLA_URL", ""), "Olla base URL")
 		rdfs.StringVar(&rd.Model, "model", envOr("LME_ROUTE_MODEL", ""), "required model name; empty selects the first compatible live model")
 		rdfs.StringVar(&rd.Purpose, "purpose", envOr("LME_ROUTE_PURPOSE", "generation"), "route purpose: generation, scoring, or embedding")
 		rdfs.StringVar(&rd.FleetCert, "fleet-cert", envOr("LME_FLEET_CERT", ""), "AI Flight Controller mTLS client certificate")
@@ -512,12 +626,24 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "WARN: --no-cleanup is deprecated; use --cleanup-policy=never instead")
 		cfg.CleanupPolicy = CleanupPolicyNever
 	}
+	if cfg.BlockOverlapChars >= chunk.LazyChunkThreshold/2 {
+		_, _ = fmt.Fprintf(stderr,
+			"--block-overlap-chars must be < %d (LazyChunkThreshold/2 = %d)\n",
+			chunk.LazyChunkThreshold/2,
+			chunk.LazyChunkThreshold/2,
+		)
+		return 1
+	}
 
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
 		return 1
 	}
 	cfg.Output = stdout
+	if err := validateScoreProvenance(cfg); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	switch cfg.ScoreOutput {
 	case "", "text", "json", "quiet":

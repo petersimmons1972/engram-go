@@ -175,7 +175,7 @@ func TestIsValidInfisicalDomain(t *testing.T) {
 		valid bool
 	}{
 		// Valid Infisical domains
-		{"default self-hosted", "https://infisical.petersimmons.com", true},
+		{"self-hosted FQDN example", "https://infisical.example.com", true},
 		{"official SaaS", "https://app.infisical.com", true},
 		{"custom subdomain", "https://secrets.internal.company.io", true},
 		{"hyphen in label", "https://my-infisical.example.com", true},

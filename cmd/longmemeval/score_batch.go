@@ -79,6 +79,7 @@ func runScoreBatch(cfg *Config) int {
 		log.Printf("score-batch: nothing to score")
 	} else {
 		ctx := context.Background()
+		provenance := scoreProvenanceForConfig(cfg)
 		results, err := longmemeval.ScoreBatch(ctx, batchItems, cfg.ScorerBatchAPIKey, cfg.ScorerModel)
 		if err != nil {
 			log.Printf("ERROR score-batch: ScoreBatch failed: %v", err)
@@ -96,6 +97,7 @@ func runScoreBatch(cfg *Config) int {
 					QuestionID: bi.QuestionID,
 					Status:     "error",
 					Error:      "missing from batch results",
+					Provenance: provenance,
 				}
 				continue
 			}
@@ -107,6 +109,7 @@ func runScoreBatch(cfg *Config) int {
 				ScoreLabel:   r.Label,
 				Explanation:  r.Explanation,
 				Status:       "done",
+				Provenance:   provenance,
 			}
 			log.Printf("score-batch [%s] label=%s", bi.QuestionID, r.Label)
 		}

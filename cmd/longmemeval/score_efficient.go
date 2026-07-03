@@ -12,6 +12,12 @@ import (
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
+// scorerHTTPClient is a dedicated http.Client for scorer health-checks and the
+// /models endpoint. The 10-second Timeout is a transport-layer backstop so a
+// stalled gateway cannot hold the health-check goroutine indefinitely.
+// Context deadlines in the callers tighten this further per-request.
+var scorerHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 // ollaHealthCheck returns true if the OAI /models endpoint responds with HTTP 200.
 func ollaHealthCheck(baseURL string) bool {
 	url := strings.TrimRight(baseURL, "/") + "/models"
@@ -21,7 +27,7 @@ func ollaHealthCheck(baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := scorerHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}
@@ -154,10 +160,8 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 		APIKey:         cfg.ScorerAPIKey,
 	}
 	judgedAt := scoreEntryJudgedAt(cfg)
-	scorerMaxTokens := cfg.ScorerMaxTokens
-	if scorerMaxTokens <= 0 {
-		scorerMaxTokens = longmemeval.DefaultScorerMaxTokens
-	}
+	scorerMaxTokens := effectiveScorerMaxTokens(cfg)
+	provenance := scoreProvenanceForConfig(cfg)
 	for r := range work {
 		item, ok := itemMap[r.QuestionID]
 		if !ok {
@@ -166,6 +170,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 				Status:     "error",
 				Error:      "item not in data file",
 				JudgedAt:   judgedAt,
+				Provenance: provenance,
 			}
 			continue
 		}
@@ -207,6 +212,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 			ScorerThinking:  cfg.ScorerThinking,
 			ScorerMaxTokens: scorerMaxTokens,
 			JudgedAt:        judgedAt,
+			Provenance:      provenance,
 		}
 		log.Printf("score-efficient [%s] label=%s", r.QuestionID, result.Label)
 	}

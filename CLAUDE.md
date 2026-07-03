@@ -39,11 +39,17 @@ CI enforces a 55% minimum statement coverage on every PR (`.github/workflows/ci.
 
 ## Retrieval Miss Handling
 
-When `memory_recall` returns nothing useful, use `memory_feedback` with `failure_class` instead of manually calling `memory_store`:
+When `memory_recall` returns nothing useful, use `memory_feedback` with `failure_class` instead of manually calling `memory_store`.
+
+`event_id` only appears in `memory_recall`'s response when the call passes `record_event=true` (off by default so plain recall stays side-effect free). Pass it when you plan to follow up with `memory_feedback`:
 
 ```
+# Recall with event recording enabled — the response carries the event_id
+memory_recall(query="...", record_event=true)
+→ {..., event_id: "0197f3c1-...", feedback_hint: "Call memory_feedback with this event_id and the memory_ids you used"}
+
 # Record the miss (do not reinforce — no edge boost applied)
-memory_feedback(event_id="<id from recall>", memory_ids=[], failure_class="<class>")
+memory_feedback(event_id="<event_id from recall>", memory_ids=[], failure_class="<class>")
 
 # Triage the distribution of misses
 memory_aggregate(by="failure_class")
