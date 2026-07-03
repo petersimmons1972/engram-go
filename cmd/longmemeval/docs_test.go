@@ -181,6 +181,24 @@ func TestLMEBenchmarkLearningsSummaryUsesCurrentQuestionTypesAndPortableReferenc
 	}
 }
 
+func TestLMEJudgingDocumentsLockedQwen3Preset(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-judging.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-judging.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{
+		"SCORER_MAX_TOKENS=<n>`: score request budget for unlocked presets such as `gpt4o`",
+		"single source of",
+		"truth for lock-owned settings",
+		"`qwen3` defers to the scorer lock",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("lme judging doc missing locked-qwen3 guidance %q:\n%s", current, doc)
+		}
+	}
+}
+
 func TestRunbookW6800CanaryHasConcreteOllaChecks(t *testing.T) {
 	data, err := os.ReadFile("../../docs/runbook.md")
 	if err != nil {

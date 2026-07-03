@@ -21,7 +21,7 @@ Optional:
 - `--compare <baseline-dir>`: print strict/lenient deltas against another run’s `score_report.json`.
 - `--bundle`: run both `qwen3` and `gpt4o` judges in one invocation. `qwen3` output lands in `--run/qwen3`, `gpt4o` in `--run/gpt4o`.
 - `WORKERS=<n>`: worker count (environment override).
-- `SCORER_MAX_TOKENS=<n>`: score request budget.
+- `SCORER_MAX_TOKENS=<n>`: score request budget for unlocked presets such as `gpt4o`.
 
 ## Judge presets
 
@@ -34,6 +34,9 @@ Use for cheap wave-over-wave scoring:
 - API key: none
 
 Qwen3 is a reasoning model and can be slower when chain-of-thought is enabled.
+The `qwen3` harness path is scorer-lock-backed: the lock is the single source of
+truth for lock-owned settings such as `max_tokens` and `preserve_correct`, so
+`lme-judge.sh` does not forward manual overrides for those flags on this preset.
 
 ### gpt-4o (comparability)
 
@@ -53,8 +56,8 @@ Use for published comparability snapshots:
 - `--scorer-model`
 - `--scorer-api-key` (optional)
 - `--scorer-thinking`
-- `--scorer-max-tokens`
-- `--preserve-correct` (resume-friendly)
+- `--scorer-max-tokens` (`gpt4o` / unlocked presets only)
+- `--preserve-correct` (resume-friendly on unlocked presets only; `qwen3` defers to the scorer lock)
 
 ## Accounting: strict vs lenient
 
