@@ -842,3 +842,206 @@ func TestMemoryCorrect_ImportanceOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+// ── #1281/#1279: tags and importance must round-trip through handleMemoryStore ──
+//
+// Before the #1281 fix, tools were registered with empty MCP input schemas, so
+// schema-driven clients (Claude Code among them) had no way to know "tags" was
+// an array or "importance" a number and sent them JSON-encoded as strings.
+// toStringSlice(v) silently returned (nil, nil) for any non-[]any value and
+// getInt silently fell back to its default — so a caller who did everything
+// the (empty) schema allowed lost their tags/importance with no error at all.
+//
+// These tests exercise handleMemoryStore end-to-end (through the real
+// search.SearchEngine, captured at the StoreMemoryTx boundary) to prove the
+// values that reach the DB layer, not just the absence of a Go error.
+
+// TestMemoryStore_TagsRoundTrip_NativeArray is the "happy path" a
+// schema-respecting client produces once #1281 lands: tags arrive as a real
+// JSON array. It must persist all the way to the stored Memory (#1279).
+func TestMemoryStore_TagsRoundTrip_NativeArray(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"content": "tagged memory",
+		"tags":    []any{"example-tag-probe", "another-tag"},
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.Len(t, cap.stored, 1)
+	require.Equal(t, []string{"example-tag-probe", "another-tag"}, cap.stored[0].Tags,
+		"tags must reach the DB layer unchanged — see #1279")
+}
+
+// TestMemoryStore_TagsRoundTrip_JSONEncodedStringFallback covers the
+// defense-in-depth coercion path: a client that (despite the now-declared
+// schema) still sends tags as a JSON-encoded string must not silently lose
+// them either.
+func TestMemoryStore_TagsRoundTrip_JSONEncodedStringFallback(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"content": "tagged memory via stringified array",
+		"tags":    `["example-tag-probe"]`,
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.Len(t, cap.stored, 1)
+	require.Equal(t, []string{"example-tag-probe"}, cap.stored[0].Tags)
+}
+
+// TestMemoryStore_TagsWrongType_ReturnsLoudErrorNotSilentDrop is the direct
+// regression guard for #1279: a wrongly-typed (and non-coercible) tags value
+// must produce a tool-level error, never a silent "stored" response with the
+// tags dropped.
+func TestMemoryStore_TagsWrongType_ReturnsLoudErrorNotSilentDrop(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"content": "should not be stored",
+		"tags":    12345.0, // neither an array nor a JSON-array-encoded string
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "wrongly-typed tags must produce a tool error")
+	require.Contains(t, res.Content[0].(mcpgo.TextContent).Text, "tags")
+	require.Empty(t, cap.stored, "nothing must be written to the DB layer on a rejected store")
+}
+
+// TestMemoryStore_ImportanceRoundTrip_NativeNumber verifies a native JSON
+// number for importance reaches the DB layer unchanged.
+func TestMemoryStore_ImportanceRoundTrip_NativeNumber(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":    "test",
+		"content":    "importance test",
+		"importance": 1.0,
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.False(t, res.IsError, "expected non-error result, got: %+v", res.Content)
+
+	require.Len(t, cap.stored, 1)
+	require.Equal(t, 1, cap.stored[0].Importance,
+		"importance=1 must reach the DB layer as 1, not silently default to 2 — see #1279 secondary observation")
+}
+
+// TestMemoryStore_ImportanceWrongType_ReturnsLoudErrorNotSilentDefault is the
+// regression guard for the #1279 secondary observation: importance:1 coming
+// back as 2 (the default) because the typed cast failed silently.
+func TestMemoryStore_ImportanceWrongType_ReturnsLoudErrorNotSilentDefault(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":    "test",
+		"content":    "should not be stored",
+		"importance": []any{"oops"}, // not a number and not JSON-coercible to one
+	}
+
+	res, err := handleMemoryStore(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "wrongly-typed importance must produce a tool error, not silently default to 2")
+	require.Contains(t, res.Content[0].(mcpgo.TextContent).Text, "importance")
+	require.Empty(t, cap.stored, "nothing must be written to the DB layer on a rejected store")
+}
+
+// ── #1281: memory_store_batch "memories" no-op-success bug ─────────────────
+//
+// Before the fix, `items, _ := args["memories"].([]any)` silently discarded
+// the ok flag: a wrongly-typed "memories" value (e.g. a JSON-encoded string,
+// which is exactly what a schema-less client would send for an array param)
+// produced items=nil, which the handler then reported as a *success-shaped*
+// response: {"count":0,"warning":"no memories provided"}. This is the
+// "worst variant" of the silent-discard bug called out in #1281 — a bulk
+// write that reports "ok, 0 written" and gets treated as done.
+
+// TestMemoryStoreBatch_MemoriesWrongType_ReturnsLoudErrorNotFakeSuccess is the
+// direct regression guard.
+func TestMemoryStoreBatch_MemoriesWrongType_ReturnsLoudErrorNotFakeSuccess(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":  "test",
+		"memories": `[{"content":"test 1"},{"content":"test 2"}]`, // stringified array
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// Two acceptable outcomes at this layer: either the string-coercion
+	// fallback decodes it and stores both items, or — if coercion is not
+	// implemented for this call site — it must be a loud tool error, never
+	// the old fake-success "no memories provided" shape.
+	if res.IsError {
+		require.Empty(t, cap.stored)
+		return
+	}
+	out := parseSimpleResult(t, res)
+	if warning, ok := out["warning"]; ok {
+		t.Fatalf("memory_store_batch must not report a fake success for a wrongly-typed 'memories' param; got warning=%v", warning)
+	}
+	require.Len(t, cap.stored, 2, "the stringified batch must be decoded and both items stored")
+}
+
+// TestMemoryStoreBatch_MemoriesAbsent_StillReturnsFriendlyNoOp verifies the
+// boundary: genuinely absent/empty "memories" is NOT an error — it is the
+// documented empty-batch no-op. Only a present-but-wrongly-typed value is an
+// error.
+func TestMemoryStoreBatch_MemoriesAbsent_StillReturnsFriendlyNoOp(t *testing.T) {
+	pool, _ := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.False(t, res.IsError)
+	out := parseSimpleResult(t, res)
+	require.Equal(t, "no memories provided", out["warning"])
+	require.Equal(t, float64(0), out["count"])
+}
+
+// TestMemoryStoreBatch_MemoriesWrongScalarType_ReturnsLoudError covers a
+// non-coercible scalar (a number, not even a string) — must always be a
+// loud error since there is no fallback decoding path.
+func TestMemoryStoreBatch_MemoriesWrongScalarType_ReturnsLoudError(t *testing.T) {
+	pool, cap := newCapturingPool(t)
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":  "test",
+		"memories": 42.0,
+	}
+
+	res, err := handleMemoryStoreBatch(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError, "a non-array, non-string 'memories' value must be a loud tool error")
+	require.Empty(t, cap.stored)
+}

@@ -222,7 +222,7 @@ func handleMemoryFetch(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return errResult, nil
 	}
 	detail := getString(args, "detail", "summary")
-	chunkIDs, err := toStringSlice(args["chunk_ids"])
+	chunkIDs, err := toStringSlice(args, "chunk_ids")
 	if err != nil {
 		return nil, fmt.Errorf("chunk_ids: %w", err)
 	}
@@ -350,7 +350,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.AtomRecallAsOf = atomRecallAsOf
 
 	// Federated path: "projects" overrides the single-project recall.
-	projectNames, err := toStringSlice(args["projects"])
+	projectNames, err := toStringSlice(args, "projects")
 	if err != nil {
 		return nil, fmt.Errorf("projects: %w", err)
 	}
@@ -705,16 +705,28 @@ func handleMemoryList(ctx context.Context, pool *EnginePool, req mcpgo.CallToolR
 	if err != nil {
 		return nil, err
 	}
-	limit := getInt(args, "limit", 50)
+	limit, limitPresent, limitErr := requireOptionalInt(args, "limit")
+	if limitErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("limit: %v", limitErr)), nil
+	}
+	if !limitPresent {
+		limit = 50
+	}
 	if limit < 1 || limit > 500 {
 		limit = 50
 	}
-	offset := getInt(args, "offset", 0)
+	offset, offsetPresent, offsetErr := requireOptionalInt(args, "offset")
+	if offsetErr != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("offset: %v", offsetErr)), nil
+	}
+	if !offsetPresent {
+		offset = 0
+	}
 	var memType *string
 	if s := getString(args, "memory_type", ""); s != "" {
 		memType = &s
 	}
-	listTags, err := toStringSlice(args["tags"])
+	listTags, err := toStringSlice(args, "tags")
 	if err != nil {
 		return nil, fmt.Errorf("tags: %w", err)
 	}

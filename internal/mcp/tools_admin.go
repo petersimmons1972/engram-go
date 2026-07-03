@@ -133,7 +133,7 @@ func handleMemoryFeedback(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	if err != nil {
 		return nil, err
 	}
-	ids, err := toStringSlice(args["memory_ids"])
+	ids, err := toStringSlice(args, "memory_ids")
 	if err != nil {
 		return nil, fmt.Errorf("memory_ids: %w", err)
 	}

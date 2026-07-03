@@ -183,7 +183,7 @@ func parseExploreScope(args map[string]any) claude.ExploreScope {
 		return claude.ExploreScope{}
 	}
 	var scope claude.ExploreScope
-	scope.Tags, _ = toStringSlice(scopeMap["tags"]) // ignore control-char error in optional scope
+	scope.Tags, _ = toStringSlice(scopeMap, "tags") // ignore control-char error in optional scope
 	scope.EpisodeID = getString(scopeMap, "episode_id", "")
 	if since := getString(scopeMap, "since", ""); since != "" {
 		if t, err := time.Parse(time.RFC3339, since); err == nil {
