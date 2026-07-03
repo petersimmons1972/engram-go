@@ -1173,7 +1173,11 @@ func degradedToolMessage(toolName, reason string) string {
 // and Prometheus instrumentation. timeout=0 uses defaultToolTimeout. readOnly
 // sets the MCP ReadOnlyHint annotation: clients (notably Claude Code's plan
 // mode) use that hint to decide whether to invoke a tool without prompting.
-func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeout time.Duration, readOnly bool) {
+// schema declares the tool's JSON input schema (WithString/WithNumber/
+// WithArray/WithBoolean/WithObject + Required()) — see #1281: every tool must
+// carry a real schema so MCP clients type-coerce arguments correctly instead
+// of stringifying array/number params, which handlers then silently drop.
+func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeout time.Duration, readOnly bool, schema ...mcpgo.ToolOption) {
 	if timeout == 0 {
 		timeout = defaultToolTimeout
 	}
@@ -1193,9 +1197,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 		s.toolDescriptions = make(map[string]string)
 	}
 	s.toolDescriptions[name] = desc
-	s.mcp.AddTool(mcpgo.NewTool(name,
-		mcpgo.WithDescription(desc),
-		mcpgo.WithToolAnnotation(annotation)),
+	opts := make([]mcpgo.ToolOption, 0, len(schema)+2)
+	opts = append(opts, mcpgo.WithDescription(desc), mcpgo.WithToolAnnotation(annotation))
+	opts = append(opts, schema...)
+	s.mcp.AddTool(mcpgo.NewTool(name, opts...),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			ctx, cancel := context.WithTimeout(ctx, toolTimeout)
 			defer cancel()
@@ -1227,9 +1232,10 @@ func (s *Server) registerToolWithTimeout(name, desc string, h toolHandler, timeo
 }
 
 // registerTool adds a tool with the default dispatch timeout. The readOnly hint
-// is sourced from readOnlyToolNames() — single source of truth.
-func (s *Server) registerTool(name, desc string, h toolHandler) {
-	s.registerToolWithTimeout(name, desc, h, 0, readOnlyToolNames()[name])
+// is sourced from readOnlyToolNames() — single source of truth. schema declares
+// the tool's JSON input schema (see registerToolWithTimeout).
+func (s *Server) registerTool(name, desc string, h toolHandler, schema ...mcpgo.ToolOption) {
+	s.registerToolWithTimeout(name, desc, h, 0, readOnlyToolNames()[name], schema...)
 }
 
 func (s *Server) registerTools() {
@@ -1245,89 +1251,267 @@ func (s *Server) registerTools() {
 		name    string
 		desc    string
 		handler toolHandler
+		schema  []mcpgo.ToolOption
 	}
 	tools := []toolDef{
 		// Core store operations
 		{"memory_store", "Store a focused memory (<=10k chars). Optional: pattern_confidence (float 0.0–1.0) for caller-provided confidence that a detected pattern is genuine." + embedSuffix,
-			handleMemoryStore},
+			handleMemoryStore, []mcpgo.ToolOption{
+				requiredStrProp("content", "The memory content to store (<=10,000 chars)."),
+				projectProp(),
+				enumStrProp("memory_type", "Type of memory. Defaults to \"context\" (auto-upgraded to \"preference\" when the content reads as a stated preference and memory_type was not explicitly supplied).",
+					"decision", "pattern", "error", "context", "architecture", "preference"),
+				numberProp("importance", "Retention priority 0–4 (0=Critical .. 4=Low). Defaults to 2."),
+				tagsProp("Freeform tags. A tag of the form \"date:YYYY-MM-DD\" sets valid_from."),
+				boolProp("immutable", "When true, the memory can never be edited or soft-deleted."),
+				numberProp("pattern_confidence", "Caller-provided confidence (0.0–1.0) that a detected pattern is genuine."),
+				strProp("episode_id", "Episode to attach this memory to. Falls back to the session's auto-started episode when omitted."),
+			}},
 		{"memory_store_document", "Store a large document (auto-tiered up to 50 MB via synopsis + raw blob storage)",
-			handleMemoryStoreDocument},
+			handleMemoryStoreDocument, []mcpgo.ToolOption{
+				requiredStrProp("content", "The document content to store."),
+				projectProp(),
+				enumStrProp("memory_type", "Type of memory. Defaults to \"context\".",
+					"decision", "pattern", "error", "context", "architecture", "preference"),
+				numberProp("importance", "Retention priority 0–4 (0=Critical .. 4=Low). Defaults to 2."),
+				tagsProp("Freeform tags. A tag of the form \"date:YYYY-MM-DD\" sets valid_from."),
+				boolProp("immutable", "When true, the memory can never be edited or soft-deleted."),
+				strProp("episode_id", "Episode to attach this memory to."),
+			}},
 		{"memory_ingest_document_stream", "Ingest a very large document via server-local path or chunked base64 upload (auto-tiered, up to 50 MB)",
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
 				return handleMemoryIngestDocumentStream(ctx, s, pool, req, cfg)
+			}, []mcpgo.ToolOption{
+				projectProp(),
+				strProp("path", "Server-local file path to ingest directly (mutually exclusive with the chunked-upload action flow)."),
+				enumStrProp("action", "Chunked-upload action, used when path is not set.", "start", "append", "finish"),
+				strProp("upload_id", "Identifier for the chunked-upload session (required for append/finish; letters, digits, hyphens, underscores, dots only)."),
+				numberProp("part", "0-indexed part number for action=append."),
+				numberProp("part_index", "Legacy alias for part."),
+				strProp("data", "Base64-encoded chunk payload for action=append."),
 			}},
 		{"memory_store_batch", "Store multiple memories in one call. Each item supports the same optional fields as memory_store, including pattern_confidence (float 0.0–1.0) for per-item caller-provided confidence. If any item fails validation the entire batch is rejected." + embedSuffix,
-			handleMemoryStoreBatch},
+			handleMemoryStoreBatch, []mcpgo.ToolOption{
+				projectProp(),
+				mcpgo.WithArray("memories", mcpgo.Required(),
+					mcpgo.Description("Array of memory objects to store (max 100). Each item accepts the same fields as memory_store: content (required), memory_type, importance, tags, immutable, pattern_confidence, episode_id."),
+					mcpgo.Items(map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"content":            map[string]any{"type": "string", "description": "The memory content (required)."},
+							"memory_type":        map[string]any{"type": "string", "enum": []string{"decision", "pattern", "error", "context", "architecture", "preference"}},
+							"importance":         map[string]any{"type": "number", "description": "0-4, defaults to 2."},
+							"tags":               map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"immutable":          map[string]any{"type": "boolean"},
+							"pattern_confidence": map[string]any{"type": "number"},
+							"episode_id":         map[string]any{"type": "string"},
+						},
+						"required": []string{"content"},
+					}),
+				),
+			}},
 		// Recall and retrieval
 		{"memory_recall", "Recall memories by semantic + full-text query. Accepts top_k or limit; mode=handle returns lightweight handles. Pass record_event=true to receive an event_id in the response for use with memory_feedback (off by default so recall stays side-effect free)." + embedSuffix,
-			withWarnLog("memory_recall", handleMemoryRecall)},
+			withWarnLog("memory_recall", handleMemoryRecall), []mcpgo.ToolOption{
+				requiredStrProp("query", "The search query."),
+				projectProp(),
+				numberProp("top_k", "Maximum number of results to return. Defaults to a server-configured value."),
+				numberProp("limit", "Alias for top_k; top_k wins if both are supplied."),
+				enumStrProp("detail", "Result verbosity.", "summary", "full", "chunk"),
+				boolProp("include_conflicts", "Include conflicting_results enrichment in the response."),
+				boolProp("record_event", "Return an event_id usable with memory_feedback. Off by default so recall stays side-effect free. Not supported for federated (projects) recall."),
+				enumStrProp("mode", "Response shape.", "handle", "full", "summary", "id_only"),
+				strProp("since", "RFC3339 or YYYY-MM-DD lower bound on memory recency (single-project recall only)."),
+				strProp("before", "RFC3339 or YYYY-MM-DD upper bound on memory recency (single-project recall only)."),
+				boolProp("temporal_window_recall", "Enable server-side date-windowed temporal recall using question_text/question_date."),
+				strProp("question_text", "Free text used to parse a temporal anchor for temporal_window_recall."),
+				strProp("question_date", "Reference date (RFC3339 or YYYY-MM-DD) used to resolve relative temporal anchors."),
+				strProp("atom_recall_as_of", "RFC3339 or YYYY-MM-DD point-in-time bound for atom_recall."),
+				boolProp("atom_recall", "Enable atom-level recall."),
+				stringArrayProp("projects", "Federated recall: search across these project names instead of the single project arg. Pass [\"*\"] to expand to all known projects."),
+				boolProp("rerank", "Opt in to Claude-based reranking (single-project only; requires the server to have reranking enabled)."),
+				boolProp("exact_fact_boost", "Boost results containing verbatim identifier matches (URLs, phone numbers, quoted phrases)."),
+				boolProp("topic_anchor_boost", "Boost topic-anchor matches for preference-shaped queries."),
+				numberProp("session_diversity_n", "Per-session chunk cap on returned results."),
+				boolProp("paraphrase_union", "Enable paraphrase-union retrieval for this call."),
+				boolProp("rrf_fusion", "Enable reciprocal-rank-fusion for this call."),
+				boolProp("evidence_first_pack", "Reorder results so verbatim-identifier matches come first."),
+			}},
 		{"memory_fetch", "Fetch a single memory by ID; detail=summary|chunk|full",
-			handleMemoryFetch},
+			handleMemoryFetch, []mcpgo.ToolOption{
+				requiredStrProp("id", "ID of the memory to fetch."),
+				projectProp(),
+				enumStrProp("detail", "Response verbosity. Defaults to \"summary\".", "summary", "full", "chunk"),
+				stringArrayProp("chunk_ids", "When detail=chunk, restrict the response to these chunk IDs."),
+			}},
 		{"memory_list", "List memories with optional filters",
-			noConfig(handleMemoryList)},
+			noConfig(handleMemoryList), []mcpgo.ToolOption{
+				projectProp(),
+				numberProp("limit", "Maximum number of memories to return (1–500). Defaults to 50; out-of-range values fall back to 50."),
+				numberProp("offset", "Number of memories to skip for pagination. Defaults to 0."),
+				strProp("memory_type", "Filter to a single memory type."),
+				tagsProp("Filter to memories matching any of these tags."),
+			}},
 		{"memory_history", "Return the full version chain for a memory",
-			noConfig(handleMemoryHistory)},
+			noConfig(handleMemoryHistory), []mcpgo.ToolOption{
+				projectProp(),
+				memoryIDProp(""),
+			}},
 		{"memory_timeline", "Recall memories that were active at a given point in time (as_of param, RFC3339)",
-			noConfig(handleMemoryTimeline)},
+			noConfig(handleMemoryTimeline), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("as_of", "RFC3339 timestamp — return memories active at this point in time."),
+				numberProp("limit", "Maximum number of memories to return. Defaults to 20."),
+			}},
 		// Graph operations
 		{"memory_connect", "Create a directed relationship between two memories. relation_type values: caused_by, relates_to, depends_on, supersedes, used_in, resolved_by, contradicts, supports, derived_from, part_of, follows",
-			noConfig(handleMemoryConnect)},
+			noConfig(handleMemoryConnect), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("source_id", "ID of the source memory."),
+				requiredStrProp("target_id", "ID of the target memory."),
+				strProp("relation_type", "Relationship type. Defaults to \"relates_to\"."),
+				numberProp("strength", "Relationship strength, 0.0–1.0. Defaults to 1.0."),
+			}},
 		{"memory_expand", "Explore the relationship graph neighbourhood of a known memory.",
-			noConfig(handleMemoryExpand)},
+			noConfig(handleMemoryExpand), []mcpgo.ToolOption{
+				projectProp(),
+				memoryIDProp(""),
+				numberProp("depth", "Number of relationship hops to traverse. Defaults to 2."),
+			}},
 		// Mutations
 		{"memory_correct", "Update content, tags, importance, or pattern_confidence (float 0.0–1.0) on an existing memory. Omit pattern_confidence to leave it unchanged. Only-promote-never-nullify rule: omit 'tags' entirely to preserve the existing valid_from; sending tags=[...] recalculates valid_from from date: tags; sending tags=[] clears valid_from to null. See docs/tools.md#memory_correct and issue #765.",
-			noConfig(handleMemoryCorrect)},
+			noConfig(handleMemoryCorrect), []mcpgo.ToolOption{
+				projectProp(),
+				memoryIDProp(""),
+				strProp("content", "New content. Omit to leave content unchanged."),
+				tagsProp("New tags. Omit entirely to preserve the existing tags/valid_from; pass [] to clear tags and valid_from."),
+				numberProp("importance", "New importance, 0–4. Omit to leave unchanged."),
+				numberProp("pattern_confidence", "New pattern confidence, 0.0–1.0. Omit to leave unchanged."),
+			}},
 		{"memory_forget", "Soft-delete a memory (sets valid_to, preserves history, respects immutability)",
-			noConfig(handleMemoryForget)},
+			noConfig(handleMemoryForget), []mcpgo.ToolOption{
+				projectProp(),
+				memoryIDProp(""),
+				strProp("reason", "Optional human-readable reason for the deletion."),
+			}},
 		// Maintenance
 		{"memory_summarize", "Immediately summarize a memory",
-			handleMemorySummarize},
+			handleMemorySummarize, []mcpgo.ToolOption{
+				projectProp(),
+				memoryIDProp(""),
+			}},
 		{"memory_resummarize", "Clear all summaries for a project — they regenerate automatically within 60s",
-			noConfig(handleMemoryResummarize)},
+			noConfig(handleMemoryResummarize), []mcpgo.ToolOption{
+				projectProp(),
+			}},
 		{"memory_status", "Return project statistics",
-			noConfig(handleMemoryStatus)},
+			noConfig(handleMemoryStatus), []mcpgo.ToolOption{
+				projectProp(),
+			}},
 		{"memory_status_ping", "Lightweight liveness probe — no DB writes, 2s internal timeout. Used by the Claude Code Stop hook to detect MCP disconnection.",
-			noConfig(handleMemoryStatusPing)},
+			noConfig(handleMemoryStatusPing), nil},
 		{"memory_verify", "Integrity check -- hash coverage and corrupt count",
-			noConfig(handleMemoryVerify)},
+			noConfig(handleMemoryVerify), []mcpgo.ToolOption{
+				projectProp(),
+			}},
 		// Feedback and aggregation
 		{"memory_feedback", "Record retrieval feedback. event_id: the id returned by memory_recall's response when called with record_event=true (required when failure_class is set). failure_class values (for misses): vocabulary_mismatch, aggregation_failure, stale_ranking, missing_content, scope_mismatch, other",
-			noConfig(handleMemoryFeedback)},
+			noConfig(handleMemoryFeedback), []mcpgo.ToolOption{
+				projectProp(),
+				stringArrayProp("memory_ids", "IDs of memories to reinforce (max 100)."),
+				strProp("event_id", "UUID from a prior memory_recall(record_event=true) call. Required when failure_class is set."),
+				enumStrProp("failure_class", "Classify a retrieval miss instead of reinforcing.",
+					"vocabulary_mismatch", "aggregation_failure", "stale_ranking", "missing_content", "scope_mismatch", "other"),
+			}},
 		{"memory_aggregate", "Group and count memories. by=tag|type|failure_class. filter: optional ILIKE substring — tag mode only, error for failure_class.",
-			noConfig(handleMemoryAggregate)},
+			noConfig(handleMemoryAggregate), []mcpgo.ToolOption{
+				projectProp(),
+				requiredEnumStrProp("by", "Dimension to group by.", "tag", "type", "failure_class"),
+				strProp("filter", "Optional ILIKE substring filter — tag mode only."),
+				numberProp("limit", "Maximum number of groups to return (1–1000). Defaults to 20."),
+			}},
 		// Consolidation
 		{"memory_consolidate", "Prune stale memories, decay edges, merge near-duplicates",
-			handleMemoryConsolidate},
+			handleMemoryConsolidate, []mcpgo.ToolOption{
+				projectProp(),
+			}},
 		{"memory_sleep", "Run full sleep-consolidation cycle: infer relationships between semantically related memories",
-			handleMemorySleep},
+			handleMemorySleep, []mcpgo.ToolOption{
+				projectProp(),
+				numberProp("min_similarity", "Minimum cosine similarity to infer a relationship. Defaults to 0.7."),
+				numberProp("limit", "Maximum memories to scan for relationship inference (1–5000). Defaults to 500."),
+				boolProp("llm_contradiction_detection", "Enable LLM-based contradiction detection (opt-in, default off)."),
+				strProp("llm_model", "Ollama model to use for contradiction detection. Defaults to \"llama3.2:3b\"."),
+				numberProp("llm_max_calls", "Cap on LLM calls for contradiction detection. Defaults to 10."),
+				boolProp("auto_supersede", "Automatically mark detected contradictions as superseded."),
+				numberProp("contradiction_limit", "Memories to scan for contradiction detection. Defaults to the value of limit when 0."),
+			}},
 		{"memory_delete_project", "Delete all memories and project data for a project. IRREVERSIBLE. Requires server started with ENGRAM_ALLOW_PROJECT_DELETE=1 AND a confirm argument exactly matching the project argument (#689). Not for normal use.",
-			noConfig(handleMemoryDeleteProject)},
+			noConfig(handleMemoryDeleteProject), []mcpgo.ToolOption{
+				requiredStrProp("project", "Project to permanently delete."),
+				requiredStrProp("confirm", "Must exactly match project — typo guard for this irreversible operation."),
+			}},
 		// Episodes
 		{"memory_episode_start", "Start a named episode to group memories from this session",
-			withWarnLog("memory_episode_start", noConfig(handleMemoryEpisodeStart))},
+			withWarnLog("memory_episode_start", noConfig(handleMemoryEpisodeStart)), []mcpgo.ToolOption{
+				projectProp(),
+				strProp("description", "Human-readable description of the episode."),
+			}},
 		{"memory_episode_end", "End an episode with an optional summary",
-			noConfig(handleMemoryEpisodeEnd)},
+			noConfig(handleMemoryEpisodeEnd), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("episode_id", "ID of the episode to end."),
+				strProp("summary", "Optional summary of what happened in this episode."),
+			}},
 		{"memory_episode_list", "List recent episodes for a project",
-			noConfig(handleMemoryEpisodeList)},
+			noConfig(handleMemoryEpisodeList), []mcpgo.ToolOption{
+				projectProp(),
+				numberProp("limit", "Maximum number of episodes to return. Defaults to 20."),
+			}},
 		{"memory_episode_recall", "Return all memories from a specific episode in chronological order",
-			noConfig(handleMemoryEpisodeRecall)},
+			noConfig(handleMemoryEpisodeRecall), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("episode_id", "ID of the episode to recall."),
+			}},
 		// Embedder management
 		{"memory_migrate_embedder", "Switch embedding model; triggers background re-embedding. Also resets any learned adaptive weights for the project to compile-time defaults.",
-			handleMemoryMigrateEmbedder},
+			handleMemoryMigrateEmbedder, []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("new_model", "Name of the new embedding model."),
+				strProp("ollama_url", "Override the server-configured embedder endpoint for this call."),
+				boolProp("force", "Bypass the same-model no-op guard."),
+				boolProp("dry_run", "Report what would happen without nulling any embeddings."),
+				boolProp("confirm", "Explicit confirmation required by some migration guards."),
+			}},
 		{"memory_models", "List installed and suggested Ollama embedding models. Shows which suggested models are installed, which is current, and flags the recommended upgrade.",
-			handleMemoryModels},
+			handleMemoryModels, nil},
 		{"memory_embedding_eval", "Compare two Ollama embedding models using probe sentences. model_a defaults to the configured embedding model; model_b defaults to the recommended registry entry. Use this to validate a 1024-dim compatible replacement before migrating. Auto-pulls missing models. Read-only — does not migrate stored embeddings.",
-			handleMemoryEmbeddingEval},
+			handleMemoryEmbeddingEval, []mcpgo.ToolOption{
+				strProp("model_a", "First model to compare. Defaults to the server's configured embedding model."),
+				strProp("model_b", "Second model to compare. Defaults to the recommended registry entry."),
+			}},
 		// Import / export
 		{"memory_export_all", "Export all memories to markdown files",
-			handleMemoryExportAll},
+			handleMemoryExportAll, []mcpgo.ToolOption{
+				projectProp(),
+				strProp("output_path", "Destination directory, relative to the server's data directory. Defaults to \"./memory-export\"."),
+			}},
 		{"memory_import_claudemd", "Import a CLAUDE.md file as structured memories",
-			handleMemoryImportClaudeMD},
+			handleMemoryImportClaudeMD, []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("path", "Path to the CLAUDE.md file, relative to the server's data directory."),
+			}},
 		{"memory_ingest", "Ingest a file or directory as document memories",
-			handleMemoryIngest},
+			handleMemoryIngest, []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("path", "File or directory to ingest, relative to the server's data directory."),
+			}},
 		{"memory_ingest_export",
 			"Ingest a server-local AI conversation export file (Slack workspace .zip, Claude.ai conversations.json, or ChatGPT conversations.json). Parses the file, auto-detects format, and stores one memory per conversation or channel.",
-			handleMemoryIngestExport},
+			handleMemoryIngestExport, []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("path", "Path to the export file, relative to the server's data directory."),
+			}},
 		{"memory_ingest_status",
 			"Check the status of an async ingestion job queued by memory_ingest_export, memory_ingest, or memory_ingest_document_stream.",
 			func(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest, cfg Config) (*mcpgo.CallToolResult, error) {
@@ -1355,62 +1539,144 @@ func (s *Server) registerTools() {
 					out["duration_ms"] = r.DoneAt.Sub(r.StartedAt).Milliseconds()
 				}
 				return toolResult(out)
+			}, []mcpgo.ToolOption{
+				requiredStrProp("job_id", "Job ID returned by the queuing call."),
 			}},
 		// Cross-project federation
 		{"memory_projects", "List all projects with memory counts",
-			noConfig(handleMemoryProjects)},
+			noConfig(handleMemoryProjects), []mcpgo.ToolOption{
+				projectProp(),
+			}},
 		{"memory_adopt", "Create a cross-project reference relationship",
-			noConfig(handleMemoryAdopt)},
+			noConfig(handleMemoryAdopt), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("source_id", "ID of the memory in the calling project."),
+				requiredStrProp("target_id", "ID of the memory in the other project."),
+				strProp("relation_type", "Relationship type. Defaults to \"relates_to\"."),
+				numberProp("strength", "Relationship strength, 0.0–1.0. Defaults to 1.0."),
+			}},
 		// Simplified front-door tools
 		{"memory_quick_store", "Store a memory and automatically extract entities. Simplified front door for memory_store.",
-			withWarnLog("memory_quick_store", handleMemoryQuickStore)},
+			withWarnLog("memory_quick_store", handleMemoryQuickStore), []mcpgo.ToolOption{
+				requiredStrProp("content", "The memory content to store."),
+				projectProp(),
+				enumStrProp("memory_type", "Type of memory. Defaults to \"context\".",
+					"decision", "pattern", "error", "context", "architecture", "preference"),
+				numberProp("importance", "Retention priority 0–4. Defaults to 2."),
+				tagsProp("Freeform tags."),
+				boolProp("immutable", "When true, the memory can never be edited or soft-deleted."),
+			}},
 		{"memory_query", "Simplified front door for memory_recall. Accepts a 'limit' param instead of top_k; sensible defaults applied." + embedSuffix,
-			handleMemoryQuery},
+			handleMemoryQuery, []mcpgo.ToolOption{
+				requiredStrProp("query", "The search query."),
+				projectProp(),
+				numberProp("limit", "Maximum number of results to return. Defaults to 5. Mapped to top_k internally."),
+				numberProp("top_k", "Alias for limit; wins if both are supplied."),
+				enumStrProp("detail", "Result verbosity.", "summary", "full", "chunk"),
+				boolProp("include_conflicts", "Include conflicting_results enrichment in the response."),
+				enumStrProp("mode", "Response shape.", "handle", "full", "summary", "id_only"),
+			}},
 		// Safety constraint verification
 		{"get_constraints", "List constraint and policy memories relevant to an optional query",
-			noConfig(handleGetConstraints)},
+			noConfig(handleGetConstraints), []mcpgo.ToolOption{
+				projectProp(),
+				strProp("query", "Optional free-text query to scope the constraint search."),
+				numberProp("limit", "Maximum number of constraints to return (1–50). Defaults to 10."),
+				numberProp("stale_after_days", "Days after which a matched constraint is flagged stale (1–3650). Defaults to 180."),
+			}},
 		{"check_constraints", "Classify a proposed action and return matching constraints with a verification decision",
-			noConfig(handleCheckConstraints)},
+			noConfig(handleCheckConstraints), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("proposed_action", "Description of the action to classify."),
+				numberProp("limit", "Maximum number of constraints to return (1–50). Defaults to 10."),
+				numberProp("stale_after_days", "Days after which a matched constraint is flagged stale (1–3650). Defaults to 180."),
+			}},
 		{"verify_before_acting", "Run the full constraint verification pipeline and return a proceed/warn/require_approval/block decision",
-			noConfig(handleVerifyBeforeActing)},
+			noConfig(handleVerifyBeforeActing), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("proposed_action", "Description of the action to verify."),
+				numberProp("limit", "Maximum number of constraints to return (1–50). Defaults to 10."),
+				numberProp("stale_after_days", "Days after which a matched constraint is flagged stale (1–3650). Defaults to 180."),
+			}},
 		// Audit and weight tuning
 		{"memory_audit_add_query", "Register a canonical query for retrieval drift monitoring",
-			handleMemoryAuditAddQuery},
+			handleMemoryAuditAddQuery, []mcpgo.ToolOption{
+				requiredProjectProp(),
+				requiredStrProp("query", "The canonical query text to monitor."),
+				strProp("description", "Optional human-readable description of this canonical query."),
+			}},
 		{"memory_audit_list_queries", "List canonical queries registered for drift monitoring in a project",
-			handleMemoryAuditListQueries},
+			handleMemoryAuditListQueries, []mcpgo.ToolOption{
+				requiredProjectProp(),
+			}},
 		{"memory_audit_deactivate_query", "Deactivate a canonical query (stops future drift snapshots)",
-			handleMemoryAuditDeactivateQuery},
+			handleMemoryAuditDeactivateQuery, []mcpgo.ToolOption{
+				requiredStrProp("query_id", "ID of the canonical query to deactivate."),
+			}},
 		{"memory_audit_run", "Run a decay audit pass for a project immediately and return snapshot summaries",
-			handleMemoryAuditRun},
+			handleMemoryAuditRun, []mcpgo.ToolOption{
+				requiredProjectProp(),
+			}},
 		{"memory_audit_compare", "Compare retrieval snapshots for a canonical query to detect ranking drift",
-			handleMemoryAuditCompare},
+			handleMemoryAuditCompare, []mcpgo.ToolOption{
+				requiredStrProp("query_id", "ID of the canonical query."),
+				numberProp("limit", "Maximum number of snapshots to return. Defaults to 10."),
+			}},
 		{"memory_weight_history", "Return current retrieval weights and tuning history for a project",
-			handleMemoryWeightHistory},
+			handleMemoryWeightHistory, []mcpgo.ToolOption{
+				requiredProjectProp(),
+			}},
 		// Diagnose (always available — no Claude required)
 		{"memory_diagnose", "Return evidence map for recalled memories: conflicts, confidence, invalidated sources — no synthesis",
-			noConfig(handleMemoryDiagnose)},
+			noConfig(handleMemoryDiagnose), []mcpgo.ToolOption{
+				projectProp(),
+				requiredStrProp("question", "Query used to recall the memories to diagnose."),
+				numberProp("top_k", "Maximum number of memories to recall for diagnosis. Defaults to 10."),
+				enumStrProp("detail", "Recall detail level passed through to the underlying recall.", "summary", "full", "chunk"),
+			}},
 	}
 	for _, t := range tools {
-		s.registerTool(t.name, t.desc, t.handler)
+		s.registerTool(t.name, t.desc, t.handler, t.schema...)
 	}
 
 	// Claude-required tools: registered only when a client is available.
 	if s.cfg.ClaudeEnabled {
 		s.registerTool("memory_reason",
 			"Recall memories and synthesize a grounded answer using Claude",
-			handleMemoryReason)
+			handleMemoryReason,
+			projectProp(),
+			requiredStrProp("question", "The question to answer."),
+			numberProp("top_k", "Maximum number of memories to recall (1–100). Defaults to 10."),
+			enumStrProp("detail", "Recall detail level.", "summary", "full", "chunk"))
 		s.registerTool("memory_explore",
 			"Iterative recall+score+synthesis loop — returns a single grounded answer (A3)",
-			handleMemoryExplore)
+			handleMemoryExplore,
+			projectProp(),
+			requiredStrProp("question", "The question to answer."),
+			numberProp("max_iterations", "Cap on recall+score+synthesis loop iterations (1–10)."),
+			numberProp("confidence_threshold", "Stop iterating once this confidence (0.0–1.0) is reached. Defaults to 0.75."),
+			numberProp("token_budget", "Cumulative scoring-call token budget. Defaults to a server-configured value."),
+			boolProp("include_trace", "Include the full iteration trace in the response."),
+			exploreScopeProp())
 		// memory_query_document (A5): query a single large document by regex/substring
 		// or semantic recall and synthesize an answer with Claude.
 		s.registerTool("memory_query_document",
 			"Query a large document stored in memory using regex/substring matching or semantic search. Returns relevant spans and an AI-synthesized answer.",
-			handleMemoryQueryDocument)
+			handleMemoryQueryDocument,
+			requiredProjectProp(),
+			requiredStrProp("memory_id", "ID of the document memory to query."),
+			requiredStrProp("question", "The question to answer against the document."),
+			queryDocumentFilterProp(),
+			numberProp("window_chars", "Characters of context to include around each match. Defaults to 4000."),
+			boolProp("semantic", "Use semantic recall instead of regex/substring matching."),
+			numberProp("token_budget", "Token budget for the synthesis call. Defaults to 6000."))
 		// memory_ask (P2): retrieval-augmented question answering with numbered citations.
 		s.registerTool("memory_ask",
 			"Answer a question using stored memories as context. Returns answer + numbered citations.",
-			handleMemoryAsk)
+			handleMemoryAsk,
+			requiredProjectProp(),
+			requiredStrProp("question", "The question to answer."),
+			numberProp("top_k", "Maximum number of memories to use as context (0–100). 0 or omitted uses the default (10)."))
 	}
 
 	// Hide maintenance/operational tools from tools/list. They remain callable
