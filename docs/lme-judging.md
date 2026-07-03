@@ -68,10 +68,10 @@ Use for the locked honest baseline and cheap wave-over-wave scoring:
 
 Qwen3 is a reasoning model and can be slower when chain-of-thought is enabled.
 Qwen3 lock settings are fixed by the manifest (`docs/lme-campaign/scorer-lock.json`)
-so same-scorer comparisons stay honest: the lock is the single source of truth
-for lock-owned settings such as `scorer_url`, `scorer_model`, `scorer_thinking`,
-and `scorer_max_tokens`, so `lme-judge.sh` does not forward manual overrides for
-those flags on this preset.
+so same-scorer comparisons stay honest: the lock is the single source of
+truth for lock-owned settings such as `scorer_url`, `scorer_model`,
+`scorer_thinking`, and `scorer_max_tokens`, so `lme-judge.sh` does not forward
+manual overrides for those flags on this preset.
 
 ### gpt-4o (comparability)
 
@@ -87,7 +87,7 @@ Use for published comparability snapshots:
 
 `lme-judge.sh` maps judge preset selection to:
 
-- `qwen3`: `--scorer-lock`, `--gold-version`, `--item-set`, `--system` (scorer URL/model/thinking/max_tokens all come from the lock manifest; unlocked-preset flags below are not forwarded)
+- `qwen3`: `--scorer-lock`, `--gold-version`, `--item-set`, `--system` (scorer URL/model/thinking/max_tokens are not forwarded — `qwen3` defers to the scorer lock)
 - `gpt4o`: `--scorer-url`, `--scorer-model`, `--scorer-api-key` (optional), `--scorer-thinking`, `--scorer-max-tokens`, `--preserve-correct` (resume-friendly)
 
 ## Accounting: strict vs lenient
