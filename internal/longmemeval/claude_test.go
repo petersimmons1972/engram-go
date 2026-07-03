@@ -589,6 +589,13 @@ func TestGenerationPromptKnowledgeUpdate_ContainsRecencyInstructionAndContext(t 
 	if !strings.Contains(prompt, "What is the user's current phone number?") {
 		t.Errorf("KU recency prompt must include the question, got:\n%s", prompt)
 	}
+	// QA blocker on #1258: issue #1178's acceptance bar is the Strict metric,
+	// which credits only judge-label CORRECT (not PARTIALLY_CORRECT/hedged), so
+	// the KU prompt must carry the same anti-hedge instruction as every other
+	// direct-answer prompt in this file (see GenerationPrompt).
+	if !strings.Contains(prompt, `never say "not mentioned", "not found in context", "cannot be determined", "not explicitly stated", or any similar refusal`) {
+		t.Errorf("KU recency prompt must include the anti-hedge instruction, got:\n%s", prompt)
+	}
 }
 
 func TestGenerationPrompt_DefaultType_UsesGenericPrompt(t *testing.T) {
