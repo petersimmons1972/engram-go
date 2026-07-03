@@ -463,6 +463,17 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if cfg.AtomOracle {
 		return runOneOracle(ctx, cfg, item, ingest)
 	}
+	if cfg.FullTimelineContext {
+		contextBlocks := buildFullTimelineContextBlocks(item, cfg.MaxBlockChars)
+		if len(contextBlocks) == 0 {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      "full-timeline context: no non-empty sessions found in haystack",
+			}
+		}
+		return generateRunEntry(ctx, cfg, item, nil, contextBlocks, "")
+	}
 
 	// Strip leading interrogative phrases for temporal questions so the recall
 	// query matches event noun-phrases rather than "how many weeks ago did...".
@@ -671,10 +682,28 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if cfg.AtomMode {
 		atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
 	}
-	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
-	// the two are mutually exclusive. When both are set, aug wins.
-	// H12 (--enumerate-first) is orthogonal — it only fires for aggregation
-	// questions, which the temporal/preference branches above never match.
+	return generateRunEntry(ctx, cfg, item, retrievedIDs, contextBlocks, atomContextBlock)
+}
+
+func buildFullTimelineContextBlocks(item longmemeval.Item, maxBlockChars int) []string {
+	blocks := make([]string, 0, len(item.HaystackSessions))
+	for i, session := range item.HaystackSessions {
+		content := longmemeval.SessionContent(session)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
+			content = "Session date: " + item.HaystackDates[i] + "\n" + content
+		}
+		if maxBlockChars > 0 && len(content) > maxBlockChars {
+			content = content[:maxBlockChars]
+		}
+		blocks = append(blocks, content)
+	}
+	return sortBlocksChronologically(blocks)
+}
+
+func generateRunEntry(ctx context.Context, cfg *Config, item longmemeval.Item, retrievedIDs []string, contextBlocks []string, atomContextBlock string) longmemeval.RunEntry {
 	var prompt string
 	switch {
 	case cfg.TemporalPromptAug:
@@ -686,12 +715,11 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	default:
 		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
 	}
-
-	// #938: prepend atom context block before the memory context when --atom-mode is set.
 	if atomContextBlock != "" {
 		prompt = atomContextBlock + "\n" + prompt
 	}
 	var hypothesis string
+	var err error
 	if cfg.LLMBaseURL != "" {
 		maxTok := cfg.LLMMaxTokens
 		if maxTok == 0 && cfg.EnableThinking {

@@ -41,6 +41,17 @@ type questionProjectProvenance struct {
 	Warning            string `json:"warning,omitempty"`
 }
 
+func generationContextMode(cfg *Config) string {
+	switch {
+	case cfg.AtomOracle:
+		return "atom-oracle"
+	case cfg.FullTimelineContext:
+		return "full-timeline"
+	default:
+		return "retrieval"
+	}
+}
+
 func scoreCompletenessFromScores(scores []longmemeval.ScoreEntry) scoreCompleteness {
 	scoreDone, scoreErrors := scoreOutcomeCounts(scores)
 	total := scoreDone + scoreErrors
@@ -124,6 +135,7 @@ func writeRunManifest(
 		"complete":              completeness.Complete,
 		"question_projects":     questionProjects,
 		"project_warning_total": projectWarningTotal,
+		"generation_context":    generationContextMode(cfg),
 		"binary_path":           exe,
 		"command_line":          os.Args,
 		"git_sha":               bestEffortGit("rev-parse", "HEAD"),
@@ -172,6 +184,7 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		"score_row_total":       snapshot.ScoreRowTotal,
 		"question_projects":     snapshot.QuestionProjects,
 		"project_warning_total": snapshot.ProjectWarningTotal,
+		"generation_context":    generationContextMode(cfg),
 		"binary_path":           exe,
 		"command_line":          commandLine,
 		"git_sha":               bestEffortGit("rev-parse", "HEAD"),

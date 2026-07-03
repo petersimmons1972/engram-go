@@ -61,6 +61,7 @@ type Config struct {
 	RecallTopK          int  // memories recalled before context trim (default 100)
 	ContextTopKOverride int  // explicit context topK; 0 = per-type default
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
+	FullTimelineContext bool // bypass retrieval and inject the full dated haystack timeline directly into the generation prompt
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
 	RepairPreset        string
@@ -163,6 +164,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  --out <dir>             Output directory for checkpoints (default .)")
 	_, _ = fmt.Fprintln(w, "  --run-id <hex>          Run identifier (auto-generated if empty)")
 	_, _ = fmt.Fprintln(w, "  --retries <n>           Retry count for generation + Engram calls (default 1)")
+	_, _ = fmt.Fprintln(w, "  --full-timeline-context Bypass recall and inject the full dated haystack timeline directly into the prompt")
 	_, _ = fmt.Fprintln(w, "  --cleanup-policy <val>  Project cleanup after run: auto (default), always, never")
 	_, _ = fmt.Fprintln(w, "                          auto: delete only projects created by this run invocation")
 	_, _ = fmt.Fprintln(w, "                          always: unconditional deletion (pre-v0 behavior)")
@@ -230,6 +232,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
 	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
+	fs.BoolVar(&cfg.FullTimelineContext, "full-timeline-context", false, "benchmark-only: bypass memory_recall and inject the full dated haystack timeline directly into the generation prompt")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")
 	fs.StringVar(&cfg.RepairPreset, "repair-preset", "", "named LongMemEval repair preset to enable known repair switches: recall-repair")
@@ -546,6 +549,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 
 	// Phase 2A (#1079): validate oracle flags when set.
 	if cfg.AtomOracle {
+		if cfg.FullTimelineContext {
+			_, _ = fmt.Fprintln(stderr, "--full-timeline-context cannot be combined with --atom-oracle")
+			return 1
+		}
 		if cfg.LLMBaseURL == "" {
 			_, _ = fmt.Fprintln(stderr, "--atom-oracle requires --llm-url (local LLM endpoint for atom extraction)")
 			return 1

@@ -216,6 +216,7 @@ go run ./cmd/benchmark/main.go \
 go run ./cmd/longmemeval help
 go run ./cmd/longmemeval ingest --data questions.json --out results/lme-run --cleanup-policy=never
 go run ./cmd/longmemeval run --data questions.json --out results/lme-run --recall-topk 100 --context-topk 8
+go run ./cmd/longmemeval run --data questions.json --out results/lme-run --full-timeline-context
 go run ./cmd/longmemeval score-efficient --data questions.json --out results/lme-run
 go run ./cmd/longmemeval analyze --results results/lme-run
 ```
@@ -224,6 +225,7 @@ go run ./cmd/longmemeval analyze --results results/lme-run
 
 - `ingest` — load the dataset into per-question Engram projects.
 - `run` — recall context and generate hypotheses.
+- `run --full-timeline-context` — benchmark-only generation-context ablation that bypasses retrieval and injects the full dated haystack timeline directly into the prompt.
 - `score` — score hypotheses against gold answers.
 - `all` — run ingest, run, and score in one invocation.
 - `score-efficient` — score with an Olla/OpenAI-compatible backend while preserving already-correct rows by default.

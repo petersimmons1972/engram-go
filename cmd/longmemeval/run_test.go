@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"reflect"
@@ -9,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
@@ -148,6 +154,107 @@ func TestSortBlocksChronologically_DoesNotMutateInput(t *testing.T) {
 		if input[i] != orig[i] {
 			t.Errorf("input slice was mutated at index %d", i)
 		}
+	}
+}
+
+func TestBuildFullTimelineContextBlocks_Chronological(t *testing.T) {
+	item := longmemeval.Item{
+		HaystackDates: []string{"2024-06-01", "2024-05-20", "2024-06-03"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "user", Content: "latest session"}},
+			{{Role: "assistant", Content: "earliest session"}},
+			{{Role: "user", Content: ""}}, // empty session should be skipped
+		},
+	}
+
+	got := buildFullTimelineContextBlocks(item, 0)
+	want := []string{
+		"Session date: 2024-05-20\nassistant: earliest session",
+		"Session date: 2024-06-01\nuser: latest session",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildFullTimelineContextBlocks() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunOne_FullTimelineContext_BypassesRecallAndFetch(t *testing.T) {
+	url := newTestEngram(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			t.Fatal("memory_recall should not be called in full-timeline mode")
+			return nil, nil
+		},
+		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			t.Fatal("memory_fetch should not be called in full-timeline mode")
+			return nil, nil
+		},
+	})
+
+	var prompt string
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode llm request: %v", err)
+		}
+		for _, msg := range body.Messages {
+			if msg.Role == "user" {
+				prompt = msg.Content
+				break
+			}
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"Alice"}}]}`)
+	}))
+	defer llmSrv.Close()
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	item := longmemeval.Item{
+		QuestionID:   "q-full-timeline",
+		QuestionType: "single-session-user",
+		Question:     "Who attended the planning session?",
+		QuestionDate: "2024-06-05",
+		HaystackDates: []string{
+			"2024-06-03",
+			"2024-06-01",
+		},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "user", Content: "Bob attended the planning session."}},
+			{{Role: "user", Content: "Alice attended the planning session."}},
+		},
+	}
+	ingest := longmemeval.IngestEntry{QuestionID: item.QuestionID, Project: "lme-r-q-full-timeline"}
+	cfg := &Config{
+		FullTimelineContext: true,
+		LLMBaseURL:          llmSrv.URL,
+		LLMModel:            "test",
+		Retries:             0,
+	}
+
+	entry := runOne(ctx, cfg, c, item, ingest)
+	if entry.Status != "done" {
+		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
+	}
+	if len(entry.RetrievedIDs) != 0 {
+		t.Fatalf("RetrievedIDs = %#v, want empty in full-timeline mode", entry.RetrievedIDs)
+	}
+	if !strings.Contains(prompt, "Session date: 2024-06-01\nuser: Alice attended the planning session.") {
+		t.Fatalf("prompt missing earliest dated session:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Session date: 2024-06-03\nuser: Bob attended the planning session.") {
+		t.Fatalf("prompt missing later dated session:\n%s", prompt)
+	}
+	if strings.Index(prompt, "2024-06-01") > strings.Index(prompt, "2024-06-03") {
+		t.Fatalf("prompt sessions not in chronological order:\n%s", prompt)
 	}
 }
 
