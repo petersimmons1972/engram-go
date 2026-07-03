@@ -135,6 +135,10 @@ func (w *Worker) processJob(ctx context.Context, job ExtractionJob) {
 	for i := range candidates {
 		candidates[i].Project = job.Project
 		candidates[i].ProvenanceMemoryID = job.MemoryID
+		if !mem.CreatedAt.IsZero() {
+			observedAt := mem.CreatedAt
+			candidates[i].ObservedAt = &observedAt
+		}
 	}
 
 	// Load all active atoms for the project to drive deduplication.

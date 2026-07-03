@@ -174,18 +174,33 @@ func scoreOne(ctx context.Context, cfg *Config, item longmemeval.Item, run longm
 func writeOutputs(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) {
 	writeHypotheses(cfg, scores)
 	writeRetrievalLog(cfg, itemMap, ingestMap, runMap, scores)
+	diagByQID := writeDiag(cfg, itemMap, ingestMap, runMap, scores)
 	writeScoreReportWithCompleteness(
 		cfg,
 		scores,
+		runMap,
 		scoreCompletenessFromMaps(itemMap, ingestMap, runMap, scores),
+		diagByQID,
 	)
 }
 
 type scoreReportCounts struct {
-	Correct          int `json:"correct"`
-	PartiallyCorrect int `json:"partially_correct"`
-	Incorrect        int `json:"incorrect"`
-	Total            int `json:"total"`
+	Correct                  int                  `json:"correct"`
+	PartiallyCorrect         int                  `json:"partially_correct"`
+	Incorrect                int                  `json:"incorrect"`
+	Total                    int                  `json:"total"`
+	Strict                   scoreAccuracySummary `json:"strict"`
+	Lenient                  scoreAccuracySummary `json:"lenient"`
+	AvgSessionDominanceRatio float64              `json:"avg_session_dominance_ratio"`
+	AvgContextSessionCount   float64              `json:"avg_context_session_count"`
+	sessionDominanceRatioSum float64              `json:"-"`
+	contextSessionCountSum   float64              `json:"-"`
+}
+
+type scoreAccuracySummary struct {
+	CreditedCorrect int     `json:"credited_correct"`
+	Total           int     `json:"total"`
+	Accuracy        float64 `json:"accuracy"`
 }
 
 func writeHypotheses(cfg *Config, scores []longmemeval.ScoreEntry) {
@@ -250,11 +265,180 @@ func writeRetrievalLog(cfg *Config, itemMap map[string]longmemeval.Item, ingestM
 	log.Printf("wrote %s", filepath.Join(cfg.OutDir, "retrieval_log.jsonl"))
 }
 
-func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
-	writeScoreReportWithCompleteness(cfg, scores, scoreCompletenessFromScores(scores))
+// diagLine is one row in score_diag.jsonl.
+type diagLine struct {
+	QuestionID   string `json:"question_id"`
+	QuestionType string `json:"question_type"`
+	ScoreLabel   string `json:"score_label"`
+	longmemeval.DiagFields
 }
 
-func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEntry, completeness scoreCompleteness) {
+func writeScoreReport(cfg *Config, scores []longmemeval.ScoreEntry) {
+	writeScoreReportWithRunMap(cfg, scores, nil)
+}
+
+func writeScoreReportWithRunMap(cfg *Config, scores []longmemeval.ScoreEntry, runMap map[string]longmemeval.RunEntry) {
+	writeScoreReportWithCompleteness(cfg, scores, runMap, scoreCompletenessFromScores(scores), nil)
+}
+
+// writeDiag computes H-DIAG fields per question, writes score_diag.jsonl, and
+// returns a map of DiagFields by QuestionID for inclusion in score_report.json.
+func writeDiag(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[string]longmemeval.IngestEntry, runMap map[string]longmemeval.RunEntry, scores []longmemeval.ScoreEntry) map[string]longmemeval.DiagFields {
+	result := make(map[string]longmemeval.DiagFields, len(scores))
+
+	f, err := createPrivateArtifact(filepath.Join(cfg.OutDir, "score_diag.jsonl"))
+	if err != nil {
+		log.Printf("WARN write score_diag.jsonl: %v", err)
+		// Still compute and return diag for score_report even if file write fails.
+	}
+	var enc *json.Encoder
+	if f != nil {
+		defer func() { _ = f.Close() }()
+		enc = json.NewEncoder(f)
+	}
+
+	contextTopK := cfg.ContextTopKOverride
+	if contextTopK <= 0 {
+		// Try to read context_topk from RUN_STATUS.json written by the run subcommand.
+		contextTopK = readContextTopKFromStatus(cfg.OutDir)
+	}
+	// contextTopK=0 passed to ComputeDiag means unlimited (gold always visible if retrieved).
+
+	for _, s := range scores {
+		if s.Status != "done" {
+			continue
+		}
+		item, ok := itemMap[s.QuestionID]
+		if !ok {
+			continue
+		}
+		ingest, ok := ingestMap[s.QuestionID]
+		if !ok {
+			continue
+		}
+		run, ok := runMap[s.QuestionID]
+		if !ok {
+			continue
+		}
+		d := longmemeval.ComputeDiag(run.RetrievedIDs, ingest.MemoryMap, item.AnswerSessionIDs, contextTopK)
+		result[s.QuestionID] = d
+		if enc != nil {
+			line := diagLine{
+				QuestionID:   s.QuestionID,
+				QuestionType: s.QuestionType,
+				ScoreLabel:   s.ScoreLabel,
+				DiagFields:   d,
+			}
+			if err := enc.Encode(line); err != nil {
+				log.Printf("WARN writeDiag encode [%s]: %v", s.QuestionID, err)
+			}
+		}
+	}
+	if f != nil {
+		log.Printf("wrote %s", filepath.Join(cfg.OutDir, "score_diag.jsonl"))
+	}
+	return result
+}
+
+// diagTypeStats aggregates H-DIAG fields for one question type.
+type diagTypeStats struct {
+	N                        int     `json:"n"`
+	GoldVisibleRate          float64 `json:"gold_visible_rate"`
+	GoldNotRetrievedRate     float64 `json:"gold_not_retrieved_rate"`
+	AvgGoldRankWhenFound     float64 `json:"avg_gold_rank_when_found"`
+	AvgSessionDominance      float64 `json:"avg_session_dominance"`
+}
+
+// aggregateDiagStats builds per-type and overall H-DIAG aggregate stats.
+func aggregateDiagStats(deduped map[string]longmemeval.ScoreEntry, diagByQID map[string]longmemeval.DiagFields) map[string]any {
+	type acc struct {
+		n                int
+		goldVisible      int
+		goldNotRetrieved int
+		sumGoldRank      float64
+		goldRankFound    int
+		sumDominance     float64
+	}
+	overall := &acc{}
+	byType := map[string]*acc{}
+
+	for qid, s := range deduped {
+		if s.Status != "done" {
+			continue
+		}
+		d, ok := diagByQID[qid]
+		if !ok {
+			continue
+		}
+		qt := s.QuestionType
+		if qt == "" {
+			qt = "_unknown"
+		}
+		if byType[qt] == nil {
+			byType[qt] = &acc{}
+		}
+		for _, a := range []*acc{overall, byType[qt]} {
+			a.n++
+			if d.GoldVisibleInContext {
+				a.goldVisible++
+			}
+			if d.RetrievedGoldRank == 0 {
+				a.goldNotRetrieved++
+			} else {
+				a.sumGoldRank += float64(d.RetrievedGoldRank)
+				a.goldRankFound++
+			}
+			a.sumDominance += d.SessionDominanceRatio
+		}
+	}
+
+	toStats := func(a *acc) diagTypeStats {
+		if a.n == 0 {
+			return diagTypeStats{}
+		}
+		s := diagTypeStats{
+			N:                    a.n,
+			GoldVisibleRate:      float64(a.goldVisible) / float64(a.n),
+			GoldNotRetrievedRate: float64(a.goldNotRetrieved) / float64(a.n),
+			AvgSessionDominance:  a.sumDominance / float64(a.n),
+		}
+		if a.goldRankFound > 0 {
+			s.AvgGoldRankWhenFound = a.sumGoldRank / float64(a.goldRankFound)
+		}
+		return s
+	}
+
+	out := map[string]any{
+		"overall": toStats(overall),
+		"by_type": func() map[string]diagTypeStats {
+			m := make(map[string]diagTypeStats, len(byType))
+			for qt, a := range byType {
+				m[qt] = toStats(a)
+			}
+			return m
+		}(),
+	}
+	return out
+}
+
+// readContextTopKFromStatus reads the context_topk value from RUN_STATUS.json in
+// outDir. Returns 0 (unlimited) if the file is absent, unreadable, or the field
+// is missing — ComputeDiag treats 0 as unlimited context (all retrieved IDs visible).
+func readContextTopKFromStatus(outDir string) int {
+	data, err := os.ReadFile(filepath.Join(outDir, "RUN_STATUS.json"))
+	if err != nil {
+		return 0
+	}
+	var status struct {
+		ContextTopK int `json:"context_topk"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil {
+		return 0
+	}
+	return status.ContextTopK
+}
+
+func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEntry, runMap map[string]longmemeval.RunEntry, completeness scoreCompleteness, diagByQID map[string]longmemeval.DiagFields) {
 	// Deduplicate by QuestionID — last-write-wins, matching checkpoint append semantics.
 	deduped := make(map[string]longmemeval.ScoreEntry, len(scores))
 	for _, s := range scores {
@@ -273,6 +457,7 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 			qbt = &scoreReportCounts{}
 			byQType[s.QuestionType] = qbt
 		}
+		run := runMap[s.QuestionID]
 		for _, bt := range []*scoreReportCounts{overall, qbt} {
 			bt.Total++
 			switch s.ScoreLabel {
@@ -283,7 +468,18 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 			default:
 				bt.Incorrect++
 			}
+			bt.sessionDominanceRatioSum += run.SessionDominanceRatio
+			bt.contextSessionCountSum += float64(run.ContextSessionCount)
 		}
+	}
+	finalizeScoreReportCounts(overall)
+	for _, counts := range byQType {
+		finalizeScoreReportCounts(counts)
+	}
+
+	overall.finalize()
+	for _, row := range byQType {
+		row.finalize()
 	}
 
 	judgedAt := cfg.Now
@@ -315,6 +511,9 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		"scorer_max_tokens":     scorerMaxTokens,
 		"judged_at":             judgedAt().Format(time.RFC3339),
 	}
+	if len(diagByQID) > 0 {
+		report["diag"] = aggregateDiagStats(deduped, diagByQID)
+	}
 
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -333,6 +532,14 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 	log.Printf("wrote %s", path)
 
 	writeScoreSummary(cfg.Output, cfg.ScoreOutput, report, overall)
+}
+
+func finalizeScoreReportCounts(counts *scoreReportCounts) {
+	if counts == nil || counts.Total == 0 {
+		return
+	}
+	counts.AvgSessionDominanceRatio = counts.sessionDominanceRatioSum / float64(counts.Total)
+	counts.AvgContextSessionCount = counts.contextSessionCountSum / float64(counts.Total)
 }
 
 func writeScoreSummary(w io.Writer, mode string, report map[string]any, overall *scoreReportCounts) {
@@ -358,9 +565,34 @@ func writeScoreSummary(w io.Writer, mode string, report map[string]any, overall 
 	pct := func(n int) float64 { return float64(n) / float64(overall.Total) * 100 }
 	_, _ = fmt.Fprintf(w, "\n--- Score Report (run-id: %s) ---\n", report["run_id"])
 	_, _ = fmt.Fprintf(w, "Total scored:       %d\n", overall.Total)
+	_, _ = fmt.Fprintf(w, "Strict accuracy:    %d/%d (%.1f%%)\n", overall.Strict.CreditedCorrect, overall.Strict.Total, overall.Strict.Accuracy*100)
+	_, _ = fmt.Fprintf(w, "Lenient accuracy:   %d/%d (%.1f%%)\n", overall.Lenient.CreditedCorrect, overall.Lenient.Total, overall.Lenient.Accuracy*100)
 	_, _ = fmt.Fprintf(w, "Correct:            %d (%.1f%%)\n", overall.Correct, pct(overall.Correct))
 	_, _ = fmt.Fprintf(w, "Partially correct:  %d (%.1f%%)\n", overall.PartiallyCorrect, pct(overall.PartiallyCorrect))
 	_, _ = fmt.Fprintf(w, "Incorrect:          %d (%.1f%%)\n", overall.Incorrect, pct(overall.Incorrect))
+}
+
+func (c *scoreReportCounts) finalize() {
+	if c == nil {
+		return
+	}
+	c.Strict = scoreAccuracySummary{
+		CreditedCorrect: c.Correct,
+		Total:           c.Total,
+		Accuracy:        accuracyRatio(c.Correct, c.Total),
+	}
+	c.Lenient = scoreAccuracySummary{
+		CreditedCorrect: c.Correct + c.PartiallyCorrect,
+		Total:           c.Total,
+		Accuracy:        accuracyRatio(c.Correct+c.PartiallyCorrect, c.Total),
+	}
+}
+
+func accuracyRatio(creditedCorrect, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(creditedCorrect) / float64(total)
 }
 
 // normalizeLabel canonicalises a score label: trims surrounding whitespace

@@ -259,6 +259,40 @@ func TestClaudeExtractor_FactAtom(t *testing.T) {
 	assert.Equal(t, "Alice", atoms[0].Subject)
 }
 
+func TestExtractProfileAndStatusChange(t *testing.T) {
+	stub := &stubCompleter{response: `[
+  {
+    "atom_type": "profile",
+    "subject": "the user",
+    "predicate": "diet",
+    "value": "vegetarian",
+    "statement": "The user is vegetarian.",
+    "scope": "global",
+    "confidence": 0.95,
+    "source_span": "I'm vegetarian"
+  },
+  {
+    "atom_type": "status_change",
+    "subject": "the user",
+    "predicate": "job",
+    "value": "started a new role at Acme",
+    "statement": "The user started a new role at Acme.",
+    "scope": "global",
+    "confidence": 0.9,
+    "source_span": "I started a new role at Acme"
+  }
+]`}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "I'm vegetarian, and I started a new role at Acme.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 2)
+	assert.Equal(t, "profile", atoms[0].Type)
+	assert.Equal(t, "status_change", atoms[1].Type)
+	assert.Contains(t, atom.ExtractionPrompt(), "profile")
+	assert.Contains(t, atom.ExtractionPrompt(), "status_change")
+}
+
 func TestExtractionPrompt_ContainsPreferenceFocus(t *testing.T) {
 	prompt := atom.ExtractionPrompt()
 	// Verify the prompt instructs the model to capture casual preference language.

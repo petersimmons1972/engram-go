@@ -17,33 +17,41 @@ import (
 
 func TestExtractSessionID_Present(t *testing.T) {
 	tags := []string{"lme", "sid:abc123", "date:2024-01-01"}
-	got := extractSessionID(tags)
+	got := ExtractSessionID(tags)
 	if got != "abc123" {
-		t.Errorf("extractSessionID = %q, want %q", got, "abc123")
+		t.Errorf("ExtractSessionID = %q, want %q", got, "abc123")
 	}
 }
 
 func TestExtractSessionID_Missing(t *testing.T) {
 	tags := []string{"lme", "date:2024-01-01"}
-	got := extractSessionID(tags)
+	got := ExtractSessionID(tags)
 	if got != "" {
-		t.Errorf("extractSessionID = %q, want empty string", got)
+		t.Errorf("ExtractSessionID = %q, want empty string", got)
 	}
 }
 
 func TestExtractSessionID_Empty(t *testing.T) {
-	got := extractSessionID(nil)
+	got := ExtractSessionID(nil)
 	if got != "" {
-		t.Errorf("extractSessionID(nil) = %q, want empty string", got)
+		t.Errorf("ExtractSessionID(nil) = %q, want empty string", got)
 	}
 }
 
 func TestExtractSessionID_SidEmptyValue(t *testing.T) {
 	// "sid:" with empty value returns ""
 	tags := []string{"sid:"}
-	got := extractSessionID(tags)
+	got := ExtractSessionID(tags)
 	if got != "" {
-		t.Errorf("extractSessionID([sid:]) = %q, want empty string", got)
+		t.Errorf("ExtractSessionID([sid:]) = %q, want empty string", got)
+	}
+}
+
+func TestExtractSessionID_SessionPrefixAlias(t *testing.T) {
+	tags := []string{"session:s99"}
+	got := ExtractSessionID(tags)
+	if got != "s99" {
+		t.Errorf("ExtractSessionID([session:s99]) = %q, want %q", got, "s99")
 	}
 }
 

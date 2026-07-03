@@ -62,8 +62,8 @@ type cacheMetaBackend struct {
 	mu           sync.Mutex
 	meta         map[string]string // key: "project:key"
 	getMetaCalls atomic.Int64
-	nullAllCalls atomic.Int32          // counts NullAllEmbeddingsTx calls
-	chunkCounts  map[string]int        // project → chunk count for volume guard
+	nullAllCalls atomic.Int32   // counts NullAllEmbeddingsTx calls
+	chunkCounts  map[string]int // project → chunk count for volume guard
 }
 
 func newCacheMetaBackend() *cacheMetaBackend {
@@ -118,6 +118,9 @@ func (b *cacheMetaBackend) GetMemory(_ context.Context, _ string) (*types.Memory
 	return nil, nil
 }
 func (b *cacheMetaBackend) GetMemoryByID(_ context.Context, _ string) (*types.Memory, error) {
+	return nil, nil
+}
+func (b *cacheMetaBackend) GetMemoryByIDInProject(_ context.Context, _, _ string) (*types.Memory, error) {
 	return nil, nil
 }
 func (b *cacheMetaBackend) GetMemoriesByIDs(_ context.Context, _ string, _ []string) ([]*types.Memory, error) {
@@ -217,6 +220,12 @@ func (b *cacheMetaBackend) GetRelationshipsBatch(_ context.Context, _ string, _ 
 }
 func (b *cacheMetaBackend) StoreRelationship(_ context.Context, _ *types.Relationship) error {
 	return nil
+}
+func (b *cacheMetaBackend) StoreRelationshipTx(_ context.Context, _ db.Tx, _ *types.Relationship) error {
+	return nil
+}
+func (b *cacheMetaBackend) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _, _ string) (bool, error) {
+	return false, nil
 }
 func (b *cacheMetaBackend) GetConnected(_ context.Context, _ string, _ int) ([]db.ConnectedResult, error) {
 	return nil, nil
@@ -372,8 +381,10 @@ func (b *cacheMetaBackend) FindNearestClusters(_ context.Context, _ string, _ []
 func (b *cacheMetaBackend) VectorSearchWithClusters(_ context.Context, _ string, _ []float32, _ int, _ []string, _, _ *time.Time) ([]db.VectorHit, error) {
 	return nil, nil
 }
-func (b *cacheMetaBackend) TableExists(_ context.Context, _ string) (bool, error)     { return false, nil }
-func (b *cacheMetaBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) { return false, nil }
+func (b *cacheMetaBackend) TableExists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (b *cacheMetaBackend) ColumnExists(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
 
 // compile-time check: cacheMetaBackend must satisfy db.Backend.
 var _ db.Backend = (*cacheMetaBackend)(nil)

@@ -131,7 +131,14 @@ var _ embed.Client = (*fakeTestEmbedClient)(nil)
 // require a live Ollama instance.
 func NewTestPoolWithDSN(t *testing.T, ctx context.Context, dsn, project string) *EnginePool {
 	t.Helper()
-	embedder := &fakeTestEmbedClient{dims: 1024}
+	return NewTestPoolWithDSNAndEmbedder(t, ctx, dsn, project, &fakeTestEmbedClient{dims: 1024})
+}
+
+// NewTestPoolWithDSNAndEmbedder is like NewTestPoolWithDSN but accepts a custom
+// embedder. Use this when a test needs to simulate a specific embedder behaviour
+// (e.g. transient errors, a deterministic always-error client).
+func NewTestPoolWithDSNAndEmbedder(t *testing.T, ctx context.Context, dsn, project string, embedder embed.Client) *EnginePool {
+	t.Helper()
 	factory := func(factoryCtx context.Context, proj string) (*EngineHandle, error) {
 		backend, err := db.NewPostgresBackend(factoryCtx, proj, dsn)
 		if err != nil {

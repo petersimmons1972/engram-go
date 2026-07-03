@@ -66,6 +66,17 @@ The judge report is scored in two ways:
 - `strict`: `CORRECT / total`
 - `lenient`: `(CORRECT + PARTIALLY_CORRECT) / total`
 
+`score_report.json` now records both summaries in machine-readable form under
+`overall.{strict,lenient}` and `by_type.<question_type>.{strict,lenient}`. This
+keeps the frozen phase-0 strict counts intact while exposing a separate
+partial-credit baseline for categories such as `single-session-preference`.
+
+When publishing benchmark updates:
+
+- Keep the original strict baseline for backward comparability.
+- Treat the lenient/partial-credit view as a new baseline artifact, not a
+  rewrite of the existing phase-0 scores.
+
 Use both when comparing checkpoints, and keep `compare` deltas in CI notes.
 
 ## Recommended workflow

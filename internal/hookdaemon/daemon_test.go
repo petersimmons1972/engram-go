@@ -36,6 +36,7 @@ type fakeEngram struct {
 	authErr      error
 	recallByProj map[string][]byte
 	recallErr    error
+	storeErr     error
 
 	authCalls  int
 	storeCalls int
@@ -66,14 +67,15 @@ func (f *fakeEngram) QuickStore(_ context.Context, _ string, body []byte) error 
 	defer f.mu.Unlock()
 	f.storeCalls++
 	f.storeBody = body
-	return nil
+	return f.storeErr
 }
 
 type fakeTokens struct {
-	mu      sync.Mutex
-	token   string
-	stored  []string
-	loadErr error
+	mu       sync.Mutex
+	token    string
+	stored   []string
+	loadErr  error
+	storeErr error
 }
 
 func (t *fakeTokens) Load() (string, error) {
@@ -86,19 +88,20 @@ func (t *fakeTokens) Store(tok string) error {
 	defer t.mu.Unlock()
 	t.stored = append(t.stored, tok)
 	t.token = tok
-	return nil
+	return t.storeErr
 }
 
 type fakeMemory struct {
 	mu       sync.Mutex
 	sections []string
+	writeErr error
 }
 
 func (m *fakeMemory) WriteRecallSection(s string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sections = append(m.sections, s)
-	return nil
+	return m.writeErr
 }
 
 type fakeFallback struct {
@@ -454,5 +457,44 @@ func TestExtractFallbackEntry(t *testing.T) {
 				t.Fatalf("want failure=%v, got entry=%q", c.want, got)
 			}
 		})
+	}
+}
+
+// ---- error-path resilience tests --------------------------------------------
+
+// When WriteRecallSection returns an error the handler must not panic and must
+// still return exit code 0 (best-effort, degrades gracefully).
+func TestInjectRecall_WriteRecallSectionErrorIsResilient(t *testing.T) {
+	d, eng, _, mem, _, _ := newTestDaemon(t, Config{})
+	eng.recallByProj["global"] = []byte(`{"results":[{"id":"g1","summary":"global one","score":0.5,"tags":["a"]}]}`)
+	mem.writeErr = errors.New("disk full")
+
+	resp := d.Handle(context.Background(), Request{Hook: HookSessionStart})
+	if resp.ExitCode != 0 {
+		t.Fatalf("WriteRecallSection failure must not set exit code, got %d", resp.ExitCode)
+	}
+}
+
+// When QuickStore returns an error the Stop handler must not panic and must
+// still return exit code 0 (lifecycle event logged, not fatal).
+func TestHandleStop_QuickStoreErrorIsResilient(t *testing.T) {
+	d, eng, _, _, _, _ := newTestDaemon(t, Config{})
+	eng.storeErr = errors.New("network error")
+
+	resp := d.Handle(context.Background(), Request{Hook: HookStop})
+	if resp.ExitCode != 0 {
+		t.Fatalf("QuickStore failure must not set exit code, got %d", resp.ExitCode)
+	}
+}
+
+// When Tokens.Store returns an error setToken must not panic and the in-memory
+// token must still be updated (best-effort persistence).
+func TestSetToken_StoreErrorIsResilient(t *testing.T) {
+	d, _, tok, _, _, _ := newTestDaemon(t, Config{})
+	tok.storeErr = errors.New("permission denied")
+
+	d.setToken("tok-new") // should not panic
+	if d.currentToken() != "tok-new" {
+		t.Fatalf("in-memory token must be updated even when Store fails, got %q", d.currentToken())
 	}
 }

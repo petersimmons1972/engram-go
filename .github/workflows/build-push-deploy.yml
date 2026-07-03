@@ -1,0 +1,137 @@
+name: build-push-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - ".github/workflows/build-push-deploy.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-push-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: registry.petersimmons.com/engram/engram-go
+  CONTEXT: .
+  DOCKERFILE: Dockerfile
+  NAMESPACE: engram
+  DEPLOYMENT: engram-go
+  CONTAINER: engram-go
+  MANIFEST: deploy/engram-go.yaml
+  PLATFORMS: linux/amd64,linux/arm64
+  BUILDKITD: tcp://buildkitd.ai-fleet.svc.cluster.local:1234
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, homelab]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -p 1 $(go list ./... | grep -v '/.claude/') -count=1 -timeout 20m
+        env:
+          GOMAXPROCS: "2"
+      - run: go vet ./...
+
+  build-push-deploy:
+    needs: test
+    runs-on: [self-hosted, linux, homelab]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preflight (tools + cluster auth)
+        run: |
+          command -v docker git kubectl >/dev/null || { echo "missing required tool (docker/git/kubectl)"; exit 1; }
+          kubectl -n "$NAMESPACE" auth can-i patch deployments >/dev/null || { echo "no kubectl patch permission in $NAMESPACE"; exit 1; }
+      - name: Compute immutable tag
+        id: tags
+        run: |
+          echo "tag=main-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+      - name: Set up buildx against in-cluster buildkitd
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: remote
+          endpoint: ${{ env.BUILDKITD }}
+      - name: Build and push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          provenance: false
+          build-args: VERSION=${{ steps.tags.outputs.tag }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+      - name: Deploy built digest to cluster (build-proof — bind to the exact digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          test -n "$DIGEST" || { echo "empty build digest"; exit 1; }
+          REF="${IMAGE}:${{ steps.tags.outputs.tag }}@${DIGEST}"
+          kubectl -n "$NAMESPACE" set image "deployment/${DEPLOYMENT}" "${CONTAINER}=${REF}"
+          kubectl -n "$NAMESPACE" rollout status "deployment/${DEPLOYMENT}" --timeout=180s
+      - name: Mint app token for commit-back
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.ENGRAM_FLEET_CI_APP_ID }}
+          private-key: ${{ secrets.ENGRAM_FLEET_CI_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Commit manifest digest bump back to main (source catches up after confirmed rollout)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN_APP: ${{ steps.app-token.outputs.token }}
+        run: |
+          REF="${IMAGE}:${{ steps.tags.outputs.tag }}@${DIGEST}"
+          sed -i -E "s#( *image: )registry\.petersimmons\.com/engram/engram-go.*#\1${REF}#" "$MANIFEST"
+          grep -qF "@${DIGEST}" "$MANIFEST" || { echo "BUG: digest bump did not apply to $MANIFEST"; exit 1; }
+          git config user.name "engram-fleet-ci[bot]"
+          git config user.email "engram-fleet-ci[bot]@users.noreply.github.com"
+          git add "$MANIFEST"
+          if git diff --cached --quiet; then
+            echo "manifest already at this digest — nothing to commit"
+            exit 0
+          fi
+          git commit -m "deploy(${DEPLOYMENT}): bump image to ${{ steps.tags.outputs.tag }} [skip ci]"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN_APP}@github.com/petersimmons1972/engram-go.git"
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort
+              git reset --hard HEAD~1
+              git fetch origin main
+              git reset --hard origin/main
+              sed -i -E "s#( *image: )registry\.petersimmons\.com/engram/engram-go.*#\1${REF}#" "$MANIFEST"
+              grep -qF "@${DIGEST}" "$MANIFEST" || { echo "BUG: re-bump failed"; exit 1; }
+              git add "$MANIFEST"
+              git commit -m "deploy(${DEPLOYMENT}): bump image to ${{ steps.tags.outputs.tag }} [skip ci]"
+            fi
+            if git push origin HEAD:main; then
+              echo "manifest committed to main"
+              git remote set-url origin "https://github.com/petersimmons1972/engram-go.git"
+              exit 0
+            fi
+            echo "push attempt ${attempt} failed; retrying"
+            sleep 3
+          done
+          echo "ERROR: manifest commit-back failed after retries (deploy already succeeded; source now lags — reconcile manually)"
+          exit 1

@@ -84,7 +84,7 @@ services:
     container_name: engram-go-app
     image: engram-go:latest
     ports:
-      - "${ENGRAM_PORT:-8788}:8788"
+      - "127.0.0.1:${ENGRAM_PORT:-8788}:8788"
     env_file:
       - path: .env
         required: false

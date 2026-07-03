@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/search"
@@ -77,6 +78,10 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m1))
 
+	// A *different* memory with the same content must get its own independent
+	// chunk. ChunkHashExists is now scoped per memory_id (fix #1218): the pre-fix
+	// implementation was project-wide, so m2's chunk would incorrectly be skipped
+	// as a duplicate of m1's chunk. Post-fix both memories each own one chunk.
 	m2 := &types.Memory{ID: types.NewMemoryID(), Content: content,
 		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
 	require.NoError(t, engine.Store(ctx, m2))
@@ -85,7 +90,9 @@ func TestSearchEngine_Store_DeduplicatesChunks(t *testing.T) {
 	// with nil embeddings until the reembed worker runs.
 	chunks, err := engine.Backend().GetChunksPendingEmbedding(ctx, proj, 10_000)
 	require.NoError(t, err)
-	require.Len(t, chunks, 1, "identical content should produce exactly one stored chunk")
+	// Each memory owns its chunks independently: 2 memories → 2 chunks.
+	// The old project-wide dedup produced only 1 chunk here (m2's was suppressed).
+	require.Len(t, chunks, 2, "each memory gets its own chunk; memory-scoped dedup does not suppress across memories")
 }
 
 func TestSearchEngine_Recall(t *testing.T) {
@@ -217,6 +224,55 @@ func TestSearchEngine_Status(t *testing.T) {
 	stats, err := engine.Status(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, stats)
+}
+
+func TestRecallAttachesAtomPreamble(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-atom-preamble"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	mem := &types.Memory{
+		ID:          types.NewMemoryID(),
+		Content:     "The user talks about tea preferences in this session.",
+		MemoryType:  types.MemoryTypePreference,
+		Importance:  2,
+		StorageMode: "focused",
+	}
+	require.NoError(t, engine.Store(ctx, mem))
+
+	observedAt := time.Date(2024, 6, 15, 9, 0, 0, 0, time.UTC)
+	pg, ok := engine.Backend().(*db.PostgresBackend)
+	require.True(t, ok, "test engine must use PostgresBackend")
+	require.NoError(t, pg.InsertAtom(ctx, &atom.Atom{
+		Project:    engine.Project(),
+		Type:       atom.TypePreference,
+		Subject:    "the user",
+		Predicate:  "prefers",
+		Value:      "tea",
+		Statement:  "The user prefers tea.",
+		Scope:      atom.ScopeGlobal,
+		Confidence: 0.95,
+		ObservedAt: &observedAt,
+	}))
+
+	results, err := engine.RecallWithOpts(ctx, "what drink do I prefer", 5, "summary", search.RecallOpts{
+		AtomRecallEnabled: true,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.Contains(t, results[0].AtomPreamble, "The user prefers tea.")
+
+	noAtom, err := engine.RecallWithOpts(ctx, "what drink do I prefer", 5, "summary", search.RecallOpts{})
+	require.NoError(t, err)
+	require.NotEmpty(t, noAtom)
+	require.Empty(t, noAtom[0].AtomPreamble, "atom preamble must stay disabled by default")
+
+	nonPref, err := engine.RecallWithOpts(ctx, "show my session about tea", 5, "summary", search.RecallOpts{
+		AtomRecallEnabled: true,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, nonPref)
+	require.Empty(t, nonPref[0].AtomPreamble, "non-preference queries must not attach atom preambles")
 }
 
 // TestRecallWithEvent_IncrementsTimesRetrieved verifies that RecallWithEvent

@@ -131,7 +131,7 @@ func handleMemoryQueryDocument(ctx context.Context, pool *EnginePool, req mcpgo.
 	if rawFilter, ok := args["filter"]; ok {
 		if fmap, ok := rawFilter.(map[string]any); ok {
 			filterRegex = getString(fmap, "regex", "")
-			filterSubs, _ = toStringSlice(fmap["substrings"]) // ignore control-char error in optional filter
+			filterSubs, _ = toStringSlice(fmap, "substrings") // ignore control-char error in optional filter
 		}
 	}
 

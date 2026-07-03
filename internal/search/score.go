@@ -143,11 +143,6 @@ func weightCfg() weightConfig {
 	return resolvedWeights
 }
 
-// ResetDecayConfigForTesting resets the decay config sync.Once so tests can inject different env var values.
-func ResetDecayConfigForTesting() {
-	decayConfigOnce = sync.Once{}
-}
-
 // loadDecayConfig reads ENGRAM_DECAY_RATE_PER_HOUR and ENGRAM_DECAY_FLOOR,
 // applies sanity bounds, and populates resolvedDecay. Called exactly once.
 func loadDecayConfig() {

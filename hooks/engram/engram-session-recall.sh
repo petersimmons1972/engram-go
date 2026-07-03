@@ -13,7 +13,9 @@
 set -euo pipefail
 
 PORT=8788
-MEMORY_FILE="$HOME/.claude/projects/-home-psimmons/memory/MEMORY.md"
+# Claude Code project directory derived from $HOME (e.g. /home/user → -home-user)
+CLAUDE_PROJECT_DIR="$HOME/.claude/projects/-$(echo "$HOME" | sed 's|^/||; s|/|-|g')"
+MEMORY_FILE="$CLAUDE_PROJECT_DIR/memory/MEMORY.md"
 MAX_RESULTS=5
 
 # Read token from mcp_servers.json

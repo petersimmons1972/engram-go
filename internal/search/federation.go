@@ -36,15 +36,6 @@ func RecallAcrossEngines(ctx context.Context, engines []*SearchEngine, query str
 	return results, err
 }
 
-// RecallAcrossEnginesWithEvents is RecallAcrossEngines with explicit retrieval
-// telemetry control. When recordEvents is false, federation suppresses
-// retrieval-event writes but still follows the underlying recall mode's normal
-// access-heat behavior.
-func RecallAcrossEnginesWithEvents(ctx context.Context, engines []*SearchEngine, query string, topK int, detail string, recordEvents bool) ([]types.SearchResult, error) {
-	results, _, err := RecallAcrossEnginesWithEventsAndOpts(ctx, engines, query, topK, detail, RecallOpts{}, recordEvents)
-	return results, err
-}
-
 // RecallAcrossEnginesWithEventsAndOpts is RecallAcrossEnginesWithEvents with
 // explicit RecallOpts propagation so federated callers can preserve the same
 // response-mode and post-processing semantics as single-project recall.

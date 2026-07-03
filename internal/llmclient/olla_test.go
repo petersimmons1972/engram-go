@@ -364,3 +364,14 @@ func TestOllaPickModelCachedAfterFirstCall(t *testing.T) {
 		t.Errorf("model discovery endpoint called %d times for %d Complete calls, want 1", discoveryCount, calls)
 	}
 }
+
+// TestNewOllaClient_RequiresEndpoint verifies that NewOllaClient returns a
+// non-nil error when cfg.Endpoint is empty, enforcing fail-fast behavior
+// instead of silently defaulting to a founder-specific host.
+func TestNewOllaClient_RequiresEndpoint(t *testing.T) {
+	_, err := llmclient.NewOllaClient(llmclient.Config{})
+	if err == nil {
+		t.Fatal("NewOllaClient(Config{}) returned nil error, want non-nil error for empty Endpoint")
+	}
+}
+

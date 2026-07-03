@@ -141,6 +141,18 @@ type Config struct {
 	// Set via --session-ndcg-agg flag or ENGRAM_SESSION_NDCG_AGG=true env var.
 	// Default false (ablation-safe; identical to baseline when false). (LEVER-8)
 	SessionNDCGAgg bool
+	// SessionDiversityN is the LEVER-9 per-session chunk cap for recall results.
+	// When non-zero, recall results are post-processed to ensure no single session
+	// contributes more than N chunks to the returned topK. This surfaces minority-
+	// session gold chunks buried under a dominant session's higher-scoring chunks.
+	//
+	// Note: RecallWithOpts reads ENGRAM_SESSION_DIVERSITY_N directly as a fallback
+	// when this field is zero, so the env var alone is sufficient for server-wide
+	// activation without wiring through the MCP handler. This field is provided for
+	// future per-request override support.
+	//
+	// Default 0 = off (baseline-safe). (LEVER-9, issue #1121)
+	SessionDiversityN int
 
 	// PreferenceMMR enables the H-NEW-2 centroid-MMR diversity pass for
 	// preference-shaped recall queries. When true, RecallWithOpts applies an
@@ -169,13 +181,10 @@ func (c Config) rateLimitBurst() int {
 // backendFetcher is the narrow interface required by execFetch.
 // Satisfied by db.Backend; declared separately so tests can inject a stub.
 type backendFetcher interface {
-	// GetMemoryByID retrieves a memory by its ID without project filtering.
-	// This is intentional: memory IDs are globally unique UUIDs, and fetch
-	// must work regardless of which project the caller's pool is scoped to.
-	// Using the project-filtered GetMemory here was the root cause of #634,
-	// where memory_recall (project="global") returned handles that
-	// memory_fetch (project="default") could not resolve.
-	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByIDInProject retrieves a memory by ID scoped to the caller's
+	// declared project. The unscoped GetMemoryByID remains available on
+	// db.Backend for internal cross-project reads such as EnrichWithConflicts.
+	GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error)
 	GetChunksForMemory(ctx context.Context, id string) ([]*types.Chunk, error)
 }
 
@@ -313,37 +322,114 @@ func validateContent(s string) error {
 	return nil
 }
 
-// getInt extracts an int arg (JSON numbers arrive as float64) with a fallback.
+// coerceToFloat converts v to float64. It accepts a native JSON number
+// (float64/int) or a JSON-encoded numeric string (e.g. "250") as a
+// defense-in-depth fallback for MCP clients that stringify arguments despite
+// the tool's declared schema (#1281). Returns ok=false when v is present but
+// cannot be interpreted as a number by either path.
+func coerceToFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case string:
+		s := strings.TrimSpace(n)
+		if s == "" {
+			return 0, false
+		}
+		var f float64
+		if err := json.Unmarshal([]byte(s), &f); err == nil {
+			return f, true
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
+// coerceToInt is coerceToFloat rounded to the nearest int.
+func coerceToInt(v any) (int, bool) {
+	f, ok := coerceToFloat(v)
+	if !ok {
+		return 0, false
+	}
+	return int(math.Round(f)), true
+}
+
+// coerceToBool converts v to bool. It accepts a native JSON boolean or the
+// exact strings "true"/"false" (case-insensitive) as a defense-in-depth
+// fallback (#1281). No truthy/falsy guessing on other strings.
+func coerceToBool(v any) (bool, bool) {
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(b)) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+		return false, false
+	}
+	return false, false
+}
+
+// getInt extracts an int arg (JSON numbers arrive as float64) with a
+// fallback. Accepts a JSON-encoded numeric string as a coercion fallback
+// (#1281); a present-but-uncoercible value silently returns def — callers on
+// load-bearing params should use requireOptionalInt instead so a genuinely
+// bad value produces a loud error rather than a silent default.
 func getInt(args map[string]any, key string, def int) int {
 	if v, ok := args[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return int(math.Round(n))
-		case int:
+		if n, ok := coerceToInt(v); ok {
 			return n
 		}
 	}
 	return def
 }
 
-// getFloat extracts a float64 arg with a fallback.
+// getFloat extracts a float64 arg with a fallback. Accepts a JSON-encoded
+// numeric string as a coercion fallback (#1281).
 func getFloat(args map[string]any, key string, def float64) float64 {
 	if v, ok := args[key]; ok {
-		if f, ok := v.(float64); ok {
+		if f, ok := coerceToFloat(v); ok {
 			return f
 		}
 	}
 	return def
 }
 
-// getBool extracts a bool arg with a fallback default.
+// getBool extracts a bool arg with a fallback default. Accepts the strings
+// "true"/"false" as a coercion fallback (#1281).
 func getBool(args map[string]any, key string, def bool) bool {
 	if v, ok := args[key]; ok {
-		if b, ok := v.(bool); ok {
+		if b, ok := coerceToBool(v); ok {
 			return b
 		}
 	}
 	return def
+}
+
+// requireOptionalInt extracts an optional numeric arg. present=false means
+// the key is absent or null — the caller should apply its own default. A
+// non-nil err means the key was present but the value could not be
+// interpreted as a number even via the coerceToInt string fallback.
+//
+// This is the loud-error counterpart to getInt: load-bearing numeric params
+// (memory_list's limit/offset, memory_store's importance, etc.) must use this
+// instead of getInt so a present-but-wrongly-typed value surfaces a tool
+// error rather than silently falling back to a default that looks
+// indistinguishable from a legitimate response (#1279, #1280, #1281).
+func requireOptionalInt(args map[string]any, key string) (value int, present bool, err error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return 0, false, nil
+	}
+	if n, ok := coerceToInt(v); ok {
+		return n, true, nil
+	}
+	return 0, true, fmt.Errorf("%s must be a number, got %T", key, v)
 }
 
 // Per-tag and count limits to prevent tag injection attacks (#149).
@@ -352,13 +438,47 @@ const (
 	maxTagLength = 256
 )
 
-// toStringSlice converts []any to []string, applying per-tag/count limits (#149).
+// toStringSlice extracts args[key] as a []string, applying per-tag/count
+// limits (#149). present semantics: an absent or null key returns (nil, nil)
+// — "no items", the same as an omitted optional array param always meant.
+//
+// A present-but-wrongly-typed value is a loud error naming the key (#1279,
+// #1281) — it is never silently dropped. As a defense-in-depth fallback for
+// clients that still JSON-encode the array as a string despite the tool's
+// declared schema, a string value is first attempted as JSON before being
+// rejected.
+//
 // Returns an error if any tag contains NUL or C0 control characters
 // (except tab/newline/carriage-return) or DEL (#252).
-func toStringSlice(v any) ([]string, error) {
+func toStringSlice(args map[string]any, key string) ([]string, error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return nil, nil
+	}
 	arr, ok := v.([]any)
 	if !ok {
-		return nil, nil
+		switch typed := v.(type) {
+		case []string:
+			// Go-native callers (test helpers, REST bridges, internal
+			// handler-to-handler calls) build args maps directly with
+			// []string rather than the []any JSON decoding produces. It IS
+			// an array of strings — route it through the same per-item
+			// validation below rather than rejecting the type. (Post-#1283
+			// CI regression: the tags-only memory_correct integration test's
+			// helper passes []string.)
+			arr = make([]any, len(typed))
+			for i, s := range typed {
+				arr[i] = s
+			}
+		case string:
+			var decoded []any
+			if err := json.Unmarshal([]byte(typed), &decoded); err != nil {
+				return nil, fmt.Errorf("%s must be an array of strings, got a string that is not valid JSON: %w", key, err)
+			}
+			arr = decoded
+		default:
+			return nil, fmt.Errorf("%s must be an array of strings, got %T", key, v)
+		}
 	}
 	result := make([]string, 0, len(arr))
 	for _, item := range arr {

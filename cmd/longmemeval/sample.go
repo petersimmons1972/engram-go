@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/search"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 type samplePrepareConfig struct {
@@ -302,6 +304,30 @@ func hasGoldSession(retrievedIDs []string, memoryMap map[string]string, answerSe
 		}
 	}
 	return false
+}
+
+func computeSessionDiagnostics(results []types.SearchResult) (float64, int) {
+	if len(results) == 0 {
+		return 0.0, 0
+	}
+
+	counts := make(map[string]int, len(results))
+	maxCount := 0
+	for i, result := range results {
+		sid := ""
+		if result.Memory != nil {
+			sid = search.ExtractSessionID(result.Memory.Tags)
+		}
+		if sid == "" {
+			sid = fmt.Sprintf("__missing_%d", i)
+		}
+		counts[sid]++
+		if counts[sid] > maxCount {
+			maxCount = counts[sid]
+		}
+	}
+
+	return float64(maxCount) / float64(len(results)), len(counts)
 }
 
 func loadItemsFile(path string) ([]longmemeval.Item, error) {

@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	defaultOllaHost    = "https://olla.petersimmons.com"
 	ollaModelsPath     = "/olla/models"
 	ollaCompletePath   = "/v1/chat/completions"
 	defaultOllaTimeout = 60 * time.Second
@@ -48,30 +47,30 @@ var skipFamilies = map[string]struct{}{
 type ollaClient struct {
 	host    string
 	timeout time.Duration
+	client  *http.Client
 
-	// modelOnce guards the cached model ID.  sync.Once is appropriate because
-	// pickModel is idempotent: running it N times on the same Olla host always
-	// returns the same model (model list is stable within a single run).
-	// Reset modelOnce on ErrBackendUnavailable to allow re-resolution on a
-	// flapping host.
-	modelOnce sync.Once
-	modelID   string // set once by modelOnce
+	// mu guards modelID and modelResolved.  A mutex (rather than sync.Once) is
+	// used so resetModel can safely clear the cache while another goroutine may
+	// concurrently be running resolvedModel — assigning to a sync.Once struct
+	// field is a data race.
+	mu            sync.Mutex
+	modelID       string
+	modelResolved bool
 }
 
 // NewOllaClient constructs an Olla LLMClient from cfg.
-// cfg.Endpoint is the base host (e.g. "https://olla.petersimmons.com").
-// Defaults to defaultOllaHost when empty.
+// cfg.Endpoint is required — set OLLA_URL or pass --olla-url.
 // cfg.APIKey and cfg.Model are ignored; Olla resolves the model dynamically.
 func NewOllaClient(cfg Config) (LLMClient, error) {
 	host := cfg.Endpoint
 	if host == "" {
-		host = defaultOllaHost
+		return nil, fmt.Errorf("llmclient/olla: Endpoint is required — set OLLA_URL or pass --olla-url")
 	}
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = defaultOllaTimeout
 	}
-	return &ollaClient{host: host, timeout: timeout}, nil
+	return &ollaClient{host: host, timeout: timeout, client: &http.Client{Timeout: timeout}}, nil
 }
 
 // pickModel queries /olla/models and returns the first model id suitable for
@@ -85,7 +84,7 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 		return ""
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: cannot reach Olla", "host", c.host, "err", err)
 		return ""
@@ -165,18 +164,24 @@ func (c *ollaClient) pickModel(ctx context.Context) string {
 // invocation.  If the cached model is empty (discovery failed), it returns "".
 // Call resetModel to clear the cache so the next call retries discovery.
 func (c *ollaClient) resolvedModel(ctx context.Context) string {
-	c.modelOnce.Do(func() {
+	c.mu.Lock()
+	if !c.modelResolved {
 		c.modelID = c.pickModel(ctx)
-	})
-	return c.modelID
+		c.modelResolved = true
+	}
+	m := c.modelID
+	c.mu.Unlock()
+	return m
 }
 
 // resetModel clears the model cache so the next Complete call re-discovers.
 // Called when the completion endpoint returns ErrBackendUnavailable, indicating
 // the previously selected model may have become unavailable.
 func (c *ollaClient) resetModel() {
-	c.modelOnce = sync.Once{}
+	c.mu.Lock()
+	c.modelResolved = false
 	c.modelID = ""
+	c.mu.Unlock()
 }
 
 // Complete sends systemPrompt + userPrompt to Olla using the OpenAI-compatible
@@ -220,7 +225,7 @@ func (c *ollaClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 	}
 	req.Header.Set("content-type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("llm/olla: completion HTTP error", "err", err)
 		c.resetModel() // cached model may be gone; re-resolve next call

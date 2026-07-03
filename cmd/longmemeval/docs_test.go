@@ -181,7 +181,7 @@ func TestLMEBenchmarkLearningsSummaryUsesCurrentQuestionTypesAndPortableReferenc
 	}
 }
 
-func TestSSPrefModelRecommendationMemoTrackedAndComplete(t *testing.T) {
+func TestSSPrefModelMemoReferencedInBenchmarkLearnings(t *testing.T) {
 	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
 	if err != nil {
 		t.Fatalf("read docs/lme-benchmark-learnings.md: %v", err)
@@ -213,6 +213,42 @@ func TestLMEJudgingDocumentsLockedQwen3Preset(t *testing.T) {
 	} {
 		if !strings.Contains(doc, current) {
 			t.Fatalf("lme judging doc missing locked-qwen3 guidance %q:\n%s", current, doc)
+		}
+	}
+}
+
+func TestSSPrefModelRecommendationMemoTrackedAndComplete(t *testing.T) {
+	readmeData, err := os.ReadFile("../../results/README.md")
+	if err != nil {
+		t.Fatalf("read results/README.md: %v", err)
+	}
+	readme := string(readmeData)
+	const trackedFile = "wisdom/ss-pref-model-recommendations-2026-06-27.md"
+	if !strings.Contains(readme, trackedFile) {
+		t.Fatalf("results/README.md missing tracked wisdom artifact %q", trackedFile)
+	}
+
+	docData, err := os.ReadFile("../../results/" + trackedFile)
+	if err != nil {
+		t.Fatalf("read results/%s: %v", trackedFile, err)
+	}
+	doc := string(docData)
+	for _, current := range []string{
+		"## Ranked Candidates",
+		"## Quantization Guidance",
+		"## Config Levers to Prioritize",
+		"Qwen3-32B BF16",
+		"Llama 3.3 70B NVFP4",
+		"Qwen2.5-72B NVFP4",
+		"Gemma 3 27B BF16",
+		"Qwen3-32B NVFP4",
+		"dual-preference-recall",
+		"topic-anchor-boost",
+		"query-paraphrase-passes=3",
+		"PreferenceMMR",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("ss-pref model recommendation memo missing %q", current)
 		}
 	}
 }

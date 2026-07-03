@@ -44,6 +44,9 @@ type Backend interface {
 	// Used by EnrichWithConflicts to fetch cross-project contradicting memories.
 	// Returns nil, nil if not found.
 	GetMemoryByID(ctx context.Context, id string) (*types.Memory, error)
+	// GetMemoryByIDInProject retrieves a memory by ID scoped to the given project.
+	// Returns nil, nil if not found.
+	GetMemoryByIDInProject(ctx context.Context, id, project string) (*types.Memory, error)
 	// GetMemoriesByIDs retrieves multiple memories by ID in a single query.
 	// Only memories belonging to project are returned. Missing IDs are silently omitted.
 	GetMemoriesByIDs(ctx context.Context, project string, ids []string) ([]*types.Memory, error)
@@ -129,6 +132,10 @@ type Backend interface {
 
 	// StoreRelationship upserts a directed relationship between two memories.
 	StoreRelationship(ctx context.Context, rel *types.Relationship) error
+	// StoreRelationshipTx is like StoreRelationship but runs inside an existing
+	// transaction. FK existence checks are skipped (the caller owns the tx
+	// and is responsible for ordering the writes correctly).
+	StoreRelationshipTx(ctx context.Context, tx Tx, rel *types.Relationship) error
 	// GetConnected performs a BFS from memoryID and returns connected memories
 	// up to maxHops hops away.
 	GetConnected(ctx context.Context, memoryID string, maxHops int) ([]ConnectedResult, error)
@@ -164,6 +171,9 @@ type Backend interface {
 	// The memory and its chunks are NOT removed from the database; they remain
 	// for history queries. Returns false if not found, error if immutable.
 	SoftDeleteMemory(ctx context.Context, project, id, reason string) (bool, error)
+	// SoftDeleteMemoryTx is like SoftDeleteMemory but runs inside an existing
+	// transaction. The caller is responsible for commit/rollback.
+	SoftDeleteMemoryTx(ctx context.Context, tx Tx, project, id, reason string) (bool, error)
 
 	// GetMemoriesAsOf returns memories that were active at the given point in time:
 	// created_at <= asOf AND (valid_to IS NULL OR valid_to > asOf).
@@ -426,4 +436,3 @@ type MemoryCluster struct {
 	Label    string
 	Size     int
 }
-
