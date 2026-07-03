@@ -181,6 +181,42 @@ func TestLMEBenchmarkLearningsSummaryUsesCurrentQuestionTypesAndPortableReferenc
 	}
 }
 
+func TestSSPrefModelMemoReferencedInBenchmarkLearnings(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-benchmark-learnings.md: %v", err)
+	}
+	doc := string(data)
+
+	for _, current := range []string{
+		"For current DGX Spark `single-session-preference` model triage",
+		"ranked model list and approximate BF16 or NVFP4 footprints",
+		"`docs/benchmarks/2026-07-02-ss-preference-model-ranking.md`",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("benchmark learnings missing ss-preference memo reference %q", current)
+		}
+	}
+}
+
+func TestLMEJudgingDocumentsLockedQwen3Preset(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-judging.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-judging.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{
+		"SCORER_MAX_TOKENS=<n>`: score request budget for unlocked presets such as `gpt4o`",
+		"single source of",
+		"truth for lock-owned settings",
+		"`qwen3` defers to the scorer lock",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("lme judging doc missing locked-qwen3 guidance %q:\n%s", current, doc)
+		}
+	}
+}
+
 func TestSSPrefModelRecommendationMemoTrackedAndComplete(t *testing.T) {
 	readmeData, err := os.ReadFile("../../results/README.md")
 	if err != nil {

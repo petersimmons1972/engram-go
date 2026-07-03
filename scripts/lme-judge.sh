@@ -4,9 +4,11 @@ set -euo pipefail
 # Maintained judging harness for LongMemEval score reports.
 # - Supports bundled judge presets (qwen3 and gpt4o)
 # - Preserves CORRECT rows by default (resume-friendly)
+# - qwen3 is lock-backed; lock-owned scorer knobs must not be overridden here
 # - Emits strict and lenient percentages with optional comparison deltas
 
-REPO=${REPO:-/home/psimmons/projects/engram-go}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO=${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}
 BIN=${BIN:-$REPO/longmemeval}
 DATA=${DATA:-$REPO/testdata/longmemeval/longmemeval_m_cleaned.json}
 WORKERS=${WORKERS:-4}
@@ -15,6 +17,7 @@ RUN_DIR=
 JUDGE=
 THINKING=on
 BUNDLE=0
+SHOW_HELP=0
 SCORER_MAX_TOKENS=${SCORER_MAX_TOKENS:-2048}
 GPT4O_MODEL=${GPT4O_MODEL:-gpt-4o-2024-11-20}
 
@@ -56,8 +59,9 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --help|-h)
-      usage
-      exit 0
+      SHOW_HELP=1
+      shift 1
+      break
       ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
@@ -66,6 +70,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$SHOW_HELP" == "1" ]]; then
+  usage
+  help_exit=0
+  exit "$help_exit"
+fi
 
 if [[ -z "$RUN_DIR" ]]; then
   echo "ERROR: --run is required" >&2
@@ -96,6 +106,7 @@ run_judge() {
   local scorer_model=""
   local scorer_api_key=""
   local scorer_thinking="--scorer-thinking=true"
+  local -a score_args=()
 
   case "$judge" in
     qwen3)
@@ -123,17 +134,24 @@ run_judge() {
   esac
 
   mkdir -p "$out_dir"
+  score_args=(
+    score-efficient
+    --data "$DATA"
+    --out "$out_dir"
+    --scorer-url "$scorer_url"
+    --scorer-model "$scorer_model"
+    --scorer-api-key "$scorer_api_key"
+    "$scorer_thinking"
+    --workers "$WORKERS"
+  )
+  if [[ "$judge" != "qwen3" ]]; then
+    score_args+=(
+      --scorer-max-tokens "$SCORER_MAX_TOKENS"
+      --preserve-correct
+    )
+  fi
   echo "==> score-efficient: $judge -> $out_dir"
-  "$BIN" score-efficient \
-    --data "$DATA" \
-    --out "$out_dir" \
-    --scorer-url "$scorer_url" \
-    --scorer-model "$scorer_model" \
-    --scorer-api-key "$scorer_api_key" \
-    --scorer-max-tokens "$SCORER_MAX_TOKENS" \
-    "$scorer_thinking" \
-    --workers "$WORKERS" \
-    --preserve-correct
+  "$BIN" "${score_args[@]}"
 }
 
 read_report() {
@@ -195,20 +213,18 @@ if [[ "$BUNDLE" == "1" ]]; then
   if [[ -n "$COMPARE" ]]; then
     print_summary "$COMPARE/score_report.json" "compare baseline"
   fi
-  exit 0
-fi
+else
+  run_judge "$JUDGE" "$RUN_DIR"
+  print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
 
-run_judge "$JUDGE" "$RUN_DIR"
-print_summary "$RUN_DIR/score_report.json" "$JUDGE report"
+  if [[ -n "$COMPARE" ]]; then
+    compare_path="$COMPARE/score_report.json"
+    if [[ ! -f "$compare_path" ]]; then
+      echo "ERROR: baseline report missing: $compare_path" >&2
+      exit 1
+    fi
 
-if [[ -n "$COMPARE" ]]; then
-  compare_path="$COMPARE/score_report.json"
-  if [[ ! -f "$compare_path" ]]; then
-    echo "ERROR: baseline report missing: $compare_path" >&2
-    exit 1
-  fi
-
-  python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
+    python3 - "$RUN_DIR/score_report.json" "$compare_path" <<'PY'
 import json
 import sys
 
@@ -238,4 +254,5 @@ print("Delta vs baseline:")
 print("  strict:  %+0.2f%% (%+0.2f vs %+0.2f)" % (new_strict - old_strict, new_strict, old_strict))
 print("  lenient: %+0.2f%% (%+0.2f vs %+0.2f)" % (new_lenient - old_lenient, new_lenient, old_lenient))
 PY
+  fi
 fi

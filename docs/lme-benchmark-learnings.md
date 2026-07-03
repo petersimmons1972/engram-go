@@ -13,6 +13,8 @@ We ran the LongMemEval-M benchmark against Engram to evaluate long-context memor
 
 Key learnings document nine configuration issues (all resolvable), throughput optimization strategies, and model-specific constraints that future benchmarks should adopt from the start.
 
+For current DGX Spark `single-session-preference` model triage, including a ranked model list and approximate BF16 or NVFP4 footprints, see [`docs/benchmarks/2026-07-02-ss-preference-model-ranking.md`](./benchmarks/2026-07-02-ss-preference-model-ranking.md).
+
 ---
 
 ## Configuration Issues Found (and Fixed)
