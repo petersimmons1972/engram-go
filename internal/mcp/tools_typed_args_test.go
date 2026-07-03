@@ -154,6 +154,36 @@ func TestToStringSlice_NativeArray_HappyPath(t *testing.T) {
 	require.Equal(t, []string{"a", "b"}, tags)
 }
 
+func TestToStringSlice_GoStringSlice_Accepted(t *testing.T) {
+	// Go-native callers (test helpers, REST bridges, internal handler-to-handler
+	// calls) construct args maps directly with []string rather than the []any
+	// that JSON decoding produces. A []string IS an array of strings — it must
+	// be accepted, not rejected as a wrong type. Regression guard for the
+	// post-#1283 CI failure in TestHandleMemoryCorrect_PreservesSummaryOnTagOnlyChange,
+	// whose helper passes tags as []string.
+	tags, err := toStringSlice(map[string]any{"tags": []string{"go", "style"}}, "tags")
+	require.NoError(t, err)
+	require.Equal(t, []string{"go", "style"}, tags)
+}
+
+func TestToStringSlice_GoStringSlice_StillValidatesControlChars(t *testing.T) {
+	// The []string path must go through the same control-character validation
+	// as the []any path — acceptance of the type must not bypass #252 checks.
+	_, err := toStringSlice(map[string]any{"tags": []string{"bad\x00tag"}}, "tags")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disallowed control character")
+}
+
+func TestToStringSlice_GoStringSlice_Empty_ReturnsEmptyNotNil(t *testing.T) {
+	// tags=[] has distinct semantics from tags omitted (memory_correct: []
+	// clears valid_from, omitted preserves it). A Go-native empty []string
+	// must behave like an empty []any: non-nil empty result, no error.
+	tags, err := toStringSlice(map[string]any{"tags": []string{}}, "tags")
+	require.NoError(t, err)
+	require.NotNil(t, tags)
+	require.Empty(t, tags)
+}
+
 func TestToStringSlice_JSONEncodedStringArray_Coerces(t *testing.T) {
 	// Defense-in-depth: a client that still JSON-encodes the array as a string
 	// despite the declared schema must not silently lose the tags (#1279).

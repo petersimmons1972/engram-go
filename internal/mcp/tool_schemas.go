@@ -48,11 +48,6 @@ func numberProp(name, desc string) mcpgo.ToolOption {
 	return mcpgo.WithNumber(name, mcpgo.Description(desc))
 }
 
-// requiredNumberProp declares a required number param.
-func requiredNumberProp(name, desc string) mcpgo.ToolOption {
-	return mcpgo.WithNumber(name, mcpgo.Required(), mcpgo.Description(desc))
-}
-
 // boolProp declares an optional boolean param.
 func boolProp(name, desc string) mcpgo.ToolOption {
 	return mcpgo.WithBoolean(name, mcpgo.Description(desc))

@@ -457,15 +457,28 @@ func toStringSlice(args map[string]any, key string) ([]string, error) {
 	}
 	arr, ok := v.([]any)
 	if !ok {
-		s, isStr := v.(string)
-		if !isStr {
+		switch typed := v.(type) {
+		case []string:
+			// Go-native callers (test helpers, REST bridges, internal
+			// handler-to-handler calls) build args maps directly with
+			// []string rather than the []any JSON decoding produces. It IS
+			// an array of strings — route it through the same per-item
+			// validation below rather than rejecting the type. (Post-#1283
+			// CI regression: the tags-only memory_correct integration test's
+			// helper passes []string.)
+			arr = make([]any, len(typed))
+			for i, s := range typed {
+				arr[i] = s
+			}
+		case string:
+			var decoded []any
+			if err := json.Unmarshal([]byte(typed), &decoded); err != nil {
+				return nil, fmt.Errorf("%s must be an array of strings, got a string that is not valid JSON: %w", key, err)
+			}
+			arr = decoded
+		default:
 			return nil, fmt.Errorf("%s must be an array of strings, got %T", key, v)
 		}
-		var decoded []any
-		if err := json.Unmarshal([]byte(s), &decoded); err != nil {
-			return nil, fmt.Errorf("%s must be an array of strings, got a string that is not valid JSON: %w", key, err)
-		}
-		arr = decoded
 	}
 	result := make([]string, 0, len(arr))
 	for _, item := range arr {
