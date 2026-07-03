@@ -8,6 +8,7 @@ via `git add -f`. The currently-tracked files are:
 - `lme-camp-report.md` — live campaign-log artifact
 - `lme-camp-state.json`, `lme-camp-stratified-100.json` — campaign-state machine data
 - `next-campaign-manifest.md` — next-campaign starting point + post-campaign outcomes block
+- `layerb-corruption-probe.md` — Layer B additive-schema integrity probe for issue #1289
 - `wisdom/bottleneck-symmetry.md` — durable pattern doc: bottleneck symmetry analysis
 - `wisdom/temporal-reasoning-mechanism-analysis.md` — durable pattern doc: temporal reasoning failure mechanisms
 
