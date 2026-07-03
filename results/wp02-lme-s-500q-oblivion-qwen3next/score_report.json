@@ -1,0 +1,226 @@
+{
+  "baseline_comparison": {
+    "artifact_pct": 81.4,
+    "distance_to_artifact_pct": 19.400000000000006,
+    "distance_to_honest_plateau_pct": 8,
+    "honest_plateau_pct": 70,
+    "nearest_baseline": "honest_plateau",
+    "nearest_baseline_pct": 70,
+    "observed_strict_pct": 62,
+    "status": "diverges"
+  },
+  "by_type": {
+    "knowledge-update": {
+      "correct": 51,
+      "partially_correct": 3,
+      "incorrect": 24,
+      "total": 78,
+      "strict": {
+        "credited_correct": 51,
+        "total": 78,
+        "accuracy": 0.6538461538461539
+      },
+      "lenient": {
+        "credited_correct": 54,
+        "total": 78,
+        "accuracy": 0.6923076923076923
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    },
+    "multi-session": {
+      "correct": 57,
+      "partially_correct": 9,
+      "incorrect": 67,
+      "total": 133,
+      "strict": {
+        "credited_correct": 57,
+        "total": 133,
+        "accuracy": 0.42857142857142855
+      },
+      "lenient": {
+        "credited_correct": 66,
+        "total": 133,
+        "accuracy": 0.49624060150375937
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    },
+    "single-session-assistant": {
+      "correct": 51,
+      "partially_correct": 3,
+      "incorrect": 2,
+      "total": 56,
+      "strict": {
+        "credited_correct": 51,
+        "total": 56,
+        "accuracy": 0.9107142857142857
+      },
+      "lenient": {
+        "credited_correct": 54,
+        "total": 56,
+        "accuracy": 0.9642857142857143
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    },
+    "single-session-preference": {
+      "correct": 12,
+      "partially_correct": 8,
+      "incorrect": 10,
+      "total": 30,
+      "strict": {
+        "credited_correct": 12,
+        "total": 30,
+        "accuracy": 0.4
+      },
+      "lenient": {
+        "credited_correct": 20,
+        "total": 30,
+        "accuracy": 0.6666666666666666
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    },
+    "single-session-user": {
+      "correct": 61,
+      "partially_correct": 4,
+      "incorrect": 5,
+      "total": 70,
+      "strict": {
+        "credited_correct": 61,
+        "total": 70,
+        "accuracy": 0.8714285714285714
+      },
+      "lenient": {
+        "credited_correct": 65,
+        "total": 70,
+        "accuracy": 0.9285714285714286
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    },
+    "temporal-reasoning": {
+      "correct": 78,
+      "partially_correct": 0,
+      "incorrect": 55,
+      "total": 133,
+      "strict": {
+        "credited_correct": 78,
+        "total": 133,
+        "accuracy": 0.5864661654135338
+      },
+      "lenient": {
+        "credited_correct": 78,
+        "total": 133,
+        "accuracy": 0.5864661654135338
+      },
+      "avg_session_dominance_ratio": 0,
+      "avg_context_session_count": 0
+    }
+  },
+  "complete": true,
+  "completed_run_total": 500,
+  "completed_score_total": 500,
+  "diag": {
+    "by_type": {
+      "knowledge-update": {
+        "n": 78,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 1.141025641025641,
+        "avg_session_dominance": 0.022583483215669827
+      },
+      "multi-session": {
+        "n": 133,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 1.556390977443609,
+        "avg_session_dominance": 0.022354334694797653
+      },
+      "single-session-assistant": {
+        "n": 56,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 2.3392857142857144,
+        "avg_session_dominance": 0.021226598178412184
+      },
+      "single-session-preference": {
+        "n": 30,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 14.6,
+        "avg_session_dominance": 0.02200554348957827
+      },
+      "single-session-user": {
+        "n": 70,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 2.3714285714285714,
+        "avg_session_dominance": 0.022917370232686658
+      },
+      "temporal-reasoning": {
+        "n": 133,
+        "gold_visible_rate": 1,
+        "gold_not_retrieved_rate": 0,
+        "avg_gold_rank_when_found": 1.7067669172932332,
+        "avg_session_dominance": 0.022666934966460318
+      }
+    },
+    "overall": {
+      "n": 500,
+      "gold_visible_rate": 1,
+      "gold_not_retrieved_rate": 0,
+      "avg_gold_rank_when_found": 2.516,
+      "avg_session_dominance": 0.02240482454947207
+    }
+  },
+  "error_items": [],
+  "expected_total": 500,
+  "ingest_done_total": 500,
+  "judged_at": "2026-07-03T17:54:41Z",
+  "overall": {
+    "correct": 310,
+    "partially_correct": 27,
+    "incorrect": 163,
+    "total": 500,
+    "strict": {
+      "credited_correct": 310,
+      "total": 500,
+      "accuracy": 0.62
+    },
+    "lenient": {
+      "credited_correct": 337,
+      "total": 500,
+      "accuracy": 0.674
+    },
+    "avg_session_dominance_ratio": 0,
+    "avg_context_session_count": 0
+  },
+  "provenance": {
+    "gold_version": "gold-lme-s-2026-07-03",
+    "scorer_version": "tier1-qwen3-2026-06-22",
+    "feature_flags": {
+      "force_rescore": false,
+      "preserve_correct": true,
+      "query_paraphrase_passes": 3,
+      "recall_topk": 100,
+      "scorer_lock": "/tmp/worktrees/engram-go-wp02-lme-s-500q/docs/lme-campaign/scorer-lock.json",
+      "scorer_max_tokens": 2048,
+      "scorer_thinking": false,
+      "session_ndcg_agg": true
+    },
+    "system": "oblivion-qwen3next-80b-fp8-wp02",
+    "item_set": "lme-s-500q",
+    "run_id": "76a3ec13afadbc4c",
+    "harness_sha": "b7c8e2ec19c20576b52e89ffbf307cf870921f9a"
+  },
+  "run_error_total": 0,
+  "run_id": "76a3ec13afadbc4c",
+  "score_error_total": 0,
+  "scorer_max_tokens": 2048,
+  "scorer_model": "inference",
+  "scorer_thinking": false,
+  "scorer_url": "http://192.168.0.138:30411/olla/openai/v1",
+  "total_scored": 500
+}
