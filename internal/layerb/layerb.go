@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/aggq"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -72,11 +72,11 @@ var stopWords = map[string]bool{
 // memories and returns a count-style aggregation payload when the query is
 // aggregation-shaped. Non-aggregation queries return (nil, nil).
 func BuildSummary(ctx context.Context, store Store, query string, results []types.SearchResult) (*Summary, error) {
-	if !longmemeval.IsAggregationQuestion(query) {
+	if !aggq.IsAggregationQuestion(query) {
 		return nil, nil
 	}
 
-	anchor := strings.TrimSpace(longmemeval.ExtractAggregationAnchor(query))
+	anchor := strings.TrimSpace(aggq.ExtractAggregationAnchor(query))
 	anchorTerms := normalizeTerms(anchor)
 	if len(anchorTerms) == 0 {
 		return nil, nil
