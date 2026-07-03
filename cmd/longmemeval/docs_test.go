@@ -211,6 +211,45 @@ func TestDeploymentNotesW6800CanaryHasConcreteOllaChecks(t *testing.T) {
 	}
 }
 
+func TestLMEJudgingDocumentsLockedScorerWorkflow(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-judging.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-judging.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{
+		"--gold-version",
+		"docs/lme-campaign/scorer-lock.json",
+		"lme-s-500q",
+		"gold_version",
+		"scorer_version",
+		"baseline_comparison.status",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("lme judging doc missing %q", current)
+		}
+	}
+}
+
+func TestLMEScorerLockManifestExistsAndLooksTier1(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-campaign/scorer-lock.json")
+	if err != nil {
+		t.Fatalf("read scorer lock manifest: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{
+		"tier1-qwen3-2026-06-22",
+		"\"scorer_url\"",
+		"\"scorer_model\"",
+		"\"scorer_thinking\"",
+		"\"scorer_max_tokens\"",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("scorer lock manifest missing %q", current)
+		}
+	}
+}
+
 func between(t *testing.T, s, start, end string) string {
 	t.Helper()
 	startIdx := strings.Index(s, start)

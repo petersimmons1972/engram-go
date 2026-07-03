@@ -154,10 +154,8 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 		APIKey:         cfg.ScorerAPIKey,
 	}
 	judgedAt := scoreEntryJudgedAt(cfg)
-	scorerMaxTokens := cfg.ScorerMaxTokens
-	if scorerMaxTokens <= 0 {
-		scorerMaxTokens = longmemeval.DefaultScorerMaxTokens
-	}
+	scorerMaxTokens := effectiveScorerMaxTokens(cfg)
+	provenance := scoreProvenanceForConfig(cfg)
 	for r := range work {
 		item, ok := itemMap[r.QuestionID]
 		if !ok {
@@ -166,6 +164,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 				Status:     "error",
 				Error:      "item not in data file",
 				JudgedAt:   judgedAt,
+				Provenance: provenance,
 			}
 			continue
 		}
@@ -207,6 +206,7 @@ func scoreEfficientWorker(cfg *Config, itemMap map[string]longmemeval.Item,
 			ScorerThinking:  cfg.ScorerThinking,
 			ScorerMaxTokens: scorerMaxTokens,
 			JudgedAt:        judgedAt,
+			Provenance:      provenance,
 		}
 		log.Printf("score-efficient [%s] label=%s", r.QuestionID, result.Label)
 	}
