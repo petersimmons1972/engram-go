@@ -594,6 +594,11 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	sanitizeRecallResults(results)
 	out := map[string]any{"results": results, "count": len(results)}
+	if summary, err := buildLayerBSummary(ctx, h.Engine.Backend(), query, results); err != nil {
+		slog.Warn("layer_b recall post-pass failed", "project", project, "err", err)
+	} else if summary != nil {
+		out["layer_b"] = summary
+	}
 	attachSynthesisDirective(out, query)
 	if atomPreamble != "" {
 		out["atom_preamble"] = atomPreamble
