@@ -29,7 +29,7 @@ PRs submitted by any AI-assisted development (Claude Code, Cursor, GitHub Copilo
 
 ## Coverage Gate
 
-CI enforces a 55% minimum statement coverage on every PR (`.github/workflows/ci.yml`) — a temporary lower bound (#694) while four integration tests are `t.Skip`'d (#429). The target is 60%; re-enabling those tests should recover the missing ~4 points. New files should aim for 60%+ to keep the per-file bar above the global gate. The safety tools rewrite (safety.go) serves as the reference for what adequate coverage looks like.
+CI enforces a 60% minimum statement coverage on every PR (`.github/workflows/ci.yml`). The four integration tests previously blocked on #429 (`TestHandleMemoryRecall_IncludeConflicts_Integration`, `TestFederatedRecall_IncludeConflicts_NotSilentlyDropped`, `TestEmbedDeadline_RecallWithinMemory`, `TestRetrievalTracking_PrecisionUpdated`) are fixed and un-skipped; #429 is closed. Measured coverage with `TEST_DATABASE_URL` set is 65.9%. New files should aim for 60%+ to keep the per-file bar above the global gate. The safety tools rewrite (safety.go) serves as the reference for what adequate coverage looks like.
 
 ## Test Policy
 
