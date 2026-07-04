@@ -69,6 +69,32 @@ func TestReembedModelEnvDefaultAndOverride(t *testing.T) {
 	})
 }
 
+// TestEmbedEndpointsCoincide verifies the startup coincidence diagnostic that
+// drives the WARN-vs-INFO branch (#1208): it must treat trailing-slash / case
+// variants of the same host as coincident so a shared GPU is not mislabelled
+// "separated", while genuinely distinct hosts read as separated.
+func TestEmbedEndpointsCoincide(t *testing.T) {
+	cases := []struct {
+		name         string
+		embedURL     string
+		reembedURL   string
+		wantCoincide bool
+	}{
+		{"identical", "http://mi50:8007", "http://mi50:8007", true},
+		{"trailing slash", "http://mi50:8007", "http://mi50:8007/", true},
+		{"scheme case", "HTTP://MI50:8007", "http://mi50:8007", true},
+		{"distinct hosts", "http://mi50:8007", "http://w6800:8008", false},
+		{"distinct ports same host", "http://mi50:8007", "http://mi50:8008", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := embedEndpointsCoincide(tc.embedURL, tc.reembedURL); got != tc.wantCoincide {
+				t.Fatalf("embedEndpointsCoincide(%q, %q) = %v, want %v", tc.embedURL, tc.reembedURL, got, tc.wantCoincide)
+			}
+		})
+	}
+}
+
 // TestReembedURLRouting verifies live/reembed GPU role-separation is enforceable
 // from config (#1208): the live client is always constructed against the live
 // embed URL, while the reembed client honours ENGRAM_REEMBED_URL and falls back

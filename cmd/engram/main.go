@@ -56,6 +56,36 @@ func reembedURLFromEnv(embedURL string) string {
 	return envOr("ENGRAM_REEMBED_URL", embedURL)
 }
 
+// normalizeEndpoint canonicalises an embed endpoint for the coincidence
+// diagnostic only (scheme/host lowercased, trailing slash trimmed). It is never
+// used for actual routing — the original URL strings are passed to the clients
+// verbatim — so this cannot alter where traffic is sent.
+func normalizeEndpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return strings.TrimRight(strings.ToLower(raw), "/")
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.Path, "/")
+}
+
+// embedEndpointsCoincide reports whether the live and reembed embed endpoints
+// resolve to the same host, tolerating trailing-slash / case differences so the
+// startup diagnostic does not report "separated" for URLs that hit one GPU.
+func embedEndpointsCoincide(embedURL, reembedURL string) bool {
+	return normalizeEndpoint(embedURL) == normalizeEndpoint(reembedURL)
+}
+
+// logEmbedEndpointSeparation emits the startup diagnostic for live/reembed GPU
+// role-separation (#1208): WARN when both clients share one endpoint (separation
+// not enforced), INFO when they are physically separated.
+func logEmbedEndpointSeparation(logger *slog.Logger, embedURL, reembedURL string) {
+	if embedEndpointsCoincide(embedURL, reembedURL) {
+		logger.Warn("embed live and reembed clients share one endpoint — GPU role-separation not enforced; set ENGRAM_REEMBED_URL to a distinct host so batch reembed traffic does not land on the live-query GPU (#1208)", "embed_url", embedURL, "reembed_url", reembedURL)
+		return
+	}
+	logger.Info("embed live/reembed endpoints separated", "embed_url", embedURL, "reembed_url", reembedURL)
+}
+
 func newEmbedClients(embedURL, reembedURL, liveModel, reembedModel, apiKey string, targetDims int, cbCfg embed.CircuitConfig) (embed.Client, embed.Client) {
 	return newLiteLLMEmbedClient(embedURL, liveModel, apiKey, targetDims, cbCfg),
 		newLiteLLMEmbedClient(reembedURL, reembedModel, apiKey, targetDims, cbCfg)
@@ -306,11 +336,7 @@ func runServer(args []string) error {
 		BackoffCap:        *embedCircuitBackoffCap,
 	}
 	reembedURL := reembedURLFromEnv(embedURL)
-	if reembedURL == embedURL {
-		slog.Warn("embed live and reembed clients share one endpoint — GPU role-separation not enforced; set ENGRAM_REEMBED_URL to a distinct host so batch reembed traffic does not land on the live-query GPU (#1208)", "embed_url", embedURL)
-	} else {
-		slog.Info("embed live/reembed endpoints separated", "embed_url", embedURL, "reembed_url", reembedURL)
-	}
+	logEmbedEndpointSeparation(slog.Default(), embedURL, reembedURL)
 	embedClient, reembedClient := newEmbedClients(embedURL, reembedURL, *embedModel, reembedModel, litellmAPIKey, *embedDims, cbCfg)
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	probeVec, probeModelID, probeErr := embedClient.EmbedWithModel(probeCtx, "startup probe")
