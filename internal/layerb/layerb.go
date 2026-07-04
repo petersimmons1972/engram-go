@@ -172,7 +172,7 @@ func extractMatchingAtoms(mem *types.Memory, anchorTerms []string) []Atom {
 			continue
 		}
 		normalized := normalizeText(sentence)
-		if !containsAllTerms(normalized, anchorTerms) {
+		if !containsAnyTerm(normalized, anchorTerms) {
 			continue
 		}
 		matches = append(matches, Atom{
@@ -216,7 +216,7 @@ func sentenceSpans(text string) []span {
 	return spans
 }
 
-func containsAllTerms(normalized string, terms []string) bool {
+func containsAnyTerm(normalized string, terms []string) bool {
 	if len(terms) == 0 {
 		return false
 	}
@@ -225,11 +225,11 @@ func containsAllTerms(normalized string, terms []string) bool {
 		have[term] = true
 	}
 	for _, term := range terms {
-		if !have[term] {
-			return false
+		if have[term] {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func normalizeTerms(text string) []string {
@@ -260,10 +260,10 @@ func stem(token string) string {
 		return token[:len(token)-3]
 	case len(token) > 3 && strings.HasSuffix(token, "ed"):
 		return token[:len(token)-2]
-	case len(token) > 3 && strings.HasSuffix(token, "es"):
-		return token[:len(token)-2]
 	case len(token) > 2 && strings.HasSuffix(token, "s"):
 		return token[:len(token)-1]
+	case len(token) > 3 && strings.HasSuffix(token, "es"):
+		return token[:len(token)-2]
 	default:
 		return token
 	}

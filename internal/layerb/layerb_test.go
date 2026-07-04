@@ -95,3 +95,58 @@ func TestBuildSummary_NonAggregationQuestionIsNoOp(t *testing.T) {
 	require.Empty(t, store.atoms)
 	require.Empty(t, store.events)
 }
+
+func TestBuildSummary_AggregationAnchorMatchesAcrossDifferentSentences(t *testing.T) {
+	store := &stubStore{}
+	results := []types.SearchResult{{
+		Memory: &types.Memory{
+			ID:        "mem-bike",
+			Project:   "proj",
+			Content:   "I own a bike.",
+			CreatedAt: time.Now().UTC(),
+		},
+		Score: 1,
+	}, {
+		Memory: &types.Memory{
+			ID:        "mem-hat",
+			Project:   "proj",
+			Content:   "I own a hat.",
+			CreatedAt: time.Now().UTC().Add(time.Minute),
+		},
+		Score: 1,
+	}}
+
+	summary, err := layerb.BuildSummary(context.Background(), store, "How many bikes and hats?", results)
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	require.Equal(t, 2, summary.Count)
+	require.Equal(t, "bike hat", summary.Anchor)
+	require.Len(t, summary.Evidence, 2)
+
+	ids := map[string]struct{}{}
+	for _, rec := range summary.Evidence {
+		ids[rec.MemoryID] = struct{}{}
+		require.NotEmpty(t, rec.ProvenanceSpan)
+		require.NotEmpty(t, rec.SpanText)
+	}
+	require.Len(t, ids, 2)
+}
+
+func TestBuildSummary_StemmerFixesBikePlural(t *testing.T) {
+	store := &stubStore{}
+	results := []types.SearchResult{{
+		Memory: &types.Memory{
+			ID:        "mem-1",
+			Project:   "proj",
+			Content:   "I own a bike.",
+			CreatedAt: time.Now().UTC(),
+		},
+		Score: 1,
+	}}
+
+	summary, err := layerb.BuildSummary(context.Background(), store, "How many bikes?", results)
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	require.Equal(t, "bike", summary.Anchor)
+	require.Len(t, summary.Evidence, 1)
+}
