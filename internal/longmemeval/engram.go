@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -367,6 +368,9 @@ type RecallResult struct {
 	// "full" mode. Populated by RecallResultsWith* wrappers for callers that
 	// need access to memory tags (e.g. session dominance diagnostics).
 	Results []types.SearchResult
+	// LayerB carries the additive layer_b summary returned by non-handle
+	// recall modes when the server detects an aggregation-shaped query.
+	LayerB *layerb.Summary
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -487,6 +491,16 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
+// RecallFullResult returns the full recall payload, including any additive
+// layer_b summary the server attaches outside handle mode.
+func (c *Client) RecallFullResult(ctx context.Context, project, query string, topK int) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project,
+		query:   query,
+		topK:    topK,
+		mode:    "full",
+	})
+}
 
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
@@ -654,6 +668,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	// Parse both and prefer whichever is populated.
 	var resp struct {
 		AtomPreamble string               `json:"atom_preamble"`
+		LayerB       *layerb.Summary      `json:"layer_b"`
 		Results      []types.SearchResult `json:"results"`
 		Handles      []struct {
 			ID    string   `json:"id"`
@@ -679,7 +694,14 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 			}
 		}
 	}
-	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap, Results: resp.Results}, nil
+	return RecallResult{
+		IDs:          IDsFromScoredRecall(hits),
+		AtomPreamble: resp.AtomPreamble,
+		Hits:         hits,
+		MemoryMap:    memoryMap,
+		Results:      resp.Results,
+		LayerB:       resp.LayerB,
+	}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
