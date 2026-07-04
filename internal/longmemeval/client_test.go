@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 	"github.com/petersimmons1972/engram/internal/search"
 )
@@ -328,6 +330,100 @@ func TestRecallResultsWithOpts_FullModeIncludesTags(t *testing.T) {
 	}
 }
 
+func TestRecallFullResult_HappyPathIncludesLayerB(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "full" {
+				t.Fatalf("mode = %#v, want full", got)
+			}
+			if got, ok := args["record_event"].(bool); !ok || got {
+				t.Fatalf("record_event = %#v, want false", args["record_event"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{
+					{
+						"memory": map[string]any{"id": "mem-111"},
+						"score":  0.9,
+					},
+				},
+				"layer_b": map[string]any{
+					"mode":   "count",
+					"anchor": "bake cookies",
+					"count":  2,
+					"evidence": []map[string]any{
+						{"memory_id": "mem-111", "provenance_span": "chars:0-12", "span_text": "baked cookies.", "anchor": "bake cookies", "normalized_text": "baked cookies"},
+						{"memory_id": "mem-222", "provenance_span": "chars:15-30", "span_text": "baked cookies again.", "anchor": "bake cookies", "normalized_text": "baked cookies again"},
+					},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallFullResult(ctx, "proj", "How many times did I bake cookies?", 5)
+	if err != nil {
+		t.Fatalf("RecallFullResult: %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
+	}
+	want := &layerb.Summary{
+		Mode:   "count",
+		Anchor: "bake cookies",
+		Count:  2,
+		Evidence: []layerb.EventRecord{
+			{MemoryID: "mem-111", ProvenanceSpan: "chars:0-12", SpanText: "baked cookies.", Anchor: "bake cookies", NormalizedText: "baked cookies"},
+			{MemoryID: "mem-222", ProvenanceSpan: "chars:15-30", SpanText: "baked cookies again.", Anchor: "bake cookies", NormalizedText: "baked cookies again"},
+		},
+	}
+	if result.LayerB == nil {
+		t.Fatal("LayerB = nil, want parsed summary")
+	}
+	if !reflect.DeepEqual(result.LayerB, want) {
+		t.Fatalf("LayerB = %+v, want %+v", *result.LayerB, *want)
+	}
+}
+
+func TestRecallFullResult_OlderResponseWithoutLayerB(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{
+					{
+						"memory": map[string]any{"id": "mem-111"},
+						"score":  0.9,
+					},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallFullResult(ctx, "proj", "How many times did I bake cookies?", 5)
+	if err != nil {
+		t.Fatalf("RecallFullResult: %v", err)
+	}
+	if result.LayerB != nil {
+		t.Fatalf("LayerB = %+v, want nil when layer_b is absent", result.LayerB)
+	}
+}
 
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
