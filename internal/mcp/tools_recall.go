@@ -584,7 +584,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
 		}
 		if droppedHits > 0 {
-			out["degraded"].(map[string]any)["dropped_hits"] = droppedHits
+			if dm, ok := out["degraded"].(map[string]any); ok {
+				dm["dropped_hits"] = droppedHits
+			}
 		}
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
@@ -625,7 +627,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	isDegraded := embedDegraded || !ok
 	out["degraded"] = degradedMap(isDegraded, reason)
 	if droppedHits > 0 {
-		out["degraded"].(map[string]any)["dropped_hits"] = droppedHits
+		if dm, ok := out["degraded"].(map[string]any); ok {
+			dm["dropped_hits"] = droppedHits
+		}
 	}
 	if isDegraded || droppedHits > 0 {
 		if reason == "" && embedDegraded {
