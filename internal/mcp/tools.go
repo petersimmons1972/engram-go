@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -329,11 +330,51 @@ func getInt(args map[string]any, key string, def int) int {
 // getFloat extracts a float64 arg with a fallback.
 func getFloat(args map[string]any, key string, def float64) float64 {
 	if v, ok := args[key]; ok {
-		if f, ok := v.(float64); ok {
+		if f, ok := coerceToFloat(v); ok {
 			return f
 		}
 	}
 	return def
+}
+
+func coerceToFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		if err == nil {
+			return f, true
+		}
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }
 
 // getBool extracts a bool arg with a fallback default.

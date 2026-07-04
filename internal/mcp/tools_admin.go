@@ -72,9 +72,9 @@ func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	strength := 1.0
-	if v, ok := args["strength"].(float64); ok {
-		strength = v
+	strength := getFloat(args, "strength", 1.0)
+	if err := validateRelationshipStrength(strength); err != nil {
+		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, srcID, dstID, relType, strength); err != nil {
 		return nil, err
@@ -107,17 +107,21 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	strength := 1.0
-	if v, ok := args["strength"].(float64); ok {
-		strength = v
-	}
-	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
-		return nil, fmt.Errorf("strength must be between 0 and 1, got %v", strength)
+	strength := getFloat(args, "strength", 1.0)
+	if err := validateRelationshipStrength(strength); err != nil {
+		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, src, dst, relType, strength); err != nil {
 		return nil, err
 	}
 	return toolResult(map[string]any{"status": "connected", "source_id": src, "target_id": dst})
+}
+
+func validateRelationshipStrength(strength float64) error {
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
+		return fmt.Errorf("strength must be between 0 and 1, got %v", strength)
+	}
+	return nil
 }
 
 // handleMemoryCorrect updates the content, tags, or importance of an existing memory.
