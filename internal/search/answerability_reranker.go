@@ -100,6 +100,45 @@ func isNumeric(s string) bool {
 	return true
 }
 
+// stem returns a lightweight English surface-form stem for matching.
+//
+// The rules are intentionally tiny and geared toward the exact failure mode in
+// #1298:
+//   - "bikes" -> "bike" (plain "s" stripping has priority over "es")
+//   - "baked" -> "bake" (ed-stripping before e-strip side effects)
+//
+// This is not a full morphological stemmer; it is designed to improve recall
+// for short answerability snippets while minimizing false positives.
+func stem(s string) string {
+	if len(s) <= 3 {
+		return s
+	}
+	if strings.HasSuffix(s, "ed") && len(s) > 3 {
+		return s[:len(s)-2]
+	}
+	// Handle common plural forms where stripping "es" is the right edit.
+	switch {
+	case strings.HasSuffix(s, "sses"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "xes"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "zes"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "ches"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "shes"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "ies") && len(s) > 4:
+		return s[:len(s)-3] + "y"
+	}
+	// "s" comes after the explicit "es"/"ed"/"ies" patterns so "bikes" => "bike"
+	// instead of "bik".
+	if strings.HasSuffix(s, "s") && len(s) > 3 {
+		return s[:len(s)-1]
+	}
+	return s
+}
+
 // tokenize splits text into lowercase, punctuation-stripped word tokens that
 // are longer than one character, excluding stop words.
 func tokenize(text string) []string {
@@ -114,7 +153,7 @@ func tokenize(text string) []string {
 		if _, ok := stopWords[tok]; ok {
 			continue
 		}
-		out = append(out, tok)
+		out = append(out, stem(tok))
 	}
 	return out
 }
@@ -159,10 +198,15 @@ func AnswerabilityScore(query, summary string) float64 {
 		if _, ok := summarySet[qTok]; ok {
 			matched = true
 		} else if len(qTok) >= 4 {
-			// Prefix-stem: check if any summary token has qTok as a prefix,
-			// or if qTok has any summary token as a prefix.
+			// Prefix/stem fallback: exact stem equality still lets "bikes" match
+			// "bike", while the old prefix checks cover legitimate stem-noise
+			// cases not represented in this tiny stemmer.
 			for sTok := range summarySet {
-				if strings.HasPrefix(sTok, qTok) || (len(sTok) >= 4 && strings.HasPrefix(qTok, sTok)) {
+				if qTok == sTok {
+					matched = true
+					break
+				}
+				if len(sTok) >= 4 && (strings.HasPrefix(sTok, qTok) || strings.HasPrefix(qTok, sTok)) {
 					matched = true
 					break
 				}

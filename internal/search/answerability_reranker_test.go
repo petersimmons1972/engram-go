@@ -61,6 +61,32 @@ func TestAnswerabilityScore_Deterministic(t *testing.T) {
 	}
 }
 
+// TestAnswerabilityScore_StemmedPluralMatch confirms that plural words whose
+// surface form diverges only by a trailing "s" still match (issue #1298).
+func TestAnswerabilityScore_StemmedPluralMatch(t *testing.T) {
+	query := "which bikes did she buy"
+	summary := "She bought a bike in 2025."
+	score := search.AnswerabilityScore(query, summary)
+
+	require.Greater(t, score, 0.0, "plural summary/query mismatch should be normalized by stem")
+}
+
+// TestAnswerabilityScore_StemmedPastTenseMatch confirms symmetric stemming for
+// "bake"/"baked" so query and summary forms hit the same stem.
+func TestAnswerabilityScore_StemmedPastTenseMatch(t *testing.T) {
+	scoreFromBakedQuery := search.AnswerabilityScore(
+		"what recipe did she baked",
+		"She baked a cake with berry jam.",
+	)
+	require.Greater(t, scoreFromBakedQuery, 0.0, "bake/baked mismatch should now match")
+
+	scoreFromBakeQuery := search.AnswerabilityScore(
+		"what recipe does she bake",
+		"She baked a cake with berry jam.",
+	)
+	require.Greater(t, scoreFromBakeQuery, 0.0, "bake/baked mismatch should now match")
+}
+
 // TestAnswerabilityScore_BoundedZeroOne confirms the score is always in [0, 1].
 func TestAnswerabilityScore_BoundedZeroOne(t *testing.T) {
 	cases := []struct{ q, s string }{
