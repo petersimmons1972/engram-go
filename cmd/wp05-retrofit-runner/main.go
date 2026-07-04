@@ -48,9 +48,9 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, outPath s
 	if err != nil {
 		return fmt.Errorf("connect MCP: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
-	harnessSHA, err := gitShortSHA()
+	harnessSHA, err := gitShortSHA(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve harness SHA: %w", err)
 	}
@@ -162,8 +162,8 @@ func mcpDefaults() (url, token string) {
 	return url, token
 }
 
-func gitShortSHA() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+func gitShortSHA(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse: %w", err)
 	}
