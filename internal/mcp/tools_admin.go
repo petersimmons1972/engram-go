@@ -35,6 +35,15 @@ func handleMemoryProjects(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	return toolResult(map[string]any{"projects": out, "count": len(out)})
 }
 
+// validateRelationshipStrength rejects non-finite or out-of-range relationship
+// strengths (NaN, +/-Inf, or outside [0, 1]) before they reach persistence.
+func validateRelationshipStrength(strength float64) error {
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
+		return fmt.Errorf("strength must be between 0 and 1, got %v", strength)
+	}
+	return nil
+}
+
 // handleMemoryAdopt creates a cross-project reference relationship from a memory in
 // the calling project to a memory in another project. The relationship is stored in
 // the calling project's edge table.
@@ -57,9 +66,14 @@ func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	strength := 1.0
-	if v, ok := args["strength"].(float64); ok {
-		strength = v
+	if s, ok := args["strength"].(string); ok {
+		if s == "NaN" || s == "Inf" || s == "-Inf" {
+			return nil, fmt.Errorf("strength must be between 0 and 1, got %v", s)
+		}
+	}
+	strength := getFloat(args, "strength", 1.0)
+	if err := validateRelationshipStrength(strength); err != nil {
+		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, srcID, dstID, relType, strength); err != nil {
 		return nil, err
@@ -92,12 +106,14 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	strength := 1.0
-	if v, ok := args["strength"].(float64); ok {
-		strength = v
+	if s, ok := args["strength"].(string); ok {
+		if s == "NaN" || s == "Inf" || s == "-Inf" {
+			return nil, fmt.Errorf("strength must be between 0 and 1, got %v", s)
+		}
 	}
-	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
-		return nil, fmt.Errorf("strength must be between 0 and 1, got %v", strength)
+	strength := getFloat(args, "strength", 1.0)
+	if err := validateRelationshipStrength(strength); err != nil {
+		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, src, dst, relType, strength); err != nil {
 		return nil, err
