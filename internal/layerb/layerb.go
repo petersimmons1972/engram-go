@@ -286,8 +286,7 @@ func contributionsAreConnected(contributions []memberContribution) bool {
 	for i := range parent {
 		parent[i] = i
 	}
-	var find func(int) int
-	find = func(i int) int {
+	find := func(i int) int {
 		for parent[i] != i {
 			parent[i] = parent[parent[i]]
 			i = parent[i]
@@ -490,6 +489,8 @@ func endsWithSibilant(s string) bool {
 // in silent-e before a bare "o" syllable (e.g. "shoe"/"shoes") will still
 // mis-stem under this rule; this is an accepted tradeoff, not a regression
 // target, since no test in this package currently depends on that case.
+//
+//nolint:misspell
 func endsWithSibilantOrIrregularO(s string) bool {
 	if endsWithSibilant(s) {
 		return true
