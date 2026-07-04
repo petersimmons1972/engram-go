@@ -85,6 +85,16 @@ type RecallOpts struct {
 	// such as model crash or connection refused). Empty string when not degraded.
 	// Nil = do not populate. (#989)
 	EmbedDegradedReason *string
+	// DroppedHits receives the count of recall candidates the backend found
+	// but whose Memory failed to hydrate (nil Memory on an FTS/vector result),
+	// if the caller provides a non-nil pointer. These hits are never added to
+	// the returned result set (a contentless memory must never reach a
+	// caller) but they are real evidence of a retrieval-layer problem and
+	// must not silently vanish from the caller-visible count. Incremented
+	// (not overwritten) at every drop site, so a caller reusing the same
+	// pointer across multiple internal passes (e.g. recallTwoPassTemporal)
+	// sees the accumulated total. Nil = do not populate.
+	DroppedHits *int
 	// DateSince and DateBefore scope retrieval by memory valid_from timestamps.
 	// Nil bounds leave that side unbounded.
 	DateSince  *time.Time
@@ -946,6 +956,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	maxBM25 := 0.0
 	for _, r := range ftsRes.results {
 		if r.Memory == nil {
+			if opts.DroppedHits != nil {
+				*opts.DroppedHits++
+			}
 			continue
 		}
 		ftsScores[r.Memory.ID] = r.Score
@@ -1007,6 +1020,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			if pFErr == nil {
 				for _, r := range pFTSResults {
 					if r.Memory == nil {
+						if opts.DroppedHits != nil {
+							*opts.DroppedHits++
+						}
 						continue
 					}
 					// Prefer higher BM25 score across passes.

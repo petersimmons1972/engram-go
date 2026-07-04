@@ -867,3 +867,33 @@ func TestHandleMemoryRecall_EmbedError_IncrementsDegradedCounter(t *testing.T) {
 	after := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
 	require.Equal(t, before+1, after, "RecallDegradedTotal[embed_error] must increment once on hard embed error (engine-owned)")
 }
+
+// TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField verifies that
+// a nil-Memory FTS hit (dropped at engine layer) contributes to "count" and appears as
+// dropped_hits inside the "degraded" map, while the results payload remains empty.
+func TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField(t *testing.T) {
+	backend := &recallTrackingBackend{
+		ftsResults: []db.FTSResult{{
+			Memory: nil,
+			Score:  0.5,
+		}},
+	}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "record recall telemetry nil-mem degraded field",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"], "count must include the dropped nil-Memory hit")
+	degraded, ok := out["degraded"].(map[string]any)
+	require.True(t, ok, "degraded field must be a map")
+	require.Equal(t, float64(1), degraded["dropped_hits"], "degraded.dropped_hits must reflect the one dropped hit")
+	results, ok := out["results"].([]any)
+	require.True(t, ok, "results field must be a list")
+	require.Empty(t, results, "the memories payload must never include a nil-Memory entry")
+}
