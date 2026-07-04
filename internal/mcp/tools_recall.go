@@ -524,6 +524,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	var embedDegradeReason string
 	opts.EmbedDegraded = &embedDegraded
 	opts.EmbedDegradedReason = &embedDegradeReason
+	// Capture dropped-hit count (nil-Memory recall candidates) — see RecallOpts.DroppedHits.
+	var droppedHits int
+	opts.DroppedHits = &droppedHits
 
 	var results []types.SearchResult
 	var eventID string
@@ -576,15 +579,21 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		sanitizeRecallResults(results)
 		out := map[string]any{
 			"handles":    search.ToHandles(results),
-			"count":      len(results),
+			"count":      len(results) + droppedHits,
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
 			"degraded":   degradedMap(embedDegraded, embedDegradeReason),
+		}
+		if droppedHits > 0 {
+			if dm, ok := out["degraded"].(map[string]any); ok {
+				dm["dropped_hits"] = droppedHits
+			}
 		}
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
 		}
-		if embedDegraded {
-			addRecallDegradedWarning(out, cfg.RouterURL, embedDegradeReason)
+		if embedDegraded || droppedHits > 0 {
+			reason := embedDegradeReason
+			addRecallDegradedWarning(out, cfg.RouterURL, reason)
 		}
 		if eventID != "" {
 			out["event_id"] = eventID
@@ -593,7 +602,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return toolResult(out)
 	}
 	sanitizeRecallResults(results)
-	out := map[string]any{"results": results, "count": len(results)}
+	out := map[string]any{"results": results, "count": len(results) + droppedHits}
 	if summary, err := buildLayerBSummary(ctx, h.Engine.Backend(), query, results); err != nil {
 		slog.Warn("layer_b recall post-pass failed", "project", project, "err", err)
 	} else if summary != nil {
@@ -617,7 +626,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 	isDegraded := embedDegraded || !ok
 	out["degraded"] = degradedMap(isDegraded, reason)
-	if isDegraded {
+	if droppedHits > 0 {
+		if dm, ok := out["degraded"].(map[string]any); ok {
+			dm["dropped_hits"] = droppedHits
+		}
+	}
+	if isDegraded || droppedHits > 0 {
 		if reason == "" && embedDegraded {
 			// Use the actual degradation reason surfaced by the engine (#989).
 			reason = embedDegradeReason
@@ -633,9 +647,6 @@ func recordRecallEvent(ctx context.Context, h *EngineHandle, project, query stri
 		if r.Memory != nil {
 			resultIDs = append(resultIDs, r.Memory.ID)
 		}
-	}
-	if len(resultIDs) == 0 {
-		return ""
 	}
 	event := &types.RetrievalEvent{
 		ID:        types.NewMemoryID(),

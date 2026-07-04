@@ -50,6 +50,7 @@ func (s *recallStubFetcher) GetChunksForMemory(_ context.Context, _ string) ([]*
 
 type recallTrackingBackend struct {
 	noopBackend
+	ftsResults   []db.FTSResult
 	storedEvents atomic.Int64
 	increments   atomic.Int64
 	// lastEventID is the ID of the most recent event passed to
@@ -62,6 +63,9 @@ type recallTrackingBackend struct {
 }
 
 func (b *recallTrackingBackend) FTSSearch(_ context.Context, project, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
+	if b.ftsResults != nil {
+		return b.ftsResults, nil
+	}
 	return []db.FTSResult{{
 		Memory: &types.Memory{
 			ID:        "mem-1",
@@ -469,6 +473,53 @@ func TestHandleMemoryRecall_HandleModeRecordEventReturnsFeedbackEvent(t *testing
 	require.Equal(t, int64(1), backend.increments.Load())
 }
 
+func TestHandleMemoryRecall_EmptyResultsRecordEventReturnsFeedbackEvent(t *testing.T) {
+	backend := &recallTrackingBackend{
+		ftsResults: make([]db.FTSResult, 0),
+	}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "record recall telemetry miss",
+		"record_event": true,
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(0), out["count"])
+	require.NotEmpty(t, out["event_id"], "record_event=true should return a feedback event on zero results")
+	require.NotEmpty(t, out["feedback_hint"], "record_event=true should return a feedback_hint on zero results")
+	require.Equal(t, int64(1), backend.storedEvents.Load())
+}
+
+func TestHandleMemoryRecall_NilMemoryResultsRecordEventReturnsFeedbackEvent(t *testing.T) {
+	backend := &recallTrackingBackend{
+		ftsResults: []db.FTSResult{{
+			Memory: nil,
+			Score:  0.5,
+		}},
+	}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":      "test",
+		"query":        "record recall telemetry nil-mem",
+		"record_event": true,
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"])
+	require.NotEmpty(t, out["event_id"], "record_event=true should return a feedback event when only nil memories are returned")
+	require.NotEmpty(t, out["feedback_hint"], "record_event=true should return a feedback_hint when only nil memories are returned")
+	require.Equal(t, int64(1), backend.storedEvents.Load())
+}
+
 func TestHandleMemoryRecall_LimitAliasMapsToTopK(t *testing.T) {
 	backend := &recallLimitBackend{}
 	limitPool := NewEnginePool(func(ctx context.Context, project string) (*EngineHandle, error) {
@@ -815,4 +866,34 @@ func TestHandleMemoryRecall_EmbedError_IncrementsDegradedCounter(t *testing.T) {
 	// Counter must increment exactly once with label "embed_error" (engine is sole owner).
 	after := testutil.ToFloat64(metrics.RecallDegradedTotal.WithLabelValues("embed_error"))
 	require.Equal(t, before+1, after, "RecallDegradedTotal[embed_error] must increment once on hard embed error (engine-owned)")
+}
+
+// TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField verifies that
+// a nil-Memory FTS hit (dropped at engine layer) contributes to "count" and appears as
+// dropped_hits inside the "degraded" map, while the results payload remains empty.
+func TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField(t *testing.T) {
+	backend := &recallTrackingBackend{
+		ftsResults: []db.FTSResult{{
+			Memory: nil,
+			Score:  0.5,
+		}},
+	}
+	pool := newRecallTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "record recall telemetry nil-mem degraded field",
+	}
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, testConfig())
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	require.Equal(t, float64(1), out["count"], "count must include the dropped nil-Memory hit")
+	degraded, ok := out["degraded"].(map[string]any)
+	require.True(t, ok, "degraded field must be a map")
+	require.Equal(t, float64(1), degraded["dropped_hits"], "degraded.dropped_hits must reflect the one dropped hit")
+	results, ok := out["results"].([]any)
+	require.True(t, ok, "results field must be a list")
+	require.Empty(t, results, "the memories payload must never include a nil-Memory entry")
 }
