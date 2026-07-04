@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -313,6 +314,54 @@ func validateContent(s string) error {
 	return nil
 }
 
+// coerceToFloat converts common numeric/string argument encodings to float64.
+func coerceToFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	case string:
+		s := strings.TrimSpace(n)
+		if s == "" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	default:
+		return 0, false
+	}
+}
+
 // getInt extracts an int arg (JSON numbers arrive as float64) with a fallback.
 func getInt(args map[string]any, key string, def int) int {
 	if v, ok := args[key]; ok {
@@ -329,7 +378,7 @@ func getInt(args map[string]any, key string, def int) int {
 // getFloat extracts a float64 arg with a fallback.
 func getFloat(args map[string]any, key string, def float64) float64 {
 	if v, ok := args[key]; ok {
-		if f, ok := v.(float64); ok {
+		if f, ok := coerceToFloat(v); ok {
 			return f
 		}
 	}
