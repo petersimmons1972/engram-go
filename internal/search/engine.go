@@ -945,6 +945,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	ftsScores := make(map[string]float64)
 	maxBM25 := 0.0
 	for _, r := range ftsRes.results {
+		if r.Memory == nil {
+			continue
+		}
 		ftsScores[r.Memory.ID] = r.Score
 		if r.Score > maxBM25 {
 			maxBM25 = r.Score
@@ -1003,6 +1006,9 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			pFTSResults, pFErr := e.backend.FTSSearch(ctx, e.project, pq, topK*3, opts.DateSince, opts.DateBefore)
 			if pFErr == nil {
 				for _, r := range pFTSResults {
+					if r.Memory == nil {
+						continue
+					}
 					// Prefer higher BM25 score across passes.
 					if r.Score > ftsScores[r.Memory.ID] {
 						ftsScores[r.Memory.ID] = r.Score
