@@ -82,6 +82,22 @@ func TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey(t *testing.T) {
 	}
 }
 
+func TestHelp_RunSubcommandIncludesSSPrefSessionDiversityFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch(run --help) exit = %d, want 0", exit)
+	}
+
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "ss-pref-session-diversity-n") {
+		t.Fatalf("help output missing ss-pref-session-diversity-n flag:\n%s", combined)
+	}
+	if !strings.Contains(combined, "single-session-preference") {
+		t.Fatalf("help output missing single-session-preference scope for ss-pref-session-diversity-n:\n%s", combined)
+	}
+}
+
 func TestDispatch_SpecialSubcommandsReturnControlledHelpAndParseExitCodes(t *testing.T) {
 	if os.Getenv("LONGMEMEVAL_DISPATCH_HELPER") == "1" {
 		args := strings.Split(os.Getenv("LONGMEMEVAL_DISPATCH_ARGS"), "\n")

@@ -203,6 +203,16 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
+func resolveSessionDiversityOverride(cfg *Config, questionType string) int {
+	if cfg == nil || questionType != "single-session-preference" {
+		return 0
+	}
+	if cfg.SSPrefSessionDiversityN <= 0 {
+		return 0
+	}
+	return cfg.SSPrefSessionDiversityN
+}
+
 // runRun executes the run stage. Returns the process exit code: 0 on success,
 // 1 when zero items completed successfully out of any that were attempted
 // (#703 — total-failure guard so scripted pipelines don't proceed when every
@@ -469,18 +479,17 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
+	recallOpts := longmemeval.RecallOpts{
+		ExactFactBoost:    cfg.ExactSignalBoost,
+		TopicAnchorBoost:  cfg.TopicAnchorBoost,
+		SessionDiversityN: resolveSessionDiversityOverride(cfg, item.QuestionType),
+	}
 
 	recall := func(query string, topK int, callSince, callBefore *time.Time) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, callSince, callBefore)
-		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, callSince, callBefore, recallOpts)
 	}
 	recallDefault := func(query string, topK int) ([]string, error) {
-		if cfg.ExactSignalBoost {
-			return mcpClient.RecallWithExactBoost(ctx, ingest.Project, query, topK, since, before)
-		}
-		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, cfg.TopicAnchorBoost)
+		return mcpClient.RecallWithOpts(ctx, ingest.Project, query, topK, since, before, recallOpts)
 	}
 
 	// H-NEW-1: when --temporal-window-recall is set, hand temporal anchoring to the

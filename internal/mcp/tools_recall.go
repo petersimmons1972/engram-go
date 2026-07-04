@@ -486,6 +486,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 
 	// LEVER-8: propagate server-level session-DCG aggregation flag.
 	opts.SessionNDCGAgg = cfg.SessionNDCGAgg
+	opts.SessionDiversityN = getInt(args, "session_diversity_n", 0)
 
 	// H-NEW-2: propagate server-side PreferenceMMR flag into RecallOpts.
 	opts.PreferenceMMR = cfg.PreferenceMMR

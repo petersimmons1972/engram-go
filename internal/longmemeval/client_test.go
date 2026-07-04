@@ -208,6 +208,67 @@ func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	}
 }
 
+func TestRecallWithOpts_SendsSessionDiversityN(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["session_diversity_n"]; got != float64(2) {
+				t.Fatalf("session_diversity_n = %#v, want 2", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-aaa", "score": 0.8}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	_, err = c.RecallWithOpts(ctx, "proj", "query", 5, nil, nil, longmemeval.RecallOpts{
+		SessionDiversityN: 2,
+	})
+	if err != nil {
+		t.Fatalf("RecallWithOpts: %v", err)
+	}
+}
+
+func TestRecallWithExactBoost_SendsSessionDiversityN(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["exact_fact_boost"]; got != true {
+				t.Fatalf("exact_fact_boost = %#v, want true", got)
+			}
+			if got := args["session_diversity_n"]; got != float64(1) {
+				t.Fatalf("session_diversity_n = %#v, want 1", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-aaa", "score": 0.8}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	_, err = c.RecallWithExactBoost(ctx, "proj", "query", 5, nil, nil, 1)
+	if err != nil {
+		t.Fatalf("RecallWithExactBoost: %v", err)
+	}
+}
+
 // TestFetchContent_HappyPath verifies content fetching.
 func TestFetchContent_HappyPath(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){

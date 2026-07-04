@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -186,6 +187,76 @@ func TestRunOne_HappyPath(t *testing.T) {
 	}
 	if entry.Hypothesis == "" {
 		t.Error("hypothesis should not be empty on success")
+	}
+}
+
+func TestRunOne_SSPrefSessionDiversityThreadsIntoExactBoostRecall(t *testing.T) {
+	var sawRecall atomic.Bool
+
+	url := newTestEngram(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			sawRecall.Store(true)
+			args := req.GetArguments()
+			if got := args["exact_fact_boost"]; got != true {
+				t.Fatalf("exact_fact_boost = %#v, want true", got)
+			}
+			if got := args["session_diversity_n"]; got != float64(1) {
+				t.Fatalf("session_diversity_n = %#v, want 1", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{{"memory": map[string]any{"id": "m1"}, "score": 0.9}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			resp, _ := json.Marshal(map[string]any{
+				"memory": map[string]any{"content": "Alice preferred the red bike."},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"The red bike."}}]}`)
+	}))
+	defer llmSrv.Close()
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	item := longmemeval.Item{
+		QuestionID:   "q-ss-pref",
+		QuestionType: "single-session-preference",
+		Question:     "Which bike did I prefer?",
+		QuestionDate: "2024-01-15",
+	}
+	ingest := longmemeval.IngestEntry{
+		QuestionID: "q-ss-pref",
+		Project:    "lme-r-q-ss-pref",
+		MemoryMap:  map[string]string{"m1": "sid-1"},
+	}
+	cfg := &Config{
+		LLMBaseURL:              llmSrv.URL,
+		LLMModel:                "test",
+		Retries:                 0,
+		ExactSignalBoost:        true,
+		SSPrefSessionDiversityN: 1,
+	}
+
+	entry := runOne(ctx, cfg, c, item, ingest)
+	if entry.Status != "done" {
+		t.Fatalf("runOne status = %q error=%q, want done", entry.Status, entry.Error)
+	}
+	if !sawRecall.Load() {
+		t.Fatal("memory_recall was not called")
 	}
 }
 

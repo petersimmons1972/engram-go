@@ -92,6 +92,9 @@ type Config struct {
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
 	EvidenceFirstPacked bool // order context blocks by exact overlap before prompt assembly
+	// SSPrefSessionDiversityN caps leading results from one session for
+	// single-session-preference recall calls only. Zero disables the pass.
+	SSPrefSessionDiversityN int
 
 	// Phase 0: SessionNDCGAgg — RecallAny+NDCGAny for single-session types in retrieval_log.
 	SessionNDCGAgg bool // default true; use RecallAny/NDCGAny for single-session types
@@ -258,6 +261,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")
+	fs.IntVar(&cfg.SSPrefSessionDiversityN, "ss-pref-session-diversity-n", 0, "cap session diversity for single-session-preference recall calls (0 = off)")
 	// Phase 0 (P0): SessionNDCGAgg — use NDCGAny-weighted session aggregation for the
 	// retrieval_log recall metrics on single-session question types. When on, single-session
 	// items use RecallAny (ANY gold session in top-K) instead of RecallAll (ALL gold sessions),
