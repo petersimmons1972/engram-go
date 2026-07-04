@@ -634,9 +634,6 @@ func recordRecallEvent(ctx context.Context, h *EngineHandle, project, query stri
 			resultIDs = append(resultIDs, r.Memory.ID)
 		}
 	}
-	if len(resultIDs) == 0 {
-		return ""
-	}
 	event := &types.RetrievalEvent{
 		ID:        types.NewMemoryID(),
 		Project:   project,
