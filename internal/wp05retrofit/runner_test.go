@@ -303,6 +303,36 @@ func TestParseIntAnswer(t *testing.T) {
 	}
 }
 
+func TestRun_SkipIngestDoesNotStore(t *testing.T) {
+	items := []longmemeval.Item{
+		{
+			QuestionID:       "q1",
+			Question:         "How many times did I bake something?",
+			Answer:           "1",
+			HaystackSessions: [][]longmemeval.Turn{{{Role: "user", Content: "x"}}},
+		},
+	}
+	client := &fakeClient{
+		recallResult: longmemeval.RecallResult{
+			LayerB: &layerb.Summary{Count: 1, Evidence: []layerb.EventRecord{{ProvenanceSpan: "chars:0-1"}}},
+		},
+	}
+	_, err := Run(context.Background(), client, items, Config{
+		ProjectPrefix: "wp05",
+		Limit:         10,
+		SkipIngest:    true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(client.storeCalls) != 0 || len(client.storeBatchCalls) != 0 {
+		t.Fatalf("store calls = (%d, %d), want (0, 0) with skip-ingest", len(client.storeCalls), len(client.storeBatchCalls))
+	}
+	if len(client.recallCalls) != 1 {
+		t.Fatalf("recallCalls = %d, want 1", len(client.recallCalls))
+	}
+}
+
 func TestRun_PropagatesRecallError(t *testing.T) {
 	items := []longmemeval.Item{
 		{

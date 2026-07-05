@@ -25,18 +25,19 @@ func main() {
 		projectPrefix = flag.String("project-prefix", "wp05-retrofit", "project namespace prefix; each fixture item gets its own <prefix>-<question_id> project")
 		limit                 = flag.Int("limit", 200, "recall limit; must exceed the max haystack session count per item")
 		exhaustiveAggregation = flag.Bool("exhaustive-aggregation", false, "H8: for aggregation questions, union topK=500 primary+anchor recall with a project-wide memory_list sweep and build Layer B client-side")
+		skipIngest            = flag.Bool("skip-ingest", false, "recall/score only — assumes memories already ingested under project-prefix")
 		outPath               = flag.String("out", "results/wp05-retrofit/retrofit-bundle.json", "output path for the retrofit bundle JSON")
 	)
 	flag.Parse()
 	applySharedDefaults(flag.CommandLine, serverURL, apiKey)
 
-	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *exhaustiveAggregation, *outPath); err != nil {
+	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *exhaustiveAggregation, *skipIngest, *outPath); err != nil {
 		fmt.Fprintf(os.Stderr, "wp05-retrofit-runner: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiveAggregation bool, outPath string) error {
+func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiveAggregation, skipIngest bool, outPath string) error {
 	items, err := wp05retrofit.LoadFixture(dataPath)
 	if err != nil {
 		return fmt.Errorf("load fixture: %w", err)
@@ -71,13 +72,14 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiv
 		HarnessSHA:    harnessSHA,
 	}
 
-	log.Printf("wp05-retrofit-runner: starting %d fixture item(s), project-prefix=%s limit=%d exhaustive=%t url=%s",
-		len(items), projectPrefix, limit, exhaustiveAggregation, serverURL)
+	log.Printf("wp05-retrofit-runner: starting %d fixture item(s), project-prefix=%s limit=%d exhaustive=%t skip-ingest=%t url=%s",
+		len(items), projectPrefix, limit, exhaustiveAggregation, skipIngest, serverURL)
 
 	bundle, err := wp05retrofit.Run(ctx, client, items, wp05retrofit.Config{
 		ProjectPrefix:         projectPrefix,
 		Limit:                 limit,
 		ExhaustiveAggregation: exhaustiveAggregation,
+		SkipIngest:            skipIngest,
 		ProvenanceTemplate:    provenance,
 	}, log.Printf)
 	if err != nil {

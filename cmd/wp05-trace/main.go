@@ -46,8 +46,9 @@ func main() {
 		projectPrefix = flag.String("project-prefix", "wp05-retrofit-2026-07-04c", "ingested project prefix")
 		serverURL     = flag.String("url", "http://127.0.0.1:8790", "Engram MCP server URL")
 		apiKey        = flag.String("api-key", "", "Engram API key (env ENGRAM_API_KEY)")
-		limit         = flag.Int("limit", 200, "recall limit")
-		outPath       = flag.String("out", "-", "output JSON path (- for stdout)")
+		limit                 = flag.Int("limit", 200, "recall limit")
+		exhaustiveAggregation = flag.Bool("exhaustive-aggregation", false, "H8 exhaustive recall path")
+		outPath               = flag.String("out", "-", "output JSON path (- for stdout)")
 	)
 	flag.Parse()
 
@@ -88,7 +89,10 @@ func main() {
 			fatal("question_id %q not found in fixture", id)
 		}
 		project := fmt.Sprintf("%s-%s", strings.TrimSuffix(*projectPrefix, "-"), id)
-		res, err := wp05retrofit.RecallItem(ctx, client, project, it, wp05retrofit.Config{Limit: *limit})
+		res, err := wp05retrofit.RecallItem(ctx, client, project, it, wp05retrofit.Config{
+			Limit:                 *limit,
+			ExhaustiveAggregation: *exhaustiveAggregation,
+		})
 		if err != nil {
 			fatal("recall %s: %v", id, err)
 		}
@@ -141,7 +145,8 @@ func main() {
 	payload, err := json.MarshalIndent(map[string]any{
 		"system":         "engram-go-retrofit",
 		"project_prefix": *projectPrefix,
-		"limit":          *limit,
+		"limit":                   *limit,
+		"exhaustive_aggregation":  *exhaustiveAggregation,
 		"server_url":     *serverURL,
 		"traces":         traces,
 	}, "", "  ")

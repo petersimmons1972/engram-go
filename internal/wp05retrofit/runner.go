@@ -82,6 +82,7 @@ type Config struct {
 	ProjectPrefix         string
 	Limit                 int
 	ExhaustiveAggregation bool
+	SkipIngest            bool
 	ProvenanceTemplate    Provenance
 }
 
@@ -122,8 +123,10 @@ func Run(ctx context.Context, client Client, items []Item, cfg Config, logf Logf
 	results := make([]ItemResult, 0, len(items))
 	for _, item := range items {
 		project := cfg.ProjectPrefix + "-" + item.QuestionID
-		if err := IngestItem(ctx, client, project, item); err != nil {
-			return Bundle{}, fmt.Errorf("ingest item %s: %w", item.QuestionID, err)
+		if !cfg.SkipIngest {
+			if err := IngestItem(ctx, client, project, item); err != nil {
+				return Bundle{}, fmt.Errorf("ingest item %s: %w", item.QuestionID, err)
+			}
 		}
 		recallResult, err := RecallItem(ctx, client, project, item, cfg)
 		if err != nil {
