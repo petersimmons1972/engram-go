@@ -404,3 +404,17 @@ func TestSessionContent_SanitizesControlChars(t *testing.T) {
 		t.Errorf("content stripped too aggressively: %q", got)
 	}
 }
+
+func TestSessionContent_SanitizesRoleLabelsAndSkipsEmptyAfterSanitize(t *testing.T) {
+	turns := []longmemeval.Turn{
+		{Role: "us\x02er", Content: "pre\x02dicting contextualized target represent"},
+		{Role: "assistant", Content: "\x00\x02"},
+	}
+	got := longmemeval.SessionContent(turns)
+	if strings.Contains(got, "\x02") || strings.Contains(got, "\x00") {
+		t.Fatalf("control chars not stripped from %q", got)
+	}
+	if got != "user: predicting contextualized target represent" {
+		t.Fatalf("SessionContent() = %q", got)
+	}
+}

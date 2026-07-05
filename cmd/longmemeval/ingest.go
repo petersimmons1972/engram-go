@@ -107,11 +107,17 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 			continue
 		}
 		// Prepend session date so the model can anchor relative-time questions.
-		tags := []string{"lme", "sid:" + sessionID}
-		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
-			content = "Session date: " + item.HaystackDates[i] + "\n" + content
-			tags = append(tags, "date:"+item.HaystackDates[i])
+		tags := []string{"lme"}
+		if cleanSessionID := longmemeval.SanitizeStoreContent(sessionID); cleanSessionID != "" {
+			tags = append(tags, "sid:"+cleanSessionID)
 		}
+		if i < len(item.HaystackDates) && item.HaystackDates[i] != "" {
+			if cleanDate := longmemeval.SanitizeStoreContent(item.HaystackDates[i]); cleanDate != "" {
+				content = "Session date: " + cleanDate + "\n" + content
+				tags = append(tags, "date:"+cleanDate)
+			}
+		}
+		content = longmemeval.SanitizeStoreContent(content)
 		sessions = append(sessions, sessionEntry{
 			sessionID: sessionID,
 			item:      longmemeval.BatchItem{Content: content, Tags: tags},

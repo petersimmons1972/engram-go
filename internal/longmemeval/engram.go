@@ -487,7 +487,6 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
-
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project           string
@@ -934,35 +933,32 @@ func restStatusError(op string, status int, msg, hint string) error {
 // preserving role labels so the retriever and generator can distinguish
 // user questions from assistant responses. Dropping assistant turns would
 // make single-session-assistant questions unanswerable (the gold content
-// lives in the assistant's reply).
-//
-// C0/C1 control characters (except \t, \n, \r) are stripped — the server's
-// validateContent rejects them and, because memory_store_batch is all-or-
-// nothing, one offender tanks an entire 100-item batch. See LongMemEval
-// session 158 of question 7e00a6cb for a real-world offender (\x0B).
+// lives in the assistant's reply). Control characters are stripped from both
+// role labels and content before the rendered session is returned.
 func SessionContent(turns []Turn) string {
 	var sb strings.Builder
 	for _, t := range turns {
-		if t.Content == "" {
+		content := SanitizeStoreContent(t.Content)
+		if content == "" {
 			continue
 		}
 		if sb.Len() > 0 {
 			sb.WriteByte('\n')
 		}
-		role := t.Role
+		role := SanitizeStoreContent(t.Role)
 		if role == "" {
 			role = "user"
 		}
 		sb.WriteString(role)
 		sb.WriteString(": ")
-		sb.WriteString(sanitizeControlChars(t.Content))
+		sb.WriteString(content)
 	}
 	return sb.String()
 }
 
-// sanitizeControlChars removes C0 (0x00-0x1F except \t \n \r) and C1 (0x7F-0x9F)
-// control characters from s.
-func sanitizeControlChars(s string) string {
+// SanitizeStoreContent removes C0/C1 control characters except tab, newline,
+// and carriage return before benchmark content reaches memory_store.
+func SanitizeStoreContent(s string) string {
 	var sb strings.Builder
 	sb.Grow(len(s))
 	for _, r := range s {
