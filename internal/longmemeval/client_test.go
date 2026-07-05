@@ -393,6 +393,50 @@ func TestRecallFullResult_HappyPathIncludesLayerB(t *testing.T) {
 	}
 }
 
+func TestListProjectMemories_HappyPath(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_list": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["project"]; got != "proj" {
+				t.Fatalf("project = %#v, want proj", got)
+			}
+			if got := args["limit"]; got != float64(500) {
+				t.Fatalf("limit = %#v, want 500", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"memories": []map[string]any{
+					{"id": "mem-1", "content": "first"},
+					{"id": "mem-2", "content": "second"},
+				},
+				"count": 2,
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	results, err := c.ListProjectMemories(ctx, "proj", 500)
+	if err != nil {
+		t.Fatalf("ListProjectMemories: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].Memory == nil || results[0].Memory.ID != "mem-1" {
+		t.Fatalf("first result = %+v, want mem-1", results[0])
+	}
+	if results[0].Score != 0 {
+		t.Fatalf("score = %v, want 0 for listed memories", results[0].Score)
+	}
+}
+
 func TestRecallFullResult_OlderResponseWithoutLayerB(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

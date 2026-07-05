@@ -13,6 +13,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/aggq"
 	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 const (
@@ -73,13 +74,15 @@ type Client interface {
 	Store(context.Context, string, string, []string) (string, error)
 	StoreBatch(context.Context, string, []longmemeval.BatchItem) ([]string, error)
 	RecallFullResult(context.Context, string, string, int) (longmemeval.RecallResult, error)
+	ListProjectMemories(context.Context, string, int) ([]types.SearchResult, error)
 }
 
 // Config controls one retrofit runner execution.
 type Config struct {
-	ProjectPrefix      string
-	Limit              int
-	ProvenanceTemplate Provenance
+	ProjectPrefix         string
+	Limit                 int
+	ExhaustiveAggregation bool
+	ProvenanceTemplate    Provenance
 }
 
 // Logf is the minimal logging seam shared by the runner and CLI.
@@ -122,7 +125,7 @@ func Run(ctx context.Context, client Client, items []Item, cfg Config, logf Logf
 		if err := IngestItem(ctx, client, project, item); err != nil {
 			return Bundle{}, fmt.Errorf("ingest item %s: %w", item.QuestionID, err)
 		}
-		recallResult, err := RecallItem(ctx, client, project, item, cfg.Limit)
+		recallResult, err := RecallItem(ctx, client, project, item, cfg)
 		if err != nil {
 			return Bundle{}, fmt.Errorf("recall item %s: %w", item.QuestionID, err)
 		}
@@ -197,8 +200,14 @@ func sessionTags(item Item, idx int) []string {
 }
 
 // RecallItem runs the full-mode recall path so additive layer_b data survives transport.
-func RecallItem(ctx context.Context, client Client, project string, item Item, limit int) (longmemeval.RecallResult, error) {
-	return client.RecallFullResult(ctx, project, item.Question, limit)
+// When cfg.ExhaustiveAggregation is set and the question is aggregation-shaped, H8
+// deep recall plus anchor and project sweeps are unioned and Layer B is built
+// client-side over the merged candidate set.
+func RecallItem(ctx context.Context, client Client, project string, item Item, cfg Config) (longmemeval.RecallResult, error) {
+	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
+		return recallItemExhaustive(ctx, client, project, item, cfg.Limit)
+	}
+	return client.RecallFullResult(ctx, project, item.Question, cfg.Limit)
 }
 
 // ScoreItem ports duramind's wp05b scorer semantics to the retrofit harness.

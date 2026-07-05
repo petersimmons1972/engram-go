@@ -754,6 +754,54 @@ func (c *Client) FetchContent(ctx context.Context, project, id string) (string, 
 	return resp.Content, nil
 }
 
+// ListProjectMemories returns project memories via the memory_list MCP tool.
+// Results are shaped as SearchResult values with score 0 so harness code can
+// union them with recall hits. limit is clamped to [1, 500] per server policy.
+func (c *Client) ListProjectMemories(ctx context.Context, project string, limit int) ([]types.SearchResult, error) {
+	if limit < 1 || limit > 500 {
+		limit = 500
+	}
+	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "memory_list",
+			Arguments: map[string]any{
+				"project": project,
+				"limit":   limit,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.IsError {
+		return nil, toolErrorMsg(result, "memory_list")
+	}
+	if len(result.Content) == 0 {
+		return nil, fmt.Errorf("memory_list returned no content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		return nil, fmt.Errorf("unexpected content type from memory_list: %T", result.Content[0])
+	}
+	var resp struct {
+		Memories []*types.Memory `json:"memories"`
+	}
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		return nil, fmt.Errorf("parse memory_list response: %w", err)
+	}
+	out := make([]types.SearchResult, 0, len(resp.Memories))
+	for _, mem := range resp.Memories {
+		if mem == nil || strings.TrimSpace(mem.ID) == "" {
+			continue
+		}
+		if strings.TrimSpace(mem.Project) == "" {
+			mem.Project = project
+		}
+		out = append(out, types.SearchResult{Memory: mem, Score: 0})
+	}
+	return out, nil
+}
+
 // DeleteProject calls memory_delete_project to clean up an isolation project.
 func (c *Client) DeleteProject(ctx context.Context, project string) error {
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{

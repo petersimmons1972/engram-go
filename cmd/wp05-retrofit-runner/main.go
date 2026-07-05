@@ -23,19 +23,20 @@ func main() {
 		serverURL     = flag.String("url", "", "Engram server URL (env: ENGRAM_URL)")
 		apiKey        = flag.String("api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
 		projectPrefix = flag.String("project-prefix", "wp05-retrofit", "project namespace prefix; each fixture item gets its own <prefix>-<question_id> project")
-		limit         = flag.Int("limit", 200, "recall limit; must exceed the max haystack session count per item")
-		outPath       = flag.String("out", "results/wp05-retrofit/retrofit-bundle.json", "output path for the retrofit bundle JSON")
+		limit                 = flag.Int("limit", 200, "recall limit; must exceed the max haystack session count per item")
+		exhaustiveAggregation = flag.Bool("exhaustive-aggregation", false, "H8: for aggregation questions, union topK=500 primary+anchor recall with a project-wide memory_list sweep and build Layer B client-side")
+		outPath               = flag.String("out", "results/wp05-retrofit/retrofit-bundle.json", "output path for the retrofit bundle JSON")
 	)
 	flag.Parse()
 	applySharedDefaults(flag.CommandLine, serverURL, apiKey)
 
-	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *outPath); err != nil {
+	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *exhaustiveAggregation, *outPath); err != nil {
 		fmt.Fprintf(os.Stderr, "wp05-retrofit-runner: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, outPath string) error {
+func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiveAggregation bool, outPath string) error {
 	items, err := wp05retrofit.LoadFixture(dataPath)
 	if err != nil {
 		return fmt.Errorf("load fixture: %w", err)
@@ -56,23 +57,28 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, outPath s
 	}
 	runID := "wp05-retrofit-" + time.Now().UTC().Format("20060102T150405Z")
 	itemSet := fmt.Sprintf("%s-develop-n%d", strings.TrimSuffix(filepath.Base(dataPath), filepath.Ext(dataPath)), len(items))
+	featureFlags := []string{"layer_b_retrofit"}
+	if exhaustiveAggregation {
+		featureFlags = append(featureFlags, "exhaustive_aggregation")
+	}
 	provenance := wp05retrofit.Provenance{
 		GoldVersion:   filepath.Base(dataPath),
 		ScorerVersion: "wp05-retrofit-v1",
-		FeatureFlags:  []string{"layer_b_retrofit"},
+		FeatureFlags:  featureFlags,
 		System:        wp05retrofit.SystemName,
 		ItemSet:       itemSet,
 		RunID:         runID,
 		HarnessSHA:    harnessSHA,
 	}
 
-	log.Printf("wp05-retrofit-runner: starting %d fixture item(s), project-prefix=%s limit=%d url=%s",
-		len(items), projectPrefix, limit, serverURL)
+	log.Printf("wp05-retrofit-runner: starting %d fixture item(s), project-prefix=%s limit=%d exhaustive=%t url=%s",
+		len(items), projectPrefix, limit, exhaustiveAggregation, serverURL)
 
 	bundle, err := wp05retrofit.Run(ctx, client, items, wp05retrofit.Config{
-		ProjectPrefix:      projectPrefix,
-		Limit:              limit,
-		ProvenanceTemplate: provenance,
+		ProjectPrefix:         projectPrefix,
+		Limit:                 limit,
+		ExhaustiveAggregation: exhaustiveAggregation,
+		ProvenanceTemplate:    provenance,
 	}, log.Printf)
 	if err != nil {
 		return err

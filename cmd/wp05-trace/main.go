@@ -88,7 +88,7 @@ func main() {
 			fatal("question_id %q not found in fixture", id)
 		}
 		project := fmt.Sprintf("%s-%s", strings.TrimSuffix(*projectPrefix, "-"), id)
-		res, err := wp05retrofit.RecallItem(ctx, client, project, it, *limit)
+		res, err := wp05retrofit.RecallItem(ctx, client, project, it, wp05retrofit.Config{Limit: *limit})
 		if err != nil {
 			fatal("recall %s: %v", id, err)
 		}

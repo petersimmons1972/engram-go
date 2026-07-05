@@ -11,13 +11,19 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 type fakeClient struct {
 	storeCalls      []storeCall
 	storeBatchCalls []storeBatchCall
+	recallCalls     []recallCall
+	recallByQuery   map[string]longmemeval.RecallResult
+	listCalls       []int
+	listResult      []types.SearchResult
 	recallResult    longmemeval.RecallResult
 	recallErr       error
+	listErr         error
 }
 
 type storeCall struct {
@@ -43,7 +49,24 @@ func (f *fakeClient) StoreBatch(ctx context.Context, project string, items []lon
 }
 
 func (f *fakeClient) RecallFullResult(ctx context.Context, project, query string, topK int) (longmemeval.RecallResult, error) {
-	return f.recallResult, f.recallErr
+	f.recallCalls = append(f.recallCalls, recallCall{query: query, topK: topK})
+	if f.recallErr != nil {
+		return longmemeval.RecallResult{}, f.recallErr
+	}
+	if f.recallByQuery != nil {
+		if result, ok := f.recallByQuery[query]; ok {
+			return result, nil
+		}
+	}
+	return f.recallResult, nil
+}
+
+func (f *fakeClient) ListProjectMemories(ctx context.Context, project string, limit int) ([]types.SearchResult, error) {
+	f.listCalls = append(f.listCalls, limit)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listResult, nil
 }
 
 func TestScoreItem_HappyPath(t *testing.T) {
