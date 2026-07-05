@@ -17,6 +17,27 @@ func memoryResult(id, content string, score float64) types.SearchResult {
 	}
 }
 
+func TestMergeSearchResults_PrefersLongerContentOnIDCollision(t *testing.T) {
+	truncated := strings.Repeat("a", 500) + "…"
+	full := strings.Repeat("a", 2000) + " spent playing games"
+	primary := []types.SearchResult{
+		memoryResult("a", truncated, 0.9),
+	}
+	secondary := []types.SearchResult{
+		memoryResult("a", full, 0),
+	}
+	got := mergeSearchResults(primary, secondary)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].Score != 0.9 {
+		t.Fatalf("score = %v, want 0.9", got[0].Score)
+	}
+	if got[0].Memory.Content != full {
+		t.Fatalf("content len = %d, want full session len %d", len(got[0].Memory.Content), len(full))
+	}
+}
+
 func TestMergeSearchResults_UnionsByIDAndKeepsMaxScore(t *testing.T) {
 	primary := []types.SearchResult{
 		memoryResult("a", "alpha", 0.9),

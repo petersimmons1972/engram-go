@@ -84,8 +84,12 @@ func mergeSearchResults(batches ...[]types.SearchResult) []types.SearchResult {
 			}
 			if hit.Score > current.result.Score {
 				current.result.Score = hit.Score
-				merged[id] = current
 			}
+			// Recall uses detail=summary (500-char cap); memory_list carries full
+			// session text. Keep the longer content so client-side Layer B sees
+			// the same evidence the server uses when building layer_b in full mode.
+			preferLongerMemoryContent(&current.result, hit)
+			merged[id] = current
 		}
 	}
 	out := make([]mergedHit, 0, len(merged))
@@ -106,6 +110,21 @@ func mergeSearchResults(batches ...[]types.SearchResult) []types.SearchResult {
 		results = append(results, hit.result)
 	}
 	return results
+}
+
+func preferLongerMemoryContent(dst *types.SearchResult, src types.SearchResult) {
+	if dst.Memory == nil {
+		if src.Memory != nil {
+			dst.Memory = src.Memory
+		}
+		return
+	}
+	if src.Memory == nil {
+		return
+	}
+	if len(src.Memory.Content) > len(dst.Memory.Content) {
+		dst.Memory.Content = src.Memory.Content
+	}
 }
 
 func idsFromSearchResults(results []types.SearchResult) []string {
