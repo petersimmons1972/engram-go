@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -2142,8 +2143,8 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 	if !types.ValidateRelationType(relType) {
 		return fmt.Errorf("invalid relation type %q", relType)
 	}
-	if strength <= 0 {
-		strength = 1.0
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
+		return fmt.Errorf("strength must be between 0 and 1, got %v", strength)
 	}
 	rel := &types.Relationship{
 		ID:       types.NewMemoryID(),
