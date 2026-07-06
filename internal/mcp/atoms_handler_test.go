@@ -65,6 +65,44 @@ func atomEmbeddingText(t *testing.T, ctx context.Context, pool *pgxpool.Pool, at
 	return got
 }
 
+func atomRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, atomID, project string) int {
+	t.Helper()
+	var got int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM atoms WHERE id = $1 AND project = $2`, atomID, project).Scan(&got)
+	require.NoError(t, err)
+	return got
+}
+
+func atomEmbeddingRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, atomID string) int {
+	t.Helper()
+	var got int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM atom_embeddings WHERE atom_id = $1`, atomID).Scan(&got)
+	require.NoError(t, err)
+	return got
+}
+
+func TestAtomsStoreRejectsCallerSuppliedIDBeforeSideEffects(t *testing.T) {
+	ctx := context.Background()
+	dsn := testAtomsDSN(t)
+	project := uniqueAtomsProject("atoms-id")
+
+	pool := NewTestPoolWithDSN(t, ctx, dsn, project)
+	s := &Server{pool: pool, cfg: testConfig()}
+
+	queryPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(queryPool.Close)
+
+	callerID := "caller-controlled-id-" + project
+	at := testAtom("mallory", "coffee")
+	at.ID = callerID
+	resp := postAtomsStore(t, s, project, at, make([]float32, 1024))
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	require.Zero(t, atomRowCount(t, ctx, queryPool, callerID, project), "rejected caller ID must not insert an atom row")
+	require.Zero(t, atomEmbeddingRowCount(t, ctx, queryPool, callerID), "rejected caller ID must not insert an embedding row")
+}
+
 func TestAtomsStoreRejectsCrossProjectCallerSuppliedID(t *testing.T) {
 	ctx := context.Background()
 	dsn := testAtomsDSN(t)
@@ -104,4 +142,5 @@ func TestAtomsStoreRejectsCrossProjectCallerSuppliedID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, attackResp.Code)
 	after := atomEmbeddingText(t, ctx, queryPool, created.ID)
 	require.Equal(t, before, after, "cross-project atom ID reuse must not mutate the existing embedding")
+	require.Zero(t, atomRowCount(t, ctx, queryPool, created.ID, projectB), "rejected cross-project request must not insert an atom row")
 }
