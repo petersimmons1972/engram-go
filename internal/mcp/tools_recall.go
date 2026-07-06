@@ -15,7 +15,10 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-const recallEmbedDegradedWarning = "recall degraded: embed unavailable, using BM25 fallback"
+const (
+	recallEmbedDegradedWarning = "recall degraded: embed unavailable, using BM25 fallback"
+	recallDroppedHitsWarning   = "recall degraded: dropped backend hits with missing memory records"
+)
 
 // degradedMap builds the "degraded" response field.
 // When embed is true the reason string is included; when embed is false the
@@ -81,7 +84,21 @@ func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
 	slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
 		"embed_endpoint", endpoint,
 		"reason", reason)
-	out["warnings"] = []string{recallEmbedDegradedWarning}
+	appendRecallWarning(out, recallEmbedDegradedWarning)
+}
+
+func addRecallDroppedHitsWarning(out map[string]any, droppedHits int) {
+	slog.Warn("memory_recall degraded: dropped backend hits with missing memory records",
+		"dropped_hits", droppedHits)
+	appendRecallWarning(out, recallDroppedHitsWarning)
+}
+
+func appendRecallWarning(out map[string]any, warning string) {
+	if existing, ok := out["warnings"].([]string); ok {
+		out["warnings"] = append(existing, warning)
+		return
+	}
+	out["warnings"] = []string{warning}
 }
 
 func finiteOrZero(v float64) float64 {
@@ -591,9 +608,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
 		}
-		if embedDegraded || droppedHits > 0 {
+		if embedDegraded {
 			reason := embedDegradeReason
 			addRecallDegradedWarning(out, cfg.RouterURL, reason)
+		}
+		if droppedHits > 0 {
+			addRecallDroppedHitsWarning(out, droppedHits)
 		}
 		if eventID != "" {
 			out["event_id"] = eventID
@@ -631,12 +651,15 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			dm["dropped_hits"] = droppedHits
 		}
 	}
-	if isDegraded || droppedHits > 0 {
+	if isDegraded {
 		if reason == "" && embedDegraded {
 			// Use the actual degradation reason surfaced by the engine (#989).
 			reason = embedDegradeReason
 		}
 		addRecallDegradedWarning(out, cfg.RouterURL, reason)
+	}
+	if droppedHits > 0 {
+		addRecallDroppedHitsWarning(out, droppedHits)
 	}
 	return toolResult(out)
 }

@@ -8,7 +8,9 @@ import (
 	"math"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/petersimmons1972/engram/internal/db"
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
@@ -150,6 +152,59 @@ func TestSortResults_TiedScores(t *testing.T) {
 	}
 }
 
+type droppedHitsTemporalBackend struct {
+	noopBackend
+	calls atomic.Int64
+}
+
+func (b *droppedHitsTemporalBackend) FTSSearch(_ context.Context, _ string, _ string, _ int, _, _ *time.Time) ([]db.FTSResult, error) {
+	b.calls.Add(1)
+	return []db.FTSResult{{Memory: nil, Score: 1}}, nil
+}
+
+type pureTestEmbedder struct{}
+
+func (pureTestEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return []float32{1}, nil
+}
+
+func (e pureTestEmbedder) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
+	vec, err := e.Embed(ctx, text)
+	return vec, "pure-test", err
+}
+
+func (pureTestEmbedder) Name() string { return "pure-test" }
+
+func (pureTestEmbedder) Dimensions() int { return 1 }
+
+func TestRecallTwoPassTemporal_AccumulatesDroppedHitsFromBothPasses(t *testing.T) {
+	backend := &droppedHitsTemporalBackend{}
+	engine := New(context.Background(), backend, pureTestEmbedder{}, "test-dropped-hits",
+		"http://ollama-test:11434", "", false, nil, 0)
+	t.Cleanup(engine.Close)
+
+	droppedHits := 0
+	results, err := engine.RecallWithOpts(context.Background(), "dentist appointment", 10, "summary", RecallOpts{
+		TemporalWindowRecall: true,
+		QuestionText:         "What did I schedule 3 days ago?",
+		QuestionDate:         "2023/06/09 (Fri)",
+		DroppedHits:          &droppedHits,
+	})
+	if err != nil {
+		t.Fatalf("RecallWithOpts returned error: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf("expected no materialized results for nil-Memory hits, got %d", len(results))
+	}
+	if calls := backend.calls.Load(); calls != 2 {
+		t.Fatalf("expected two temporal recall passes, got %d", calls)
+	}
+	if droppedHits != 2 {
+		t.Fatalf("expected dropped hits from both temporal passes, got %d", droppedHits)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // toConnectedMemories
 // ---------------------------------------------------------------------------
@@ -253,7 +308,6 @@ func TestToConnectedMemories_MixedDirections(t *testing.T) {
 		t.Errorf("in-source direction = %q, want 'incoming'", dirs["in-source"])
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // maybeRerank

@@ -893,6 +893,12 @@ func TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField(t 
 	degraded, ok := out["degraded"].(map[string]any)
 	require.True(t, ok, "degraded field must be a map")
 	require.Equal(t, float64(1), degraded["dropped_hits"], "degraded.dropped_hits must reflect the one dropped hit")
+	warningsRaw, hasWarnings := out["warnings"]
+	require.True(t, hasWarnings, "warnings must be present when recall drops backend hits")
+	warnings, ok := warningsRaw.([]any)
+	require.True(t, ok, "warnings must be a list")
+	require.NotContains(t, warnings, recallEmbedDegradedWarning, "nil-Memory dropped hits are not an embed fallback")
+	require.Contains(t, warnings, recallDroppedHitsWarning)
 	results, ok := out["results"].([]any)
 	require.True(t, ok, "results field must be a list")
 	require.Empty(t, results, "the memories payload must never include a nil-Memory entry")
