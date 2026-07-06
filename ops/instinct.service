@@ -18,11 +18,10 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/env python3 -m instinct.run
+ExecStart=%h/bin/instinct-consolidate
 WorkingDirectory=%h
 StandardOutput=append:%S/instinct/run.log
 StandardError=append:%S/instinct/run.log
-Environment=PYTHONPATH=%h/projects/engram-go/consolidator
 
 [Install]
 WantedBy=default.target
