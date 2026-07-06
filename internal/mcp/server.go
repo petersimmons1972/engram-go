@@ -1865,8 +1865,7 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		Importance int        `json:"importance"`
 		ExpiresAt  *time.Time `json:"expires_at"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeLimitedJSON(w, r, &body, quickStoreBodyLimitBytes) {
 		return
 	}
 	if strings.TrimSpace(body.Content) == "" {
@@ -1969,8 +1968,7 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 		Tags    []string `json:"tags"`
 		Limit   int      `json:"limit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeLimitedJSON(w, r, &body, quickRecallBodyLimitBytes) {
 		return
 	}
 	if strings.TrimSpace(body.Project) == "" {

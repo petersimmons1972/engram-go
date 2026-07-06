@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -107,6 +108,27 @@ func TestHandleQuickRecall_InvalidJSON(t *testing.T) {
 	s.handleQuickRecall(w, req)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestQuickRecallRequestBodyLimit verifies that the REST handler rejects request
+// bodies before decoding payloads large enough to allocate proportional memory.
+func TestQuickRecallRequestBodyLimit(t *testing.T) {
+	s := newQuickRecallServer(t)
+
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/quick-recall",
+		bytes.NewReader([]byte(fmt.Sprintf(
+			`{"query":"hello","project":"global","padding":"%s"}`,
+			string(bytes.Repeat([]byte("x"), quickRecallBodyLimitBytes)),
+		))),
+	)
+	w := httptest.NewRecorder()
+
+	s.handleQuickRecall(w, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }
 
 // TestHandleQuickRecall_LimitClamped verifies that a limit > 20 is clamped to 20

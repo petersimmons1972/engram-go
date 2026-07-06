@@ -12,7 +12,6 @@ package mcp
 // are not yet in the db.Backend interface (Milestone 1 minimal footprint).
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -38,13 +37,16 @@ func (s *Server) handleAtoms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req atomsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeLimitedJSON(w, r, &req, atomsBodyLimitBytes) {
 		return
 	}
 
 	if req.Project == "" {
 		writeJSONError(w, http.StatusBadRequest, "project is required")
+		return
+	}
+	if req.Action == "store" && s.cfg.EmbedDimensions > 0 && len(req.Embedding) > s.cfg.EmbedDimensions {
+		writeJSONError(w, http.StatusBadRequest, "embedding dimension exceeds configured limit")
 		return
 	}
 

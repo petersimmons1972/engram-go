@@ -123,6 +123,27 @@ func TestQuickStoreHandler_InvalidJSON(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestQuickStoreRequestBodyLimit verifies that the REST handler rejects request
+// bodies before decoding payloads large enough to allocate proportional memory.
+func TestQuickStoreRequestBodyLimit(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/quick-store",
+		bytes.NewReader([]byte(fmt.Sprintf(
+			`{"content":"ok","project":"global","padding":"%s"}`,
+			string(bytes.Repeat([]byte("x"), quickStoreBodyLimitBytes)),
+		))),
+	)
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
 // TestQuickStoreHandler_OversizedContent verifies that content > 1 MiB is rejected with 400.
 func TestQuickStoreHandler_OversizedContent(t *testing.T) {
 	s := newQuickStoreServer(t)
