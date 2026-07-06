@@ -99,22 +99,47 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return nil, err
 	}
 	minSim := getFloat(args, "min_similarity", 0.7)
-	limit := getInt(args, "limit", 500)
+	limit := 500
+	if v, present, err := requireOptionalInt(args, "limit"); err != nil {
+		return nil, err
+	} else if present {
+		limit = v
+	}
 	if limit < 1 || limit > 5000 {
 		limit = 500
+	}
+	// Optional LLM contradiction detection params (opt-in, default off).
+	// RouterURL comes from server config; model and call cap are per-request.
+	llmDetect := false
+	if v, present, err := requireOptionalBool(args, "llm_contradiction_detection"); err != nil {
+		return nil, err
+	} else if present {
+		llmDetect = v
+	}
+	llmModel := getString(args, "llm_model", "llama3.2:3b")
+	llmMaxCalls := 10
+	if v, present, err := requireOptionalInt(args, "llm_max_calls"); err != nil {
+		return nil, err
+	} else if present {
+		llmMaxCalls = v
+	}
+	autoSupersede := false
+	if v, present, err := requireOptionalBool(args, "auto_supersede"); err != nil {
+		return nil, err
+	} else if present {
+		autoSupersede = v
+	}
+
+	contradictionLimit := 0 // 0 → falls back to limit
+	if v, present, err := requireOptionalInt(args, "contradiction_limit"); err != nil {
+		return nil, err
+	} else if present {
+		contradictionLimit = v
 	}
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	// Optional LLM contradiction detection params (opt-in, default off).
-	// RouterURL comes from server config; model and call cap are per-request.
-	llmDetect := getBool(args, "llm_contradiction_detection", false)
-	llmModel := getString(args, "llm_model", "llama3.2:3b")
-	llmMaxCalls := getInt(args, "llm_max_calls", 10)
-	autoSupersede := getBool(args, "auto_supersede", false)
-
-	contradictionLimit := getInt(args, "contradiction_limit", 0) // 0 → falls back to limit
 
 	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{

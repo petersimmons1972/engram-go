@@ -49,9 +49,24 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 
 	// Extract new safety-guard args early — dry_run must bypass the dimension
 	// pre-flight since a dry_run only counts; it never nulls anything.
-	force := getBool(args, "force", false)
-	dryRun := getBool(args, "dry_run", false)
-	confirm := getBool(args, "confirm", false)
+	force := false
+	if v, present, err := requireOptionalBool(args, "force"); err != nil {
+		return nil, err
+	} else if present {
+		force = v
+	}
+	dryRun := false
+	if v, present, err := requireOptionalBool(args, "dry_run"); err != nil {
+		return nil, err
+	} else if present {
+		dryRun = v
+	}
+	confirm := false
+	if v, present, err := requireOptionalBool(args, "confirm"); err != nil {
+		return nil, err
+	} else if present {
+		confirm = v
+	}
 
 	// Dimension pre-flight (#251): compare stored dims against the new model's output.
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -380,6 +381,43 @@ func TestHandleAuditCompare_HappyPath(t *testing.T) {
 	count, _ := m["count"].(float64)
 	if int(count) != 2 {
 		t.Errorf("expected count=2, got %v", m["count"])
+	}
+}
+
+func TestHandleAuditCompare_LimitStringCoerces(t *testing.T) {
+	var gotLimit any
+	db := &happyTestQuerier{
+		queryFn: func(_ string, args ...any) (pgx.Rows, error) {
+			if len(args) >= 2 {
+				gotLimit = args[1]
+			}
+			return newHappyRows(nil), nil
+		},
+	}
+	cfg := makeTestConfig(db)
+	pool := makeNilEnginePool()
+
+	_, err := handleMemoryAuditCompare(context.Background(), pool,
+		auditHandlerRequest(map[string]any{"query_id": "q1", "limit": "7"}), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotLimit != 7 {
+		t.Fatalf("expected coerced limit 7, got %#v", gotLimit)
+	}
+}
+
+func TestHandleAuditCompare_LimitWrongTypeReturnsLoudError(t *testing.T) {
+	cfg := makeTestConfig(&happyTestQuerier{})
+	pool := makeNilEnginePool()
+
+	_, err := handleMemoryAuditCompare(context.Background(), pool,
+		auditHandlerRequest(map[string]any{"query_id": "q1", "limit": []any{"oops"}}), cfg)
+	if err == nil {
+		t.Fatal("expected wrong-type limit to return error")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, "limit") {
+		t.Fatalf("expected error to mention limit, got %q", got)
 	}
 }
 

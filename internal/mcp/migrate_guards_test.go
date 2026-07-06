@@ -142,6 +142,17 @@ func TestMCPMigrateDryRunArgPassedToEngine(t *testing.T) {
 	require.True(t, dryRunSeen, "dry_run=true must reach migrateFunc as DryRun=true")
 }
 
+func TestMCPMigrateDryRunWrongTypeReturnsLoudError(t *testing.T) {
+	pool := newDimPool(t, "", 1024)
+	req := makeMigrateRequestFull("proj", "new-model-768", map[string]any{
+		"dry_run": []any{"not-bool"},
+	})
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "dry_run")
+}
+
 // TestMCPMigrateLargeVolumeRefusalPassedThrough: large volume refusal from
 // the engine is surfaced as a tool error.
 func TestMCPMigrateLargeVolumeRefusalPassedThrough(t *testing.T) {
@@ -203,6 +214,17 @@ func TestMCPMigrateConfirmArgPassedToEngine(t *testing.T) {
 	require.True(t, confirmSeen, "confirm=true must reach migrateFunc as Confirm=true")
 }
 
+func TestMCPMigrateConfirmWrongTypeReturnsLoudError(t *testing.T) {
+	pool := newDimPool(t, "", 1024)
+	req := makeMigrateRequestFull("proj", "new-model-different", map[string]any{
+		"confirm": []any{"not-bool"},
+	})
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirm")
+}
+
 // ── G4: force arg passthrough ─────────────────────────────────────────────────
 
 // TestMCPMigrateForceArgPassedToEngine verifies force=true is forwarded.
@@ -234,4 +256,15 @@ func TestMCPMigrateForceArgPassedToEngine(t *testing.T) {
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.NoError(t, err)
 	require.True(t, forceSeen, "force=true must reach migrateFunc as Force=true")
+}
+
+func TestMCPMigrateForceWrongTypeReturnsLoudError(t *testing.T) {
+	pool := newDimPool(t, "", 1024)
+	req := makeMigrateRequestFull("proj", "new-model-different", map[string]any{
+		"force": []any{"not-bool"},
+	})
+
+	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, Config{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "force")
 }

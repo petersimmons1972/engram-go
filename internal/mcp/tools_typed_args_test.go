@@ -94,6 +94,36 @@ func TestGetBool_AcceptsStringifiedBool(t *testing.T) {
 	require.True(t, getBool(args, "immutable", false))
 }
 
+// ── requireOptionalBool: loud-error path for load-bearing bool params ───────
+
+func TestRequireOptionalBool_AbsentKey(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{}, "confirm")
+	require.NoError(t, err)
+	require.False(t, present)
+	require.False(t, b)
+}
+
+func TestRequireOptionalBool_NullValue(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{"confirm": nil}, "confirm")
+	require.NoError(t, err)
+	require.False(t, present)
+	require.False(t, b)
+}
+
+func TestRequireOptionalBool_CoercibleString(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{"confirm": "true"}, "confirm")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.True(t, b)
+}
+
+func TestRequireOptionalBool_UncoercibleValue_ReturnsLoudError(t *testing.T) {
+	_, present, err := requireOptionalBool(map[string]any{"confirm": []any{"oops"}}, "confirm")
+	require.True(t, present)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirm")
+}
+
 // ── requireOptionalInt: the loud-error path used by load-bearing params ────
 
 func TestRequireOptionalInt_AbsentKey(t *testing.T) {

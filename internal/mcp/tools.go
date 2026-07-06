@@ -432,6 +432,20 @@ func requireOptionalInt(args map[string]any, key string) (value int, present boo
 	return 0, true, fmt.Errorf("%s must be a number, got %T", key, v)
 }
 
+// requireOptionalBool extracts an optional boolean arg. present=false means
+// the key is absent or null. A non-nil err means the key was present but could
+// not be interpreted as a boolean even via the string fallback.
+func requireOptionalBool(args map[string]any, key string) (value bool, present bool, err error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false, false, nil
+	}
+	if b, ok := coerceToBool(v); ok {
+		return b, true, nil
+	}
+	return false, true, fmt.Errorf("%s must be a boolean, got %T", key, v)
+}
+
 // Per-tag and count limits to prevent tag injection attacks (#149).
 const (
 	maxTagCount  = 50
