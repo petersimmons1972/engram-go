@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -367,6 +368,9 @@ type RecallResult struct {
 	// "full" mode. Populated by RecallResultsWith* wrappers for callers that
 	// need access to memory tags (e.g. session dominance diagnostics).
 	Results []types.SearchResult
+	// LayerB carries the additive layer_b summary returned by non-handle
+	// recall modes when the server detects an aggregation-shaped query.
+	LayerB *layerb.Summary
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -487,6 +491,16 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
+// RecallFullResult returns the full recall payload, including any additive
+// layer_b summary the server attaches outside handle mode.
+func (c *Client) RecallFullResult(ctx context.Context, project, query string, topK int) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project: project,
+		query:   query,
+		topK:    topK,
+		mode:    "full",
+	})
+}
 
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
@@ -654,6 +668,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	// Parse both and prefer whichever is populated.
 	var resp struct {
 		AtomPreamble string               `json:"atom_preamble"`
+		LayerB       *layerb.Summary      `json:"layer_b"`
 		Results      []types.SearchResult `json:"results"`
 		Handles      []struct {
 			ID    string   `json:"id"`
@@ -679,7 +694,14 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 			}
 		}
 	}
-	return RecallResult{IDs: IDsFromScoredRecall(hits), AtomPreamble: resp.AtomPreamble, Hits: hits, MemoryMap: memoryMap, Results: resp.Results}, nil
+	return RecallResult{
+		IDs:          IDsFromScoredRecall(hits),
+		AtomPreamble: resp.AtomPreamble,
+		Hits:         hits,
+		MemoryMap:    memoryMap,
+		Results:      resp.Results,
+		LayerB:       resp.LayerB,
+	}, nil
 }
 
 // FetchContent fetches the full content of a memory by ID within a project.
@@ -730,6 +752,54 @@ func (c *Client) FetchContent(ctx context.Context, project, id string) (string, 
 		return resp.Memory.Content, nil
 	}
 	return resp.Content, nil
+}
+
+// ListProjectMemories returns project memories via the memory_list MCP tool.
+// Results are shaped as SearchResult values with score 0 so harness code can
+// union them with recall hits. limit is clamped to [1, 500] per server policy.
+func (c *Client) ListProjectMemories(ctx context.Context, project string, limit int) ([]types.SearchResult, error) {
+	if limit < 1 || limit > 500 {
+		limit = 500
+	}
+	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "memory_list",
+			Arguments: map[string]any{
+				"project": project,
+				"limit":   limit,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.IsError {
+		return nil, toolErrorMsg(result, "memory_list")
+	}
+	if len(result.Content) == 0 {
+		return nil, fmt.Errorf("memory_list returned no content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		return nil, fmt.Errorf("unexpected content type from memory_list: %T", result.Content[0])
+	}
+	var resp struct {
+		Memories []*types.Memory `json:"memories"`
+	}
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		return nil, fmt.Errorf("parse memory_list response: %w", err)
+	}
+	out := make([]types.SearchResult, 0, len(resp.Memories))
+	for _, mem := range resp.Memories {
+		if mem == nil || strings.TrimSpace(mem.ID) == "" {
+			continue
+		}
+		if strings.TrimSpace(mem.Project) == "" {
+			mem.Project = project
+		}
+		out = append(out, types.SearchResult{Memory: mem, Score: 0})
+	}
+	return out, nil
 }
 
 // DeleteProject calls memory_delete_project to clean up an isolation project.
@@ -784,8 +854,9 @@ func NewRestClient(baseURL, token string) *RestClient {
 }
 
 // QuickStore stores a single memory via POST /quick-store and returns its ID.
-// When expiresAt is non-nil, the server stamps project_ttl so the project can
-// be swept later by lme prune. Retries on 429 and 5xx with exponential backoff.
+// When expiresAt is non-nil, QuickStore explicitly requests project-level TTL
+// so the scratch project can be swept later by lme prune. Retries on 429 and
+// 5xx with exponential backoff.
 func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string, expiresAt *time.Time) (string, error) {
 	body := map[string]any{
 		"content": content,
@@ -793,7 +864,8 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 		"tags":    tags,
 	}
 	if expiresAt != nil {
-		body["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+		body["set_project_ttl"] = true
+		body["project_expires_at"] = expiresAt.UTC().Format(time.RFC3339)
 	}
 	data, err := json.Marshal(body)
 	if err != nil {

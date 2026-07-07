@@ -126,7 +126,7 @@ See `internal/mcp/tools_test.go` for examples of what adequate coverage looks li
 
 ## Coverage Gate
 
-CI enforces 55% minimum statement coverage on every PR — a temporary lower bound (#694) while four integration tests remain `t.Skip`'d (#429). The target is 60%; new files should aim for 60%+ to keep the per-file bar above the global gate.
+CI enforces 60% minimum statement coverage on every PR. The four integration tests previously blocked on #429 are fixed and un-skipped (#429 is closed); measured coverage with `TEST_DATABASE_URL` set is 65.9%. New files should aim for 60%+ to keep the per-file bar above the global gate.
 
 Check locally before pushing:
 
