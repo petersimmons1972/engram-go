@@ -69,7 +69,7 @@ The risk that remains is **up to one snapshot interval of authoritative writes**
 
 **Recommendation:** Keep `sync=disabled`. Add:
 
-1. **ZFS snapshot schedule on `zp1/postgres-engram`** — at least hourly send/receive to a second pool or offsite target. This bounds authoritative data loss to the snapshot interval, not 5 seconds.
+1. **ZFS snapshot schedule on `zp1/ix-apps/app_mounts/postgres-engram/postgres-engram`** — at least hourly send/receive to a second pool or offsite target. This bounds authoritative data loss to the snapshot interval, not 5 seconds.
 2. **Daily `pg_dump` backup** — logical backup is snapshot-interval-independent and survives pool-level corruption. Store on a different dataset.
 
 **Do not** flip to `sync=standard` unless throughput testing on the current pool confirms the write-amplification penalty is acceptable. On spinning-disk HDD vdevs this is typically a 3–10× write throughput reduction.
@@ -82,11 +82,11 @@ The risk that remains is **up to one snapshot interval of authoritative writes**
 
 ```bash
 # On the Postgres host, check the last checkpoint timestamp.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c \
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c \
   "SELECT pg_last_xact_replay_timestamp(), NOW() - pg_last_xact_replay_timestamp() AS lag;"
 
 # Check ZFS snapshot timestamps.
-ssh trunas "zfs list -t snapshot zp1/postgres-engram | tail -5"
+ssh truenas.petersimmons.com "/sbin/zfs list -t snapshot zp1/ix-apps/app_mounts/postgres-engram/postgres-engram | tail -5"
 ```
 
 ### Step 2: Start the server and verify schema integrity
@@ -96,7 +96,7 @@ ssh trunas "zfs list -t snapshot zp1/postgres-engram | tail -5"
 kubectl rollout restart deployment/engram -n engram
 
 # Verify schema version matches expectations.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c \
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c \
   "SELECT * FROM project_meta WHERE project='_engram';"
 ```
 
@@ -104,7 +104,7 @@ psql -h trunas.petersimmons.com -p 5434 -U engram engram -c \
 
 ```bash
 # Memories with content_hash mismatch indicate partial writes.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c "
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c "
   SELECT id, project, created_at, updated_at
   FROM memories
   WHERE content_hash IS NOT NULL
@@ -115,7 +115,7 @@ psql -h trunas.petersimmons.com -p 5434 -U engram engram -c "
 "
 
 # Open memory_versions rows (system_to IS NULL) with no matching current memory.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c "
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c "
   SELECT mv.memory_id, mv.change_type, mv.system_from
   FROM memory_versions mv
   LEFT JOIN memories m ON mv.memory_id = m.id
@@ -137,7 +137,7 @@ psql -c "
 "
 
 # Option B: If no version snapshot exists, restore from the most recent pg_dump backup.
-pg_restore -h trunas.petersimmons.com -p 5434 -U engram -d engram \
+pg_restore -h truenas.petersimmons.com -p 5434 -U engram -d engram \
   --table=memories --data-only /path/to/backup.dump
 ```
 
@@ -145,14 +145,14 @@ pg_restore -h trunas.petersimmons.com -p 5434 -U engram -d engram \
 
 ```bash
 # Re-run content_hash backfill.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram \
+psql -h truenas.petersimmons.com -p 5434 -U engram engram \
   -f internal/db/migrations/012_backfill_content_hash_safe.sql
 
 # Re-embed chunks (nulls set by power-loss mid-embed).
 engram reembed --project=all --null-only
 
 # Rebuild HNSW index after reembed completes.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c "
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c "
   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_hnsw
       ON chunks USING hnsw (embedding vector_cosine_ops)
       WITH (m = 16, ef_construction = 64);
@@ -168,7 +168,7 @@ for project in clearwatch homelab engram global; do
 done
 
 # Confirm weight_config is present for active projects.
-psql -h trunas.petersimmons.com -p 5434 -U engram engram -c \
+psql -h truenas.petersimmons.com -p 5434 -U engram engram -c \
   "SELECT project, updated_at FROM weight_config ORDER BY updated_at DESC;"
 ```
 
