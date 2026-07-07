@@ -289,7 +289,7 @@ NEW_KEY=$(grep '^ENGRAM_API_KEY=' .env | cut -d= -f2)
 
 # 1. New bearer accepted at /setup-token
 curl -s -o /dev/null -w "HTTP %{http_code}\n" \
-  -H "Authorization: Bearer $NEW_KEY" http://localhost:8788/setup-token
+  -H "Authorization: Bearer ${NEW_KEY}" http://localhost:8788/setup-token
 # Expect: 200 (or 429 if hit rate limit — wait 5 min and retry)
 
 # 2. No auth errors in any container
