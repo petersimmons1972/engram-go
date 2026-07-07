@@ -50,6 +50,7 @@ out=$(bash "$SCRIPT" --help 2>&1); rc=$?
 assert_exit "help exits cleanly" 0 "$rc"
 assert_contains "help documents judges" " --judge <name>" "$out"
 assert_contains "help documents gold version" " --gold-version <tag>" "$out"
+assert_contains "help warns against scorer secrets on argv" "do not pass secrets on argv" "$out"
 
 out=$(bash "$SCRIPT" 2>&1); rc=$?
 assert_exit "missing arguments fail" 2 "$rc"
@@ -66,12 +67,16 @@ tmp=$(mktemp -d)
 run_dir="$tmp/run"
 fake_bin="$tmp/longmemeval"
 args_log="$tmp/args.log"
+env_log="$tmp/env.log"
+ready_file="$tmp/ready"
+pid_file="$tmp/pid"
 lock_path="$tmp/scorer-lock.json"
 mkdir -p "$run_dir"
 cat >"$fake_bin" <<EOF
 #!/usr/bin/env bash
 set -eu
 printf '%s\n' "\$@" >"$args_log"
+printf '%s' "\${LME_SCORER_API_KEY:-}" >"$env_log"
 out_dir=""
 while [ "\$#" -gt 0 ]; do
   if [ "\$1" = "--out" ]; then
@@ -85,6 +90,13 @@ mkdir -p "\$out_dir"
 cat >"\$out_dir/score_report.json" <<'JSON'
 {"overall":{"correct":1,"partially_correct":0,"total":1},"baseline_comparison":{"status":"near","nearest_baseline":"honest_plateau","observed_strict_pct":70.0}}
 JSON
+if [ -n "\${FAKE_BIN_READY_FILE:-}" ]; then
+  printf '%s' "\$\$" >"$pid_file"
+  : >"\$FAKE_BIN_READY_FILE"
+fi
+if [ "\${FAKE_BIN_SLEEP_SECS:-0}" != "0" ]; then
+  sleep "\$FAKE_BIN_SLEEP_SECS"
+fi
 EOF
 chmod +x "$fake_bin"
 cat >"$lock_path" <<'EOF'
@@ -109,9 +121,47 @@ assert_exit "gpt4o wrapper invocation succeeds with fake scorer" 0 "$rc"
 args=$(cat "$args_log")
 assert_contains "gpt4o path still forwards scorer-url" "--scorer-url" "$args"
 assert_contains "gpt4o path still forwards scorer-model" "--scorer-model" "$args"
+assert_not_contains "gpt4o path omits scorer-api-key flag" "--scorer-api-key" "$args"
+assert_not_contains "gpt4o path omits scorer-api-key value" "test-key" "$args"
 assert_contains "gpt4o path still forwards scorer-thinking" "--scorer-thinking=false" "$args"
 assert_contains "gpt4o path still forwards scorer-max-tokens" "--scorer-max-tokens" "$args"
 assert_contains "gpt4o path still forwards preserve-correct" "--preserve-correct" "$args"
+env_value=$(cat "$env_log")
+assert_contains "gpt4o path exports scorer key via environment" "test-key" "$env_value"
+
+rm -f "$args_log" "$env_log" "$ready_file" "$pid_file"
+BIN="$fake_bin" OPENAI_API_KEY=redacted-test-key FAKE_BIN_READY_FILE="$ready_file" FAKE_BIN_SLEEP_SECS=5 \
+  bash "$SCRIPT" --run "$run_dir" --judge gpt4o --gold-version gold-v1 >"$tmp/bg.out" 2>&1 &
+judge_pid=$!
+for _ in $(seq 1 50); do
+  if [ -f "$ready_file" ]; then
+    break
+  fi
+  sleep 0.1
+done
+if [ ! -f "$ready_file" ]; then
+  echo "✗ FAIL: active gpt4o judge reached ready state"
+  FAIL=$((FAIL + 1))
+  wait "$judge_pid" || true
+else
+  fake_pid=$(cat "$pid_file")
+  if [ ! -r "/proc/$judge_pid/cmdline" ] || [ ! -r "/proc/$fake_pid/cmdline" ]; then
+    echo "✗ FAIL: active judge cmdline was not readable under /proc"
+    FAIL=$((FAIL + 1))
+  else
+    judge_cmdline=$(tr '\0' ' ' </proc/"$judge_pid"/cmdline)
+    fake_cmdline=$(tr '\0' ' ' </proc/"$fake_pid"/cmdline)
+    if [[ "$judge_cmdline" == *"redacted-test-key"* ]] || [[ "$fake_cmdline" == *"redacted-test-key"* ]]; then
+      echo "✗ FAIL: active judge cmdline leaked scorer key"
+      FAIL=$((FAIL + 1))
+    else
+      echo "✓ PASS: active judge cmdline does not contain scorer key"
+      PASS=$((PASS + 1))
+    fi
+  fi
+  wait "$judge_pid"; rc=$?
+  assert_exit "active gpt4o judge run completes cleanly" 0 "$rc"
+fi
 
 rm -rf "$tmp" "$run_dir"
 
