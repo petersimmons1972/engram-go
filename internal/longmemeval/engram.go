@@ -854,8 +854,9 @@ func NewRestClient(baseURL, token string) *RestClient {
 }
 
 // QuickStore stores a single memory via POST /quick-store and returns its ID.
-// When expiresAt is non-nil, the server stamps project_ttl so the project can
-// be swept later by lme prune. Retries on 429 and 5xx with exponential backoff.
+// When expiresAt is non-nil, QuickStore explicitly requests project-level TTL
+// so the scratch project can be swept later by lme prune. Retries on 429 and
+// 5xx with exponential backoff.
 func (r *RestClient) QuickStore(ctx context.Context, project, content string, tags []string, expiresAt *time.Time) (string, error) {
 	body := map[string]any{
 		"content": content,
@@ -863,7 +864,8 @@ func (r *RestClient) QuickStore(ctx context.Context, project, content string, ta
 		"tags":    tags,
 	}
 	if expiresAt != nil {
-		body["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+		body["set_project_ttl"] = true
+		body["project_expires_at"] = expiresAt.UTC().Format(time.RFC3339)
 	}
 	data, err := json.Marshal(body)
 	if err != nil {

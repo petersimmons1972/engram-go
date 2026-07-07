@@ -122,7 +122,7 @@ func TestIngestOne_EmptySessionsSkipped(t *testing.T) {
 }
 
 // TestIngestOne_ScratchTTL_PassesExpiresAt verifies that when ScratchTTL > 0,
-// ingestOne passes a non-nil expires_at in the QuickStore request body.
+// ingestOne requests explicit project-level TTL in the QuickStore request body.
 func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,24 +149,30 @@ func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
 		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
 	}
 
-	raw, ok := gotBody["expires_at"]
+	raw, ok := gotBody["project_expires_at"]
 	if !ok {
-		t.Fatal("expires_at missing from QuickStore request body")
+		t.Fatal("project_expires_at missing from QuickStore request body")
+	}
+	if gotBody["set_project_ttl"] != true {
+		t.Fatal("set_project_ttl must be true when ScratchTTL is enabled")
+	}
+	if _, ok := gotBody["expires_at"]; ok {
+		t.Fatal("expires_at must not be sent for project TTL")
 	}
 	parsed, err := time.Parse(time.RFC3339, raw.(string))
 	if err != nil {
-		t.Fatalf("expires_at is not RFC3339: %v", err)
+		t.Fatalf("project_expires_at is not RFC3339: %v", err)
 	}
-	// expires_at is serialized as RFC3339 (second precision), so truncate to seconds for comparison.
+	// project_expires_at is serialized as RFC3339 (second precision), so truncate to seconds for comparison.
 	expectedMin := before.Add(168 * time.Hour).Truncate(time.Second)
 	expectedMax := after.Add(168 * time.Hour).Add(time.Second) // +1s to account for truncation
 	if parsed.Before(expectedMin) || parsed.After(expectedMax) {
-		t.Errorf("expires_at %v outside expected range [%v, %v]", parsed, expectedMin, expectedMax)
+		t.Errorf("project_expires_at %v outside expected range [%v, %v]", parsed, expectedMin, expectedMax)
 	}
 }
 
 // TestIngestOne_NoScratchTTL_OmitsExpiresAt verifies that when ScratchTTL == 0,
-// expires_at is absent from the QuickStore request body.
+// project TTL fields are absent from the QuickStore request body.
 func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +197,12 @@ func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	}
 	if _, ok := gotBody["expires_at"]; ok {
 		t.Error("expires_at must be absent from QuickStore body when ScratchTTL is 0")
+	}
+	if _, ok := gotBody["set_project_ttl"]; ok {
+		t.Error("set_project_ttl must be absent from QuickStore body when ScratchTTL is 0")
+	}
+	if _, ok := gotBody["project_expires_at"]; ok {
+		t.Error("project_expires_at must be absent from QuickStore body when ScratchTTL is 0")
 	}
 }
 
