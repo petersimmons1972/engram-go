@@ -246,7 +246,7 @@ D.exit-zero-wrapper::./.worktrees/issue-1063-extract-parser/hooks/engram/engram-
 D.exit-zero-wrapper::./.worktrees/issue-1063-extract-parser/hooks/engram/engram-precheck.sh::38
 D.exit-zero-wrapper::./.worktrees/issue-1063-extract-parser/hooks/pre-tool-use.sh::4
 D.exit-zero-wrapper::./ops/healthcheck.sh::37
-D.exit-zero-wrapper::./hooks/post-tool-use.sh::111
+D.exit-zero-wrapper::./hooks/post-tool-use.sh::113
 D.exit-zero-wrapper::./hooks/engram/engram-session-end.sh::16
 D.exit-zero-wrapper::./hooks/engram/engram-session-end.sh::65
 D.exit-zero-wrapper::./hooks/engram/engram-token-refresh.sh::33

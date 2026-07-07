@@ -97,14 +97,16 @@ print(json.dumps(event))
 echo "$parsed" >> "$BUFFER_FILE"
 
 # Trigger consolidator every N events
+# Binary name must match ops/instinct.service's ExecStart and hooks/install.sh's
+# build target: $HOME/bin/instinct-consolidate.
 count=$(wc -l < "$BUFFER_FILE" 2>/dev/null || echo 0)
 threshold="${INSTINCT_CONSOLIDATE_EVERY:-20}"
 if (( count % threshold == 0 )); then
-    if command -v instinct &>/dev/null; then
-        instinct >> "$LOG_FILE" 2>&1 &
+    if command -v instinct-consolidate &>/dev/null; then
+        instinct-consolidate >> "$LOG_FILE" 2>&1 &
         disown
     else
-        echo "$(date -Iseconds) instinct binary not found on PATH — run hooks/install.sh" >> "$LOG_FILE"
+        echo "$(date -Iseconds) instinct-consolidate binary not found on PATH — run hooks/install.sh" >> "$LOG_FILE"
     fi
 fi
 
