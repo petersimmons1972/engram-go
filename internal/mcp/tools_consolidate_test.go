@@ -156,6 +156,8 @@ func TestMemorySleepLoadBearingParamsWrongTypeReturnLoudError(t *testing.T) {
 		{name: "contradiction_limit", key: "contradiction_limit"},
 		{name: "llm_contradiction_detection", key: "llm_contradiction_detection"},
 		{name: "auto_supersede", key: "auto_supersede"},
+		{name: "min_similarity", key: "min_similarity"},
+		{name: "llm_model", key: "llm_model"},
 	}
 
 	for _, tc := range tests {

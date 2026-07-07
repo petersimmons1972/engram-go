@@ -98,7 +98,13 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if err != nil {
 		return nil, err
 	}
-	minSim := getFloat(args, "min_similarity", 0.7)
+	minSim, minSimPresent, minSimErr := requireOptionalFloat(args, "min_similarity")
+	if minSimErr != nil {
+		return mcpgo.NewToolResultError(minSimErr.Error()), nil
+	}
+	if !minSimPresent {
+		minSim = 0.7
+	}
 	limit, limitPresent, limitErr := requireOptionalInt(args, "limit")
 	if limitErr != nil {
 		return mcpgo.NewToolResultError(limitErr.Error()), nil
@@ -116,7 +122,13 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 	if !llmDetectPresent {
 		llmDetect = false
 	}
-	llmModel := getString(args, "llm_model", "llama3.2:3b")
+	llmModel, llmModelPresent, llmModelErr := requireOptionalString(args, "llm_model")
+	if llmModelErr != nil {
+		return mcpgo.NewToolResultError(llmModelErr.Error()), nil
+	}
+	if !llmModelPresent {
+		llmModel = "llama3.2:3b"
+	}
 	llmMaxCalls, llmMaxCallsPresent, llmMaxCallsErr := requireOptionalInt(args, "llm_max_calls")
 	if llmMaxCallsErr != nil {
 		return mcpgo.NewToolResultError(llmMaxCallsErr.Error()), nil
