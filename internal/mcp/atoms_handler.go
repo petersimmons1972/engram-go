@@ -12,13 +12,16 @@ package mcp
 // are not yet in the db.Backend interface (Milestone 1 minimal footprint).
 
 import (
-	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/db"
 )
+
+const maxAtomsRequestBodyBytes = 2 * 1024 * 1024
 
 // atomsRequest is the unified request body for POST /atoms.
 type atomsRequest struct {
@@ -38,13 +41,22 @@ func (s *Server) handleAtoms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req atomsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBodyBounded(w, r, maxAtomsRequestBodyBytes, &req); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.Project == "" {
 		writeJSONError(w, http.StatusBadRequest, "project is required")
+		return
+	}
+	if req.Action == "store" && s.cfg.EmbedDimensions > 0 && len(req.Embedding) > s.cfg.EmbedDimensions {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("embedding length %d exceeds configured EmbedDimensions %d", len(req.Embedding), s.cfg.EmbedDimensions))
 		return
 	}
 

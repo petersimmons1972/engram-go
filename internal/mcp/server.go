@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -1855,6 +1856,8 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 // Project-level TTL for prune workflows requires explicit opt-in:
 // {"set_project_ttl":true,"project_expires_at":"..."}.
 func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
+	const maxQuickStoreRequestBodyBytes = 2 * 1024 * 1024
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1869,7 +1872,11 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 		SetProjectTTL    bool       `json:"set_project_ttl"`
 		ProjectExpiresAt *time.Time `json:"project_expires_at"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBodyBounded(w, r, maxQuickStoreRequestBodyBytes, &body); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -1975,6 +1982,8 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 // Returns {"results":[{"id":"...","summary":"...","content":"...","tags":[...],"score":N},...]}
 // On no results returns {"results":[]}, never an error.
 func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
+	const maxQuickRecallRequestBodyBytes = 512 * 1024
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1986,7 +1995,11 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 		Tags    []string `json:"tags"`
 		Limit   int      `json:"limit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBodyBounded(w, r, maxQuickRecallRequestBodyBytes, &body); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
