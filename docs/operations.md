@@ -170,17 +170,17 @@ For the live Engram deployment in this environment, Kubernetes is the operationa
 make status-k8s
 ```
 
-It summarizes deployment readiness, image identity, pod restarts, previous container termination reasons, recent warning events, `/health`, `/ready`, and authenticated metrics when `ENGRAM_API_KEY` is available. Use the Docker commands below only for a confirmed local Docker/Compose stack.
+It summarizes deployment readiness, image identity, pod restarts, previous container termination reasons, recent warning events, `/health`, `/ready`, and authenticated metrics when `ENGRAM_API_KEY` is available. Use the Docker commands below only for a confirmed local Docker/Compose stack. If you started the local-only profile with `docker-compose.local.yml`, keep that same file override on every command below.
 
 ```bash
 # Local Docker only: check container state
-docker compose ps
+docker compose -f docker-compose.local.yml ps
 
 # Local Docker only: application logs - last 50 lines
-docker compose logs engram-go-app --tail=50
+docker compose -f docker-compose.local.yml logs engram-go-app --tail=50
 
 # Local Docker only: PostgreSQL logs
-docker compose logs engram-postgres --tail=20
+docker compose -f docker-compose.local.yml logs engram-postgres --tail=20
 
 # Local Docker only: memory count - quick health check
 docker exec engram-postgres psql -U engram -d engram -c "SELECT COUNT(*) FROM memories;"
@@ -195,7 +195,7 @@ curl -s http://localhost:8788/sse
 > `scripts/psql-exec.sh <file.sql>` which uses `docker cp` + `psql -f`
 > (unambiguous, no stdin). See issue #646.
 
-If the SSE endpoint returns nothing or hangs in live Kubernetes, run `make status-k8s` first and inspect the restart/crash/event rows before restarting anything. If the affected runtime is local Docker, check whether the Go container started correctly (`docker compose ps`) and whether PostgreSQL is accepting connections (`docker compose logs engram-postgres`). Most local startup failures are PostgreSQL not finishing its initialization before the Go process tries to connect - restart with `docker compose restart engram-go-app` once PostgreSQL is ready.
+If the SSE endpoint returns nothing or hangs in live Kubernetes, run `make status-k8s` first and inspect the restart/crash/event rows before restarting anything. If the affected runtime is local Docker, check whether the Go container started correctly (`docker compose -f docker-compose.local.yml ps`) and whether PostgreSQL is accepting connections (`docker compose -f docker-compose.local.yml logs engram-postgres`). Most local startup failures are PostgreSQL not finishing its initialization before the Go process tries to connect; once PostgreSQL is ready, restart the same local-only profile with `docker compose -f docker-compose.local.yml restart engram-go-app`.
 
 ---
 
