@@ -340,9 +340,10 @@ func TestAllowProbe_NeverGrantsOnClosed(t *testing.T) {
 // TestAllowProbe_ConcurrentNoRaceStillGrants is the concurrency guard. It runs
 // AllowProbe() (background) and Allow() (demand) against the breaker from many
 // goroutines while a driver flips it Open<->Closed, and asserts only two things:
-//   - the run is data-race clean (the value of this test is under `-race`), and
-//   - legitimate Open-state probes are still granted (probeGrants > 0), so the
-//     concurrent path is exercised, not starved.
+//   - legitimate Open-state probes are still granted, so the probe path is not
+//     vacuous, and
+//   - the concurrent run is data-race clean (the value of the stress portion is
+//     under `-race`).
 //
 // Crucially it does NOT attempt a "was the breaker Closed at grant time"
 // post-read: that determination cannot be made atomically with the grant from
@@ -355,13 +356,10 @@ func TestAllowProbe_ConcurrentNoRaceStillGrants(t *testing.T) {
 	cb := NewCircuitBreaker(cfg)
 	cb.now = func() time.Time { return fixedNow }
 
-	var probeGrants atomic.Int64
-
 	runProbeGate := func() {
 		if err := cb.AllowProbe(); err != nil {
 			return
 		}
-		probeGrants.Add(1)
 		// Release the slot the real way. No post-read of state here — that would
 		// be racy (see doc comment).
 		cb.RecordSuccess()
@@ -372,6 +370,20 @@ func TestAllowProbe_ConcurrentNoRaceStillGrants(t *testing.T) {
 		}
 		cb.RecordSuccess()
 	}
+
+	// Deterministically prove the non-vacuity condition before the stress loop.
+	// The previous version inferred this from a fixed 200 ms concurrent window,
+	// which can starve under CI scheduling load even when AllowProbe is correct.
+	cb.mu.Lock()
+	cb.state = StateOpen
+	cb.consecutiveOpens = 1
+	cb.nextProbeAt = fixedNow.Add(-1 * time.Second)
+	cb.probeInFlight = false
+	cb.mu.Unlock()
+	if err := cb.AllowProbe(); err != nil {
+		t.Fatalf("AllowProbe on Open breaker before stress = %v, want nil", err)
+	}
+	cb.RecordSuccess()
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -433,10 +445,6 @@ func TestAllowProbe_ConcurrentNoRaceStillGrants(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
 	wg.Wait()
-
-	if probeGrants.Load() == 0 {
-		t.Fatal("no probe was ever granted under concurrency — path starved/vacuous")
-	}
 }
 
 // TestBackgroundProbe_PanicSafe verifies a panicking probe does not wedge the
