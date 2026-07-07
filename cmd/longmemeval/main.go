@@ -413,7 +413,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
 		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
-		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
+		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", "", "DEPRECATED: prefer LME_SCORER_API_KEY or OPENAI_API_KEY environment variables; avoid secrets on argv")
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
 		sefs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; when set, scorer URL/model/thinking/max_tokens are taken from the manifest")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
@@ -425,6 +425,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "context window size used during run (for H-DIAG diagnostics; 0 = read from RUN_STATUS.json)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
+		}
+		applyScoreEfficientDefaults(cfg, sefs)
+		if flagWasProvided(sefs, "scorer-api-key") {
+			_, _ = fmt.Fprintln(stderr, "WARN: --scorer-api-key is deprecated; prefer LME_SCORER_API_KEY or OPENAI_API_KEY to avoid secrets on argv")
 		}
 		cfg.scorerThinkingSet = flagPassed(sefs, "scorer-thinking")
 		cfg.scorerMaxTokensSet = flagPassed(sefs, "scorer-max-tokens")
@@ -782,12 +786,22 @@ func defaultServerURL() string {
 	return envOr("ENGRAM_URL", url)
 }
 
+func defaultScorerAPIKey() string {
+	return envOr("LME_SCORER_API_KEY", envOr("OPENAI_API_KEY", ""))
+}
+
 func applySharedDefaults(cfg *Config, fs *flag.FlagSet) {
 	if !flagWasProvided(fs, "api-key") {
 		cfg.APIKey = defaultAPIKey()
 	}
 	if !flagWasProvided(fs, "url") {
 		cfg.ServerURL = defaultServerURL()
+	}
+}
+
+func applyScoreEfficientDefaults(cfg *Config, fs *flag.FlagSet) {
+	if !flagWasProvided(fs, "scorer-api-key") {
+		cfg.ScorerAPIKey = defaultScorerAPIKey()
 	}
 }
 
