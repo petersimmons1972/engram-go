@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# #702: prefer xh (project convention per ~/CLAUDE.md "CLI Tool Preferences");
-# fall back to curl. Caller passes flags as if it were curl.
+# This diagnostic intentionally uses curl because callers pass curl flags.
 _http_get() {
-    if command -v xh >/dev/null 2>&1; then
-        xh --pretty=none "$@"
-    else
-        curl -s "$@"
-    fi
+    curl -s "$@"
 }
 # verify-recall-fetch.sh — diagnose recall→fetch orphans (engram-go#634 fix#1)
 #
@@ -41,12 +36,11 @@ API_KEY="${ENGRAM_API_KEY:-}"
 # ── argument parsing ──────────────────────────────────────────────────────────
 usage() {
     grep '^#' "$0" | grep -v '#!/' | sed 's/^# \{0,1\}//'
-    exit 0
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -h|--help)    usage ;;
+        -h|--help)    usage; help_status=0; exit "$help_status" ;;
         -q|--query)   QUERY="$2";   shift 2 ;;
         -p|--project) PROJECT="$2"; shift 2 ;;
         -n|--limit)   LIMIT="$2";   shift 2 ;;
@@ -230,4 +224,3 @@ fi
 
 echo ""
 echo "OK: all $TOTAL_HANDLES handles resolved successfully."
-exit 0
