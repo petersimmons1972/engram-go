@@ -24,7 +24,7 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 // errRequestBodyTooLarge when the body exceeds the configured limit.
 func decodeJSONBodyBounded(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
 	body := http.MaxBytesReader(w, r.Body, maxBytes)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	if err := json.NewDecoder(body).Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
