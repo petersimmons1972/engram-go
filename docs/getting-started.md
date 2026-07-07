@@ -185,7 +185,7 @@ When you see <!-- count:visible-default -->18<!-- /count --> tools (or <!-- coun
 
 ## Step 6: Optional — Install Bundled Skills
 
-Engram includes four Claude Code skills for maintenance, consolidation, and diagnostics operations. These skills wrap advanced tools and provide a user-friendly interface to operations that are powerful but rarely needed during regular sessions.
+Engram includes two bundled Claude Code skills for maintenance and diagnostics operations. These skills wrap advanced tools and provide a user-friendly interface to operations that are powerful but rarely needed during regular sessions.
 
 To install the bundled skills:
 
@@ -193,11 +193,14 @@ To install the bundled skills:
 make install-skills
 ```
 
-This copies four skill directories to `~/.claude/skills/`:
-- `/engram-consolidate` — memory consolidation and decay audits
-- `/engram-episodes` — session and episode management
-- `/engram-ingest` — import and export operations
+This copies two skill directories to `~/.claude/skills/`:
+- `/engram` — routes hidden maintenance workflows for ingest, consolidation, and episodes
 - `/engram-diagnose` — health checks and analytics
+
+Within `/engram`, follow the routed workflow reference that matches what you need:
+- ingest/import/export operations
+- memory consolidation, sleep, summarize, and resummarize
+- episode start, end, list, and recall
 
 After install, the skills appear in your Claude Code command palette (type `/` to see them). See [MCP Tool Profiles](tools.md#mcp-tool-profiles) for details on what each skill does and why you might need it.
 
