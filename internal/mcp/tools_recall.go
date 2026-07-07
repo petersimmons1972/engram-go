@@ -423,9 +423,12 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			), nil
 		}
 		sanitizeRecallResults(results)
+		var out map[string]any
+		var federatedDegraded bool
+		var federatedReason string
 		if mode == "handle" {
 			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-			out := map[string]any{
+			out = map[string]any{
 				"handles":    search.ToHandles(results),
 				"count":      len(results),
 				"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
@@ -434,32 +437,34 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			if len(failedProjects) > 0 {
 				out["failed_projects"] = federatedFailurePayload(failedProjects)
 			}
-			if !ok {
-				addRecallWarnings(out, cfg.RouterURL, reason, true, 0)
+			federatedDegraded, federatedReason = !ok, reason
+		} else {
+			out = map[string]any{"results": results, "count": len(results)}
+			if len(failedProjects) > 0 {
+				out["failed_projects"] = federatedFailurePayload(failedProjects)
 			}
-			return toolResult(out)
+			if includeConflicts && firstHandle != nil {
+				// All projects share the same Postgres instance, so the backend from
+				// the first successfully-initialized engine can serve cross-project
+				// GetRelationships and GetMemory calls (#154).
+				// EnrichWithConflicts uses each result's Memory.Project for the
+				// per-memory lookup; firstProject is the fallback for the rare empty case.
+				conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), firstProject, results)
+				sanitizeConflictingResults(conflicts)
+				out["conflicting_results"] = conflicts
+				out["conflict_count"] = len(conflicts)
+			}
+			ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+			out["degraded"] = degradedMap(!ok, reason)
+			federatedDegraded, federatedReason = !ok, reason
+			attachSynthesisDirective(out, query)
 		}
-		out := map[string]any{"results": results, "count": len(results)}
-		if len(failedProjects) > 0 {
-			out["failed_projects"] = federatedFailurePayload(failedProjects)
+		// Single consolidated warning-emission site for the federated path (both
+		// mode=="handle" and full-result branches funnel through here) — avoids
+		// the duplicate addRecallWarnings call sites the two branches used to have.
+		if federatedDegraded {
+			addRecallWarnings(out, cfg.RouterURL, federatedReason, true, 0)
 		}
-		if includeConflicts && firstHandle != nil {
-			// All projects share the same Postgres instance, so the backend from
-			// the first successfully-initialized engine can serve cross-project
-			// GetRelationships and GetMemory calls (#154).
-			// EnrichWithConflicts uses each result's Memory.Project for the
-			// per-memory lookup; firstProject is the fallback for the rare empty case.
-			conflicts := EnrichWithConflicts(ctx, firstHandle.Engine.Backend(), firstProject, results)
-			sanitizeConflictingResults(conflicts)
-			out["conflicting_results"] = conflicts
-			out["conflict_count"] = len(conflicts)
-		}
-		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-		out["degraded"] = degradedMap(!ok, reason)
-		if !ok {
-			addRecallWarnings(out, cfg.RouterURL, reason, true, 0)
-		}
-		attachSynthesisDirective(out, query)
 		return toolResult(out)
 	}
 
@@ -590,9 +595,18 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return structuredEmbedDegradedError(results)
 	}
 
+	// finalDegraded/finalReason/finalDroppedHits are finalized by whichever
+	// branch below runs, then fed into the single consolidated addRecallWarnings
+	// call site just before the function's one remaining return — this replaces
+	// the two separate per-branch addRecallWarnings calls that used to exist
+	// here, each of which could independently fire a warning for the same
+	// underlying embed-degraded/dropped-hits condition.
+	var out map[string]any
+	var finalDegraded bool
+	var finalReason string
 	if mode == "handle" {
 		sanitizeRecallResults(results)
-		out := map[string]any{
+		out = map[string]any{
 			"handles":    search.ToHandles(results),
 			"count":      len(results) + droppedHits,
 			"fetch_hint": "call memory_fetch with id and detail=summary|chunk|full",
@@ -606,52 +620,50 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
 		}
-		if embedDegraded || droppedHits > 0 {
-			reason := embedDegradeReason
-			addRecallWarnings(out, cfg.RouterURL, reason, embedDegraded, droppedHits)
+		if eventID != "" {
+			out["event_id"] = eventID
+			out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
+		}
+		finalDegraded, finalReason = embedDegraded, embedDegradeReason
+	} else {
+		sanitizeRecallResults(results)
+		out = map[string]any{"results": results, "count": len(results) + droppedHits}
+		if summary, err := buildLayerBSummary(ctx, h.Engine.Backend(), query, results); err != nil {
+			slog.Warn("layer_b recall post-pass failed", "project", project, "err", err)
+		} else if summary != nil {
+			out["layer_b"] = summary
+		}
+		attachSynthesisDirective(out, query)
+		if atomPreamble != "" {
+			out["atom_preamble"] = atomPreamble
 		}
 		if eventID != "" {
 			out["event_id"] = eventID
 			out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
 		}
-		return toolResult(out)
-	}
-	sanitizeRecallResults(results)
-	out := map[string]any{"results": results, "count": len(results) + droppedHits}
-	if summary, err := buildLayerBSummary(ctx, h.Engine.Backend(), query, results); err != nil {
-		slog.Warn("layer_b recall post-pass failed", "project", project, "err", err)
-	} else if summary != nil {
-		out["layer_b"] = summary
-	}
-	attachSynthesisDirective(out, query)
-	if atomPreamble != "" {
-		out["atom_preamble"] = atomPreamble
-	}
-	if eventID != "" {
-		out["event_id"] = eventID
-		out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
-	}
-	if includeConflicts {
-		conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
-		sanitizeConflictingResults(conflicts)
-		out["conflicting_results"] = conflicts
-		out["conflict_count"] = len(conflicts)
-	}
-	// Add embedder health status to response.
-	ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
-	isDegraded := embedDegraded || !ok
-	out["degraded"] = degradedMap(isDegraded, reason)
-	if droppedHits > 0 {
-		if dm, ok := out["degraded"].(map[string]any); ok {
-			dm["dropped_hits"] = droppedHits
+		if includeConflicts {
+			conflicts := EnrichWithConflicts(ctx, h.Engine.Backend(), project, results)
+			sanitizeConflictingResults(conflicts)
+			out["conflicting_results"] = conflicts
+			out["conflict_count"] = len(conflicts)
 		}
-	}
-	if isDegraded || droppedHits > 0 {
+		// Add embedder health status to response.
+		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
+		isDegraded := embedDegraded || !ok
+		out["degraded"] = degradedMap(isDegraded, reason)
+		if droppedHits > 0 {
+			if dm, ok := out["degraded"].(map[string]any); ok {
+				dm["dropped_hits"] = droppedHits
+			}
+		}
 		if reason == "" && embedDegraded {
 			// Use the actual degradation reason surfaced by the engine (#989).
 			reason = embedDegradeReason
 		}
-		addRecallWarnings(out, cfg.RouterURL, reason, isDegraded, droppedHits)
+		finalDegraded, finalReason = isDegraded, reason
+	}
+	if finalDegraded || droppedHits > 0 {
+		addRecallWarnings(out, cfg.RouterURL, finalReason, finalDegraded, droppedHits)
 	}
 	return toolResult(out)
 }
