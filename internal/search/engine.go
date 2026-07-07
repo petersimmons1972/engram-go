@@ -1752,30 +1752,27 @@ func rerankTextForMemory(m *types.Memory) string {
 // unfiltered pass carries the composite-scored ranking the caller expects on top.
 func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResult {
 	merged := make([]types.SearchResult, 0, len(a)+len(b))
-	seen := make(map[string]struct{}, len(a)+len(b))
+	indexByMemoryID := make(map[string]int, len(a)+len(b))
 	atomPreamble := firstAtomPreamble(a)
 	if atomPreamble == "" {
 		atomPreamble = firstAtomPreamble(b)
 	}
-	for _, r := range a {
+	appendOrHydrate := func(r types.SearchResult) {
 		if r.Memory == nil {
-			continue
+			return
 		}
-		if _, dup := seen[r.Memory.ID]; dup {
-			continue
+		if idx, dup := indexByMemoryID[r.Memory.ID]; dup {
+			merged[idx].Memory = preferLongerMemoryContent(merged[idx].Memory, r.Memory)
+			return
 		}
-		seen[r.Memory.ID] = struct{}{}
+		indexByMemoryID[r.Memory.ID] = len(merged)
 		merged = append(merged, r)
 	}
+	for _, r := range a {
+		appendOrHydrate(r)
+	}
 	for _, r := range b {
-		if r.Memory == nil {
-			continue
-		}
-		if _, dup := seen[r.Memory.ID]; dup {
-			continue
-		}
-		seen[r.Memory.ID] = struct{}{}
-		merged = append(merged, r)
+		appendOrHydrate(r)
 	}
 	if limit > 0 && len(merged) > limit {
 		merged = merged[:limit]
@@ -1786,6 +1783,19 @@ func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResu
 		}
 	}
 	return merged
+}
+
+func preferLongerMemoryContent(current, candidate *types.Memory) *types.Memory {
+	if current == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return current
+	}
+	if len(candidate.Content) <= len(current.Content) {
+		return current
+	}
+	return candidate
 }
 
 func firstAtomPreamble(results []types.SearchResult) string {
