@@ -15,7 +15,10 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
-const recallEmbedDegradedWarning = "recall degraded: embed unavailable, using BM25 fallback"
+const (
+	recallEmbedDegradedWarning = "recall degraded: embed unavailable, using BM25 fallback"
+	recallDroppedHitsWarning   = "recall degraded: dropped backend hits with missing memory records"
+)
 
 // degradedMap builds the "degraded" response field.
 // When embed is true the reason string is included; when embed is false the
@@ -71,17 +74,29 @@ func federatedFailureMessage(baseErr error, failed []search.FailedFederatedProje
 	return msg
 }
 
-func addRecallDegradedWarning(out map[string]any, endpoint, reason string) {
+func addRecallWarnings(out map[string]any, endpoint, reason string, embedDegraded bool, droppedHits int) {
+	warnings := make([]string, 0, 2)
+
 	// NOTE: RecallDegradedTotal is intentionally NOT incremented here.
 	// The engine layer (RecallWithOpts / RecallWithinMemory) is the single
 	// source of truth for this counter: it fires with the correct reason label
 	// derived from the actual embed error, and it covers all callers (MCP and
 	// non-MCP alike). Incrementing here would double-count every MCP recall
 	// that goes through the engine. (#973/#917 blocker fix)
-	slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
-		"embed_endpoint", endpoint,
-		"reason", reason)
-	out["warnings"] = []string{recallEmbedDegradedWarning}
+	if embedDegraded {
+		slog.Warn("memory_recall degraded: embed unavailable, using BM25 fallback",
+			"embed_endpoint", endpoint,
+			"reason", reason)
+		warnings = append(warnings, recallEmbedDegradedWarning)
+	}
+	if droppedHits > 0 {
+		slog.Warn("memory_recall degraded: dropped backend hits with missing memory records",
+			"dropped_hits", droppedHits)
+		warnings = append(warnings, recallDroppedHitsWarning)
+	}
+	if len(warnings) > 0 {
+		out["warnings"] = warnings
+	}
 }
 
 func finiteOrZero(v float64) float64 {
@@ -420,7 +435,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				out["failed_projects"] = federatedFailurePayload(failedProjects)
 			}
 			if !ok {
-				addRecallDegradedWarning(out, cfg.RouterURL, reason)
+				addRecallWarnings(out, cfg.RouterURL, reason, true, 0)
 			}
 			return toolResult(out)
 		}
@@ -442,7 +457,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		ok, reason := cfg.EmbedderHealth.Snapshot(ctx)
 		out["degraded"] = degradedMap(!ok, reason)
 		if !ok {
-			addRecallDegradedWarning(out, cfg.RouterURL, reason)
+			addRecallWarnings(out, cfg.RouterURL, reason, true, 0)
 		}
 		attachSynthesisDirective(out, query)
 		return toolResult(out)
@@ -593,7 +608,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		if embedDegraded || droppedHits > 0 {
 			reason := embedDegradeReason
-			addRecallDegradedWarning(out, cfg.RouterURL, reason)
+			addRecallWarnings(out, cfg.RouterURL, reason, embedDegraded, droppedHits)
 		}
 		if eventID != "" {
 			out["event_id"] = eventID
@@ -636,7 +651,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			// Use the actual degradation reason surfaced by the engine (#989).
 			reason = embedDegradeReason
 		}
-		addRecallDegradedWarning(out, cfg.RouterURL, reason)
+		addRecallWarnings(out, cfg.RouterURL, reason, isDegraded, droppedHits)
 	}
 	return toolResult(out)
 }
