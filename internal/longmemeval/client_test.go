@@ -248,6 +248,107 @@ func TestRecall_MemoryMapPopulated(t *testing.T) {
 	}
 }
 
+func TestListAllProjectMemories_PaginatesPast500(t *testing.T) {
+	type listCall struct {
+		Limit  any
+		Offset any
+	}
+
+	var calls []listCall
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_list": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			calls = append(calls, listCall{
+				Limit:  args["limit"],
+				Offset: args["offset"],
+			})
+
+			offset, _ := args["offset"].(float64)
+			limit, _ := args["limit"].(float64)
+			if int(limit) != 500 {
+				return nil, fmt.Errorf("limit = %v, want 500", args["limit"])
+			}
+
+			count := 500
+			if int(offset) == 500 {
+				count = 3
+			}
+			memories := make([]map[string]any, 0, count)
+			for i := 0; i < count; i++ {
+				id := fmt.Sprintf("mem-%03d", int(offset)+i)
+				memories = append(memories, map[string]any{
+					"id":      id,
+					"content": "content for " + id,
+					"project": "proj",
+					"tags":    []string{"session:s-1"},
+				})
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"memories": memories,
+				"count":    count,
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	memories, err := c.ListAllProjectMemories(ctx, "proj")
+	if err != nil {
+		t.Fatalf("ListAllProjectMemories: %v", err)
+	}
+	if len(memories) != 503 {
+		t.Fatalf("ListAllProjectMemories len = %d, want 503", len(memories))
+	}
+	if memories[0].ID != "mem-000" || memories[500].ID != "mem-500" || memories[502].ID != "mem-502" {
+		t.Fatalf("ListAllProjectMemories IDs missing paginated tail: first=%q page2=%q last=%q",
+			memories[0].ID, memories[500].ID, memories[502].ID)
+	}
+
+	if len(calls) != 2 {
+		t.Fatalf("memory_list calls = %d, want 2", len(calls))
+	}
+	if calls[0].Limit != float64(500) || calls[0].Offset != float64(0) {
+		t.Fatalf("first memory_list call = %+v, want limit=500 offset=0", calls[0])
+	}
+	if calls[1].Limit != float64(500) || calls[1].Offset != float64(500) {
+		t.Fatalf("second memory_list call = %+v, want limit=500 offset=500", calls[1])
+	}
+}
+
+func TestListAllProjectMemories_PropagatesToolErrors(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_list": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "boom"}},
+			}, nil
+		},
+	})
+
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	_, err = c.ListAllProjectMemories(ctx, "proj")
+	if err == nil {
+		t.Fatal("ListAllProjectMemories error = nil, want tool error")
+	}
+	if !strings.Contains(err.Error(), "memory_list") {
+		t.Fatalf("ListAllProjectMemories error = %q, want memory_list context", err)
+	}
+}
+
 func TestRecall_MemoryMapEmpty_NoTags(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

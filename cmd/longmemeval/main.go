@@ -110,7 +110,7 @@ type Config struct {
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
-	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
+	ExhaustiveAggregation bool // paginate memory_list across the whole project for count-shaped questions and union with primary recall
 
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	EnumerateFirst bool // inject enumerate-then-total instruction for aggregation questions (default off)
@@ -315,7 +315,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// H-TAB: topic-anchor boost (LME experiment #3)
 	fs.BoolVar(&cfg.TopicAnchorBoost, "topic-anchor-boost", false, "H-TAB: server-side topic-anchor scoring boost — preference memories containing domain tokens from the query score 1.25× higher; targets multi-preference-session distraction (default off, composable with --dual-preference-recall)")
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
-	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
+	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: paginate memory_list across the full project for count-shaped questions and union those memories with the primary recall results (default off)")
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.EnumerateFirst, "enumerate-first", false, "H12: inject enumerate-then-total generation instruction for aggregation questions (default off)")
 	// H-PE: preference-enumerate generation prompt
