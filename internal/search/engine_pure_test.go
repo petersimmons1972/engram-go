@@ -6,6 +6,7 @@ package search
 import (
 	"context"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -150,6 +151,33 @@ func TestSortResults_TiedScores(t *testing.T) {
 	}
 }
 
+func TestMergeSearchResults_PrefersLongerContentOnIDCollision(t *testing.T) {
+	longContent := strings.Repeat("x", 1024)
+	pass1 := []types.SearchResult{
+		{
+			Memory: &types.Memory{ID: "shared-id", Content: "short"},
+			Score:  0.95,
+		},
+	}
+	pass2 := []types.SearchResult{
+		{
+			Memory: &types.Memory{ID: "shared-id", Content: longContent},
+			Score:  0.20,
+		},
+	}
+
+	merged := mergeSearchResults(pass1, pass2, 10)
+	if len(merged) != 1 {
+		t.Fatalf("expected 1 merged result, got %d", len(merged))
+	}
+	if merged[0].Score != 0.95 {
+		t.Fatalf("expected pass-1 score to be preserved, got %v", merged[0].Score)
+	}
+	if got := merged[0].Memory.Content; got != longContent {
+		t.Fatalf("expected longer content from duplicate row to win, got len=%d want len=%d", len(got), len(longContent))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // toConnectedMemories
 // ---------------------------------------------------------------------------
@@ -253,7 +281,6 @@ func TestToConnectedMemories_MixedDirections(t *testing.T) {
 		t.Errorf("in-source direction = %q, want 'incoming'", dirs["in-source"])
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // maybeRerank
