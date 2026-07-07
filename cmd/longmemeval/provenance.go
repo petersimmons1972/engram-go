@@ -183,6 +183,9 @@ func buildFeatureFlags(cfg *Config) map[string]any {
 	if cfg.ContextTopKOverride != 0 {
 		flags["context_topk"] = cfg.ContextTopKOverride
 	}
+	if cfg.FullTimelineContext {
+		flags["full_timeline_context"] = true
+	}
 	if cfg.QueryParaphrasePasses != 0 {
 		flags["query_paraphrase_passes"] = cfg.QueryParaphrasePasses
 	}

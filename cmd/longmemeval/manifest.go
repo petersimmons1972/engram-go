@@ -115,6 +115,7 @@ func writeRunManifest(
 	manifest := map[string]any{
 		"run_id":                cfg.RunID,
 		"stage":                 stage,
+		"generation_context":    generationContextForArtifacts(cfg, stage),
 		"generated_at":          time.Now().UTC().Format(time.RFC3339),
 		"expected_total":        completeness.ExpectedTotal,
 		"ingest_done_total":     completeness.IngestDoneTotal,
@@ -160,6 +161,7 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 	status := map[string]any{
 		"run_id":                cfg.RunID,
 		"stage":                 stage,
+		"generation_context":    generationContextForArtifacts(cfg, stage),
 		"started_at":            startedAt.UTC().Format(time.RFC3339),
 		"ended_at":              endedAt.UTC().Format(time.RFC3339),
 		"exit_code":             exitCode,
@@ -214,6 +216,42 @@ func writeRunStatus(cfg *Config, stage string, startedAt, endedAt time.Time, exi
 		return
 	}
 	log.Printf("wrote %s", path)
+}
+
+func generationContextForArtifacts(cfg *Config, stage string) string {
+	if cfg != nil && cfg.FullTimelineContext {
+		return generationContextFullTimeline
+	}
+	switch stage {
+	case "score":
+		if persisted := readPersistedGenerationContext(cfg); persisted != "" {
+			return persisted
+		}
+	}
+	return generationContextRetrieval
+}
+
+func readPersistedGenerationContext(cfg *Config) string {
+	if cfg == nil || strings.TrimSpace(cfg.OutDir) == "" {
+		return ""
+	}
+	for _, name := range []string{"RUN_STATUS.json", "run_manifest.json"} {
+		data, err := os.ReadFile(filepath.Join(cfg.OutDir, name))
+		if err != nil {
+			continue
+		}
+		var artifact struct {
+			GenerationContext string `json:"generation_context"`
+		}
+		if err := json.Unmarshal(data, &artifact); err != nil {
+			continue
+		}
+		switch artifact.GenerationContext {
+		case generationContextRetrieval, generationContextFullTimeline:
+			return artifact.GenerationContext
+		}
+	}
+	return ""
 }
 
 func collectRunStatusSnapshot(cfg *Config) runStatusSnapshot {

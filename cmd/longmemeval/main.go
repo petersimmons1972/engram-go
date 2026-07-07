@@ -68,6 +68,7 @@ type Config struct {
 	// retrieval ablation flags
 	RecallTopK          int  // memories recalled before context trim (default 100)
 	ContextTopKOverride int  // explicit context topK; 0 = per-type default
+	FullTimelineContext bool // benchmark-only: bypass memory_recall/memory_fetch and inject the full dated haystack timeline into generation prompts
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
 	MaxBlockChars       int  // truncate each context block to this many chars before prompt assembly; 0 = no truncation
@@ -292,6 +293,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
 	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
+	fs.BoolVar(&cfg.FullTimelineContext, "full-timeline-context", false, "benchmark-only: bypass memory_recall and memory_fetch, and inject the full dated haystack timeline directly into generation prompts")
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
 	fs.IntVar(&cfg.MaxBlockChars, "max-block-chars", 0, "truncate each context block to this many chars before prompt assembly; 0 = no limit (use with large --context-topk to stay within vLLM max_model_len)")

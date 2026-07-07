@@ -32,6 +32,11 @@ type contextBlock struct {
 	Date      string
 }
 
+const (
+	generationContextRetrieval    = "retrieval"
+	generationContextFullTimeline = "full_timeline_context"
+)
+
 // add appends name to the log. Safe for concurrent use.
 func (pl *preservedLog) add(name string) {
 	pl.mu.Lock()
@@ -246,6 +251,26 @@ func formatContextBlocks(blocks []contextBlock) []string {
 		out = append(out, formatContextBlock(block.Content, block.SessionID, block.Date))
 	}
 	return out
+}
+
+func fullTimelineContextBlocks(item longmemeval.Item, maxBlockChars int) []string {
+	blocks := make([]string, 0, len(item.HaystackSessions))
+	for i, session := range item.HaystackSessions {
+		content := longmemeval.SessionContent(session)
+		if content == "" {
+			continue
+		}
+		if i < len(item.HaystackDates) {
+			if date := strings.TrimSpace(item.HaystackDates[i]); date != "" {
+				content = "Session date: " + date + "\n" + content
+			}
+		}
+		if maxBlockChars > 0 && len(content) > maxBlockChars {
+			content = content[:maxBlockChars]
+		}
+		blocks = append(blocks, content)
+	}
+	return blocks
 }
 
 // runRun executes the run stage. Returns the process exit code: 0 on success,
@@ -574,13 +599,18 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		temporalFallbackIDs []string
 		atomPreamble        string
 		primaryScoredHits   []longmemeval.ScoredMemoryID
+		contextBlocks       []string
 		err                 error
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
+	fullTimelineContext := cfg.FullTimelineContext
 	dualPreferenceRecall := cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
 	var sessionDominanceRatio float64
 	var contextSessionCount int
-	if serverTemporalWindow {
+	if fullTimelineContext {
+		contextBlocks = fullTimelineContextBlocks(item, cfg.MaxBlockChars)
+		contextSessionCount = len(contextBlocks)
+	} else if serverTemporalWindow {
 		retrievedIDs, err = mcpClient.RecallWithTemporalWindow(ctx, ingest.Project, recallQuery, effectiveRecallTopK, item.Question, item.QuestionDate)
 		if err != nil {
 			return longmemeval.RunEntry{
@@ -681,31 +711,36 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// --context-topk overrides per-type default; 0 means use per-type default.
 	// See resolveContextTopK for the full priority chain, including the
 	// issue #1176 --ss-pref-context-topk knob.
-	contextLimit := resolveContextTopK(cfg, item.QuestionType, runOpts.UseFullAggregationContext(item.Question), len(retrievedIDs))
-	contextIDs := selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
-	sessionDateByID := haystackDateBySessionID(item)
-	contextBlocks := make([]string, 0, contextLimit)
-	contentByID := make(map[string]string, contextLimit)
-	contextBlockByID := make(map[string]string, contextLimit)
-	for _, id := range contextIDs {
-		content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
-		if err != nil {
-			log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
-			continue
-		}
-		if content != "" {
-			// Truncate at storage time so contentByID and contextBlocks stay
-			// consistent. If --exact-signal-boost later rebuilds contextBlocks
-			// from contentByID, it gets already-truncated content — preventing
-			// full-length blocks from exceeding the model's context window.
-			if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
-				content = content[:cfg.MaxBlockChars]
+	contentByID := map[string]string{}
+	contextBlockByID := map[string]string{}
+	contextIDs := []string(nil)
+	if !fullTimelineContext {
+		contextLimit := resolveContextTopK(cfg, item.QuestionType, runOpts.UseFullAggregationContext(item.Question), len(retrievedIDs))
+		contextIDs = selectContextIDs(retrievedIDs, secondaryContextIDs, contextLimit)
+		sessionDateByID := haystackDateBySessionID(item)
+		contextBlocks = make([]string, 0, contextLimit)
+		contentByID = make(map[string]string, contextLimit)
+		contextBlockByID = make(map[string]string, contextLimit)
+		for _, id := range contextIDs {
+			content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
+			if err != nil {
+				log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
+				continue
 			}
-			sessionID := ingest.MemoryMap[id]
-			block := formatContextBlock(content, sessionID, sessionDateByID[sessionID])
-			contentByID[id] = content
-			contextBlockByID[id] = block
-			contextBlocks = append(contextBlocks, block)
+			if content != "" {
+				// Truncate at storage time so contentByID and contextBlocks stay
+				// consistent. If --exact-signal-boost later rebuilds contextBlocks
+				// from contentByID, it gets already-truncated content — preventing
+				// full-length blocks from exceeding the model's context window.
+				if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
+					content = content[:cfg.MaxBlockChars]
+				}
+				sessionID := ingest.MemoryMap[id]
+				block := formatContextBlock(content, sessionID, sessionDateByID[sessionID])
+				contentByID[id] = content
+				contextBlockByID[id] = block
+				contextBlocks = append(contextBlocks, block)
+			}
 		}
 	}
 
@@ -714,6 +749,8 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// chronological order and prevents nearby sessions from being displaced.
 	if _, ok := targetDateFromQuestion(item.Question, item.QuestionType, item.QuestionDate); ok {
 		contextBlocks = sortBlocksByTargetDate(contextBlocks, item.Question, item.QuestionType, item.QuestionDate)
+	} else if fullTimelineContext {
+		contextBlocks = sortBlocksChronologically(contextBlocks)
 	} else if cfg.ChronoSort {
 		contextBlocks = sortBlocksChronologically(contextBlocks)
 	}
@@ -722,7 +759,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// is not overwritten. --evidence-first-pack is suppressed for temporal-reasoning
 	// questions where chrono order is load-bearing (mirrors --temporal-prompt-aug
 	// precedence: the temporal branch takes priority over other reordering passes).
-	if cfg.ExactSignalBoost {
+	if cfg.ExactSignalBoost && !fullTimelineContext {
 		ranked := rankIDsByExactSignals(contextIDs, item.Question, contentByID)
 		reordered := make([]string, 0, len(ranked))
 		for _, id := range ranked {
@@ -808,7 +845,6 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		AtomInContext:         atomContextBlock != "",
 	}
 }
-
 
 func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {
 	seen := map[string]bool{}

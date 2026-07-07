@@ -221,9 +221,12 @@ go run ./cmd/benchmark/main.go \
 go run ./cmd/longmemeval help
 go run ./cmd/longmemeval ingest --data questions.json --out results/lme-run --cleanup-policy=never
 go run ./cmd/longmemeval run --data questions.json --out results/lme-run --recall-topk 100 --context-topk 8
+go run ./cmd/longmemeval run --data questions.json --out results/lme-run --full-timeline-context
 go run ./cmd/longmemeval score-efficient --data questions.json --out results/lme-run
 go run ./cmd/longmemeval analyze --results results/lme-run
 ```
+
+`--full-timeline-context` is a benchmark-only `run` mode for A/B attribution. It bypasses `memory_recall` and `memory_fetch`, then injects the full dated haystack timeline from the dataset directly into the generation prompt instead of using retrieved memories.
 
 **Current subcommands:**
 

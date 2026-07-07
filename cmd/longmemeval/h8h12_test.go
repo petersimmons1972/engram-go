@@ -20,6 +20,8 @@ type h8h12Capture struct {
 	topKs     []int
 	prompts   []string
 	questions []string
+	recalls   int
+	fetches   int
 }
 
 func (c *h8h12Capture) addTopK(topK int, query string) {
@@ -27,12 +29,19 @@ func (c *h8h12Capture) addTopK(topK int, query string) {
 	defer c.mu.Unlock()
 	c.topKs = append(c.topKs, topK)
 	c.questions = append(c.questions, query)
+	c.recalls++
 }
 
 func (c *h8h12Capture) addPrompt(prompt string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.prompts = append(c.prompts, prompt)
+}
+
+func (c *h8h12Capture) addFetch() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fetches++
 }
 
 func (c *h8h12Capture) lastTopK(t *testing.T) int {
@@ -55,6 +64,18 @@ func (c *h8h12Capture) lastPrompt(t *testing.T) string {
 	return c.prompts[len(c.prompts)-1]
 }
 
+func (c *h8h12Capture) recallCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recalls
+}
+
+func (c *h8h12Capture) fetchCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fetches
+}
+
 func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) *h8h12Capture {
 	t.Helper()
 
@@ -73,6 +94,7 @@ func runOneWithCapture(t *testing.T, cfg *Config, item longmemeval.Item) *h8h12C
 			}, nil
 		},
 		"memory_fetch": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			capture.addFetch()
 			resp, _ := json.Marshal(map[string]any{
 				"memory": map[string]any{"content": "Session date: 2024-05-10\nCalled my sister."},
 			})
@@ -227,5 +249,46 @@ func TestH8H12_CombinedFlags(t *testing.T) {
 	}
 	if got := capture.lastPrompt(t); !strings.Contains(got, longmemeval.EnumerateFirstPrefix()) {
 		t.Fatalf("combined flags prompt missing enumerate-first prefix:\n%s", got)
+	}
+}
+
+func TestFullTimelineContext_UsesHaystackTimelineWithoutRecallOrFetch(t *testing.T) {
+	item := longmemeval.Item{
+		QuestionID:   "q-full-timeline",
+		Question:     "What travel plans changed?",
+		QuestionType: "single-session-user",
+		QuestionDate: "2024-06-01",
+		HaystackDates: []string{
+			"2024-04-01",
+			"2024-05-10",
+		},
+		HaystackSessions: [][]longmemeval.Turn{
+			{
+				{Role: "user", Content: "Booked the Seattle trip."},
+				{Role: "assistant", Content: "Saved the itinerary."},
+			},
+			{
+				{Role: "user", Content: "Canceled the Denver hotel."},
+			},
+		},
+	}
+	capture := runOneWithCapture(t, &Config{
+		RecallTopK:          100,
+		FullTimelineContext: true,
+	}, item)
+
+	if got := capture.recallCalls(); got != 0 {
+		t.Fatalf("memory_recall calls = %d, want 0 in full timeline context mode", got)
+	}
+	if got := capture.fetchCalls(); got != 0 {
+		t.Fatalf("memory_fetch calls = %d, want 0 in full timeline context mode", got)
+	}
+
+	want := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, []string{
+		"Session date: 2024-04-01\nuser: Booked the Seattle trip.\nassistant: Saved the itinerary.",
+		"Session date: 2024-05-10\nuser: Canceled the Denver hotel.",
+	})
+	if got := capture.lastPrompt(t); got != want {
+		t.Fatalf("full timeline prompt mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
