@@ -23,7 +23,7 @@ Follow the workflow below in order. Each step shows the exact command.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_episode_start","arguments":{"project":"<project>","description":"<description>"}}'
@@ -42,7 +42,7 @@ episode is open are automatically associated with it.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_episode_end","arguments":{"id":"<episode-id>","project":"<project>","summary":"<optional-one-sentence-summary>"}}'
@@ -56,7 +56,7 @@ from what was done during the session.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_episode_list","arguments":{"project":"<project>","limit":10}}'
@@ -69,7 +69,7 @@ history. Present results as a table: episode ID, description, status, date.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_episode_recall","arguments":{"id":"<episode-id>","project":"<project>"}}'

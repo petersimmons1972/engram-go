@@ -7,10 +7,13 @@ package mcp
 // Uses newTestNoopPool from explore_handler_test.go for the recall tests.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -822,6 +825,21 @@ func newErrorEmbedPool(t *testing.T) *EnginePool {
 	return NewEnginePool(factory)
 }
 
+// newErrorEmbedTrackingPool combines errorEmbedder (always-degraded embed path)
+// with a caller-supplied recallTrackingBackend, so a single recall invocation
+// can be driven to hit both the embed-degraded path and a custom FTS result
+// set (e.g. nil-Memory hits for dropped-hit coverage) simultaneously.
+func newErrorEmbedTrackingPool(t *testing.T, backend *recallTrackingBackend) *EnginePool {
+	t.Helper()
+	factory := func(ctx context.Context, project string) (*EngineHandle, error) {
+		engine := search.New(ctx, backend, errorEmbedder{}, project,
+			"http://ollama-test:11434", "", false, nil, 0)
+		t.Cleanup(engine.Close)
+		return &EngineHandle{Engine: engine}, nil
+	}
+	return NewEnginePool(factory)
+}
+
 // TestHandleMemoryRecall_EmbedError_IncrementsDegradedCounter verifies that
 // when RecallWithOpts sets embedDegraded=true (embed backend hard-error path),
 // RecallDegradedTotal with label "embed_error" is incremented exactly once by
@@ -893,7 +911,75 @@ func TestHandleMemoryRecall_NilMemoryResultSurfacesDroppedHitsInDegradedField(t 
 	degraded, ok := out["degraded"].(map[string]any)
 	require.True(t, ok, "degraded field must be a map")
 	require.Equal(t, float64(1), degraded["dropped_hits"], "degraded.dropped_hits must reflect the one dropped hit")
+	warnings, ok := out["warnings"].([]any)
+	require.True(t, ok, "warnings field must be a list")
+	require.Contains(t, warnings, "recall degraded: dropped backend hits with missing memory records")
+	require.NotContains(t, warnings, recallEmbedDegradedWarning, "nil-memory dropped hits must not imply an embed fallback")
 	results, ok := out["results"].([]any)
 	require.True(t, ok, "results field must be a list")
 	require.Empty(t, results, "the memories payload must never include a nil-Memory entry")
+}
+
+// TestHandleMemoryRecall_EmbedDegradedAndDroppedHits_EmitsWarningsExactlyOnce is
+// the regression guard for the consolidated warning-emission call site in
+// handleMemoryRecall. Before the fix, the embed-degraded and dropped-hits
+// warnings were each added from a separate addRecallWarnings call site inside
+// the handler (one per branch); this test drives BOTH conditions true in a
+// single invocation and asserts:
+//   - the "warnings" list has exactly the expected length (no duplicate
+//     entries from a doubled call site),
+//   - both expected warning strings are present, and
+//   - the underlying embed-degradation slog.Warn line is emitted exactly
+//     once (not once per call site), verified via a captured log buffer.
+func TestHandleMemoryRecall_EmbedDegradedAndDroppedHits_EmitsWarningsExactlyOnce(t *testing.T) {
+	backend := &recallTrackingBackend{
+		ftsResults: []db.FTSResult{{
+			Memory: nil,
+			Score:  0.5,
+		}},
+	}
+	pool := newErrorEmbedTrackingPool(t, backend)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project": "test",
+		"query":   "embed degraded and dropped hits in one call",
+	}
+	cfg := testConfig()
+	cfg.RouterURL = "http://litellm:4000"
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+
+	res, err := handleMemoryRecall(context.Background(), pool, req, cfg)
+	require.NoError(t, err)
+	out := parseRecallResult(t, res)
+
+	warningsRaw, hasWarnings := out["warnings"]
+	require.True(t, hasWarnings, "warnings must be present when both embed-degraded and dropped-hits are true")
+	warnings, ok := warningsRaw.([]any)
+	require.True(t, ok, "warnings field must be a list")
+	require.Len(t, warnings, 2, "warnings must contain exactly the two expected entries, with no duplicates")
+	require.Contains(t, warnings, recallEmbedDegradedWarning)
+	require.Contains(t, warnings, "recall degraded: dropped backend hits with missing memory records")
+
+	degraded, ok := out["degraded"].(map[string]any)
+	require.True(t, ok, "degraded field must be a map")
+	require.Equal(t, true, degraded["embed"], "degraded.embed must be true on embed error path")
+	require.Equal(t, float64(1), degraded["dropped_hits"], "degraded.dropped_hits must reflect the one dropped hit")
+
+	// Verify the MCP-layer embed-degradation warning was logged exactly once —
+	// this is the direct regression guard for the duplicate-call-site bug: the
+	// handler used to have two addRecallWarnings call sites (one per branch),
+	// and a regression that reintroduces a second call in the same invocation
+	// would double this line's occurrence count.
+	logLines := strings.Split(strings.TrimRight(logBuf.String(), "\n"), "\n")
+	occurrences := 0
+	for _, line := range logLines {
+		if strings.Contains(line, "memory_recall degraded: embed unavailable, using BM25 fallback") {
+			occurrences++
+		}
+	}
+	require.Equal(t, 1, occurrences, "the memory_recall embed-degraded warning must be logged exactly once per invocation, not once per call site")
 }

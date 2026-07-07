@@ -22,7 +22,7 @@ All calls use:
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"<tool>","arguments":{...}}'

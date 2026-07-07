@@ -145,3 +145,39 @@ func TestMemoryDeleteProject_IdempotentDelete(t *testing.T) {
 	require.Len(t, stub.deleteCalls, 1)
 	require.Equal(t, "never-existed", stub.deleteCalls[0])
 }
+
+func TestMemorySleepLoadBearingParamsWrongTypeReturnLoudError(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "limit", key: "limit"},
+		{name: "llm_max_calls", key: "llm_max_calls"},
+		{name: "contradiction_limit", key: "contradiction_limit"},
+		{name: "llm_contradiction_detection", key: "llm_contradiction_detection"},
+		{name: "auto_supersede", key: "auto_supersede"},
+		{name: "min_similarity", key: "min_similarity"},
+		{name: "llm_model", key: "llm_model"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var poolGets int
+			pool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
+				poolGets++
+				return nil, context.Canceled
+			})
+
+			req := mcpgo.CallToolRequest{}
+			req.Params.Arguments = map[string]any{
+				"project": tc.name,
+				tc.key:    []any{"oops"},
+			}
+
+			result, err := handleMemorySleep(context.Background(), pool, req, Config{})
+			require.NoError(t, err)
+			require.Zero(t, poolGets, "wrong-type %s must be rejected before pool access", tc.key)
+			require.Contains(t, requireToolErrorText(t, result), tc.key)
+		})
+	}
+}

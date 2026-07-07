@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -18,21 +19,81 @@ import (
 // Context deadlines in the callers tighten this further per-request.
 var scorerHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
-// ollaHealthCheck returns true if the OAI /models endpoint responds with HTTP 200.
-func ollaHealthCheck(baseURL string) bool {
+type scorerPreflightErrorKind string
+
+const (
+	scorerPreflightAuth        scorerPreflightErrorKind = "auth"
+	scorerPreflightUnavailable scorerPreflightErrorKind = "unavailable"
+)
+
+type scorerPreflightError struct {
+	kind       scorerPreflightErrorKind
+	url        string
+	statusCode int
+	cause      error
+}
+
+func (e *scorerPreflightError) Error() string {
+	switch e.kind {
+	case scorerPreflightAuth:
+		if e.statusCode > 0 {
+			return fmt.Sprintf("scorer authentication failed during /models preflight at %s: HTTP %d", e.url, e.statusCode)
+		}
+		return fmt.Sprintf("scorer authentication failed during /models preflight at %s", e.url)
+	case scorerPreflightUnavailable:
+		if e.cause != nil {
+			return fmt.Sprintf("scorer endpoint unavailable during /models preflight at %s: %v", e.url, e.cause)
+		}
+		if e.statusCode > 0 {
+			return fmt.Sprintf("scorer endpoint unavailable during /models preflight at %s: HTTP %d", e.url, e.statusCode)
+		}
+	}
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	return "scorer preflight failed"
+}
+
+// ollaHealthCheck verifies that the OAI /models endpoint responds with HTTP 200.
+func ollaHealthCheck(baseURL, apiKey string) error {
 	url := strings.TrimRight(baseURL, "/") + "/models"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false
+		return &scorerPreflightError{
+			kind:  scorerPreflightUnavailable,
+			url:   url,
+			cause: err,
+		}
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := scorerHTTPClient.Do(req)
 	if err != nil {
-		return false
+		return &scorerPreflightError{
+			kind:  scorerPreflightUnavailable,
+			url:   url,
+			cause: err,
+		}
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return &scorerPreflightError{
+			kind:       scorerPreflightAuth,
+			url:        url,
+			statusCode: resp.StatusCode,
+		}
+	}
+	return &scorerPreflightError{
+		kind:       scorerPreflightUnavailable,
+		url:        url,
+		statusCode: resp.StatusCode,
+	}
 }
 
 // buildPreserveSkipSet splits scored labels into skip (CORRECT, preserve) and
@@ -86,13 +147,15 @@ func runScoreEfficient(cfg *Config) int {
 
 	// Decide backend: configured OAI scorer only. Switching judges on health
 	// failure makes score comparisons ambiguous, so fail closed instead.
-	useOAI := cfg.ScorerURL != "" && ollaHealthCheck(cfg.ScorerURL)
-	if useOAI {
-		log.Printf("score-efficient: backend=olla url=%s model=%s", cfg.ScorerURL, cfg.ScorerModel)
-	} else {
-		log.Printf("ERROR score-efficient: scorer unavailable or not configured; set --scorer-url/--scorer-model and verify /models")
+	if cfg.ScorerURL == "" || cfg.ScorerModel == "" {
+		log.Printf("ERROR score-efficient: scorer not configured; set --scorer-url/--scorer-model")
 		return 1
 	}
+	if err := ollaHealthCheck(cfg.ScorerURL, cfg.ScorerAPIKey); err != nil {
+		log.Printf("ERROR score-efficient: %v", err)
+		return 1
+	}
+	log.Printf("score-efficient: backend=olla url=%s model=%s", cfg.ScorerURL, cfg.ScorerModel)
 
 	work := make(chan longmemeval.RunEntry, len(runEntries))
 	var skipped, queued int

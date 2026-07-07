@@ -79,7 +79,7 @@ Use for published comparability snapshots:
 
 - URL: `https://api.openai.com/v1`
 - model: default `gpt-4o-2024-11-20`
-- API key from `LME_SCORER_API_KEY` or `OPENAI_API_KEY` (mapped to `--scorer-api-key`)
+- API key from `LME_SCORER_API_KEY` or `OPENAI_API_KEY` (inherited via environment only; do not pass secrets on argv)
 
 `gpt4o` runs are typically faster with fewer concurrency settings but carry higher cost.
 
@@ -88,7 +88,7 @@ Use for published comparability snapshots:
 `lme-judge.sh` maps judge preset selection to:
 
 - `qwen3`: `--scorer-lock`, `--gold-version`, `--item-set`, `--system` (scorer URL/model/thinking/max_tokens are not forwarded — `qwen3` defers to the scorer lock)
-- `gpt4o`: `--scorer-url`, `--scorer-model`, `--scorer-api-key` (optional), `--scorer-thinking`, `--scorer-max-tokens`, `--preserve-correct` (resume-friendly)
+- `gpt4o`: `--scorer-url`, `--scorer-model`, `--scorer-thinking`, `--scorer-max-tokens`, `--preserve-correct` (resume-friendly). The scorer API key is inherited via `LME_SCORER_API_KEY`.
 
 ## Accounting: strict vs lenient
 
