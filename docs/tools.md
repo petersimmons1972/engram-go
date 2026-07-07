@@ -55,10 +55,13 @@ make install-skills
 ```
 
 Available skills after install:
-- `/engram-consolidate` — memory consolidation and maintenance
-- `/engram-episodes` — session/episode tracking  
-- `/engram-ingest` — import/export operations
+- `/engram` — routes hidden maintenance workflows for ingest/import/export, consolidation, and episodes
 - `/engram-diagnose` — health and analytics
+
+Within `/engram`, use the referenced workflow that matches the task:
+- `reference/ingest.md` for import/export and bulk document ingest
+- `reference/consolidate.md` for consolidation, sleep, summarize, and resummarize
+- `reference/episodes.md` for episode lifecycle operations
 
 ---
 
