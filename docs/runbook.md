@@ -24,10 +24,10 @@ make status NO_REMOTE=1
 
 ## Metrics Overview
 
-Engram exports Prometheus metrics on port 8788 at `/metrics`. The endpoint requires `Authorization: Bearer $ENGRAM_API_KEY`. The canonical set appears below. All metrics are prefixed `engram_`.
+Engram exports Prometheus metrics on port 8788 at `/metrics`. The endpoint requires the header `"Authorization: Bearer ${ENGRAM_API_KEY}"`. The canonical set appears below. All metrics are prefixed `engram_`.
 
 ```bash
-curl -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics
+curl -H "Authorization: Bearer ${ENGRAM_API_KEY}" http://localhost:8788/metrics
 ```
 
 ---
@@ -89,13 +89,13 @@ docker exec engram-postgres psql -U engram -d engram -c "SELECT version FROM sch
 
 ```bash
 # Get the current metric value
-curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_episodes_ended_by_reaper_total
+curl -s -H "Authorization: Bearer ${ENGRAM_API_KEY}" http://localhost:8788/metrics | grep engram_episodes_ended_by_reaper_total
 
 # Local Docker only: check SSE connection logs
 docker logs engram-go-app | grep "episode" | tail -20
 
 # Monitor in real-time
-watch -n 1 'curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_episodes'
+watch -n 1 'curl -s -H "Authorization: Bearer ${ENGRAM_API_KEY}" http://localhost:8788/metrics | grep engram_episodes'
 ```
 
 **Typical fixes:**
@@ -119,7 +119,7 @@ watch -n 1 'curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:
 
 ```bash
 # Get the current metric value
-curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics | grep engram_worker_panics_total
+curl -s -H "Authorization: Bearer ${ENGRAM_API_KEY}" http://localhost:8788/metrics | grep engram_worker_panics_total
 
 # Local Docker only: get detailed panic logs
 docker logs engram-go-app 2>&1 | grep -i panic
@@ -170,11 +170,11 @@ docker exec engram-postgres pg_isready -U engram
 
 **Endpoint:** `GET /setup-token`
 
-**Contract:** Returns the current bearer token, SSE endpoint URL, and server name. Localhost-only (RFC1918 addresses accepted in Docker). Requires `Authorization: Bearer <ENGRAM_API_KEY>`.
+**Contract:** Returns the current bearer token, SSE endpoint URL, and server name. Localhost-only (RFC1918 addresses accepted in Docker). Requires the header `"Authorization: Bearer <ENGRAM_API_KEY>"`.
 
 ```bash
 curl \
-  --header "Authorization: Bearer $ENGRAM_API_KEY" \
+  --header "Authorization: Bearer ${ENGRAM_API_KEY}" \
   http://localhost:8788/setup-token
 # {"token":"...","endpoint":"http://127.0.0.1:8788/sse","name":"engram"}
 ```
@@ -266,7 +266,7 @@ docker logs engram-reembed | grep -i "exhausted\|retries\|failed"
 **Diagnostic**:
 ```bash
 # Live gauges
-curl -s -H "Authorization: Bearer $ENGRAM_API_KEY" http://localhost:8788/metrics   | grep '^engram_db_pool_'
+curl -s -H "Authorization: Bearer ${ENGRAM_API_KEY}" http://localhost:8788/metrics   | grep '^engram_db_pool_'
 
 # Slow queries that may be holding connections
 docker exec engram-postgres psql -U engram -d engram -c   "SELECT pid, now()-query_start AS age, state, substring(query,1,80) FROM pg_stat_activity WHERE state='active' ORDER BY age DESC LIMIT 10;"

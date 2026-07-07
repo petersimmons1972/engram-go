@@ -26,7 +26,7 @@ directly via HTTP.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_diagnose","arguments":{"id":"<memory-id>"}}'
@@ -46,7 +46,7 @@ conflicting memory ID and its content to the user. If `confidence` is low
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_aggregate","arguments":{"project":"<project>","group_by":"<tag|type|failure_class>"}}'
@@ -65,7 +65,7 @@ entry.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_summarize","arguments":{"id":"<memory-id>"}}'
