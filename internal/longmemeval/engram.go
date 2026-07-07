@@ -487,7 +487,6 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
-
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project           string
@@ -580,18 +579,22 @@ func (c *Client) RecallResultsWithExactBoost(ctx context.Context, project, query
 }
 
 func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, error) {
+	mode := p.mode
+	if mode == "" {
+		mode = "handle"
+	}
+	detail := "summary"
+	if mode == "full" {
+		detail = "full"
+	}
 	args := map[string]any{
 		"query":   p.query,
 		"project": p.project,
 		"top_k":   p.topK,
-		"detail":  "summary",
+		"detail":  detail,
 		// Benchmark retrieval must not mutate retrieval telemetry while
 		// measuring recall quality.
 		"record_event": false,
-	}
-	mode := p.mode
-	if mode == "" {
-		mode = "handle"
 	}
 	args["mode"] = mode
 	if p.exactFactBoost {

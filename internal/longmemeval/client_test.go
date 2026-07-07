@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -328,6 +329,56 @@ func TestRecallResultsWithOpts_FullModeIncludesTags(t *testing.T) {
 	}
 }
 
+func TestRecallResultsWithOpts_FullModeRequestsFullDetail(t *testing.T) {
+	fullContent := strings.Repeat("x", 700)
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "full" {
+				t.Fatalf("mode = %#v, want full", got)
+			}
+			detail, _ := args["detail"].(string)
+			content := fullContent
+			if detail != "full" {
+				content = content[:500]
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"results": []map[string]any{
+					{
+						"memory": map[string]any{
+							"id":      "mem-111",
+							"content": content,
+						},
+						"score": 0.9,
+					},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	results, err := c.RecallResultsWithOpts(ctx, "proj", "query", 5, nil, nil, false)
+	if err != nil {
+		t.Fatalf("RecallResultsWithOpts: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Memory == nil {
+		t.Fatal("memory = nil, want populated result")
+	}
+	if got := len(results[0].Memory.Content); got != len(fullContent) {
+		t.Fatalf("content len = %d, want %d", got, len(fullContent))
+	}
+}
 
 func TestRecall_SetsRecordEventFalse(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
