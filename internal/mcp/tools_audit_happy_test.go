@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/petersimmons1972/engram/internal/audit"
 	"github.com/petersimmons1972/engram/internal/weight"
+	"github.com/stretchr/testify/require"
 )
 
 // --- stubs implementing audit.AuditQuerier ---
@@ -428,6 +429,58 @@ func TestHandleAuditCompare_UnknownQueryID(t *testing.T) {
 	if int(count) != 0 {
 		t.Errorf("expected count=0 for unknown query, got %v", m["count"])
 	}
+}
+
+func TestHandleAuditCompare_Limit(t *testing.T) {
+	t.Run("default absent limit uses ten", func(t *testing.T) {
+		var capturedLimit any
+		db := &happyTestQuerier{
+			queryFn: func(_ string, args ...any) (pgx.Rows, error) {
+				if len(args) >= 2 {
+					capturedLimit = args[1]
+				}
+				return newHappyRows(nil), nil
+			},
+		}
+
+		result, err := handleMemoryAuditCompare(context.Background(), makeNilEnginePool(),
+			auditHandlerRequest(map[string]any{"query_id": "q1"}), makeTestConfig(db))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, 10, capturedLimit)
+	})
+
+	t.Run("coercible string limit is forwarded", func(t *testing.T) {
+		var capturedLimit any
+		db := &happyTestQuerier{
+			queryFn: func(_ string, args ...any) (pgx.Rows, error) {
+				if len(args) >= 2 {
+					capturedLimit = args[1]
+				}
+				return newHappyRows(nil), nil
+			},
+		}
+
+		result, err := handleMemoryAuditCompare(context.Background(), makeNilEnginePool(),
+			auditHandlerRequest(map[string]any{"query_id": "q1", "limit": "5"}), makeTestConfig(db))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, 5, capturedLimit)
+	})
+
+	t.Run("wrong type returns loud tool error", func(t *testing.T) {
+		db := &happyTestQuerier{
+			queryFn: func(_ string, _ ...any) (pgx.Rows, error) {
+				t.Fatal("audit DB must not be queried when limit has the wrong type")
+				return nil, nil
+			},
+		}
+
+		result, err := handleMemoryAuditCompare(context.Background(), makeNilEnginePool(),
+			auditHandlerRequest(map[string]any{"query_id": "q1", "limit": []any{"oops"}}), makeTestConfig(db))
+		require.NoError(t, err)
+		require.Contains(t, requireToolErrorText(t, result), "limit")
+	})
 }
 
 // --- weightStubDB: satisfies weight.tunerQuerier structurally ---
