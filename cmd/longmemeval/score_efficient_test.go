@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,80 @@ import (
 )
 
 func TestOllaHealthCheck_unreachable(t *testing.T) {
-	if ollaHealthCheck("http://127.0.0.1:19999/v1") {
-		t.Error("unreachable endpoint must return false")
+	err := ollaHealthCheck("http://127.0.0.1:19999/v1", "")
+	if err == nil {
+		t.Fatal("unreachable endpoint must return an error")
+	}
+	var preflightErr *scorerPreflightError
+	if !errors.As(err, &preflightErr) {
+		t.Fatalf("error = %T, want *scorerPreflightError", err)
+	}
+	if preflightErr.kind != scorerPreflightUnavailable {
+		t.Fatalf("preflight error kind = %q, want %q", preflightErr.kind, scorerPreflightUnavailable)
+	}
+}
+
+func TestOllaHealthCheck_UsesBearerWhenAPIKeySet(t *testing.T) {
+	scorer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+	}))
+	defer scorer.Close()
+
+	if err := ollaHealthCheck(scorer.URL, ""); err == nil {
+		t.Fatal("health check without api key must fail")
+	} else {
+		var preflightErr *scorerPreflightError
+		if !errors.As(err, &preflightErr) {
+			t.Fatalf("error = %T, want *scorerPreflightError", err)
+		}
+		if preflightErr.kind != scorerPreflightAuth {
+			t.Fatalf("preflight error kind = %q, want %q", preflightErr.kind, scorerPreflightAuth)
+		}
+	}
+
+	if err := ollaHealthCheck(scorer.URL, "test-key"); err != nil {
+		t.Fatalf("health check with api key: %v", err)
+	}
+}
+
+func TestOllaHealthCheck_AuthFailureDiffersFromEndpointUnavailability(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer authServer.Close()
+
+	authErr := ollaHealthCheck(authServer.URL, "")
+	if authErr == nil {
+		t.Fatal("expected auth error")
+	}
+
+	unavailableErr := ollaHealthCheck("http://127.0.0.1:19999/v1", "")
+	if unavailableErr == nil {
+		t.Fatal("expected unavailable error")
+	}
+
+	var authPreflightErr *scorerPreflightError
+	if !errors.As(authErr, &authPreflightErr) {
+		t.Fatalf("auth error = %T, want *scorerPreflightError", authErr)
+	}
+	if authPreflightErr.kind != scorerPreflightAuth {
+		t.Fatalf("auth error kind = %q, want %q", authPreflightErr.kind, scorerPreflightAuth)
+	}
+
+	var unavailablePreflightErr *scorerPreflightError
+	if !errors.As(unavailableErr, &unavailablePreflightErr) {
+		t.Fatalf("unavailable error = %T, want *scorerPreflightError", unavailableErr)
+	}
+	if unavailablePreflightErr.kind != scorerPreflightUnavailable {
+		t.Fatalf("unavailable error kind = %q, want %q", unavailablePreflightErr.kind, scorerPreflightUnavailable)
 	}
 }
 
