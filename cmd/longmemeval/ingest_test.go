@@ -121,6 +121,53 @@ func TestIngestOne_EmptySessionsSkipped(t *testing.T) {
 	}
 }
 
+func TestIngestOne_SanitizesRenderedContentBeforeStore(t *testing.T) {
+	var gotBody struct {
+		Content string   `json:"content"`
+		Tags    []string `json:"tags"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "m-sanitized"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	cfg := &Config{RunID: "run-sanitize", Workers: 1}
+	item := longmemeval.Item{
+		QuestionID:         "e56a43b9",
+		HaystackSessionIDs: []string{"18"},
+		HaystackDates:      []string{"2024-01-0\x021"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "us\x02er", Content: "pre\x02dicting contextualized target represent"}},
+		},
+	}
+
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
+	}
+	if strings.Contains(gotBody.Content, "\x02") {
+		t.Fatalf("stored content leaked control byte: %q", gotBody.Content)
+	}
+	if !strings.Contains(gotBody.Content, "Session date: 2024-01-01") {
+		t.Fatalf("stored content missing sanitized date prefix: %q", gotBody.Content)
+	}
+	if !strings.Contains(gotBody.Content, "user: predicting contextualized target represent") {
+		t.Fatalf("stored content missing sanitized role/content: %q", gotBody.Content)
+	}
+	for _, tag := range gotBody.Tags {
+		if strings.Contains(tag, "\x02") {
+			t.Fatalf("stored tag leaked control byte: %q (all tags: %v)", tag, gotBody.Tags)
+		}
+	}
+	if len(gotBody.Tags) < 3 || gotBody.Tags[1] != "sid:18" || gotBody.Tags[2] != "date:2024-01-01" {
+		t.Fatalf("stored tags missing sanitized sid/date tags: %v", gotBody.Tags)
+	}
+}
+
 // TestIngestOne_ScratchTTL_PassesExpiresAt verifies that when ScratchTTL > 0,
 // ingestOne requests explicit project-level TTL in the QuickStore request body.
 func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
