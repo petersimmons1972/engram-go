@@ -487,7 +487,6 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
-
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project           string
@@ -732,6 +731,70 @@ func (c *Client) FetchContent(ctx context.Context, project, id string) (string, 
 	return resp.Content, nil
 }
 
+// ListProjectMemories returns one page of project-scoped memories via
+// memory_list. limit is clamped into the documented MCP range [1,500].
+func (c *Client) ListProjectMemories(ctx context.Context, project string, limit, offset int) ([]types.Memory, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > projectMemoryListPageSize {
+		limit = projectMemoryListPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "memory_list",
+			Arguments: map[string]any{
+				"project": project,
+				"limit":   limit,
+				"offset":  offset,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.IsError {
+		return nil, toolErrorMsg(result, "memory_list")
+	}
+	if len(result.Content) == 0 {
+		return nil, fmt.Errorf("memory_list returned no content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		return nil, fmt.Errorf("unexpected content type from memory_list: %T", result.Content[0])
+	}
+	var resp struct {
+		Memories []types.Memory `json:"memories"`
+	}
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		return nil, fmt.Errorf("parse memory_list response: %w", err)
+	}
+	return resp.Memories, nil
+}
+
+// ListAllProjectMemories paginates memory_list until the project is exhausted.
+func (c *Client) ListAllProjectMemories(ctx context.Context, project string) ([]types.Memory, error) {
+	var all []types.Memory
+	offset := 0
+	for {
+		page, err := c.ListProjectMemories(ctx, project, projectMemoryListPageSize, offset)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			return all, nil
+		}
+		all = append(all, page...)
+		if len(page) < projectMemoryListPageSize {
+			return all, nil
+		}
+		offset += len(page)
+	}
+}
+
 // DeleteProject calls memory_delete_project to clean up an isolation project.
 func (c *Client) DeleteProject(ctx context.Context, project string) error {
 	result, err := c.mcp.CallTool(ctx, mcp.CallToolRequest{
@@ -768,8 +831,9 @@ type RestClient struct {
 }
 
 const (
-	restResponsePreviewBytes = 80
-	restBaseURLHint          = "is the base URL the server root rather than /mcp?"
+	restResponsePreviewBytes  = 80
+	restBaseURLHint           = "is the base URL the server root rather than /mcp?"
+	projectMemoryListPageSize = 500
 )
 
 // NewRestClient constructs a RestClient pointed at baseURL with Bearer auth.
