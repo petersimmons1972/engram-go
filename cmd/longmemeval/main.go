@@ -142,9 +142,9 @@ type Config struct {
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
 
-	// #754/#837: scratch TTL. Applied at ingest time via the /quick-store
-	// expires_at field so the `prune` subcommand can sweep expired lme-*
-	// projects later. Zero means durable (no expiry).
+	// #754/#837/#1329: scratch TTL. Applied at ingest time via explicit
+	// /quick-store project TTL fields so the `prune` subcommand can sweep
+	// expired lme-* projects later. Zero means durable (no expiry).
 	ScratchTTL time.Duration
 
 	// AtomMode: when true, fetch extracted preference atoms for the project

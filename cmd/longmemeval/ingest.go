@@ -83,8 +83,8 @@ func ingestOne(ctx context.Context, cfg *Config, restClient *longmemeval.RestCli
 
 	project := projectName(cfg.RunID, item.QuestionID)
 
-	// #837: compute expiresAt once per question. Passed to every QuickStore call;
-	// SetProjectTTL is idempotent (ON CONFLICT DO UPDATE) so repeated upserts are safe.
+	// #837/#1329: compute project expiry once per question. Passed to every
+	// QuickStore call; SetProjectTTL is idempotent so repeated upserts are safe.
 	var expiresAt *time.Time
 	if cfg.ScratchTTL > 0 {
 		t := time.Now().UTC().Add(cfg.ScratchTTL)
