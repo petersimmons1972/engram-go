@@ -99,22 +99,50 @@ func handleMemorySleep(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return nil, err
 	}
 	minSim := getFloat(args, "min_similarity", 0.7)
-	limit := getInt(args, "limit", 500)
+	limit, limitPresent, limitErr := requireOptionalInt(args, "limit")
+	if limitErr != nil {
+		return mcpgo.NewToolResultError(limitErr.Error()), nil
+	}
+	if !limitPresent {
+		limit = 500
+	}
 	if limit < 1 || limit > 5000 {
 		limit = 500
 	}
+	llmDetect, llmDetectPresent, llmDetectErr := requireOptionalBool(args, "llm_contradiction_detection")
+	if llmDetectErr != nil {
+		return mcpgo.NewToolResultError(llmDetectErr.Error()), nil
+	}
+	if !llmDetectPresent {
+		llmDetect = false
+	}
+	llmModel := getString(args, "llm_model", "llama3.2:3b")
+	llmMaxCalls, llmMaxCallsPresent, llmMaxCallsErr := requireOptionalInt(args, "llm_max_calls")
+	if llmMaxCallsErr != nil {
+		return mcpgo.NewToolResultError(llmMaxCallsErr.Error()), nil
+	}
+	if !llmMaxCallsPresent {
+		llmMaxCalls = 10
+	}
+	autoSupersede, autoSupersedePresent, autoSupersedeErr := requireOptionalBool(args, "auto_supersede")
+	if autoSupersedeErr != nil {
+		return mcpgo.NewToolResultError(autoSupersedeErr.Error()), nil
+	}
+	if !autoSupersedePresent {
+		autoSupersede = false
+	}
+	contradictionLimit, contradictionLimitPresent, contradictionLimitErr := requireOptionalInt(args, "contradiction_limit")
+	if contradictionLimitErr != nil {
+		return mcpgo.NewToolResultError(contradictionLimitErr.Error()), nil
+	}
+	if !contradictionLimitPresent {
+		contradictionLimit = 0
+	}
+
 	h, err := pool.Get(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	// Optional LLM contradiction detection params (opt-in, default off).
-	// RouterURL comes from server config; model and call cap are per-request.
-	llmDetect := getBool(args, "llm_contradiction_detection", false)
-	llmModel := getString(args, "llm_model", "llama3.2:3b")
-	llmMaxCalls := getInt(args, "llm_max_calls", 10)
-	autoSupersede := getBool(args, "auto_supersede", false)
-
-	contradictionLimit := getInt(args, "contradiction_limit", 0) // 0 → falls back to limit
 
 	runner := consolidatepkg.NewRunner(h.Engine.Backend(), project, h.Engine.Embedder())
 	stats, err := runner.RunAll(ctx, consolidatepkg.RunOptions{
