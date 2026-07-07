@@ -145,13 +145,17 @@ This is the moment it clicks. Run these checks and watch the pieces confirm each
 Check that the containers for your chosen profile are running and healthy:
 
 ```bash
-docker compose ps
+docker compose -f docker-compose.local.yml ps
 ```
 
-In hybrid mode, `engram-postgres` and `engram-go-app` should show `Up (healthy)`.
-In local-only mode, `engram-ollama` should also be present and healthy. If any
-service shows `Up (health: starting)`, wait 30 seconds and check again — the
-health checks run on a short interval.
+For the local-only profile, `engram-postgres`, `engram-ollama`, and
+`engram-go-app` should all show `Up (healthy)`. If any service shows
+`Up (health: starting)`, wait 30 seconds and check again — the health checks
+run on a short interval.
+
+If you started the hybrid profile with `make up`, rerun the same `ps` check
+against the default compose file. That profile should show `engram-postgres`
+and `engram-go-app` as `Up (healthy)`.
 
 Confirm the MCP endpoint is reachable:
 
@@ -356,13 +360,13 @@ And comment out the `ollama` service in `docker-compose.yml` so Docker does not 
 ## Common Problems
 
 **Port 8788 is already in use.**
-Something else claimed that port before Engram did. Set `ENGRAM_PORT=8789` (or any free port) in `.env`, restart with `docker compose up -d`, and update the port in your IDE config.
+Something else claimed that port before Engram did. Set `ENGRAM_PORT=8789` (or any free port) in `.env`, restart the same profile you started, and update the port in your IDE config. For local-only, use `docker compose -f docker-compose.local.yml up -d`. For hybrid, re-run `make up`.
 
 **Embedding model not found / connection errors on first start.**
 Ollama is still downloading the model — it can look like a crash when it is really just slow. Watch it finish:
 
 ```bash
-docker compose logs ollama -f
+docker compose -f docker-compose.local.yml logs ollama -f
 ```
 
 Wait for a line like `llm server listening`. Then the `engram-go-app` container will become healthy.
@@ -371,13 +375,13 @@ Wait for a line like `llm server listening`. Then the `engram-go-app` container 
 Either a container is not up yet, or `engram-go-app` is waiting on its dependencies. Confirm the state:
 
 ```bash
-docker compose ps
+docker compose -f docker-compose.local.yml ps
 ```
 
 If `engram-go-app` shows `Up (health: starting)`, it is waiting for Postgres or Ollama. Give it 30 seconds. If it shows `Exit`, the process crashed — check the logs to see why:
 
 ```bash
-docker compose logs engram-go-app
+docker compose -f docker-compose.local.yml logs engram-go-app
 ```
 
 The most common causes are a missing `POSTGRES_PASSWORD` or `ENGRAM_API_KEY`. Run `make init` to generate both.
