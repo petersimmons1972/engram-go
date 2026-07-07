@@ -11,13 +11,19 @@ import (
 
 	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/types"
 )
 
 type fakeClient struct {
 	storeCalls      []storeCall
 	storeBatchCalls []storeBatchCall
+	recallCalls     []recallCall
+	recallByQuery   map[string]longmemeval.RecallResult
+	listCalls       []int
+	listResult      []types.SearchResult
 	recallResult    longmemeval.RecallResult
 	recallErr       error
+	listErr         error
 }
 
 type storeCall struct {
@@ -43,7 +49,24 @@ func (f *fakeClient) StoreBatch(ctx context.Context, project string, items []lon
 }
 
 func (f *fakeClient) RecallFullResult(ctx context.Context, project, query string, topK int) (longmemeval.RecallResult, error) {
-	return f.recallResult, f.recallErr
+	f.recallCalls = append(f.recallCalls, recallCall{query: query, topK: topK})
+	if f.recallErr != nil {
+		return longmemeval.RecallResult{}, f.recallErr
+	}
+	if f.recallByQuery != nil {
+		if result, ok := f.recallByQuery[query]; ok {
+			return result, nil
+		}
+	}
+	return f.recallResult, nil
+}
+
+func (f *fakeClient) ListProjectMemories(ctx context.Context, project string, limit int) ([]types.SearchResult, error) {
+	f.listCalls = append(f.listCalls, limit)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listResult, nil
 }
 
 func TestScoreItem_HappyPath(t *testing.T) {
@@ -277,6 +300,36 @@ func TestParseIntAnswer(t *testing.T) {
 				t.Fatalf("ParseIntAnswer(%v) = (%d, %t), want (%d, %t)", tc.input, got, ok, tc.want, tc.wantOK)
 			}
 		})
+	}
+}
+
+func TestRun_SkipIngestDoesNotStore(t *testing.T) {
+	items := []longmemeval.Item{
+		{
+			QuestionID:       "q1",
+			Question:         "How many times did I bake something?",
+			Answer:           "1",
+			HaystackSessions: [][]longmemeval.Turn{{{Role: "user", Content: "x"}}},
+		},
+	}
+	client := &fakeClient{
+		recallResult: longmemeval.RecallResult{
+			LayerB: &layerb.Summary{Count: 1, Evidence: []layerb.EventRecord{{ProvenanceSpan: "chars:0-1"}}},
+		},
+	}
+	_, err := Run(context.Background(), client, items, Config{
+		ProjectPrefix: "wp05",
+		Limit:         10,
+		SkipIngest:    true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(client.storeCalls) != 0 || len(client.storeBatchCalls) != 0 {
+		t.Fatalf("store calls = (%d, %d), want (0, 0) with skip-ingest", len(client.storeCalls), len(client.storeBatchCalls))
+	}
+	if len(client.recallCalls) != 1 {
+		t.Fatalf("recallCalls = %d, want 1", len(client.recallCalls))
 	}
 }
 
