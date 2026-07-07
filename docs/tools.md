@@ -41,7 +41,7 @@ To call a hidden tool directly via HTTP:
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_consolidate","arguments":{"project":"default"}}'
 ```
@@ -55,10 +55,13 @@ make install-skills
 ```
 
 Available skills after install:
-- `/engram-consolidate` — memory consolidation and maintenance
-- `/engram-episodes` — session/episode tracking  
-- `/engram-ingest` — import/export operations
+- `/engram` — routes hidden maintenance workflows for ingest/import/export, consolidation, and episodes
 - `/engram-diagnose` — health and analytics
+
+Within `/engram`, use the referenced workflow that matches the task:
+- `reference/ingest.md` for import/export and bulk document ingest
+- `reference/consolidate.md` for consolidation, sleep, summarize, and resummarize
+- `reference/episodes.md` for episode lifecycle operations
 
 ---
 

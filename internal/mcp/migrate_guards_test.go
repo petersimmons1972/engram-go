@@ -18,6 +18,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func requireToolErrorText(t *testing.T, result *mcpgo.CallToolResult) string {
+	t.Helper()
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "expected MCP tool error result")
+	require.NotEmpty(t, result.Content)
+	text, ok := result.Content[0].(mcpgo.TextContent)
+	require.True(t, ok, "expected TextContent, got %T", result.Content[0])
+	return text.Text
+}
+
 // makeMigrateRequestFull builds a CallToolRequest with the full set of new args.
 func makeMigrateRequestFull(project, newModel string, extras map[string]any) mcpgo.CallToolRequest {
 	var req mcpgo.CallToolRequest
@@ -234,4 +244,35 @@ func TestMCPMigrateForceArgPassedToEngine(t *testing.T) {
 	_, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, cfg)
 	require.NoError(t, err)
 	require.True(t, forceSeen, "force=true must reach migrateFunc as Force=true")
+}
+
+func TestMCPMigrateLoadBearingBoolWrongTypeReturnsLoudError(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "force", key: "force"},
+		{name: "dry_run", key: "dry_run"},
+		{name: "confirm", key: "confirm"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var poolGets int
+			pool := NewEnginePool(func(_ context.Context, _ string) (*EngineHandle, error) {
+				poolGets++
+				return nil, context.Canceled
+			})
+			req := makeMigrateRequestFull("proj", "new-model", map[string]any{
+				tc.key: []any{"oops"},
+			})
+
+			result, err := handleMemoryMigrateEmbedder(context.Background(), pool, req, Config{
+				RouterURL: "http://ollama-test:11434",
+			})
+			require.NoError(t, err)
+			require.Zero(t, poolGets, "wrong-type %s must be rejected before pool access", tc.key)
+			require.Contains(t, requireToolErrorText(t, result), tc.key)
+		})
+	}
 }

@@ -46,6 +46,21 @@ _core_exit=0
 run_core_checks "$@" || _core_exit=$?
 [[ $_core_exit -eq 2 ]] && exit 2
 
+# ── D2. Documentation auth headers must stay copy-paste valid (#1340) ────────
+section "D2. Documentation auth header snippets"
+if out="$(scripts/check-doc-auth-headers.sh 2>&1)"; then
+  pass_rule "D2.doc-auth-headers" "all Authorization header snippets use quoted \${VAR} placeholders"
+else
+  while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
+    file="${hit%%:*}"
+    rest="${hit#*:}"
+    lineno="${rest%%:*}"
+    why="${rest#*: }"
+    finding "D2.doc-auth-headers" "$file" "$lineno" "$why"
+  done <<< "$out"
+fi
+
 # ── P1. No hardcoded DB connection strings (FM-06 / secrets) ─────────────────
 section "P1. Hardcoded DB connection strings"
 p1_n=0

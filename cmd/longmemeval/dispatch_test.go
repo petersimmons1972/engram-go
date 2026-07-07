@@ -174,6 +174,25 @@ func TestDispatch_APIKeyDefaultsDoNotLeakInHelp(t *testing.T) {
 	}
 }
 
+func TestDispatch_ScoreEfficientHelpDoesNotLeakScorerAPIKeyAndWarnsAboutArgv(t *testing.T) {
+	const secret = "scorer-secret-must-not-print"
+	t.Setenv("LME_SCORER_API_KEY", secret)
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "score-efficient", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("score-efficient --help exit = %d, want 0; stderr=%q", exit, stderr.String())
+	}
+
+	combined := stdout.String() + stderr.String()
+	if strings.Contains(combined, secret) {
+		t.Fatalf("score-efficient --help leaked LME_SCORER_API_KEY in output:\n%s", combined)
+	}
+	if !strings.Contains(combined, "avoid secrets on argv") {
+		t.Fatalf("score-efficient --help missing argv warning:\n%s", combined)
+	}
+}
+
 func TestApplySharedDefaultsPreservesExplicitEmptyValues(t *testing.T) {
 	t.Setenv("ENGRAM_API_KEY", "env-secret")
 	t.Setenv("ENGRAM_URL", "http://env.example.test")
@@ -217,6 +236,41 @@ func TestApplySharedDefaultsUsesEnvironmentWhenFlagsOmitted(t *testing.T) {
 	}
 	if cfg.ServerURL != "http://env.example.test" {
 		t.Fatalf("omitted --url should use ENGRAM_URL, got %q", cfg.ServerURL)
+	}
+}
+
+func TestApplyScoreEfficientDefaultsUsesEnvironmentWhenFlagOmitted(t *testing.T) {
+	t.Setenv("LME_SCORER_API_KEY", "lme-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+
+	cfg := &Config{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", "", "scorer API key")
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	applyScoreEfficientDefaults(cfg, fs)
+
+	if cfg.ScorerAPIKey != "lme-secret" {
+		t.Fatalf("omitted --scorer-api-key should use LME_SCORER_API_KEY first, got %q", cfg.ScorerAPIKey)
+	}
+}
+
+func TestApplyScoreEfficientDefaultsPreservesExplicitFlagValue(t *testing.T) {
+	t.Setenv("LME_SCORER_API_KEY", "lme-secret")
+
+	cfg := &Config{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", "", "scorer API key")
+	if err := fs.Parse([]string{"--scorer-api-key=argv-secret"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	applyScoreEfficientDefaults(cfg, fs)
+
+	if cfg.ScorerAPIKey != "argv-secret" {
+		t.Fatalf("explicit --scorer-api-key must remain unchanged, got %q", cfg.ScorerAPIKey)
 	}
 }
 

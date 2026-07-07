@@ -20,7 +20,7 @@ below. Capture the response and report the result (or error) to the user.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_consolidate","arguments":{"project":"<project>"}}'
@@ -33,7 +33,7 @@ normal session.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_sleep","arguments":{"project":"<project>"}}'
@@ -47,7 +47,7 @@ enough, or at end-of-week cleanup. Warn the user this may take a few minutes.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_summarize","arguments":{"id":"<memory-id>"}}'
@@ -60,7 +60,7 @@ rather than waiting for the background summarizer.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_resummarize","arguments":{"project":"<project>"}}'

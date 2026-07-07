@@ -121,8 +121,55 @@ func TestIngestOne_EmptySessionsSkipped(t *testing.T) {
 	}
 }
 
+func TestIngestOne_SanitizesRenderedContentBeforeStore(t *testing.T) {
+	var gotBody struct {
+		Content string   `json:"content"`
+		Tags    []string `json:"tags"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "m-sanitized"})
+	}))
+	defer srv.Close()
+
+	rc := longmemeval.NewRestClient(srv.URL, "")
+	cfg := &Config{RunID: "run-sanitize", Workers: 1}
+	item := longmemeval.Item{
+		QuestionID:         "e56a43b9",
+		HaystackSessionIDs: []string{"18"},
+		HaystackDates:      []string{"2024-01-0\x021"},
+		HaystackSessions: [][]longmemeval.Turn{
+			{{Role: "us\x02er", Content: "pre\x02dicting contextualized target represent"}},
+		},
+	}
+
+	entry := ingestOne(t.Context(), cfg, rc, item)
+	if entry.Status != "done" {
+		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
+	}
+	if strings.Contains(gotBody.Content, "\x02") {
+		t.Fatalf("stored content leaked control byte: %q", gotBody.Content)
+	}
+	if !strings.Contains(gotBody.Content, "Session date: 2024-01-01") {
+		t.Fatalf("stored content missing sanitized date prefix: %q", gotBody.Content)
+	}
+	if !strings.Contains(gotBody.Content, "user: predicting contextualized target represent") {
+		t.Fatalf("stored content missing sanitized role/content: %q", gotBody.Content)
+	}
+	for _, tag := range gotBody.Tags {
+		if strings.Contains(tag, "\x02") {
+			t.Fatalf("stored tag leaked control byte: %q (all tags: %v)", tag, gotBody.Tags)
+		}
+	}
+	if len(gotBody.Tags) < 3 || gotBody.Tags[1] != "sid:18" || gotBody.Tags[2] != "date:2024-01-01" {
+		t.Fatalf("stored tags missing sanitized sid/date tags: %v", gotBody.Tags)
+	}
+}
+
 // TestIngestOne_ScratchTTL_PassesExpiresAt verifies that when ScratchTTL > 0,
-// ingestOne passes a non-nil expires_at in the QuickStore request body.
+// ingestOne requests explicit project-level TTL in the QuickStore request body.
 func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,24 +196,30 @@ func TestIngestOne_ScratchTTL_PassesExpiresAt(t *testing.T) {
 		t.Fatalf("expected done, got %s: %s", entry.Status, entry.Error)
 	}
 
-	raw, ok := gotBody["expires_at"]
+	raw, ok := gotBody["project_expires_at"]
 	if !ok {
-		t.Fatal("expires_at missing from QuickStore request body")
+		t.Fatal("project_expires_at missing from QuickStore request body")
+	}
+	if gotBody["set_project_ttl"] != true {
+		t.Fatal("set_project_ttl must be true when ScratchTTL is enabled")
+	}
+	if _, ok := gotBody["expires_at"]; ok {
+		t.Fatal("expires_at must not be sent for project TTL")
 	}
 	parsed, err := time.Parse(time.RFC3339, raw.(string))
 	if err != nil {
-		t.Fatalf("expires_at is not RFC3339: %v", err)
+		t.Fatalf("project_expires_at is not RFC3339: %v", err)
 	}
-	// expires_at is serialized as RFC3339 (second precision), so truncate to seconds for comparison.
+	// project_expires_at is serialized as RFC3339 (second precision), so truncate to seconds for comparison.
 	expectedMin := before.Add(168 * time.Hour).Truncate(time.Second)
 	expectedMax := after.Add(168 * time.Hour).Add(time.Second) // +1s to account for truncation
 	if parsed.Before(expectedMin) || parsed.After(expectedMax) {
-		t.Errorf("expires_at %v outside expected range [%v, %v]", parsed, expectedMin, expectedMax)
+		t.Errorf("project_expires_at %v outside expected range [%v, %v]", parsed, expectedMin, expectedMax)
 	}
 }
 
 // TestIngestOne_NoScratchTTL_OmitsExpiresAt verifies that when ScratchTTL == 0,
-// expires_at is absent from the QuickStore request body.
+// project TTL fields are absent from the QuickStore request body.
 func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +244,12 @@ func TestIngestOne_NoScratchTTL_OmitsExpiresAt(t *testing.T) {
 	}
 	if _, ok := gotBody["expires_at"]; ok {
 		t.Error("expires_at must be absent from QuickStore body when ScratchTTL is 0")
+	}
+	if _, ok := gotBody["set_project_ttl"]; ok {
+		t.Error("set_project_ttl must be absent from QuickStore body when ScratchTTL is 0")
+	}
+	if _, ok := gotBody["project_expires_at"]; ok {
+		t.Error("project_expires_at must be absent from QuickStore body when ScratchTTL is 0")
 	}
 }
 
