@@ -5,6 +5,7 @@
 # (e.g., shared machines, background processing without an active Claude session).
 #
 # Installation (if you want timer mode):
+#   make install-instinct
 #   cp ops/instinct.service ~/.config/systemd/user/
 #   cp ops/instinct.timer   ~/.config/systemd/user/
 #   systemctl --user daemon-reload
@@ -18,11 +19,10 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/env python3 -m instinct.run
+ExecStart=%h/bin/instinct-consolidate
 WorkingDirectory=%h
 StandardOutput=append:%S/instinct/run.log
 StandardError=append:%S/instinct/run.log
-Environment=PYTHONPATH=%h/projects/engram-go/consolidator
 
 [Install]
 WantedBy=default.target
