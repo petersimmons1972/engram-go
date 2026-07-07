@@ -123,6 +123,24 @@ func TestQuickStoreHandler_InvalidJSON(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestQuickStoreRequestBodyLimit(t *testing.T) {
+	s := newQuickStoreServer(t)
+
+	body, err := json.Marshal(map[string]any{
+		"content": "short body",
+		"project": "global",
+		"padding": string(bytes.Repeat([]byte("x"), 2*1024*1024)),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-store", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickStore(w, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
 // TestQuickStoreHandler_OversizedContent verifies that content > 1 MiB is rejected with 400.
 func TestQuickStoreHandler_OversizedContent(t *testing.T) {
 	s := newQuickStoreServer(t)
