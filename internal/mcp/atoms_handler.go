@@ -91,6 +91,10 @@ func (s *Server) handleAtomStore(w http.ResponseWriter, r *http.Request, pg *db.
 		writeJSONError(w, http.StatusBadRequest, "atom is required for action=store")
 		return
 	}
+	if req.Atom.ID != "" {
+		writeJSONError(w, http.StatusBadRequest, "atom.id must be omitted for action=store")
+		return
+	}
 	req.Atom.Project = req.Project
 
 	if insErr := pg.InsertAtom(r.Context(), req.Atom); insErr != nil {
