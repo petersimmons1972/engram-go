@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
         - name: engram-go
-          image: registry.petersimmons.com/engram/engram-go:main-708d21b-20260704174004@sha256:49d0f254e614fe7e7519106cf1c82f0494acbdf1bc7d692a39a22f8ab50922e3
+          image: registry.petersimmons.com/engram/engram-go:main-5a51ffe-20260707004023@sha256:d105b96fa6082669e20c92adc70e47e9d6b33d81463c7ceb6e31a9b84a3babdd
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
