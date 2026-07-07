@@ -119,10 +119,14 @@ print(f"  Wrote {settings_path}")
 PYEOF
 
 # 3. Build instinct binary
+# Name/path must match ops/instinct.service's ExecStart and the `make install-instinct`
+# target (see Makefile), and hooks/post-tool-use.sh's `command -v instinct-consolidate`
+# check — all three must agree on the same binary.
 echo "Building instinct binary..."
-go build -o "$HOME/bin/instinct" "$REPO_DIR/cmd/instinct"
-echo "  Binary installed at $HOME/bin/instinct"
+mkdir -p "$HOME/bin"
+go build -o "$HOME/bin/instinct-consolidate" "$REPO_DIR/cmd/instinct"
+echo "  Binary installed at $HOME/bin/instinct-consolidate"
 
 echo "Done."
-echo "  instinct binary: $HOME/bin/instinct"
+echo "  instinct binary: $HOME/bin/instinct-consolidate"
 echo "  To disable without uninstalling: export INSTINCT_ENABLED=0"

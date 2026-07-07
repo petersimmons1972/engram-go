@@ -109,6 +109,24 @@ func TestHandleQuickRecall_InvalidJSON(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestQuickRecallRequestBodyLimit(t *testing.T) {
+	s := newQuickRecallServer(t)
+
+	body, err := json.Marshal(map[string]any{
+		"query":   "short query",
+		"project": "global",
+		"padding": string(bytes.Repeat([]byte("x"), 512*1024)),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/quick-recall", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleQuickRecall(w, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
 // TestHandleQuickRecall_LimitClamped verifies that a limit > 20 is clamped to 20
 // and the request still succeeds.
 func TestHandleQuickRecall_LimitClamped(t *testing.T) {

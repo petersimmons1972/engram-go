@@ -24,10 +24,10 @@ To configure manually:
 
 ```bash
 claude mcp add engram --transport sse http://localhost:8788/sse \
-  --header "Authorization: Bearer your-api-key-here"
+  --header "Authorization: Bearer ${ENGRAM_API_KEY}"
 ```
 
-Copy your `ENGRAM_API_KEY` from `.env` for the header value. Bearer authentication is required — connections without it are rejected with `401 Unauthorized`.
+Copy your `ENGRAM_API_KEY` from `.env` for the header value. Bearer authentication is required — connections without the header `"Authorization: Bearer <token>"` are rejected with `401 Unauthorized`.
 
 Verify the tools loaded:
 
@@ -187,11 +187,11 @@ docker compose up -d
 
 Bearer auth is not bureaucracy — it is the thing standing between your memory store and anything else running on your machine. Engram can read and write everything you have stored: decisions, patterns, credentials metadata, architectural context accumulated over months of work. A server that accepted connections from any local process without a token would be one misconfigured tool call away from exfiltrating all of it.
 
-Bearer token authentication is required. The server refuses to start without `ENGRAM_API_KEY` set. Every SSE connection must present `Authorization: Bearer <token>` — connections without it are rejected with `401 Unauthorized`.
+Bearer token authentication is required. The server refuses to start without `ENGRAM_API_KEY` set. Every SSE connection must present the header `"Authorization: Bearer <token>"` — connections without it are rejected with `401 Unauthorized`.
 
 **For Claude Code:** `make setup` handles the token automatically.
 
-**For other clients:** copy `ENGRAM_API_KEY` from `.env` and add the `Authorization: Bearer <token>` header to your IDE's MCP config (see the Cursor example above).
+**For other clients:** copy `ENGRAM_API_KEY` from `.env` and add the header `"Authorization: Bearer <token>"` to your IDE's MCP config (see the Cursor example above).
 
 The token is stored in `.env` — never committed to git. The `/setup-token` endpoint (localhost-only) is still Bearer-protected; `make setup` bootstraps by probing local key sources such as `.env` and `~/.config/engram/api_key`, then uses that token to fetch the live config programmatically.
 

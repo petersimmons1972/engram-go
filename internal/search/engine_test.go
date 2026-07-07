@@ -3,6 +3,8 @@ package search_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -181,6 +183,51 @@ func TestSearchEngine_Connect(t *testing.T) {
 
 	err := engine.Connect(ctx, m1.ID, m2.ID, types.RelTypeRelatesTo, 1.0)
 	require.NoError(t, err)
+}
+
+func TestSearchEngine_ConnectStrengthBoundaries(t *testing.T) {
+	for _, strength := range []float64{0.0, 1.0} {
+		t.Run(fmt.Sprintf("strength_%g", strength), func(t *testing.T) {
+			engine := newTestEngine(t, uniqueProject("test-connect-strength"))
+			t.Cleanup(func() { engine.Close() })
+			ctx := context.Background()
+
+			m1 := &types.Memory{ID: types.NewMemoryID(), Content: "source",
+				MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+			m2 := &types.Memory{ID: types.NewMemoryID(), Content: "target",
+				MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+			require.NoError(t, engine.Store(ctx, m1))
+			require.NoError(t, engine.Store(ctx, m2))
+
+			require.NoError(t, engine.Connect(ctx, m1.ID, m2.ID, types.RelTypeRelatesTo, strength))
+
+			rels, err := engine.Backend().GetRelationships(ctx, engine.Project(), m1.ID)
+			require.NoError(t, err)
+			require.Len(t, rels, 1)
+			require.InDelta(t, strength, rels[0].Strength, 0.0001)
+		})
+	}
+}
+
+func TestSearchEngine_ConnectRejectsInvalidStrength(t *testing.T) {
+	engine := newTestEngine(t, uniqueProject("test-connect-invalid-strength"))
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	m1 := &types.Memory{ID: types.NewMemoryID(), Content: "source",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	m2 := &types.Memory{ID: types.NewMemoryID(), Content: "target",
+		MemoryType: types.MemoryTypeContext, StorageMode: "focused"}
+	require.NoError(t, engine.Store(ctx, m1))
+	require.NoError(t, engine.Store(ctx, m2))
+
+	for _, strength := range []float64{-0.5, -1e-9, 1.0000001, 1.5, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		t.Run(fmt.Sprintf("strength_%v", strength), func(t *testing.T) {
+			err := engine.Connect(ctx, m1.ID, m2.ID, types.RelTypeRelatesTo, strength)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "strength must be between 0 and 1")
+		})
+	}
 }
 
 func TestSearchEngine_Correct(t *testing.T) {

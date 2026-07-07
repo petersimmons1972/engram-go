@@ -134,6 +134,43 @@ func TestRequireOptionalInt_UncoercibleValue_ReturnsLoudError(t *testing.T) {
 	require.Contains(t, err.Error(), "importance")
 }
 
+// ── requireOptionalBool: loud-error path for load-bearing flags ────────────
+
+func TestRequireOptionalBool_AbsentKey(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{}, "force")
+	require.NoError(t, err)
+	require.False(t, present)
+	require.False(t, b)
+}
+
+func TestRequireOptionalBool_NullValue(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{"force": nil}, "force")
+	require.NoError(t, err)
+	require.False(t, present)
+	require.False(t, b)
+}
+
+func TestRequireOptionalBool_NativeBool(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{"force": true}, "force")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.True(t, b)
+}
+
+func TestRequireOptionalBool_CoercibleString(t *testing.T) {
+	b, present, err := requireOptionalBool(map[string]any{"force": "true"}, "force")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.True(t, b)
+}
+
+func TestRequireOptionalBool_UncoercibleValue_ReturnsLoudError(t *testing.T) {
+	_, present, err := requireOptionalBool(map[string]any{"force": []any{"oops"}}, "force")
+	require.True(t, present, "the key was present — callers must not treat this as absent")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "force")
+}
+
 // ── toStringSlice(args, key): presence vs. wrong-type vs. valid array ──────
 
 func TestToStringSlice_AbsentKey_ReturnsNilNil(t *testing.T) {

@@ -24,13 +24,30 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 	if err != nil {
 		return nil, err
 	}
-	h, err := pool.Get(ctx, project)
-	if err != nil {
-		return nil, err
-	}
 	errResult, newModel := requireString(args, "new_model")
 	if errResult != nil {
 		return errResult, nil
+	}
+	force, forcePresent, forceErr := requireOptionalBool(args, "force")
+	if forceErr != nil {
+		return mcpgo.NewToolResultError(forceErr.Error()), nil
+	}
+	if !forcePresent {
+		force = false
+	}
+	dryRun, dryRunPresent, dryRunErr := requireOptionalBool(args, "dry_run")
+	if dryRunErr != nil {
+		return mcpgo.NewToolResultError(dryRunErr.Error()), nil
+	}
+	if !dryRunPresent {
+		dryRun = false
+	}
+	confirm, confirmPresent, confirmErr := requireOptionalBool(args, "confirm")
+	if confirmErr != nil {
+		return mcpgo.NewToolResultError(confirmErr.Error()), nil
+	}
+	if !confirmPresent {
+		confirm = false
 	}
 
 	// Resolve the Ollama URL for this operation: caller may supply ollama_url to
@@ -47,11 +64,10 @@ func handleMemoryMigrateEmbedder(ctx context.Context, pool *EnginePool, req mcpg
 		validatedUpstreamURL = raw
 	}
 
-	// Extract new safety-guard args early — dry_run must bypass the dimension
-	// pre-flight since a dry_run only counts; it never nulls anything.
-	force := getBool(args, "force", false)
-	dryRun := getBool(args, "dry_run", false)
-	confirm := getBool(args, "confirm", false)
+	h, err := pool.Get(ctx, project)
+	if err != nil {
+		return nil, err
+	}
 
 	// Dimension pre-flight (#251): compare stored dims against the new model's output.
 	// Avoids nulling all embeddings only to discover a dimension mismatch at INSERT.

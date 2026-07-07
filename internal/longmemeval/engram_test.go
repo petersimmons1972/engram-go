@@ -295,7 +295,7 @@ func TestRestClient_QuickRecall_ObjectErrorResponse(t *testing.T) {
 }
 
 // TestRestClient_QuickStore_ExpiresAt_Set verifies that a non-nil expiresAt is
-// serialized as "expires_at" (RFC3339) in the POST body.
+// serialized as explicit project-level TTL intent in the POST body.
 func TestRestClient_QuickStore_ExpiresAt_Set(t *testing.T) {
 	future := time.Now().UTC().Add(72 * time.Hour)
 	var gotBody map[string]any
@@ -316,25 +316,31 @@ func TestRestClient_QuickStore_ExpiresAt_Set(t *testing.T) {
 	if id != "mem-ttl" {
 		t.Errorf("id = %q, want mem-ttl", id)
 	}
-	raw, ok := gotBody["expires_at"]
+	raw, ok := gotBody["project_expires_at"]
 	if !ok {
-		t.Fatal("expires_at field missing from request body")
+		t.Fatal("project_expires_at field missing from request body")
+	}
+	if gotBody["set_project_ttl"] != true {
+		t.Fatal("set_project_ttl must be true when project_expires_at is sent")
+	}
+	if _, ok := gotBody["expires_at"]; ok {
+		t.Fatal("expires_at must not be sent for project TTL")
 	}
 	parsed, err := time.Parse(time.RFC3339, raw.(string))
 	if err != nil {
-		t.Fatalf("expires_at is not RFC3339: %v", err)
+		t.Fatalf("project_expires_at is not RFC3339: %v", err)
 	}
 	delta := parsed.Sub(future)
 	if delta < 0 {
 		delta = -delta
 	}
 	if delta > 2*time.Second {
-		t.Errorf("expires_at delta = %v, want < 2s", delta)
+		t.Errorf("project_expires_at delta = %v, want < 2s", delta)
 	}
 }
 
 // TestRestClient_QuickStore_ExpiresAt_Nil verifies that a nil expiresAt does NOT
-// include an "expires_at" key in the POST body (not null — fully absent).
+// include any project TTL keys in the POST body (not null — fully absent).
 func TestRestClient_QuickStore_ExpiresAt_Nil(t *testing.T) {
 	var gotBody map[string]any
 
@@ -356,6 +362,12 @@ func TestRestClient_QuickStore_ExpiresAt_Nil(t *testing.T) {
 	}
 	if _, ok := gotBody["expires_at"]; ok {
 		t.Error("expires_at must be absent from request body when expiresAt is nil")
+	}
+	if _, ok := gotBody["set_project_ttl"]; ok {
+		t.Error("set_project_ttl must be absent from request body when expiresAt is nil")
+	}
+	if _, ok := gotBody["project_expires_at"]; ok {
+		t.Error("project_expires_at must be absent from request body when expiresAt is nil")
 	}
 }
 
@@ -402,5 +414,19 @@ func TestSessionContent_SanitizesControlChars(t *testing.T) {
 	}
 	if !strings.Contains(got, "hello") || !strings.Contains(got, "world") {
 		t.Errorf("content stripped too aggressively: %q", got)
+	}
+}
+
+func TestSessionContent_SanitizesRoleLabelsAndSkipsEmptyAfterSanitize(t *testing.T) {
+	turns := []longmemeval.Turn{
+		{Role: "us\x02er", Content: "pre\x02dicting contextualized target represent"},
+		{Role: "assistant", Content: "\x00\x02"},
+	}
+	got := longmemeval.SessionContent(turns)
+	if strings.Contains(got, "\x02") || strings.Contains(got, "\x00") {
+		t.Fatalf("control chars not stripped from %q", got)
+	}
+	if got != "user: predicting contextualized target represent" {
+		t.Fatalf("SessionContent() = %q", got)
 	}
 }

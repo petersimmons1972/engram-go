@@ -762,3 +762,30 @@ func TestRegisterTools_EmbedHealthy_NoSuffix(t *testing.T) {
 		}
 	}
 }
+
+// TestRegisterTools_RecallFeedbackDescriptionsDocumentEventIDContract pins the
+// discoverability text added for #1259. Schema coverage alone cannot catch a
+// future edit that drops the record_event/event_id contract from descriptions.
+func TestRegisterTools_RecallFeedbackDescriptionsDocumentEventIDContract(t *testing.T) {
+	s := NewServer(nil, Config{})
+	descs := s.RegisteredToolDescriptions()
+
+	recallDesc := descs["memory_recall"]
+	if !strings.Contains(recallDesc, "record_event=true") {
+		t.Fatalf("memory_recall description must mention record_event=true\ngot: %q", recallDesc)
+	}
+	if !strings.Contains(recallDesc, "event_id") {
+		t.Fatalf("memory_recall description must mention event_id\ngot: %q", recallDesc)
+	}
+	if !strings.Contains(recallDesc, "memory_feedback") {
+		t.Fatalf("memory_recall description must point users to memory_feedback\ngot: %q", recallDesc)
+	}
+
+	feedbackDesc := descs["memory_feedback"]
+	if !strings.Contains(feedbackDesc, "event_id") {
+		t.Fatalf("memory_feedback description must mention event_id\ngot: %q", feedbackDesc)
+	}
+	if !strings.Contains(feedbackDesc, "memory_recall") {
+		t.Fatalf("memory_feedback description must point back to memory_recall\ngot: %q", feedbackDesc)
+	}
+}

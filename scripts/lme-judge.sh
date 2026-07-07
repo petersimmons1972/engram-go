@@ -37,6 +37,7 @@ Options:
   --thinking <on|off>  Scorer chain-of-thought flag (default: on)
   --compare <dir>   Also print delta against baseline score_report.json
   --bundle          Run both qwen3 (default thinking on) and gpt4o, writing suffix
+  gpt4o credentials: set LME_SCORER_API_KEY or OPENAI_API_KEY in the environment; do not pass secrets on argv
   --help            Show this help
 EOF
 }
@@ -160,18 +161,19 @@ run_judge() {
     score_args+=(
       --scorer-lock "$SCORER_LOCK"
     )
+    echo "==> score-efficient: $judge -> $out_dir"
+    "$BIN" "${score_args[@]}"
   else
     score_args+=(
       --scorer-url "$scorer_url"
       --scorer-model "$scorer_model"
-      --scorer-api-key "$scorer_api_key"
       "$scorer_thinking"
       --scorer-max-tokens "$SCORER_MAX_TOKENS"
       --preserve-correct
     )
+    echo "==> score-efficient: $judge -> $out_dir"
+    LME_SCORER_API_KEY="$scorer_api_key" "$BIN" "${score_args[@]}"
   fi
-  echo "==> score-efficient: $judge -> $out_dir"
-  "$BIN" "${score_args[@]}"
 }
 
 read_report() {

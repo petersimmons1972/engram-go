@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +46,28 @@ func validateRelationshipStrength(strength float64) error {
 	return nil
 }
 
+func relationshipStrength(args map[string]any) (float64, error) {
+	raw, ok := args["strength"]
+	if !ok || raw == nil {
+		return 1.0, nil
+	}
+	if s, ok := raw.(string); ok {
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0, fmt.Errorf("strength must be numeric, got %v", s)
+		}
+		if err := validateRelationshipStrength(f); err != nil {
+			return 0, err
+		}
+		return f, nil
+	}
+	strength := getFloat(args, "strength", 1.0)
+	if err := validateRelationshipStrength(strength); err != nil {
+		return 0, err
+	}
+	return strength, nil
+}
+
 // handleMemoryAdopt creates a cross-project reference relationship from a memory in
 // the calling project to a memory in another project. The relationship is stored in
 // the calling project's edge table.
@@ -66,13 +90,8 @@ func handleMemoryAdopt(ctx context.Context, pool *EnginePool, req mcpgo.CallTool
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	if s, ok := args["strength"].(string); ok {
-		if s == "NaN" || s == "Inf" || s == "-Inf" {
-			return nil, fmt.Errorf("strength must be between 0 and 1, got %v", s)
-		}
-	}
-	strength := getFloat(args, "strength", 1.0)
-	if err := validateRelationshipStrength(strength); err != nil {
+	strength, err := relationshipStrength(args)
+	if err != nil {
 		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, srcID, dstID, relType, strength); err != nil {
@@ -106,13 +125,8 @@ func handleMemoryConnect(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return errResult, nil
 	}
 	relType := getString(args, "relation_type", types.RelTypeRelatesTo)
-	if s, ok := args["strength"].(string); ok {
-		if s == "NaN" || s == "Inf" || s == "-Inf" {
-			return nil, fmt.Errorf("strength must be between 0 and 1, got %v", s)
-		}
-	}
-	strength := getFloat(args, "strength", 1.0)
-	if err := validateRelationshipStrength(strength); err != nil {
+	strength, err := relationshipStrength(args)
+	if err != nil {
 		return nil, err
 	}
 	if err := h.Engine.Connect(ctx, src, dst, relType, strength); err != nil {

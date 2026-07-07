@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -1852,20 +1853,30 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 // POST /quick-store
 // Authorization: Bearer <token>
 // {"content":"...","project":"...","tags":[...],"importance":N}.
+// Project-level TTL for prune workflows requires explicit opt-in:
+// {"set_project_ttl":true,"project_expires_at":"..."}.
 func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
+	const maxQuickStoreRequestBodyBytes = 2 * 1024 * 1024
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var body struct {
-		Content    string     `json:"content"`
-		Project    string     `json:"project"`
-		Tags       []string   `json:"tags"`
-		Importance int        `json:"importance"`
-		ExpiresAt  *time.Time `json:"expires_at"`
+		Content          string     `json:"content"`
+		Project          string     `json:"project"`
+		Tags             []string   `json:"tags"`
+		Importance       int        `json:"importance"`
+		ExpiresAt        *time.Time `json:"expires_at"`
+		SetProjectTTL    bool       `json:"set_project_ttl"`
+		ProjectExpiresAt *time.Time `json:"project_expires_at"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBodyBounded(w, r, maxQuickStoreRequestBodyBytes, &body); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -1885,6 +1896,18 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
 		writeJSONError(w, http.StatusBadRequest, "expires_at must be a future timestamp")
+		return
+	}
+	if body.SetProjectTTL && body.ProjectExpiresAt == nil {
+		writeJSONError(w, http.StatusBadRequest, "project_expires_at is required when set_project_ttl is true")
+		return
+	}
+	if !body.SetProjectTTL && body.ProjectExpiresAt != nil {
+		writeJSONError(w, http.StatusBadRequest, "set_project_ttl must be true when project_expires_at is provided")
+		return
+	}
+	if body.ProjectExpiresAt != nil && !body.ProjectExpiresAt.After(time.Now()) {
+		writeJSONError(w, http.StatusBadRequest, "project_expires_at must be a future timestamp")
 		return
 	}
 
@@ -1935,12 +1958,13 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 
-	// #837: if expires_at was provided, stamp project_ttl via the engine pool.
+	// Project TTL is a project-level deletion signal, so require explicit
+	// opt-in instead of deriving it from memory-level expires_at (#1329).
 	// Best-effort: failure is logged but does not affect the store response.
-	if body.ExpiresAt != nil {
+	if body.SetProjectTTL {
 		if h, poolErr := s.pool.Get(r.Context(), project); poolErr != nil {
 			slog.Warn("quick-store: pool.Get failed for SetProjectTTL", "project", project, "err", poolErr)
-		} else if ttlErr := h.Engine.Backend().SetProjectTTL(r.Context(), project, time.Now().UTC(), body.ExpiresAt); ttlErr != nil {
+		} else if ttlErr := h.Engine.Backend().SetProjectTTL(r.Context(), project, time.Now().UTC(), body.ProjectExpiresAt); ttlErr != nil {
 			slog.Warn("quick-store: SetProjectTTL failed", "project", project, "err", ttlErr)
 		}
 	}
@@ -1958,6 +1982,8 @@ func (s *Server) handleQuickStore(w http.ResponseWriter, r *http.Request) {
 // Returns {"results":[{"id":"...","summary":"...","content":"...","tags":[...],"score":N},...]}
 // On no results returns {"results":[]}, never an error.
 func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
+	const maxQuickRecallRequestBodyBytes = 512 * 1024
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1969,7 +1995,11 @@ func (s *Server) handleQuickRecall(w http.ResponseWriter, r *http.Request) {
 		Tags    []string `json:"tags"`
 		Limit   int      `json:"limit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBodyBounded(w, r, maxQuickRecallRequestBodyBytes, &body); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
