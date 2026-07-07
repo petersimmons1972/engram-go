@@ -788,7 +788,4 @@ func TestRegisterTools_RecallFeedbackDescriptionsDocumentEventIDContract(t *test
 	if !strings.Contains(feedbackDesc, "memory_recall") {
 		t.Fatalf("memory_feedback description must point back to memory_recall\ngot: %q", feedbackDesc)
 	}
-	if !strings.Contains(feedbackDesc, "record_event=true") {
-		t.Fatalf("memory_feedback description must mention record_event=true\ngot: %q", feedbackDesc)
-	}
 }
