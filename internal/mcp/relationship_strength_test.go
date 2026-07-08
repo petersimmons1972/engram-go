@@ -180,6 +180,47 @@ func TestMemoryRelationshipHandlers_RejectNonFiniteStringStrength(t *testing.T) 
 	}
 }
 
+// TestMemoryRelationshipHandlers_RejectUncoercibleNonStringStrength covers
+// #1282: a present-but-uncoercible non-string "strength" (bool, array,
+// object) must be a loud tool error, not a silent fallback to the default
+// 1.0 — before this fix, relationshipStrength routed non-string values
+// through getFloat, which discarded the caller's bad value and stored 1.0
+// as if the caller had asked for it.
+func TestMemoryRelationshipHandlers_RejectUncoercibleNonStringStrength(t *testing.T) {
+	handlers := []struct {
+		name    string
+		handler func(context.Context, *EnginePool, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)
+	}{
+		{name: "memory_adopt", handler: handleMemoryAdopt},
+		{name: "memory_connect", handler: handleMemoryConnect},
+	}
+
+	badStrengths := []struct {
+		name string
+		val  any
+	}{
+		{name: "bool", val: true},
+		{name: "array", val: []any{1, 2}},
+		{name: "object", val: map[string]any{"a": 1}},
+	}
+
+	for _, handlerTC := range handlers {
+		t.Run(handlerTC.name, func(t *testing.T) {
+			for _, strength := range badStrengths {
+				t.Run(strength.name, func(t *testing.T) {
+					backend := &relationshipCaptureBackend{}
+					pool := newRelationshipCapturePool(t, backend)
+
+					_, err := handlerTC.handler(context.Background(), pool, relationshipRequest(strength.val))
+					require.Error(t, err)
+					require.Contains(t, err.Error(), "strength must be numeric")
+					require.Empty(t, backend.relationships, "a bad strength must not silently default to 1.0 and persist")
+				})
+			}
+		})
+	}
+}
+
 func relationshipRequest(strength any) mcpgo.CallToolRequest {
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{

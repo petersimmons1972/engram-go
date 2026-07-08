@@ -51,6 +51,8 @@ func handleMemoryReason(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, err
 	}
 	question := getString(args, "question", "")
+	// #1282: lenient — result-count knob already range-clamped below, so a
+	// bad value silently degrading to the default 10 is harmless.
 	topK := getInt(args, "top_k", 10)
 	if topK < 1 {
 		topK = 1
@@ -213,13 +215,26 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 		return mcpgo.NewToolResultError("memory_explore requires ANTHROPIC_API_KEY to be set"), nil
 	}
 
-	maxIter := getInt(args, "max_iterations", cfg.ExploreMaxIters)
+	// #1282: loud — max_iterations bounds the Claude call loop the same way
+	// memory_sleep's llm_max_calls does; a caller who explicitly bounds cost
+	// with a low value must not have that intent silently discarded by a
+	// mistyped param falling back to cfg.ExploreMaxIters.
+	maxIter, maxIterPresent, maxIterErr := requireOptionalInt(args, "max_iterations")
+	if maxIterErr != nil {
+		return mcpgo.NewToolResultError(maxIterErr.Error()), nil
+	}
+	if !maxIterPresent {
+		maxIter = cfg.ExploreMaxIters
+	}
 	if maxIter < 1 {
 		maxIter = 1
 	}
 	if maxIter > 10 {
 		maxIter = 10
 	}
+	// #1282: lenient — accuracy-tuning knob; a bad value silently degrading to
+	// the default 0.75 changes when the loop stops early, not correctness or
+	// cost bounds.
 	threshold := getFloat(args, "confidence_threshold", 0.75)
 	if threshold < 0 {
 		threshold = 0
@@ -227,10 +242,21 @@ func handleMemoryExplore(ctx context.Context, pool *EnginePool, req mcpgo.CallTo
 	if threshold > 1 {
 		threshold = 1
 	}
-	budget := getInt(args, "token_budget", cfg.ExploreTokenBudget)
+	// #1282: loud — same cost-bound rationale as max_iterations above: a
+	// caller-supplied token_budget caps LLM spend, so a mistyped value must
+	// not silently fall back to a possibly-larger default.
+	budget, budgetPresent, budgetErr := requireOptionalInt(args, "token_budget")
+	if budgetErr != nil {
+		return mcpgo.NewToolResultError(budgetErr.Error()), nil
+	}
+	if !budgetPresent {
+		budget = cfg.ExploreTokenBudget
+	}
 	if budget <= 0 {
 		budget = 20000
 	}
+	// #1282: lenient — debug-only trace-inclusion toggle; a bad value
+	// silently degrading to the default false only omits trace detail.
 	includeTrace := getBool(args, "include_trace", false)
 	scope := parseExploreScope(args)
 
@@ -292,6 +318,8 @@ func handleMemoryAsk(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRe
 		return mcpgo.NewToolResultError("memory_ask requires Claude (set ENGRAM_CLAUDE_KEY)"), nil
 	}
 
+	// #1282: lenient — result-count knob already range-checked below, so a bad
+	// value silently degrading to the default 0 is harmless.
 	topK := getInt(args, "top_k", 0)
 	if topK < 0 {
 		return mcpgo.NewToolResultError("top_k: must be >= 0"), nil

@@ -82,6 +82,44 @@ type verificationResult struct {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 // handleGetConstraints lists constraint memories matching an optional query.
+// constraintLookupParams extracts and range-clamps the limit/stale_after_days
+// params shared by handleGetConstraints, handleCheckConstraints, and
+// handleVerifyBeforeActing.
+//
+// #1282: loud — these gate which constraints the safety pipeline surfaces and
+// whether a constraint is treated as stale (i.e. no longer authoritative). A
+// caller who deliberately widens limit or disables staleness via
+// stale_after_days must not have that intent silently discarded by a
+// mistyped value falling back to the (narrower) default — the same
+// masked-intent failure mode as memory_audit_compare's limit (#1282). A
+// resultErr is returned pre-formatted as a tool error for the caller to
+// return directly.
+func constraintLookupParams(args map[string]any) (limit, staleAfterDays int, resultErr *mcpgo.CallToolResult) {
+	limit, limitPresent, limitErr := requireOptionalInt(args, "limit")
+	if limitErr != nil {
+		return 0, 0, mcpgo.NewToolResultError(limitErr.Error())
+	}
+	if !limitPresent {
+		limit = defaultConstraintLimit
+	}
+	if limit < 1 || limit > 50 {
+		limit = defaultConstraintLimit
+	}
+
+	staleAfterDays, staleAfterDaysPresent, staleAfterDaysErr := requireOptionalInt(args, "stale_after_days")
+	if staleAfterDaysErr != nil {
+		return 0, 0, mcpgo.NewToolResultError(staleAfterDaysErr.Error())
+	}
+	if !staleAfterDaysPresent {
+		staleAfterDays = defaultStaleAfterDays
+	}
+	if staleAfterDays < 1 || staleAfterDays > 3650 {
+		staleAfterDays = defaultStaleAfterDays
+	}
+
+	return limit, staleAfterDays, nil
+}
+
 func handleGetConstraints(ctx context.Context, pool *EnginePool, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
 	project, err := getProject(args, "default")
@@ -89,13 +127,9 @@ func handleGetConstraints(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, err
 	}
 	query := getString(args, "query", "")
-	limit := getInt(args, "limit", defaultConstraintLimit)
-	if limit < 1 || limit > 50 {
-		limit = defaultConstraintLimit
-	}
-	staleAfterDays := getInt(args, "stale_after_days", defaultStaleAfterDays)
-	if staleAfterDays < 1 || staleAfterDays > 3650 {
-		staleAfterDays = defaultStaleAfterDays
+	limit, staleAfterDays, errResult := constraintLookupParams(args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	h, err := pool.Get(ctx, project)
@@ -128,13 +162,9 @@ func handleCheckConstraints(ctx context.Context, pool *EnginePool, req mcpgo.Cal
 	if proposedAction == "" {
 		return mcpgo.NewToolResultError("proposed_action is required"), nil
 	}
-	limit := getInt(args, "limit", defaultConstraintLimit)
-	if limit < 1 || limit > 50 {
-		limit = defaultConstraintLimit
-	}
-	staleAfterDays := getInt(args, "stale_after_days", defaultStaleAfterDays)
-	if staleAfterDays < 1 || staleAfterDays > 3650 {
-		staleAfterDays = defaultStaleAfterDays
+	limit, staleAfterDays, errResult := constraintLookupParams(args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	h, err := pool.Get(ctx, project)
@@ -165,13 +195,9 @@ func handleVerifyBeforeActing(ctx context.Context, pool *EnginePool, req mcpgo.C
 	if proposedAction == "" {
 		return mcpgo.NewToolResultError("proposed_action is required"), nil
 	}
-	limit := getInt(args, "limit", defaultConstraintLimit)
-	if limit < 1 || limit > 50 {
-		limit = defaultConstraintLimit
-	}
-	staleAfterDays := getInt(args, "stale_after_days", defaultStaleAfterDays)
-	if staleAfterDays < 1 || staleAfterDays > 3650 {
-		staleAfterDays = defaultStaleAfterDays
+	limit, staleAfterDays, errResult := constraintLookupParams(args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	h, err := pool.Get(ctx, project)

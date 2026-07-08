@@ -335,10 +335,14 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 			args["top_k"] = limit
 		}
 	}
-	topK := clampTopK(getInt(args, "top_k", defaultTopK), recallMaxTopK())
+	// #1282: lenient below — handleMemoryRecall's option flags/knobs are either
+	// already range-clamped (topK) or default-off ranking/behavior toggles
+	// where a bad value silently degrading to the default changes result
+	// quality/shape, not correctness or a caller's cost/safety intent.
+	topK := clampTopK(getInt(args, "top_k", defaultTopK), recallMaxTopK()) // #1282: lenient, clamped below
 	detail := getString(args, "detail", "summary")
-	includeConflicts := getBool(args, "include_conflicts", false)
-	recordEvent := getBool(args, "record_event", false)
+	includeConflicts := getBool(args, "include_conflicts", false) // #1282: lenient, opt-in enrichment toggle
+	recordEvent := getBool(args, "record_event", false)           // #1282: lenient, opt-in event-recording toggle
 	rawMode := getString(args, "mode", cfg.RecallDefaultMode)
 	mode, err := normalizeRecallMode(rawMode)
 	if err != nil {
@@ -354,14 +358,14 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// default off). When enabled, the engine parses temporal anchors from
 	// question_text (falling back to query) against question_date and runs a
 	// second, date-filtered pass unioned with the first.
-	temporalWindowRecall := getBool(args, "temporal_window_recall", false)
+	temporalWindowRecall := getBool(args, "temporal_window_recall", false) // #1282: lenient, default-off experiment flag
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
 	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
 	if err != nil {
 		return nil, err
 	}
-	opts.AtomRecallEnabled = getBool(args, "atom_recall", false)
+	opts.AtomRecallEnabled = getBool(args, "atom_recall", false) // #1282: lenient, default-off experiment flag
 	opts.AtomRecallAsOf = atomRecallAsOf
 
 	// Federated path: "projects" overrides the single-project recall.
@@ -473,13 +477,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if err != nil {
 		return nil, err
 	}
-	rerank := getBool(args, "rerank", false)
-	exactFactBoost := getBool(args, "exact_fact_boost", false)
+	rerank := getBool(args, "rerank", false)                   // #1282: lenient, opt-in reranker toggle
+	exactFactBoost := getBool(args, "exact_fact_boost", false) // #1282: lenient, default-off experiment flag
 	opts.DateSince = since
 	opts.DateBefore = before
 	// H-TAB (LME exp #3): topic-anchor boost for preference queries.
-	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)
-	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN)
+	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)                  // #1282: lenient, default-off experiment flag
+	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN) // #1282: lenient, ranking-tuning knob
 	opts.TemporalWindowRecall = temporalWindowRecall
 	opts.QuestionText = questionText
 	opts.QuestionDate = questionDate
@@ -514,12 +518,14 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// or per-call by passing paraphrase_union=true in the MCP args.
 	{
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_PARAPHRASE_UNION")))
+		// #1282: lenient, default-off experiment flag.
 		opts.ParaphraseUnion = v == "true" || v == "1" || getBool(args, "paraphrase_union", false)
 	}
 	// RRF fusion (LME experiment #6, issue #938 improvement #1, default OFF).
 	// Enable server-wide via ENGRAM_RRF_FUSION=true|1 env var, or per-call via rrf_fusion=true.
 	{
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_RRF_FUSION")))
+		// #1282: lenient, default-off experiment flag.
 		opts.Fusion = v == "true" || v == "1" || getBool(args, "rrf_fusion", false)
 	}
 
@@ -536,6 +542,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// env var or per-request evidence_first_pack=true arg. Default OFF.
 	{
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("ENGRAM_EVIDENCE_FIRST_PACK")))
+		// #1282: lenient, default-off experiment flag.
 		opts.EvidenceFirstPack = v == "true" || v == "1" || getBool(args, "evidence_first_pack", false)
 	}
 
@@ -822,6 +829,8 @@ func handleMemoryTimeline(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 	if err != nil {
 		return nil, fmt.Errorf("as_of must be RFC3339 (e.g. 2025-03-05T14:00:00Z): %w", err)
 	}
+	// #1282: lenient — read-only page size; a bad value silently degrading to
+	// the default 20 changes result breadth, not correctness.
 	limit := getInt(args, "limit", 20)
 	memories, err := h.Engine.MemoryAsOf(ctx, asOf, limit)
 	if err != nil {
@@ -870,6 +879,8 @@ func handleMemoryExpand(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	if errResult != nil {
 		return errResult, nil
 	}
+	// #1282: lenient — graph-traversal depth already range-clamped below, so a
+	// bad value silently degrading to the default 2 is harmless.
 	requestedDepth := getInt(args, "depth", 2)
 	depth := requestedDepth
 	if depth < 1 || depth > 5 {
