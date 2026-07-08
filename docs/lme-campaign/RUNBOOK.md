@@ -108,6 +108,63 @@ c,p,i=tot; n=sum(tot); print(f'{"OVERALL":28} strict={c/n*100:5.1f}% lenient={(c
 PY
 ```
 
+### 7. Register the result in `results/benchmark-registry.jsonl`
+
+`results/benchmark-registry.jsonl` is the durable, git-tracked, one-line-per-run summary of
+every campaign measurement — curated headline numbers, not raw per-item dumps. `results/` is
+gitignored precisely to keep full raw run directories out of the repo; this file is the
+deliberate exception, force-added because it stays small (one JSON object per line) and gives
+anyone reading `main` a searchable history of every run's topline result without needing the
+raw artifacts to exist on disk.
+
+**Every LME run in this campaign — regardless of sub-effort, variant, or which arm of a
+bake-off it belongs to — appends one entry here after scoring**, whether or not the full raw
+`results/<name>/` dump is also committed (it usually isn't).
+
+Append with `git add -f results/benchmark-registry.jsonl` (the `-f` is required — the file
+lives inside the gitignored `results/` tree) and commit the new line alongside whatever else
+the run PR contains.
+
+**Schema** — one JSON object per line:
+
+Required fields:
+- `ts` — ISO-8601 UTC timestamp of when the entry was registered (not necessarily when the run
+  started).
+- `run_id` — the harness run identifier (matches `checkpoint-run.jsonl` / `RUN_STATUS.json`
+  provenance for the underlying run).
+- `label` — short human-readable slug for this measurement, unique enough to grep for
+  (e.g. `WP-0.2-oblivion-qwen3next-solo`).
+- `phase` — which campaign phase/work-package this measurement belongs to
+  (e.g. `Duramind-M0-WP0.2`).
+- `suite` — the dataset/suite identifier (e.g. `lme-s-500q`).
+- `strict_accuracy`, `lenient_accuracy` — the two headline scores (0–1 floats), per the
+  CORRECT / PARTIALLY_CORRECT / INCORRECT rubric in this doc's step 5–6.
+- `correct`, `total` — raw counts backing `strict_accuracy` (correct/total; lenient uses
+  correct+partially_correct, tracked in `by_question_type`, not duplicated at the top level).
+- `run_errors` — count of items that errored out of scoring entirely (0 for a clean run).
+- `config` — object capturing what varied this run: at minimum `generator`
+  (model/endpoint), `scorer_lock` (see `docs/lme-judging.md`), `gold_version`, and `workers`.
+  Add other knobs (flags, ingest source, generator_endpoint) as relevant to that run.
+- `by_question_type` — per-`question_type` breakdown, each with `strict`, `correct`, `total`
+  (mirrors the step-6 per-type table).
+
+Optional but strongly encouraged:
+- `notes` — free-text provenance: what this run is being compared against, any caveats
+  (invalid-attempt history, non-comparable generator/judge combos, divergence explanations),
+  and cross-references to `docs/lme-campaign/FINDINGS.md` or prior `run_id`s. Every row's
+  provenance (`gold_version`, `scorer_version`, `feature_flags`, `system`, `item_set`,
+  `run_id`, `harness_sha` — the full field list from `docs/lme-judging.md`) should be
+  reconstructable from `notes` plus `config` even if the raw `score_report.json` is gone.
+
+**Worked example** (WP-0.2 baseline, PR #1294 — abbreviated):
+
+```json
+{"ts": "2026-07-03T17:54:41Z", "run_id": "76a3ec13afadbc4c", "label": "WP-0.2-oblivion-qwen3next-solo", "phase": "Duramind-M0-WP0.2", "suite": "lme-s-500q", "strict_accuracy": 0.62, "lenient_accuracy": 0.674, "correct": 310, "total": 500, "run_errors": 0, "config": {"generator": "Qwen/Qwen3-Next-80B-A3B-Instruct-FP8", "generator_endpoint": "oblivion (DGX Spark, solo, gpu_memory_utilization=0.85)", "scorer_lock": "tier1-qwen3-2026-06-22", "gold_version": "gold-lme-s-2026-07-03", "workers": 1}, "by_question_type": {"knowledge-update": {"strict": 0.6538, "correct": 51, "total": 78}}, "notes": "Duramind WP-0.2 honest baseline vs locked non-thinking Qwen3-32B judge. Reference points: honest_plateau=67.87% strict (run 20260629, same scorer discipline); inflated_headline=81.4% (thinking-scorer + Sonnet generator, not comparable)."}
+```
+
+(History: this file/convention existed only on the `worktree-lme-preference-constraint` side
+branch before landing on `main` via PR #1294; see issue #1295.)
+
 ## Monitoring & gotchas (learned the hard way)
 - **Use `ps -eo cmd | grep '[p]attern'`, NOT `pgrep`/`pkill`** — those return exit 1 in this
   sandbox and abort multi-line scripts. Kill by explicit PID from `ps`.

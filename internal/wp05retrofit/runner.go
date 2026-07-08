@@ -1,3 +1,31 @@
+// Package wp05retrofit measures engram-go's existing recall path augmented
+// with Layer B (aggregation-summary) plumbing against the LongMemEval
+// fixture format, for the WP-0.5 retrofit-vs-greenfield bake-off.
+//
+// Campaign context: WP-0.5 compares two ways of getting aggregation-question
+// scoring onto engram-go — "retrofit" (this package: bolt Layer B onto the
+// existing ingest/recall path with minimal structural change) versus
+// "greenfield" (a from-scratch aggregation-aware substrate, measured
+// elsewhere). This package is the retrofit arm (WP-0.5c): it drives
+// ingest+recall through the existing engram-go client seam, optionally
+// builds Layer B client-side over a merged, exhaustive candidate set for
+// aggregation-shaped questions (see RecallItem / recallItemExhaustive in
+// recall_exhaustive.go), and scores/serializes the result.
+//
+// Duramind compatibility target: Bundle, ItemResult, and Provenance are
+// hand-kept byte-for-byte JSON-compatible with duramind's
+// internal/wp05c.{Bundle,ItemResult,Provenance} (see field-level comments
+// below) so the two arms' output can be diffed and compared by duramind's
+// bake-off tooling without a translation layer. Any change to these types'
+// JSON shape must be mirrored in duramind or the comparison breaks silently.
+//
+// Lifetime: this package is bake-off scaffolding, not permanent
+// architecture. It is expected to be retired once WP-0.5 concludes and one
+// arm is chosen — either promoted to production code under its own name, or
+// deleted along with the rest of the losing arm. Treat it as experimental:
+// do not build unrelated functionality on top of it. See PR #1315 (origin)
+// and issue #1316 (this doc pass, flagged in PR #1315 round-3 review) for
+// history.
 package wp05retrofit
 
 import (
@@ -17,10 +45,24 @@ import (
 )
 
 const (
-	SystemName          = "engram-go-retrofit"
-	SubstrateName       = "retrofit"
+	// SystemName identifies this harness in Bundle.System and
+	// Provenance.System; it distinguishes retrofit-arm output from the
+	// greenfield arm's output in duramind's bake-off comparison.
+	SystemName = "engram-go-retrofit"
+	// SubstrateName identifies the WP-0.5 arm ("retrofit" vs "greenfield")
+	// in Bundle.Substrate.
+	SubstrateName = "retrofit"
+	// SubstrateAssessment is the (currently unfilled) verdict slot in
+	// Bundle.SubstrateAssessment; it is always "unknown" from this harness
+	// and is expected to be filled in by a separate analysis/judging pass,
+	// not by the runner itself.
 	SubstrateAssessment = "unknown"
-	MeasuredPathLayerB  = "layer_b_only"
+	// MeasuredPathLayerB is the fixed value recorded in
+	// ItemResult.MeasuredPath. Layer B is built additively alongside the
+	// base recall results (see tools_recall.go note referenced in
+	// ScoreItem), so every item scored by this harness took the same
+	// "layer_b_only" measured path; there is currently no alternate path.
+	MeasuredPathLayerB = "layer_b_only"
 )
 
 const constituentMetricsNote = "constituent_recall and constituent_precision are unmeasured at this stage " +
@@ -79,11 +121,25 @@ type Client interface {
 
 // Config controls one retrofit runner execution.
 type Config struct {
-	ProjectPrefix         string
-	Limit                 int
+	// ProjectPrefix namespaces each fixture item into its own project
+	// (<ProjectPrefix>-<question_id>) so items never share recall scope.
+	ProjectPrefix string
+	// Limit is the recall topK passed to the client. It must exceed the
+	// largest haystack session count of any fixture item or recall will
+	// silently truncate evidence.
+	Limit int
+	// ExhaustiveAggregation enables H8: for aggregation-shaped questions,
+	// union a deep primary+anchor recall with a full project memory_list
+	// sweep and build Layer B client-side over the merged set, instead of
+	// relying on the server's single-call Layer B. See RecallItem.
 	ExhaustiveAggregation bool
-	SkipIngest            bool
-	ProvenanceTemplate    Provenance
+	// SkipIngest assumes memories are already ingested under
+	// ProjectPrefix and runs recall/score only.
+	SkipIngest bool
+	// ProvenanceTemplate is copied into every ItemResult.Provenance
+	// produced by this run (see ScoreItem); it is filled in once per run,
+	// not per item.
+	ProvenanceTemplate Provenance
 }
 
 // Logf is the minimal logging seam shared by the runner and CLI.
