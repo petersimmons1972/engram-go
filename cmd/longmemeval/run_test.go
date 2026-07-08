@@ -117,6 +117,101 @@ func TestResolveSessionDiversityOverride_OffByDefault(t *testing.T) {
 	}
 }
 
+// TestResolveContextTopK_NegativeSSPrefOverrideIgnored verifies negative
+// --ss-pref-context-topk values fall back to the untyped per-type default
+// rather than being treated as a truthy override (issue #1277: the `> 0`
+// guard must reject negatives, not just zero).
+func TestResolveContextTopK_NegativeSSPrefOverrideIgnored(t *testing.T) {
+	cfg := &Config{SSPrefContextTopK: -5}
+	if got := resolveContextTopK(cfg, "single-session-preference", false, 1000); got != 15 {
+		t.Errorf("got %d, want 15 (negative override ignored)", got)
+	}
+}
+
+// TestResolveSessionDiversityOverride_NegativeIgnored verifies negative
+// --ss-pref-session-diversity-n values fall back to no override (0) rather
+// than being sent to the server as a negative session_diversity_n (issue
+// #1277: the `> 0` guard must reject negatives, not just zero).
+func TestResolveSessionDiversityOverride_NegativeIgnored(t *testing.T) {
+	cfg := &Config{SSPrefSessionDiversityN: -3}
+	if got := resolveSessionDiversityOverride(cfg, "single-session-preference"); got != 0 {
+		t.Errorf("got %d, want 0 (negative override ignored)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ssPrefDiversityNoopWarning (issue #1276: --ss-pref-session-diversity-n
+// silently no-ops under --atom-mode/--exact-signal-boost because
+// RecallWithAtomRecall/RecallWithExactBoost don't accept a diversity-override
+// parameter — only the plain RecallWithDiversityOverride path threads it).
+// ---------------------------------------------------------------------------
+
+// TestSSPrefDiversityNoopWarning_AtomModeWarns verifies a non-empty warning
+// is produced when the resolved override is non-zero and --atom-mode is set.
+func TestSSPrefDiversityNoopWarning_AtomModeWarns(t *testing.T) {
+	cfg := &Config{AtomMode: true}
+	msg := ssPrefDiversityNoopWarning(cfg, "single-session-preference", 1)
+	if msg == "" {
+		t.Fatal("expected a non-empty warning, got none")
+	}
+	if !strings.Contains(msg, "atom-mode") {
+		t.Errorf("warning does not mention atom-mode: %q", msg)
+	}
+	if !strings.Contains(msg, "1276") {
+		t.Errorf("warning does not reference issue #1276: %q", msg)
+	}
+}
+
+// TestSSPrefDiversityNoopWarning_ExactSignalBoostWarns verifies a non-empty
+// warning is produced when the resolved override is non-zero and
+// --exact-signal-boost is set.
+func TestSSPrefDiversityNoopWarning_ExactSignalBoostWarns(t *testing.T) {
+	cfg := &Config{ExactSignalBoost: true}
+	msg := ssPrefDiversityNoopWarning(cfg, "single-session-preference", 1)
+	if msg == "" {
+		t.Fatal("expected a non-empty warning, got none")
+	}
+	if !strings.Contains(msg, "exact-signal-boost") {
+		t.Errorf("warning does not mention exact-signal-boost: %q", msg)
+	}
+}
+
+// TestSSPrefDiversityNoopWarning_BothModesWarns verifies the warning still
+// fires (and names both modes) when both --atom-mode and
+// --exact-signal-boost are set simultaneously.
+func TestSSPrefDiversityNoopWarning_BothModesWarns(t *testing.T) {
+	cfg := &Config{AtomMode: true, ExactSignalBoost: true}
+	msg := ssPrefDiversityNoopWarning(cfg, "single-session-preference", 1)
+	if msg == "" {
+		t.Fatal("expected a non-empty warning, got none")
+	}
+	if !strings.Contains(msg, "atom-mode") || !strings.Contains(msg, "exact-signal-boost") {
+		t.Errorf("warning does not mention both modes: %q", msg)
+	}
+}
+
+// TestSSPrefDiversityNoopWarning_SilentWhenOverrideZero verifies no warning
+// is produced when the resolved override is 0 (flag unset or non-ss-pref
+// question type), even if --atom-mode/--exact-signal-boost are set — nothing
+// is actually being silently dropped in that case.
+func TestSSPrefDiversityNoopWarning_SilentWhenOverrideZero(t *testing.T) {
+	cfg := &Config{AtomMode: true, ExactSignalBoost: true}
+	if msg := ssPrefDiversityNoopWarning(cfg, "single-session-preference", 0); msg != "" {
+		t.Errorf("expected no warning when override is 0, got %q", msg)
+	}
+}
+
+// TestSSPrefDiversityNoopWarning_SilentWhenPlainRecall verifies no warning is
+// produced for the plain (non-atom, non-exact-signal-boost) recall path,
+// since that path does thread the override through
+// RecallWithDiversityOverride — nothing is being dropped.
+func TestSSPrefDiversityNoopWarning_SilentWhenPlainRecall(t *testing.T) {
+	cfg := &Config{}
+	if msg := ssPrefDiversityNoopWarning(cfg, "single-session-preference", 1); msg != "" {
+		t.Errorf("expected no warning for plain recall path, got %q", msg)
+	}
+}
+
 // TestRunLogFormat_ErrorIncludesCause verifies that when runOne returns an
 // error entry, the log message format string produced by runWorker would
 // include the error cause — not just hypothesis_len=0.

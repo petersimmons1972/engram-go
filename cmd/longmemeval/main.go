@@ -356,7 +356,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// default), --ss-pref-session-diversity-n is actually sent as an explicit
 	// per-call session_diversity_n override for ss-pref questions, via
 	// Client.RecallScoredWithDiversityOverride.
-	fs.IntVar(&cfg.SSPrefSessionDiversityN, "ss-pref-session-diversity-n", 0, "issue #1176: per-session chunk cap applied ONLY to single-session-preference recall calls (0 = off; independent of --session-diversity-n)")
+	fs.IntVar(&cfg.SSPrefSessionDiversityN, "ss-pref-session-diversity-n", 0, "issue #1176: per-session chunk cap applied ONLY to single-session-preference recall calls (0 = off; independent of --session-diversity-n). EXCEPTION (issue #1276): silently has no effect when combined with --atom-mode or --exact-signal-boost, since RecallWithAtomRecall/RecallWithExactBoost don't accept a diversity-override parameter — runOne logs a WARN in that case, but the override itself is still dropped")
 	fs.IntVar(&cfg.SSPrefContextTopK, "ss-pref-context-topk", 0, "issue #1176: context topK applied ONLY to single-session-preference questions (0 = use the per-type default of 15; overridden by --context-topk if set)")
 	// #749: contention guard. --no-exclusive-backend is the negation flag.
 	// Default is exclusive=true; --no-exclusive-backend sets it false.

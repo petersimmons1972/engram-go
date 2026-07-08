@@ -558,6 +558,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// non-exact-signal-boost) recall closures below, which cover the default LME
 	// run configuration. Zero (the common case) preserves exact baseline behavior.
 	ssPrefDiversityOverride := resolveSessionDiversityOverride(cfg, item.QuestionType)
+	if warn := ssPrefDiversityNoopWarning(cfg, item.QuestionType, ssPrefDiversityOverride); warn != "" {
+		log.Print(warn)
+	}
 
 	recall := func(query string, topK int, callSince, callBefore *time.Time) (longmemeval.RecallResult, error) {
 		if cfg.AtomMode {
@@ -997,6 +1000,40 @@ func resolveSessionDiversityOverride(cfg *Config, questionType string) int {
 		return cfg.SSPrefSessionDiversityN
 	}
 	return 0
+}
+
+// ssPrefDiversityNoopWarning returns a non-empty warning message when the
+// resolved --ss-pref-session-diversity-n override (`override`, from
+// resolveSessionDiversityOverride) would silently have no effect for this
+// item's recall call (issue #1276).
+//
+// RecallWithAtomRecall (--atom-mode) and RecallWithExactBoost
+// (--exact-signal-boost) have no diversity-override parameter at all, so
+// only the plain RecallWithDiversityOverride path (neither flag set)
+// actually threads a non-zero override through to the server. When either
+// mode is active and the override is non-zero, the flag is a no-op for this
+// item with no other signal — this makes that combination visible in the
+// run log instead of failing silently. Returns "" (no warning) when the
+// override is 0 (nothing would have been dropped) or neither incompatible
+// mode is set (the plain path honors the override).
+func ssPrefDiversityNoopWarning(cfg *Config, questionType string, override int) string {
+	if override <= 0 {
+		return ""
+	}
+	if !cfg.AtomMode && !cfg.ExactSignalBoost {
+		return ""
+	}
+	var modes []string
+	if cfg.AtomMode {
+		modes = append(modes, "atom-mode")
+	}
+	if cfg.ExactSignalBoost {
+		modes = append(modes, "exact-signal-boost")
+	}
+	return fmt.Sprintf(
+		"WARN --ss-pref-session-diversity-n=%d has no effect for question_type=%q: --%s is set, and RecallWithAtomRecall/RecallWithExactBoost do not accept a diversity-override parameter (issue #1276)",
+		override, questionType, strings.Join(modes, "+"),
+	)
 }
 
 func selectContextIDs(retrievedIDs, secondaryIDs []string, limit int) []string {
