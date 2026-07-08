@@ -61,7 +61,14 @@ func relationshipStrength(args map[string]any) (float64, error) {
 		}
 		return f, nil
 	}
-	strength := getFloat(args, "strength", 1.0)
+	// #1282: a present-but-uncoercible non-string value (bool, array, object)
+	// must be a loud tool error, not a silent fallback to the default 1.0 —
+	// strength is persisted relationship data, the same load-bearing category
+	// as memory_store's importance param fixed in #1281.
+	strength, ok := coerceToFloat(raw)
+	if !ok {
+		return 0, fmt.Errorf("strength must be numeric, got %T", raw)
+	}
 	if err := validateRelationshipStrength(strength); err != nil {
 		return 0, err
 	}
@@ -223,6 +230,10 @@ func handleMemoryAggregate(ctx context.Context, pool *EnginePool, req mcpgo.Call
 		return nil, fmt.Errorf("by: required (tag, type, or failure_class)")
 	}
 	filter := getString(args, "filter", "")
+	// #1282: lenient — result-count knob already range-clamped below, so a
+	// present-but-uncoercible value degrading to the default 20 is harmless
+	// (this is the "memory_aggregate rows returned" bucket, not a data-loss
+	// or approval-bypass concern like memory_audit_compare's limit).
 	limit := getInt(args, "limit", 20)
 	if limit < 1 || limit > 1000 {
 		limit = 20
@@ -263,6 +274,9 @@ func handleMemoryDiagnose(ctx context.Context, pool *EnginePool, req mcpgo.CallT
 		return nil, err
 	}
 	question := getString(args, "question", "")
+	// #1282: lenient — read-only diagnostic recall-count tuning knob; a bad
+	// value silently degrading to the default 10 changes result breadth, not
+	// correctness or safety.
 	topK := getInt(args, "top_k", 10)
 	detail := getString(args, "detail", "full")
 	if question == "" {

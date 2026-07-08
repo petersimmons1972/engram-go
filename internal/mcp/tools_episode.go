@@ -54,6 +54,8 @@ func handleMemoryEpisodeList(ctx context.Context, pool *EnginePool, req mcpgo.Ca
 	if err != nil {
 		return nil, err
 	}
+	// #1282: lenient — read-only episode-list page size; a bad value silently
+	// degrading to the default 20 changes result breadth, not correctness.
 	limit := getInt(args, "limit", 20)
 	h, err := pool.Get(ctx, project)
 	if err != nil {

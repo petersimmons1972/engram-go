@@ -413,6 +413,11 @@ func handleMemoryIngestDocumentStream(ctx context.Context, s *Server, pool *Engi
 		if uploadID == "" {
 			return nil, fmt.Errorf("upload_id is required for append")
 		}
+		// #1282: lenient — the -1 sentinel default already guards against
+		// masking a wrongly-typed value: an uncoercible "part" falls through to
+		// the part_index fallback, and if that is also absent/uncoercible the
+		// explicit "part is required" error below fires. Unlike the other
+		// lenient sites, a bad value here cannot silently look like success.
 		part := getInt(args, "part", -1)
 		if part < 0 {
 			// Legacy callers may use part_index.

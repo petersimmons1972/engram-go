@@ -370,6 +370,100 @@ func TestHandleMemoryExplore_HappyPath(t *testing.T) {
 	require.NotEmpty(t, answer, "answer must be non-empty")
 }
 
+// ── TestHandleMemoryExplore_MaxIterationsWrongType_LoudError ────────────────
+
+// TestHandleMemoryExplore_MaxIterationsWrongType_LoudError covers #1282: a
+// present-but-uncoercible "max_iterations" must be a loud tool error, not a
+// silent fallback to cfg.ExploreMaxIters — max_iterations bounds the Claude
+// call loop the same way memory_sleep's llm_max_calls does, so masking a
+// caller's mistyped cost bound is the exact failure mode #1282 targets.
+func TestHandleMemoryExplore_MaxIterationsWrongType_LoudError(t *testing.T) {
+	c, err := claude.New("test-key")
+	require.NoError(t, err)
+
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":        "test",
+		"question":       "what is the answer?",
+		"max_iterations": []any{1, 2},
+	}
+
+	result, err := handleMemoryExplore(context.Background(), pool, req, Config{claudeClient: c})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "expected tool error for wrong-typed max_iterations")
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	require.True(t, ok)
+	require.Contains(t, tc.Text, "max_iterations")
+}
+
+// TestHandleMemoryExplore_TokenBudgetWrongType_LoudError covers #1282: a
+// present-but-uncoercible "token_budget" must be a loud tool error, not a
+// silent fallback to cfg.ExploreTokenBudget — token_budget caps LLM spend
+// the same way memory_sleep's llm_max_calls does.
+func TestHandleMemoryExplore_TokenBudgetWrongType_LoudError(t *testing.T) {
+	c, err := claude.New("test-key")
+	require.NoError(t, err)
+
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":      "test",
+		"question":     "what is the answer?",
+		"token_budget": map[string]any{"a": 1},
+	}
+
+	result, err := handleMemoryExplore(context.Background(), pool, req, Config{claudeClient: c})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "expected tool error for wrong-typed token_budget")
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	require.True(t, ok)
+	require.Contains(t, tc.Text, "token_budget")
+}
+
+// TestHandleMemoryExplore_MaxIterationsAndTokenBudget_HappyPath verifies that
+// valid caller-supplied max_iterations/token_budget values are honored (not
+// clamped away) and the loop still completes successfully.
+func TestHandleMemoryExplore_MaxIterationsAndTokenBudget_HappyPath(t *testing.T) {
+	var callCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"content": []map[string]string{{"type": "text", "text": `{"confidence":0.9,"gaps":[],"refined_query":null,"stop":true}`}},
+				"usage":   map[string]int{"input_tokens": 10, "output_tokens": 5},
+			})
+		} else {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"content": []map[string]string{{"type": "text", "text": "The answer is 42."}},
+				"usage":   map[string]int{"input_tokens": 10, "output_tokens": 5},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	c, err := claude.New("test-key")
+	require.NoError(t, err)
+	c.BaseURL = srv.URL
+
+	pool := newTestNoopPool(t)
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"project":        "test",
+		"question":       "what is the answer?",
+		"max_iterations": 3,
+		"token_budget":   5000,
+	}
+
+	result, err := handleMemoryExplore(context.Background(), pool, req, Config{claudeClient: c})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.IsError, "unexpected tool error: %+v", result.Content)
+}
+
 // ── TestParseExploreScope_PopulatedScope ─────────────────────────────────────
 
 // TestParseExploreScope_PopulatedScope verifies that all scope fields are
