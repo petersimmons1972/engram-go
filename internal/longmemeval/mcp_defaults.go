@@ -65,24 +65,38 @@ func FlagWasProvided(fs *flag.FlagSet, name string) bool {
 	return provided
 }
 
-// EnvOr returns the trimmed value of the named environment variable, or
-// fallback when the variable is unset or blank after trimming.
+// EnvOr returns the value of the named environment variable, or fallback when
+// the variable is unset or empty. It does not trim whitespace: a value of
+// "   " is returned as-is. This matches historical cmd/longmemeval semantics
+// (and is what DefaultAPIKey / DefaultServerURL use).
 func EnvOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// EnvOrTrimmed returns the trimmed value of the named environment variable, or
+// fallback when the variable is unset or blank after trimming. This matches
+// historical cmd/wp05-retrofit-runner semantics for ENGRAM_API_KEY / ENGRAM_URL.
+func EnvOrTrimmed(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
 	}
 	return fallback
 }
 
-// DefaultAPIKey returns ENGRAM_API_KEY if set, otherwise the Bearer token from
-// MCPDefaults (empty when neither is available).
+// DefaultAPIKey returns ENGRAM_API_KEY if set (non-empty, not trimmed), otherwise
+// the Bearer token from MCPDefaults (empty when neither is available).
+// Non-trimming matches historical cmd/longmemeval behavior.
 func DefaultAPIKey() string {
 	_, token := MCPDefaults()
 	return EnvOr("ENGRAM_API_KEY", token)
 }
 
-// DefaultServerURL returns ENGRAM_URL if set, otherwise the URL from
-// MCPDefaults (localhost:8788 when neither is available).
+// DefaultServerURL returns ENGRAM_URL if set (non-empty, not trimmed), otherwise
+// the URL from MCPDefaults (localhost:8788 when neither is available).
+// Non-trimming matches historical cmd/longmemeval behavior.
 func DefaultServerURL() string {
 	url, _ := MCPDefaults()
 	return EnvOr("ENGRAM_URL", url)

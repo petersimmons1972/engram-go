@@ -114,11 +114,16 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiv
 }
 
 func applySharedDefaults(fs *flag.FlagSet, serverURL, apiKey *string) {
+	// Use EnvOrTrimmed (not DefaultServerURL/DefaultAPIKey) to preserve this
+	// binary's historical whitespace-trimming env fallback from before the
+	// shared-package extract. Default* helpers keep cmd/longmemeval's
+	// non-trimming EnvOr semantics.
+	url, token := longmemeval.MCPDefaults()
 	if !longmemeval.FlagWasProvided(fs, "url") {
-		*serverURL = longmemeval.DefaultServerURL()
+		*serverURL = longmemeval.EnvOrTrimmed("ENGRAM_URL", url)
 	}
 	if !longmemeval.FlagWasProvided(fs, "api-key") {
-		*apiKey = longmemeval.DefaultAPIKey()
+		*apiKey = longmemeval.EnvOrTrimmed("ENGRAM_API_KEY", token)
 	}
 }
 
