@@ -15,7 +15,7 @@ fi
 
 # Extract the most recent ISO-8601 timestamp from log lines of the form:
 #   instinct: ... [2026-04-22T10:00:00Z]
-last_ts=$(sed -n 's/.*\[\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\)\].*/\1/p' "$LOG" | tail -1 || :)
+last_ts=$(sed -n 's/.*\[\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\)\].*/\1/p' "$LOG" 2>/dev/null | tail -1 || :)
 
 if [[ -z "$last_ts" ]]; then
     echo "WARN: no timestamped instinct runs found in $LOG"
@@ -34,3 +34,4 @@ fi
 
 echo "OK: instinct last ran ${gap}s ago"
 echo "Last: $last_ts"
+exit 0
