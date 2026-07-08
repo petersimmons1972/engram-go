@@ -103,5 +103,5 @@ If the episode ID is unknown: run `memory_episode_list` to find the correct ID
 before retrying.
 
 If the server is unreachable: stage a note in
-`~/.claude/projects/-home-psimmons/memory/fallback.md` with the episode
+`${ENGRAM_FALLBACK_PATH:-~/.claude/engram/fallback.md}` with the episode
 description and timestamp. Open the episode when Engram reconnects.

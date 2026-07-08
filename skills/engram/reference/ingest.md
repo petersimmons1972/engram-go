@@ -109,5 +109,5 @@ report it to the user. Common causes: unsupported file format, malformed
 export, permission error on path.
 
 If the server is unreachable: stage a note in
-`~/.claude/projects/-home-psimmons/memory/fallback.md` with the path and
+`${ENGRAM_FALLBACK_PATH:-~/.claude/engram/fallback.md}` with the path and
 project, and retry when Engram reconnects.

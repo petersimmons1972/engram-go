@@ -32,5 +32,5 @@ If `ENGRAM_API_KEY` is not set: halt and tell the user to set the variable
 before retrying.
 
 If the server is unreachable: stage a note in
-`~/.claude/projects/-home-psimmons/memory/fallback.md` and retry when Engram
+`${ENGRAM_FALLBACK_PATH:-~/.claude/engram/fallback.md}` and retry when Engram
 reconnects.

@@ -88,7 +88,7 @@ regenerate all of them within approximately 60 seconds.
 ## Error Handling
 
 If the server is unreachable: report the error and stage a note in
-`~/.claude/projects/-home-psimmons/memory/fallback.md` reminding the user
+`${ENGRAM_FALLBACK_PATH:-~/.claude/engram/fallback.md}` reminding the user
 to run consolidation when Engram comes back online.
 
 If `ENGRAM_API_KEY` is not set: halt and tell the user to set the variable
