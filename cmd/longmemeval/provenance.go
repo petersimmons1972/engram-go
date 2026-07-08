@@ -129,13 +129,14 @@ func scoreProvenanceForConfig(cfg *Config) longmemeval.ScoreProvenance {
 		itemSet = inferItemSet(cfg.DataFile)
 	}
 	return longmemeval.ScoreProvenance{
-		GoldVersion:   strings.TrimSpace(cfg.GoldVersion),
-		ScorerVersion: strings.TrimSpace(cfg.ScorerVersion),
-		FeatureFlags:  buildFeatureFlags(cfg),
-		System:        system,
-		ItemSet:       itemSet,
-		RunID:         strings.TrimSpace(cfg.RunID),
-		HarnessSHA:    harnessSHA,
+		GoldVersion:       strings.TrimSpace(cfg.GoldVersion),
+		ScorerVersion:     strings.TrimSpace(cfg.ScorerVersion),
+		FeatureFlags:      buildFeatureFlags(cfg),
+		System:            system,
+		ItemSet:           itemSet,
+		RunID:             strings.TrimSpace(cfg.RunID),
+		HarnessSHA:        harnessSHA,
+		GenerationContext: generationContextForArtifacts(cfg, "score"),
 	}
 }
 
