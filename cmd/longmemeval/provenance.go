@@ -129,13 +129,14 @@ func scoreProvenanceForConfig(cfg *Config) longmemeval.ScoreProvenance {
 		itemSet = inferItemSet(cfg.DataFile)
 	}
 	return longmemeval.ScoreProvenance{
-		GoldVersion:   strings.TrimSpace(cfg.GoldVersion),
-		ScorerVersion: strings.TrimSpace(cfg.ScorerVersion),
-		FeatureFlags:  buildFeatureFlags(cfg),
-		System:        system,
-		ItemSet:       itemSet,
-		RunID:         strings.TrimSpace(cfg.RunID),
-		HarnessSHA:    harnessSHA,
+		GoldVersion:       strings.TrimSpace(cfg.GoldVersion),
+		ScorerVersion:     strings.TrimSpace(cfg.ScorerVersion),
+		FeatureFlags:      buildFeatureFlags(cfg),
+		System:            system,
+		ItemSet:           itemSet,
+		RunID:             strings.TrimSpace(cfg.RunID),
+		HarnessSHA:        harnessSHA,
+		GenerationContext: generationContextForArtifacts(cfg, "score"),
 	}
 }
 
@@ -182,6 +183,9 @@ func buildFeatureFlags(cfg *Config) map[string]any {
 	}
 	if cfg.ContextTopKOverride != 0 {
 		flags["context_topk"] = cfg.ContextTopKOverride
+	}
+	if cfg.FullTimelineContext {
+		flags["full_timeline_context"] = true
 	}
 	if cfg.QueryParaphrasePasses != 0 {
 		flags["query_paraphrase_passes"] = cfg.QueryParaphrasePasses

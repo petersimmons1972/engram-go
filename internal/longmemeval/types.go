@@ -80,6 +80,14 @@ type ScoreProvenance struct {
 	ItemSet       string         `json:"item_set,omitempty"`
 	RunID         string         `json:"run_id,omitempty"`
 	HarnessSHA    string         `json:"harness_sha,omitempty"`
+	// GenerationContext labels how generation prompts were built for this run:
+	// "retrieval" (default memory_recall/memory_fetch path) or
+	// "full_timeline_context" (--full-timeline-context benchmark mode). Sourced
+	// from the run-stage artifact (RUN_STATUS.json/run_manifest.json) when the
+	// scoring invocation itself did not pass --full-timeline-context, so
+	// score_report.json labeling stays accurate without requiring the scoring
+	// CLI to repeat the flag.
+	GenerationContext string `json:"generation_context,omitempty"`
 }
 
 // ScoreEntry is one line written to checkpoint-score.jsonl.

@@ -241,6 +241,9 @@ func TestRunScore_WritesRunManifest(t *testing.T) {
 	if complete, ok := manifest["complete"].(bool); !ok || !complete {
 		t.Fatalf("complete = %v (%T), want true", manifest["complete"], manifest["complete"])
 	}
+	if manifest["generation_context"] != "retrieval" {
+		t.Fatalf("generation_context = %v, want retrieval", manifest["generation_context"])
+	}
 }
 
 func TestDispatchScoreWritesRunStatus(t *testing.T) {
@@ -342,6 +345,9 @@ func TestDispatchScoreWritesRunStatus(t *testing.T) {
 	}
 	if status["lock_file"] == "" {
 		t.Fatalf("lock_file missing")
+	}
+	if status["generation_context"] != "retrieval" {
+		t.Fatalf("generation_context = %v, want retrieval", status["generation_context"])
 	}
 }
 
@@ -453,6 +459,59 @@ func TestRunScore_AllAttemptedRowsFailReturnsNonZero(t *testing.T) {
 	}
 	if exit := runScore(cfg); exit == 0 {
 		t.Fatal("runScore returned 0 after every attempted score row failed")
+	}
+}
+
+func TestDispatchScorePreservesPriorGenerationContext(t *testing.T) {
+	dir := t.TempDir()
+
+	items := []longmemeval.Item{
+		{QuestionID: "q001", QuestionType: "single-session-user", Question: "?", Answer: "A"},
+	}
+	data, _ := json.Marshal(items)
+	dataPath := filepath.Join(dir, "data.json")
+	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-ingest.jsonl"), []any{
+		longmemeval.IngestEntry{QuestionID: "q001", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-run.jsonl"), []any{
+		longmemeval.RunEntry{QuestionID: "q001", Hypothesis: "A", Status: "done"},
+	})
+	writeCheckpointFile(t, filepath.Join(dir, "checkpoint-score.jsonl"), []any{
+		longmemeval.ScoreEntry{QuestionID: "q001", QuestionType: "single-session-user", ScoreLabel: "CORRECT", Status: "done"},
+	})
+	if err := os.WriteFile(filepath.Join(dir, "RUN_STATUS.json"), []byte(`{"generation_context":"full_timeline_context"}`), 0o644); err != nil {
+		t.Fatalf("seed RUN_STATUS.json: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{
+		"longmemeval",
+		"score",
+		"--data", dataPath,
+		"--out", dir,
+		"--workers", "1",
+		"--run-id", "status-run",
+		"--score-output", "quiet",
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch exit = %d, want 0; stderr=%s", exit, stderr.String())
+	}
+
+	for _, artifact := range []string{"RUN_STATUS.json", "run_manifest.json"} {
+		data, err := os.ReadFile(filepath.Join(dir, artifact))
+		if err != nil {
+			t.Fatalf("read %s: %v", artifact, err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("parse %s: %v", artifact, err)
+		}
+		if payload["generation_context"] != "full_timeline_context" {
+			t.Fatalf("%s generation_context = %v, want full_timeline_context", artifact, payload["generation_context"])
+		}
 	}
 }
 

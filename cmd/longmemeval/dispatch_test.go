@@ -82,6 +82,21 @@ func TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey(t *testing.T) {
 	}
 }
 
+func TestHelp_RunSubcommandDocumentsFullTimelineContext(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch(run --help) exit = %d, want 0", exit)
+	}
+
+	combined := stdout.String() + stderr.String()
+	for _, want := range []string{"-full-timeline-context", "benchmark-only", "memory_recall", "memory_fetch"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("run help missing %q:\n%s", want, combined)
+		}
+	}
+}
+
 func TestDispatch_SpecialSubcommandsReturnControlledHelpAndParseExitCodes(t *testing.T) {
 	if os.Getenv("LONGMEMEVAL_DISPATCH_HELPER") == "1" {
 		args := strings.Split(os.Getenv("LONGMEMEVAL_DISPATCH_ARGS"), "\n")

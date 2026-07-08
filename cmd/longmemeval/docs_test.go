@@ -140,6 +140,19 @@ func TestCommandCatalogDocumentsLongMemEval(t *testing.T) {
 	}
 }
 
+func TestCommandCatalogDocumentsFullTimelineContextMode(t *testing.T) {
+	data, err := os.ReadFile("../../cmd/README.md")
+	if err != nil {
+		t.Fatalf("read cmd/README.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{"--full-timeline-context", "benchmark-only", "memory_recall", "memory_fetch"} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("command catalog missing full timeline context guidance %q", current)
+		}
+	}
+}
+
 func TestLMEBenchmarkLearningsQuickStartUsesCurrentFlags(t *testing.T) {
 	data, err := os.ReadFile("../../docs/lme-benchmark-learnings.md")
 	if err != nil {
