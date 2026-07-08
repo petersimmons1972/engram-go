@@ -124,6 +124,9 @@ type Config struct {
 
 	// H-KUR: knowledge-update recency generation prompt (issue #1178).
 	KURecencyPrompt bool // instruct the model to answer with the most-recent-session value when multiple values for the same attribute appear across sessions (default off)
+
+	// L2 (M0.5 Phase 4 closeout): anti-hedge per-type generation prompt.
+	AntiHedgePrompts bool // append an anti-hedge addendum to single-session-preference and inferred-preference prompts instructing the model to commit to the stated preference rather than hedge with "it depends"/"I don't have enough information" when the context contains an answer (default off)
 	// Retrieval-fusion flags for issue #938.
 	RetrievalFusion     bool // union multiple query variants (primary/raw/identifier queries)
 	ExactSignalBoost    bool // re-rank candidate IDs by exact identifier/entity overlap
@@ -326,6 +329,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.PreferenceGround, "preference-ground", false, "H-PG: for single-session-preference answers, forbid specific brands/titles/cuisines/ingredients/genres unless they appear explicitly in retrieved context; prefer a short grounded answer over padded specifics (default off)")
 	// H-KUR: knowledge-update recency generation prompt (issue #1178)
 	fs.BoolVar(&cfg.KURecencyPrompt, "ku-recency-prompt", false, "H-KUR: for knowledge-update answers, instruct the model to answer with the value from the most recent session (latest date) when multiple values for the same attribute appear across sessions in context (default off)")
+	// L2 (M0.5 Phase 4 closeout): anti-hedge per-type generation prompt
+	fs.BoolVar(&cfg.AntiHedgePrompts, "anti-hedge-prompts", false, "L2: for single-session-preference and inferred-preference answers, append an addendum instructing the model to commit to the preference stated or implied in context rather than hedge with \"it depends\"/\"I don't have enough information\" when context contains an answer (default off)")
 	fs.BoolVar(&cfg.RetrievalFusion, "retrieval-fusion", false, "issue #938: fuse retrieval candidates from primary/raw/identifier query variants")
 	fs.BoolVar(&cfg.ExactSignalBoost, "exact-signal-boost", false, "issue #938: boost candidates that contain exact identifiers/entities from the question")
 	fs.BoolVar(&cfg.EvidenceFirstPacked, "evidence-first-pack", false, "issue #938: pack context in evidence-first order using exact overlap signals")

@@ -564,6 +564,54 @@ GROUNDING RULE:
 - Prefer a short grounded answer over a padded one.`, questionDate, ctx, questionDate, question)
 }
 
+// antiHedgeAddendum (L2, M0.5 Phase 4 closeout) is the anti-hedge instruction
+// appended to preference-type generation prompts when --anti-hedge-prompts is
+// enabled. Targets the ss-preference hedging failure mode where the model
+// answers "it depends" / "I don't have enough information" / "it's unclear"
+// even though the retrieved context states or clearly implies a preference —
+// a refusal-shaped non-answer the judge scores as wrong even when the
+// underlying evidence was retrieved correctly. This is a pure prompt lever:
+// it does not change retrieval, matching, schema, or scoring.
+const antiHedgeAddendum = `ANTI-HEDGE RULE: If the context above states or clearly implies a preference relevant to this question, you MUST commit to that preference as your answer. Do not hedge with phrases like "it depends", "I don't have enough information", "it's unclear", "I cannot determine", "without more context", or any similar non-answer when the context contains an answer. Only say the preference is unknown if the context truly contains no relevant information about it.`
+
+// appendPromptAddendum appends addendum to prompt separated by a blank line,
+// trimming surrounding whitespace from each so repeated application stays
+// idempotent-shaped. Mirrors prependPromptPrefix's empty-string handling.
+func appendPromptAddendum(prompt, addendum string) string {
+	prompt = strings.TrimSpace(prompt)
+	addendum = strings.TrimSpace(addendum)
+	switch {
+	case addendum == "":
+		return prompt
+	case prompt == "":
+		return addendum
+	default:
+		return prompt + "\n\n" + addendum
+	}
+}
+
+// GenerationPromptForTypeAntiHedge (L2, M0.5 Phase 4 closeout) is like
+// GenerationPromptForType but, when antiHedgePrompts is true, appends the
+// antiHedgeAddendum to the generation prompt for single-session-preference
+// questions AND for questions IsInferredPreferenceQuestion identifies as
+// preference-shaped by their raw text (e.g. "What restaurant would I like?")
+// even when the dataset's own question_type label is something else — the
+// same inferred-preference gate --dual-preference-recall (H15) already uses.
+// For all other question types, or when the flag is false, the standard
+// GenerationPromptForType output is returned unchanged. Pure prompt lever: no
+// retrieval, matcher, schema, or scorer change.
+// Activated by --anti-hedge-prompts (Config.AntiHedgePrompts). Off by default.
+func GenerationPromptForTypeAntiHedge(question, questionType, questionDate string, contextBlocks []string, antiHedgePrompts bool) string {
+	base := GenerationPromptForType(question, questionType, questionDate, contextBlocks)
+	if !antiHedgePrompts {
+		return base
+	}
+	if questionType != "single-session-preference" && !IsInferredPreferenceQuestion(question) {
+		return base
+	}
+	return appendPromptAddendum(base, antiHedgeAddendum)
+}
+
 // GenerationPromptForTypeKURecency (H-KUR, issue #1178) is like
 // GenerationPromptForType but, when kuRecencyPrompt is true for
 // "knowledge-update" questions, routes to GenerationPromptKnowledgeUpdate — a
