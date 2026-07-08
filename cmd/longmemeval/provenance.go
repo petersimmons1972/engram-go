@@ -241,6 +241,9 @@ func buildFeatureFlags(cfg *Config) map[string]any {
 	if cfg.AtomOracle {
 		flags["atom_oracle"] = true
 	}
+	if cfg.AntiHedgePrompts {
+		flags["anti_hedge_prompts"] = true
+	}
 	return flags
 }
 

@@ -569,6 +569,83 @@ func TestGenerationPrompt_KURecency_NonKUTypeUnaffected(t *testing.T) {
 	}
 }
 
+// TestGenerationPrompt_AntiHedge_SSPreferenceHappyPath verifies the L2
+// anti-hedge addendum is appended to the standard single-session-preference
+// prompt when --anti-hedge-prompts is on, instructing the model to commit to
+// a stated preference rather than hedge.
+func TestGenerationPrompt_AntiHedge_SSPreferenceHappyPath(t *testing.T) {
+	question := "What kind of restaurant would I like?"
+	questionDate := "2024-03-15"
+	context := []string{"Session date: 2024-03-10\nUser said they love quiet ramen spots."}
+	prompt := longmemeval.GenerationPromptForTypeAntiHedge(question, "single-session-preference", questionDate, context, true)
+
+	base := longmemeval.GenerationPromptForType(question, "single-session-preference", questionDate, context)
+	if !strings.Contains(prompt, base) {
+		t.Errorf("anti-hedge prompt must still contain the standard preference prompt\nwant substring:\n%s\n\ngot:\n%s", base, prompt)
+	}
+	lower := strings.ToLower(prompt)
+	for _, want := range []string{
+		"anti-hedge rule",
+		"it depends",
+		"i don't have enough information",
+		"commit",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("anti-hedge prompt must contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+// TestGenerationPrompt_AntiHedge_FlagOffIsBaseline verifies the flag is a
+// true no-op (byte-identical to GenerationPromptForType) for a
+// single-session-preference question when antiHedgePrompts is false.
+func TestGenerationPrompt_AntiHedge_FlagOffIsBaseline(t *testing.T) {
+	question := "What kind of restaurant would I like?"
+	questionDate := "2024-03-15"
+	context := []string{"Session date: 2024-03-10\nUser said they love quiet ramen spots."}
+	got := longmemeval.GenerationPromptForTypeAntiHedge(question, "single-session-preference", questionDate, context, false)
+	want := longmemeval.GenerationPromptForType(question, "single-session-preference", questionDate, context)
+	if got != want {
+		t.Errorf("anti-hedge flag off should preserve standard preference prompt\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+// TestGenerationPrompt_AntiHedge_NonPreferenceTypeUnaffected verifies the
+// addendum is absent for a question type that is neither
+// single-session-preference nor recognised by IsInferredPreferenceQuestion,
+// even when the flag is on — the lever must not leak into other types.
+func TestGenerationPrompt_AntiHedge_NonPreferenceTypeUnaffected(t *testing.T) {
+	question := "When did the user buy their camera?"
+	questionDate := "2024-03-15"
+	context := []string{"Session date: 2024-01-05\nUser mentioned they bought a Sony A7IV last week."}
+	got := longmemeval.GenerationPromptForTypeAntiHedge(question, "single-session-user", questionDate, context, true)
+	want := longmemeval.GenerationPromptForType(question, "single-session-user", questionDate, context)
+	if got != want {
+		t.Errorf("anti-hedge flag must not affect non-preference question types\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+// TestGenerationPrompt_AntiHedge_InferredPreferenceBoundary verifies the
+// addendum also fires for a question whose raw text is preference-shaped
+// (matched by IsInferredPreferenceQuestion, e.g. a "recommend" phrasing) even
+// when its dataset question_type label is something other than
+// single-session-preference — mirroring the same inferred-preference gate
+// --dual-preference-recall (H15) already uses.
+func TestGenerationPrompt_AntiHedge_InferredPreferenceBoundary(t *testing.T) {
+	question := "Can you recommend a hotel for my trip to Miami?"
+	if !longmemeval.IsInferredPreferenceQuestion(question) {
+		t.Fatalf("test setup: question %q must be recognised as inferred-preference", question)
+	}
+	questionDate := "2024-03-15"
+	context := []string{"Session date: 2024-03-10\nUser said they prefer boutique hotels near the beach."}
+	prompt := longmemeval.GenerationPromptForTypeAntiHedge(question, "single-session-user", questionDate, context, true)
+
+	lower := strings.ToLower(prompt)
+	if !strings.Contains(lower, "anti-hedge rule") {
+		t.Errorf("inferred-preference question must receive the anti-hedge addendum even with a non-preference type label, got:\n%s", prompt)
+	}
+}
+
 // TestGenerationPromptKnowledgeUpdate_ContainsRecencyInstructionAndContext
 // verifies the underlying prompt builder (named per issue #1178's acceptance
 // criteria: GenerationPromptKnowledgeUpdate) embeds both the recency rule and
