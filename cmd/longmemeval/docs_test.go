@@ -230,6 +230,26 @@ func TestLMEJudgingDocumentsLockedQwen3Preset(t *testing.T) {
 	}
 }
 
+func TestLMEJudgingDocumentsEnvOnlyGPT4OScorerCredentials(t *testing.T) {
+	data, err := os.ReadFile("../../docs/lme-judging.md")
+	if err != nil {
+		t.Fatalf("read docs/lme-judging.md: %v", err)
+	}
+	doc := string(data)
+	for _, current := range []string{
+		"inherited via environment only",
+		"do not pass secrets on argv",
+		"The scorer API key is inherited via `LME_SCORER_API_KEY`",
+	} {
+		if !strings.Contains(doc, current) {
+			t.Fatalf("lme judging doc missing scorer credential guidance %q:\n%s", current, doc)
+		}
+	}
+	if strings.Contains(doc, "mapped to `--scorer-api-key`") {
+		t.Fatalf("lme judging doc still maps scorer credentials to --scorer-api-key:\n%s", doc)
+	}
+}
+
 func TestSSPrefModelRecommendationMemoTrackedAndComplete(t *testing.T) {
 	readmeData, err := os.ReadFile("../../results/README.md")
 	if err != nil {

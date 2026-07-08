@@ -111,7 +111,7 @@ type Config struct {
 	// H-TAB: topic-anchor boost (LME experiment #3, server-side, flag-gated)
 	TopicAnchorBoost bool // H-TAB: server-side topic-anchor scoring boost for preference questions (default off)
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
-	ExhaustiveAggregation bool // run a topK=500 sweep for count-shaped questions and union with primary results
+	ExhaustiveAggregation bool // paginate memory_list across the whole project for count-shaped questions and union with primary recall
 
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	EnumerateFirst bool // inject enumerate-then-total instruction for aggregation questions (default off)
@@ -143,9 +143,9 @@ type Config struct {
 	ExclusiveBackend bool   // guard the vLLM endpoint with a PID-liveness lockfile (default true)
 	BackendLockDir   string // override lock file directory (default: $XDG_RUNTIME_DIR/lme or /tmp/lme)
 
-	// #754/#837: scratch TTL. Applied at ingest time via the /quick-store
-	// expires_at field so the `prune` subcommand can sweep expired lme-*
-	// projects later. Zero means durable (no expiry).
+	// #754/#837/#1329: scratch TTL. Applied at ingest time via explicit
+	// /quick-store project TTL fields so the `prune` subcommand can sweep
+	// expired lme-* projects later. Zero means durable (no expiry).
 	ScratchTTL time.Duration
 
 	// AtomMode: when true, fetch extracted preference atoms for the project
@@ -317,7 +317,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// H-TAB: topic-anchor boost (LME experiment #3)
 	fs.BoolVar(&cfg.TopicAnchorBoost, "topic-anchor-boost", false, "H-TAB: server-side topic-anchor scoring boost — preference memories containing domain tokens from the query score 1.25× higher; targets multi-preference-session distraction (default off, composable with --dual-preference-recall)")
 	// H8: exhaustive aggregation recall (lme-h8h12h15 branch)
-	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: run a topK=500 sweep recall for count-shaped questions and union with primary results (default off)")
+	fs.BoolVar(&cfg.ExhaustiveAggregation, "exhaustive-aggregation", false, "H8: paginate memory_list across the full project for count-shaped questions and union those memories with the primary recall results (default off)")
 	// H12: enumerate-first generation prompt (lme-h8h12h15 branch)
 	fs.BoolVar(&cfg.EnumerateFirst, "enumerate-first", false, "H12: inject enumerate-then-total generation instruction for aggregation questions (default off)")
 	// H-PE: preference-enumerate generation prompt
@@ -415,7 +415,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.Retries, "retries", 1, "retry count per LLM call")
 		sefs.StringVar(&cfg.ScorerURL, "scorer-url", envOr("LME_SCORER_URL", ""), "OAI base URL for scoring")
 		sefs.StringVar(&cfg.ScorerModel, "scorer-model", envOr("LME_SCORER_MODEL", ""), "model name for scorer")
-		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", envOr("LME_SCORER_API_KEY", ""), "API key for scorer (env: LME_SCORER_API_KEY)")
+		sefs.StringVar(&cfg.ScorerAPIKey, "scorer-api-key", "", "DEPRECATED: prefer LME_SCORER_API_KEY or OPENAI_API_KEY environment variables; avoid secrets on argv")
 		sefs.IntVar(&cfg.ScorerMaxTokens, "scorer-max-tokens", longmemeval.DefaultScorerMaxTokens, "max_tokens for scoring requests (default 2048)")
 		sefs.StringVar(&cfg.ScorerLockPath, "scorer-lock", "", "path to scorer lock manifest; when set, scorer URL/model/thinking/max_tokens are taken from the manifest")
 		sefs.BoolVar(&cfg.PreserveCorrect, "preserve-correct", true, "skip items already scored CORRECT")
@@ -427,6 +427,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		sefs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "context window size used during run (for H-DIAG diagnostics; 0 = read from RUN_STATUS.json)")
 		if exit := parseFlagSet(sefs, args[2:]); exit >= 0 {
 			return exit
+		}
+		applyScoreEfficientDefaults(cfg, sefs)
+		if flagWasProvided(sefs, "scorer-api-key") {
+			_, _ = fmt.Fprintln(stderr, "WARN: --scorer-api-key is deprecated; prefer LME_SCORER_API_KEY or OPENAI_API_KEY to avoid secrets on argv")
 		}
 		cfg.scorerThinkingSet = flagPassed(sefs, "scorer-thinking")
 		cfg.scorerMaxTokensSet = flagPassed(sefs, "scorer-max-tokens")
@@ -784,12 +788,22 @@ func defaultServerURL() string {
 	return envOr("ENGRAM_URL", url)
 }
 
+func defaultScorerAPIKey() string {
+	return envOr("LME_SCORER_API_KEY", envOr("OPENAI_API_KEY", ""))
+}
+
 func applySharedDefaults(cfg *Config, fs *flag.FlagSet) {
 	if !flagWasProvided(fs, "api-key") {
 		cfg.APIKey = defaultAPIKey()
 	}
 	if !flagWasProvided(fs, "url") {
 		cfg.ServerURL = defaultServerURL()
+	}
+}
+
+func applyScoreEfficientDefaults(cfg *Config, fs *flag.FlagSet) {
+	if !flagWasProvided(fs, "scorer-api-key") {
+		cfg.ScorerAPIKey = defaultScorerAPIKey()
 	}
 }
 

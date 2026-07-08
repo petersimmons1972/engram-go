@@ -6,8 +6,10 @@ package search
 import (
 	"context"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/petersimmons1972/engram/internal/types"
 )
@@ -150,6 +152,71 @@ func TestSortResults_TiedScores(t *testing.T) {
 	}
 }
 
+func TestMergeSearchResults_PrefersLongerContentOnIDCollision(t *testing.T) {
+	longContent := strings.Repeat("x", 1024)
+	pass1 := []types.SearchResult{
+		{
+			Memory: &types.Memory{ID: "shared-id", Content: "short"},
+			Score:  0.95,
+		},
+	}
+	pass2 := []types.SearchResult{
+		{
+			Memory: &types.Memory{ID: "shared-id", Content: longContent},
+			Score:  0.20,
+		},
+	}
+
+	merged := mergeSearchResults(pass1, pass2, 10)
+	if len(merged) != 1 {
+		t.Fatalf("expected 1 merged result, got %d", len(merged))
+	}
+	if merged[0].Score != 0.95 {
+		t.Fatalf("expected pass-1 score to be preserved, got %v", merged[0].Score)
+	}
+	if got := merged[0].Memory.Content; got != longContent {
+		t.Fatalf("expected longer content from duplicate row to win, got len=%d want len=%d", len(got), len(longContent))
+	}
+}
+
+func TestSummaryContentFallback_UsesSummaryWhenPresent(t *testing.T) {
+	summary := "prepared summary"
+	got := summaryContentFallback(&types.Memory{
+		Summary: &summary,
+		Content: strings.Repeat("x", 600),
+	})
+	if got != summary {
+		t.Fatalf("summaryContentFallback() = %q, want %q", got, summary)
+	}
+}
+
+func TestSummaryContentFallback_TruncatesContentWithEllipsis(t *testing.T) {
+	content := strings.Repeat("a", 501)
+	want := strings.Repeat("a", 500) + "…"
+	got := summaryContentFallback(&types.Memory{Content: content})
+	if got != want {
+		t.Fatalf("summaryContentFallback() length/content mismatch: got len=%d want len=%d", len(got), len(want))
+	}
+	if handleGot := handleSummaryFallback(&types.Memory{Content: content}); handleGot != want {
+		t.Fatalf("handleSummaryFallback() = %q, want shared fallback %q", handleGot, want)
+	}
+	if rerankGot := rerankTextForMemory(&types.Memory{Content: content}); rerankGot != want {
+		t.Fatalf("rerankTextForMemory() = %q, want shared fallback %q", rerankGot, want)
+	}
+}
+
+func TestSummaryContentFallback_DoesNotSplitUTF8Rune(t *testing.T) {
+	content := strings.Repeat("é", 249) + "€tail"
+	got := summaryContentFallback(&types.Memory{Content: content})
+	if !utf8.ValidString(got) {
+		t.Fatalf("summaryContentFallback() returned invalid UTF-8: %q", got)
+	}
+	want := strings.Repeat("é", 249) + "…"
+	if got != want {
+		t.Fatalf("summaryContentFallback() = %q, want %q", got, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // toConnectedMemories
 // ---------------------------------------------------------------------------
@@ -253,7 +320,6 @@ func TestToConnectedMemories_MixedDirections(t *testing.T) {
 		t.Errorf("in-source direction = %q, want 'incoming'", dirs["in-source"])
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // maybeRerank

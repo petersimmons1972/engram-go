@@ -14,6 +14,7 @@ package search_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -149,6 +150,19 @@ func TestValidityWindowFilter_SupersededFactDeranked(t *testing.T) {
 
 	require.True(t, foundOld, "outdated memory must be in recall results")
 	require.True(t, foundNew, "current memory must be in recall results")
+
+	// Guard against non-finite composite scores (NaN/Inf) *before* handing them
+	// to assert.Greater. testify's numeric comparator falls through to a bare
+	// "Can not compare type \"float64\"" failure when every ordering check on a
+	// NaN operand evaluates false — that error gives no indication a NaN was
+	// involved, which is what made this test flaky/confusing in CI (#1353).
+	// Failing loudly here with the actual values makes the underlying scoring
+	// issue (if any) visible instead of masquerading as a testify type error.
+	require.False(t, math.IsNaN(scoreOld) || math.IsNaN(scoreNew),
+		"composite scores must be finite, not NaN: scoreOld=%v scoreNew=%v", scoreOld, scoreNew)
+	require.False(t, math.IsInf(scoreOld, 0) || math.IsInf(scoreNew, 0),
+		"composite scores must be finite, not +/-Inf: scoreOld=%v scoreNew=%v", scoreOld, scoreNew)
+
 	assert.Greater(t, scoreNew, scoreOld,
 		"current fact (valid_from=2024) must outscore outdated fact (valid_from=2020) when validity window filter is ON")
 }

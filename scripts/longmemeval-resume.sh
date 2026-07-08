@@ -4,7 +4,10 @@ set -euo pipefail
 # Maintained resume wrapper for run/score stages.
 # Optional RUN_PID waits for a running "longmemeval run" process before scoring.
 
-REPO=${REPO:-/home/psimmons/projects/engram-go}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_REPO="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+REPO=${REPO:-$DEFAULT_REPO}
 BIN=${BIN:-$REPO/longmemeval}
 DATA=${DATA:-$REPO/testdata/longmemeval/longmemeval_m_cleaned.json}
 OUT=${OUT:-$REPO/results/longmemeval}
@@ -15,6 +18,13 @@ RUN_INGEST=${RUN_INGEST:-0}
 SKIP_SCORE=${SKIP_SCORE:-0}
 RUN_PID=${RUN_PID:-}
 ROUTE_DISCOVER=${ROUTE_DISCOVER:-0}
+
+log() { echo "$(date '+%Y/%m/%d %H:%M:%S') $*"; }
+
+if [[ ! -x "$BIN" ]]; then
+  log "ERROR: binary not found or not executable: $BIN"
+  exit 1
+fi
 
 if [[ "$ROUTE_DISCOVER" == "1" ]]; then
   route_path="$OUT/route-discover.json"
@@ -45,18 +55,16 @@ fi
   --cleanup-policy never \
   2>&1 | tee -a "$OUT/run.log"
 
-if [[ "$SKIP_SCORE" == "1" ]]; then
-  exit 0
+if [[ "$SKIP_SCORE" != "1" ]]; then
+  while [[ -n "$RUN_PID" ]] && kill -0 "$RUN_PID" 2>/dev/null; do
+    sleep 30
+  done
+
+  "$BIN" score \
+    --data "$DATA" \
+    --out "$OUT" \
+    --llm-url "$LLM_URL" \
+    --llm-model "$LLM_MODEL" \
+    --workers "$WORKERS" \
+    2>&1 | tee "$OUT/score.log"
 fi
-
-while [[ -n "$RUN_PID" ]] && kill -0 "$RUN_PID" 2>/dev/null; do
-  sleep 30
-done
-
-"$BIN" score \
-  --data "$DATA" \
-  --out "$OUT" \
-  --llm-url "$LLM_URL" \
-  --llm-model "$LLM_MODEL" \
-  --workers "$WORKERS" \
-  2>&1 | tee "$OUT/score.log"

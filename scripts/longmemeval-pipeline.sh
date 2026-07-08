@@ -4,7 +4,10 @@ set -euo pipefail
 # Maintained LongMemEval pipeline wrapper.
 # This script replaces ad-hoc result-local wrappers in ignored results trees.
 
-REPO=${REPO:-/home/psimmons/projects/engram-go}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_REPO="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+REPO=${REPO:-$DEFAULT_REPO}
 BIN=${BIN:-$REPO/longmemeval}
 DATA=${DATA:-$REPO/testdata/longmemeval/longmemeval_m_cleaned.json}
 OUT=${OUT:-$REPO/results/longmemeval}

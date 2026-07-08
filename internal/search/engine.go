@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -232,17 +233,34 @@ func ToHandles(results []types.SearchResult) []types.Handle {
 // async summarizer worker (internal/summarize/worker.go, ~30s poll interval)
 // has not yet processed — it falls back to a truncated content excerpt so
 // handle-mode triage still has something useful to look at instead of an
-// empty string (#1260). Mirrors the existing detail="summary" fallback used
-// for full recall results (see the "summary" case above).
+// empty string (#1260). Kept as a compatibility wrapper for handle-mode tests
+// and call sites; summaryContentFallback owns the shared truncation behavior.
 func handleSummaryFallback(m *types.Memory) string {
+	return summaryContentFallback(m)
+}
+
+func summaryContentFallback(m *types.Memory) string {
+	if m == nil {
+		return ""
+	}
 	if m.Summary != nil {
 		return *m.Summary
 	}
-	content := m.Content
-	if len(content) > 500 {
-		content = content[:500] + "…"
+	return truncatedContentFallback(m.Content)
+}
+
+func truncatedContentFallback(content string) string {
+	if len(content) <= 500 {
+		return content
 	}
-	return content
+	end := 0
+	for i := range content {
+		if i > 500 {
+			break
+		}
+		end = i
+	}
+	return content[:end] + "…"
 }
 
 // MergeCandidate is a pair of memories with their similarity score.
@@ -1239,15 +1257,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			// (Content, PatternConfidence, Tags, etc.) are stripped by design.
 			result.Memory = &types.Memory{ID: m.ID}
 		case "summary":
-			if m.Summary != nil {
-				result.Memory.Content = *m.Summary
-			} else {
-				content := m.Content
-				if len(content) > 500 {
-					content = content[:500] + "…"
-				}
-				result.Memory.Content = content
-			}
+			result.Memory.Content = summaryContentFallback(m)
 		}
 		results = append(results, result)
 	}
@@ -1733,11 +1743,7 @@ func rerankTextForMemory(m *types.Memory) string {
 	if m.Summary != nil {
 		return *m.Summary
 	}
-	summary := m.Content
-	if len(summary) > 500 {
-		summary = summary[:500]
-	}
-	return summary
+	return truncatedContentFallback(m.Content)
 }
 
 // mergeSearchResults unions two result slices, preserving the order of a first and
@@ -1746,30 +1752,27 @@ func rerankTextForMemory(m *types.Memory) string {
 // unfiltered pass carries the composite-scored ranking the caller expects on top.
 func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResult {
 	merged := make([]types.SearchResult, 0, len(a)+len(b))
-	seen := make(map[string]struct{}, len(a)+len(b))
+	indexByMemoryID := make(map[string]int, len(a)+len(b))
 	atomPreamble := firstAtomPreamble(a)
 	if atomPreamble == "" {
 		atomPreamble = firstAtomPreamble(b)
 	}
-	for _, r := range a {
+	appendOrHydrate := func(r types.SearchResult) {
 		if r.Memory == nil {
-			continue
+			return
 		}
-		if _, dup := seen[r.Memory.ID]; dup {
-			continue
+		if idx, dup := indexByMemoryID[r.Memory.ID]; dup {
+			merged[idx].Memory = preferLongerMemoryContent(merged[idx].Memory, r.Memory)
+			return
 		}
-		seen[r.Memory.ID] = struct{}{}
+		indexByMemoryID[r.Memory.ID] = len(merged)
 		merged = append(merged, r)
 	}
+	for _, r := range a {
+		appendOrHydrate(r)
+	}
 	for _, r := range b {
-		if r.Memory == nil {
-			continue
-		}
-		if _, dup := seen[r.Memory.ID]; dup {
-			continue
-		}
-		seen[r.Memory.ID] = struct{}{}
-		merged = append(merged, r)
+		appendOrHydrate(r)
 	}
 	if limit > 0 && len(merged) > limit {
 		merged = merged[:limit]
@@ -1780,6 +1783,19 @@ func mergeSearchResults(a, b []types.SearchResult, limit int) []types.SearchResu
 		}
 	}
 	return merged
+}
+
+func preferLongerMemoryContent(current, candidate *types.Memory) *types.Memory {
+	if current == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return current
+	}
+	if len(candidate.Content) <= len(current.Content) {
+		return current
+	}
+	return candidate
 }
 
 func firstAtomPreamble(results []types.SearchResult) string {
@@ -2142,8 +2158,8 @@ func (e *SearchEngine) Connect(ctx context.Context, srcID, dstID, relType string
 	if !types.ValidateRelationType(relType) {
 		return fmt.Errorf("invalid relation type %q", relType)
 	}
-	if strength <= 0 {
-		strength = 1.0
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 || strength > 1.0 {
+		return fmt.Errorf("strength must be between 0 and 1, got %v", strength)
 	}
 	rel := &types.Relationship{
 		ID:       types.NewMemoryID(),

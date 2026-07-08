@@ -19,7 +19,7 @@ backup.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_ingest","arguments":{"path":"<file-or-directory-path>","project":"<project>"}}'
@@ -36,7 +36,7 @@ formats Engram knows how to parse.
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_ingest_export","arguments":{"path":"<export-file-path>","project":"<project>","source":"<slack|claude|chatgpt>"}}'
@@ -57,7 +57,7 @@ Ingest operations run asynchronously. Poll until `status` is `complete` or
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_ingest_status","arguments":{"job_id":"<job-id>"}}'
@@ -70,7 +70,7 @@ Poll every 10–15 seconds for large jobs. Report progress to the user when
 
 ```bash
 xh POST "${ENGRAM_BASE_URL:-http://localhost:8788}/mcp" \
-  "Authorization: Bearer $ENGRAM_API_KEY" \
+  "Authorization: Bearer ${ENGRAM_API_KEY}" \
   Content-Type:application/json \
   jsonrpc=2.0 id:=1 method=tools/call \
   params:='{"name":"memory_export_all","arguments":{"project":"<project>","output_dir":"<absolute-directory-path>"}}'

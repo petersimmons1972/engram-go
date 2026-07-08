@@ -191,10 +191,10 @@ func handleMemoryAuditCompare(ctx context.Context, pool *EnginePool, req mcpgo.C
 		return errResult, nil
 	}
 	limit := 10
-	if v, ok := args["limit"]; ok {
-		if n, ok := v.(float64); ok && n > 0 {
-			limit = int(n)
-		}
+	if n, present, err := requireOptionalInt(args, "limit"); err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	} else if present {
+		limit = n
 	}
 
 	worker := newAuditWorker(pool, cfg)

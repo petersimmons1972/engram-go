@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
+	"github.com/petersimmons1972/engram/internal/search"
 )
 
 // preservedLog is a mutex-protected accumulator for project names that were
@@ -660,10 +661,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
-	// H8 (lme-h8h12h15): exhaustive aggregation recall is now handled by
-	// RunOpts.EffectiveRecallTopK (deep primary recall for count-shaped questions)
-	// and RunOpts.UseFullAggregationContext (full result set into context), rather
-	// than a separate anchor sweep — see internal/longmemeval/claude_additions.go.
+	// H8 (lme-h8h12h15): exhaustive aggregation keeps the deep primary recall
+	// (topK=500) but now also paginates memory_list across the whole per-item
+	// project and unions that full project sweep into the context candidate set.
 
 	// H15 (lme-h8h12h15): dual-query preference recall — run a second recall
 	// using the subject-anchor query for inferred preference questions only.
@@ -707,6 +707,35 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		}
 	}
 
+	type listedMemory struct {
+		Content   string
+		SessionID string
+	}
+	listedMemoryByID := map[string]listedMemory{}
+	if !fullTimelineContext && runOpts.UseFullAggregationContext(item.Question) {
+		projectMemories, listErr := mcpClient.ListAllProjectMemories(ctx, ingest.Project)
+		if listErr != nil {
+			return longmemeval.RunEntry{
+				QuestionID:   item.QuestionID,
+				RetrievedIDs: retrievedIDs,
+				Status:       "error",
+				Error:        fmt.Sprintf("list project memories: %v", listErr),
+			}
+		}
+		projectMemoryIDs := make([]string, 0, len(projectMemories))
+		for _, memory := range projectMemories {
+			if memory.ID == "" {
+				continue
+			}
+			projectMemoryIDs = append(projectMemoryIDs, memory.ID)
+			listedMemoryByID[memory.ID] = listedMemory{
+				Content:   memory.Content,
+				SessionID: search.ExtractSessionID(memory.Tags),
+			}
+		}
+		retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, projectMemoryIDs)
+	}
+
 	// Fetch content for top contextLimit memories.
 	// --context-topk overrides per-type default; 0 means use per-type default.
 	// See resolveContextTopK for the full priority chain, including the
@@ -722,10 +751,19 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contentByID = make(map[string]string, contextLimit)
 		contextBlockByID = make(map[string]string, contextLimit)
 		for _, id := range contextIDs {
-			content, err := mcpClient.FetchContent(ctx, ingest.Project, id)
-			if err != nil {
-				log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
-				continue
+			sessionID := ingest.MemoryMap[id]
+			content := ""
+			if listed, ok := listedMemoryByID[id]; ok {
+				content = listed.Content
+				if sessionID == "" {
+					sessionID = listed.SessionID
+				}
+			} else {
+				content, err = mcpClient.FetchContent(ctx, ingest.Project, id)
+				if err != nil {
+					log.Printf("WARN run [%s] fetch %s: %v", item.QuestionID, id, err)
+					continue
+				}
 			}
 			if content != "" {
 				// Truncate at storage time so contentByID and contextBlocks stay
@@ -735,7 +773,6 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				if cfg.MaxBlockChars > 0 && len(content) > cfg.MaxBlockChars {
 					content = content[:cfg.MaxBlockChars]
 				}
-				sessionID := ingest.MemoryMap[id]
 				block := formatContextBlock(content, sessionID, sessionDateByID[sessionID])
 				contentByID[id] = content
 				contextBlockByID[id] = block
