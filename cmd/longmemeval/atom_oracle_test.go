@@ -86,15 +86,15 @@ func buildTestItem() longmemeval.Item {
 		}
 	}
 	return longmemeval.Item{
-		QuestionID:   "q001",
-		QuestionType: "single-session-preference",
-		Question:     "Do I prefer dark or milk chocolate?",
-		QuestionDate: "2024/01/15",
+		QuestionID:         "q001",
+		QuestionType:       "single-session-preference",
+		Question:           "Do I prefer dark or milk chocolate?",
+		QuestionDate:       "2024/01/15",
 		HaystackSessionIDs: []string{"sess-a", "sess-b", "sess-c"},
 		HaystackSessions: [][]longmemeval.Turn{
-			turnFor("I like going to the cinema."),        // sess-a — not gold
-			turnFor("I prefer dark chocolate, always."),   // sess-b — gold
-			turnFor("The weather was nice today."),        // sess-c — not gold
+			turnFor("I like going to the cinema."),      // sess-a — not gold
+			turnFor("I prefer dark chocolate, always."), // sess-b — gold
+			turnFor("The weather was nice today."),      // sess-c — not gold
 		},
 		AnswerSessionIDs: []string{"sess-b"},
 	}

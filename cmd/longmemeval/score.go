@@ -347,11 +347,11 @@ func writeDiag(cfg *Config, itemMap map[string]longmemeval.Item, ingestMap map[s
 
 // diagTypeStats aggregates H-DIAG fields for one question type.
 type diagTypeStats struct {
-	N                        int     `json:"n"`
-	GoldVisibleRate          float64 `json:"gold_visible_rate"`
-	GoldNotRetrievedRate     float64 `json:"gold_not_retrieved_rate"`
-	AvgGoldRankWhenFound     float64 `json:"avg_gold_rank_when_found"`
-	AvgSessionDominance      float64 `json:"avg_session_dominance"`
+	N                    int     `json:"n"`
+	GoldVisibleRate      float64 `json:"gold_visible_rate"`
+	GoldNotRetrievedRate float64 `json:"gold_not_retrieved_rate"`
+	AvgGoldRankWhenFound float64 `json:"avg_gold_rank_when_found"`
+	AvgSessionDominance  float64 `json:"avg_session_dominance"`
 }
 
 // aggregateDiagStats builds per-type and overall H-DIAG aggregate stats.
