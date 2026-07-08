@@ -604,7 +604,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	)
 	serverTemporalWindow := cfg.TemporalWindowRecall && item.QuestionType == "temporal-reasoning"
 	fullTimelineContext := cfg.FullTimelineContext
-	dualPreferenceRecall := cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
+	dualPreferenceRecall := !fullTimelineContext && cfg.DualPreferenceRecall && !serverTemporalWindow && longmemeval.IsInferredPreferenceQuestion(item.Question)
 	var sessionDominanceRatio float64
 	var contextSessionCount int
 	if fullTimelineContext {
@@ -642,7 +642,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		sessionDominanceRatio, contextSessionCount = computeSessionDiagnostics(recallResult.Results)
 	}
 	secondaryContextIDs := temporalFallbackIDs
-	if cfg.RetrievalFusion && !serverTemporalWindow {
+	if !fullTimelineContext && cfg.RetrievalFusion && !serverTemporalWindow {
 		// Fix #938: fusion candidates flow through retrievedIDs (primary) only —
 		// NOT secondaryContextIDs — to avoid the reserve≤3 secondary-slot cap in
 		// selectContextIDs. UnionMemoryIDs deduplicates and preserves primary order,
@@ -689,7 +689,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	// union all retrieved IDs (deduped, primary-pass order preserved first).
 	// On paraphrase or recall errors we log a warning and continue with the IDs
 	// collected so far — a partial union is strictly better than no union.
-	if cfg.QueryParaphrasePasses > 0 && !serverTemporalWindow {
+	if !fullTimelineContext && cfg.QueryParaphrasePasses > 0 && !serverTemporalWindow {
 		paraphrases, pErr := longmemeval.GenerateParaphrases(ctx, recallQuery, cfg.QueryParaphrasePasses, cfg.Retries)
 		if pErr != nil {
 			log.Printf("WARN run [%s] paraphrase: %v — falling back to single-pass recall", item.QuestionID, pErr)
@@ -778,7 +778,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	}
 
 	var atomContextBlock string
-	if cfg.AtomMode {
+	if !fullTimelineContext && cfg.AtomMode {
 		atomContextBlock = atomPreamble
 		if atomContextBlock == "" {
 			atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
