@@ -321,12 +321,12 @@ func dispatchPrune(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	cfg.ExplicitAPIKey = flagWasProvided(fs, "api-key")
+	cfg.ExplicitAPIKey = longmemeval.FlagWasProvided(fs, "api-key")
 	if !cfg.ExplicitAPIKey && cfg.UseDefaultToken {
-		cfg.APIKey = defaultAPIKey()
+		cfg.APIKey = longmemeval.DefaultAPIKey()
 	}
-	if !flagWasProvided(fs, "url") {
-		cfg.ServerURL = defaultServerURL()
+	if !longmemeval.FlagWasProvided(fs, "url") {
+		cfg.ServerURL = longmemeval.DefaultServerURL()
 	}
 
 	return runPrune(cfg, stdout, stderr)

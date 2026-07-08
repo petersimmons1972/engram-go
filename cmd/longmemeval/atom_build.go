@@ -195,11 +195,11 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 	} else {
 		serverURL := cfg.ServerURL
 		if serverURL == "" {
-			serverURL = defaultServerURL()
+			serverURL = longmemeval.DefaultServerURL()
 		}
 		apiKey := cfg.APIKey
 		if apiKey == "" {
-			apiKey = defaultAPIKey()
+			apiKey = longmemeval.DefaultAPIKey()
 		}
 		storeAtom = makeRESTStoreFunc(serverURL, apiKey)
 		log.Printf("atom-build: using REST storage path at %s", serverURL)

@@ -9,10 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-
-	neturl "net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -271,8 +268,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.ServerURL, "url", "", "Engram server URL")
 	// Default stays empty so `--help` never prints a resolved secret
 	// (TestHelp_RunSubcommandDoesNotLeakResolvedAPIKey). The ENGRAM_API_KEY env
-	// fallback is applied post-parse by applySharedDefaults → defaultAPIKey()
-	// (envOr("ENGRAM_API_KEY", …)), letting the secret be supplied via the
+	// fallback is applied post-parse by applySharedDefaults → longmemeval.DefaultAPIKey()
+	// (EnvOr("ENGRAM_API_KEY", …)), letting the secret be supplied via the
 	// environment without ever reaching argv / `ps` (security rule: no secret on argv).
 	fs.StringVar(&cfg.APIKey, "api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
 	// #751: cleanup-policy enum replaces the old boolean --no-cleanup flag.
@@ -434,7 +431,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			return exit
 		}
 		applyScoreEfficientDefaults(cfg, sefs)
-		if flagWasProvided(sefs, "scorer-api-key") {
+		if longmemeval.FlagWasProvided(sefs, "scorer-api-key") {
 			_, _ = fmt.Fprintln(stderr, "WARN: --scorer-api-key is deprecated; prefer LME_SCORER_API_KEY or OPENAI_API_KEY to avoid secrets on argv")
 		}
 		cfg.scorerThinkingSet = flagPassed(sefs, "scorer-thinking")
@@ -783,87 +780,23 @@ func applyRepairPreset(cfg *Config) error {
 	}
 }
 
-func defaultAPIKey() string {
-	_, token := mcpDefaults()
-	return envOr("ENGRAM_API_KEY", token)
-}
-
-func defaultServerURL() string {
-	url, _ := mcpDefaults()
-	return envOr("ENGRAM_URL", url)
-}
-
 func defaultScorerAPIKey() string {
 	return envOr("LME_SCORER_API_KEY", envOr("OPENAI_API_KEY", ""))
 }
 
 func applySharedDefaults(cfg *Config, fs *flag.FlagSet) {
-	if !flagWasProvided(fs, "api-key") {
-		cfg.APIKey = defaultAPIKey()
+	if !longmemeval.FlagWasProvided(fs, "api-key") {
+		cfg.APIKey = longmemeval.DefaultAPIKey()
 	}
-	if !flagWasProvided(fs, "url") {
-		cfg.ServerURL = defaultServerURL()
+	if !longmemeval.FlagWasProvided(fs, "url") {
+		cfg.ServerURL = longmemeval.DefaultServerURL()
 	}
 }
 
 func applyScoreEfficientDefaults(cfg *Config, fs *flag.FlagSet) {
-	if !flagWasProvided(fs, "scorer-api-key") {
+	if !longmemeval.FlagWasProvided(fs, "scorer-api-key") {
 		cfg.ScorerAPIKey = defaultScorerAPIKey()
 	}
-}
-
-func flagWasProvided(fs *flag.FlagSet, name string) bool {
-	provided := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			provided = true
-		}
-	})
-	return provided
-}
-
-// mcpDefaults reads the engram URL and Bearer token from ~/.claude/mcp_servers.json,
-// which is kept current by the session-start hook. Falls back to localhost defaults.
-func mcpDefaults() (url, token string) {
-	url = "http://localhost:8788"
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return url, ""
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "mcp_servers.json"))
-	if err != nil {
-		return url, ""
-	}
-	var cfg struct {
-		McpServers map[string]struct {
-			URL     string            `json:"url"`
-			Headers map[string]string `json:"headers"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return url, ""
-	}
-	for name, srv := range cfg.McpServers {
-		if name != "engram" {
-			continue
-		}
-		// Strip /sse path component — the benchmark appends it in Connect().
-		// Parse properly so query params don't break the suffix check.
-		srvURL := srv.URL
-		if u, err := neturl.Parse(srvURL); err == nil {
-			u.Path = strings.TrimSuffix(u.Path, "/sse")
-			u.RawQuery = ""
-			srvURL = u.String()
-		}
-		if srvURL != "" {
-			url = srvURL
-		}
-		if auth := srv.Headers["Authorization"]; len(auth) > 7 {
-			token = auth[7:] // strip "Bearer "
-		}
-		return url, token
-	}
-	return url, token
 }
 
 func projectName(runID, questionID string) string {

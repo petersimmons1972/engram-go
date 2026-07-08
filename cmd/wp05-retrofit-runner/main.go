@@ -16,7 +16,7 @@
 //
 // -url and -api-key default to the local Engram MCP server config
 // (~/.claude/mcp_servers.json) when not provided, mirroring cmd/longmemeval's
-// discovery behavior (see mcpDefaults). Provenance.HarnessSHA is resolved in
+// discovery behavior (see longmemeval.MCPDefaults). Provenance.HarnessSHA is resolved in
 // priority order: -harness-sha override, `git rev-parse --short HEAD`, the
 // binary's embedded VCS build-info revision, else "unknown" — see
 // resolveHarnessSHA; per issue #1320, a missing SHA is informational and
@@ -25,11 +25,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,80 +114,17 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiv
 }
 
 func applySharedDefaults(fs *flag.FlagSet, serverURL, apiKey *string) {
-	if !flagWasProvided(fs, "url") {
-		*serverURL = defaultServerURL()
+	// Use EnvOrTrimmed (not DefaultServerURL/DefaultAPIKey) to preserve this
+	// binary's historical whitespace-trimming env fallback from before the
+	// shared-package extract. Default* helpers keep cmd/longmemeval's
+	// non-trimming EnvOr semantics.
+	url, token := longmemeval.MCPDefaults()
+	if !longmemeval.FlagWasProvided(fs, "url") {
+		*serverURL = longmemeval.EnvOrTrimmed("ENGRAM_URL", url)
 	}
-	if !flagWasProvided(fs, "api-key") {
-		*apiKey = defaultAPIKey()
+	if !longmemeval.FlagWasProvided(fs, "api-key") {
+		*apiKey = longmemeval.EnvOrTrimmed("ENGRAM_API_KEY", token)
 	}
-}
-
-func flagWasProvided(fs *flag.FlagSet, name string) bool {
-	provided := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			provided = true
-		}
-	})
-	return provided
-}
-
-func defaultAPIKey() string {
-	_, token := mcpDefaults()
-	return envOr("ENGRAM_API_KEY", token)
-}
-
-func defaultServerURL() string {
-	url, _ := mcpDefaults()
-	return envOr("ENGRAM_URL", url)
-}
-
-func envOr(name, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-// mcpDefaults mirrors cmd/longmemeval's MCP default discovery.
-func mcpDefaults() (url, token string) {
-	url = "http://localhost:8788"
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return url, ""
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "mcp_servers.json"))
-	if err != nil {
-		return url, ""
-	}
-	var cfg struct {
-		McpServers map[string]struct {
-			URL     string            `json:"url"`
-			Headers map[string]string `json:"headers"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return url, ""
-	}
-	for name, srv := range cfg.McpServers {
-		if name != "engram" {
-			continue
-		}
-		srvURL := srv.URL
-		if u, err := neturl.Parse(srvURL); err == nil {
-			u.Path = strings.TrimSuffix(u.Path, "/sse")
-			u.RawQuery = ""
-			srvURL = u.String()
-		}
-		if srvURL != "" {
-			url = srvURL
-		}
-		if auth := srv.Headers["Authorization"]; len(auth) > 7 {
-			token = auth[7:]
-		}
-		return url, token
-	}
-	return url, token
 }
 
 // harnessSHAUnknown is recorded when no SHA can be resolved by any means
