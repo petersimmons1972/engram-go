@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -19,25 +20,26 @@ import (
 
 func main() {
 	var (
-		dataPath      = flag.String("data", "/tmp/lme_s_multisession_133.json", "path to the LME-S multi-session fixture JSON")
-		serverURL     = flag.String("url", "", "Engram server URL (env: ENGRAM_URL)")
-		apiKey        = flag.String("api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
-		projectPrefix = flag.String("project-prefix", "wp05-retrofit", "project namespace prefix; each fixture item gets its own <prefix>-<question_id> project")
+		dataPath              = flag.String("data", "/tmp/lme_s_multisession_133.json", "path to the LME-S multi-session fixture JSON")
+		serverURL             = flag.String("url", "", "Engram server URL (env: ENGRAM_URL)")
+		apiKey                = flag.String("api-key", "", "Engram API key (env: ENGRAM_API_KEY)")
+		projectPrefix         = flag.String("project-prefix", "wp05-retrofit", "project namespace prefix; each fixture item gets its own <prefix>-<question_id> project")
 		limit                 = flag.Int("limit", 200, "recall limit; must exceed the max haystack session count per item")
 		exhaustiveAggregation = flag.Bool("exhaustive-aggregation", false, "H8: for aggregation questions, union topK=500 primary+anchor recall with a project-wide memory_list sweep and build Layer B client-side")
 		skipIngest            = flag.Bool("skip-ingest", false, "recall/score only — assumes memories already ingested under project-prefix")
 		outPath               = flag.String("out", "results/wp05-retrofit/retrofit-bundle.json", "output path for the retrofit bundle JSON")
+		harnessSHAFlag        = flag.String("harness-sha", "", "override the harness SHA recorded in provenance; skips git rev-parse and the build-info fallback (useful outside a git checkout, e.g. a shallow clone or extracted tarball)")
 	)
 	flag.Parse()
 	applySharedDefaults(flag.CommandLine, serverURL, apiKey)
 
-	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *exhaustiveAggregation, *skipIngest, *outPath); err != nil {
+	if err := run(*dataPath, *serverURL, *apiKey, *projectPrefix, *limit, *exhaustiveAggregation, *skipIngest, *outPath, *harnessSHAFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "wp05-retrofit-runner: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiveAggregation, skipIngest bool, outPath string) error {
+func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiveAggregation, skipIngest bool, outPath, harnessSHAOverride string) error {
 	items, err := wp05retrofit.LoadFixture(dataPath)
 	if err != nil {
 		return fmt.Errorf("load fixture: %w", err)
@@ -52,10 +54,7 @@ func run(dataPath, serverURL, apiKey, projectPrefix string, limit int, exhaustiv
 	}
 	defer func() { _ = client.Close() }()
 
-	harnessSHA, err := gitShortSHA(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve harness SHA: %w", err)
-	}
+	harnessSHA := resolveHarnessSHA(ctx, harnessSHAOverride, gitShortSHA, debug.ReadBuildInfo)
 	runID := "wp05-retrofit-" + time.Now().UTC().Format("20060102T150405Z")
 	itemSet := fmt.Sprintf("%s-develop-n%d", strings.TrimSuffix(filepath.Base(dataPath), filepath.Ext(dataPath)), len(items))
 	featureFlags := []string{"layer_b_retrofit"}
@@ -168,6 +167,53 @@ func mcpDefaults() (url, token string) {
 		return url, token
 	}
 	return url, token
+}
+
+// harnessSHAUnknown is recorded when no SHA can be resolved by any means
+// (no git checkout, no VCS build-info stamp, and no --harness-sha override).
+// The eval tool must degrade gracefully rather than abort the whole run for
+// a provenance field that is informational, not load-bearing (#1320).
+const harnessSHAUnknown = "unknown"
+
+// resolveHarnessSHA determines the harness SHA to record in provenance,
+// trying each source in order and falling back to the next on failure:
+//  1. an explicit --harness-sha override, if provided
+//  2. `git rev-parse --short HEAD` (runGit), when run inside a git checkout
+//  3. the VCS revision embedded in the binary's build info (readBuildInfo),
+//     available when the binary was built via `go build`/`go install` from
+//     within a git checkout even if one isn't present at run time
+//  4. harnessSHAUnknown, if none of the above resolve
+//
+// runGit and readBuildInfo are parameters (rather than direct calls to
+// gitShortSHA/debug.ReadBuildInfo) so tests can exercise the fallback chain
+// without depending on the actual git/build-info state of the test runner.
+func resolveHarnessSHA(ctx context.Context, override string, runGit func(context.Context) (string, error), readBuildInfo func() (*debug.BuildInfo, bool)) string {
+	if override != "" {
+		return override
+	}
+	if sha, err := runGit(ctx); err == nil {
+		if sha = strings.TrimSpace(sha); sha != "" {
+			return sha
+		}
+	}
+	if readBuildInfo != nil {
+		if info, ok := readBuildInfo(); ok && info != nil {
+			for _, setting := range info.Settings {
+				if setting.Key != "vcs.revision" {
+					continue
+				}
+				rev := strings.TrimSpace(setting.Value)
+				if rev == "" {
+					continue
+				}
+				if len(rev) > 12 {
+					rev = rev[:12]
+				}
+				return rev
+			}
+		}
+	}
+	return harnessSHAUnknown
 }
 
 func gitShortSHA(ctx context.Context) (string, error) {
