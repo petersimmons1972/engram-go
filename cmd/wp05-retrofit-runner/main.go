@@ -1,3 +1,26 @@
+// Command wp05-retrofit-runner drives the internal/wp05retrofit harness
+// end-to-end against a live Engram server: load a LongMemEval-shaped
+// fixture, ingest+recall+score each item (see wp05retrofit.Run), and write
+// the resulting Bundle as JSON.
+//
+// This is WP-0.5c, the "retrofit" arm of the WP-0.5 retrofit-vs-greenfield
+// bake-off (see the internal/wp05retrofit package doc for full campaign
+// context and the duramind JSON-compatibility contract the output must
+// hold). It is bake-off scaffolding: expected to be retired once WP-0.5
+// concludes, not permanent CLI surface.
+//
+// Usage:
+//
+//	wp05-retrofit-runner -data <fixture.json> -url <engram-url> -api-key <key> \
+//	    -project-prefix wp05-retrofit -limit 200 -out results/wp05-retrofit/retrofit-bundle.json
+//
+// -url and -api-key default to the local Engram MCP server config
+// (~/.claude/mcp_servers.json) when not provided, mirroring cmd/longmemeval's
+// discovery behavior (see mcpDefaults). Provenance.HarnessSHA is resolved in
+// priority order: -harness-sha override, `git rev-parse --short HEAD`, the
+// binary's embedded VCS build-info revision, else "unknown" — see
+// resolveHarnessSHA; per issue #1320, a missing SHA is informational and
+// must never abort the run.
 package main
 
 import (

@@ -874,8 +874,9 @@ func TestGenerationPromptForTypeEnumerate_IgnoresEnumerateFirstForNonAggregation
 // its own enumeration instructions and the hardExclusionRule.
 //
 // This test verifies two things:
-//  (a) the enumerate-first prefix is NOT injected (guard fires correctly)
-//  (b) the HARD EXCLUSION RULE keywords ARE present (base preference prompt returned)
+//
+//	(a) the enumerate-first prefix is NOT injected (guard fires correctly)
+//	(b) the HARD EXCLUSION RULE keywords ARE present (base preference prompt returned)
 func TestGenerationPromptForTypeEnumerate_PreferenceType_SkipsEnumerateFirst(t *testing.T) {
 	question := "What headphone brand does the user prefer?"
 	contextBlocks := []string{
