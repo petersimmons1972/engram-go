@@ -1,0 +1,11 @@
+# AMD ROCm acceleration override for the local-only profile.
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml -f docker-compose.rocm.yml up -d
+
+services:
+  ollama:
+    image: ollama/ollama:rocm
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
