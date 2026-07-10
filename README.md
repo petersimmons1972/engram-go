@@ -37,6 +37,8 @@ make init
 docker volume create engram_pgdata
 docker volume create ollama_ollama_storage
 make build-postgres
+docker compose -f docker-compose.local.yml up -d ollama
+docker compose -f docker-compose.local.yml exec ollama ollama pull bge-m3
 docker compose -f docker-compose.local.yml up -d
 go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
@@ -82,6 +84,8 @@ make init
 
 # Fresh-clone first run (recommended): local-only / no external backend
 make build-postgres
+docker compose -f docker-compose.local.yml up -d ollama
+docker compose -f docker-compose.local.yml exec ollama ollama pull bge-m3
 docker compose -f docker-compose.local.yml up -d
 go run ./cmd/engram-setup --url http://127.0.0.1:8788
 
@@ -109,7 +113,7 @@ If you prefer to author `.env` manually rather than using `make init`, see `.env
 | `ENGRAM_PORT` | Server listen port | 8788 |
 | `ENGRAM_ROUTER_URL` | External OpenAI-compatible endpoint for hybrid profile | `http://olla:40114/olla/openai` |
 | `LITELLM_URL` | Legacy alias for hybrid profile (kept only for compatibility) | `http://olla:40114/olla/openai` |
-| `ENGRAM_EMBED_MODEL` | Embedding model name | `BAAI/bge-m3` (Infinity/olla path) or `mxbai-embed-large` (Ollama local-only) |
+| `ENGRAM_EMBED_MODEL` | Embedding model name | `bge-m3` (Ollama local-only) |
 | `ENGRAM_EMBED_URL` | Embedding service endpoint | Inherits from `LITELLM_URL` |
 | `ANTHROPIC_API_KEY` | Claude API key (optional) | *(empty)* |
 
@@ -304,15 +308,11 @@ Knowledge graph now supports 11 typed edges (up from 7):
 
 ### Pluggable Embedder Interface + Eval Tool
 
-Compare any two Ollama embedding models against your actual stored memories before committing to a migration. Auto-pulls models not yet present in Ollama.
+Inspect the embedding models available through Ollama before storing memories.
 
 ```python
 # See what models are installed and recommended
 memory_models()
-
-# Compare two 1024-dim compatible models on your real queries
-memory_embedding_eval(project="myapp", model_a="mxbai-embed-large", model_b="bge-m3")
-# → {model_a_stats: {...}, model_b_stats: {...}, overlap_scores: [...], recommendation: "..."}
 ```
 
 ### `other` Failure Class
