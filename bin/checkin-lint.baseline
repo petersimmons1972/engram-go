@@ -261,7 +261,7 @@ D.exit-zero-wrapper::./hooks/engram/engram-precheck.sh::24
 D.exit-zero-wrapper::./hooks/engram/engram-precheck.sh::38
 D.exit-zero-wrapper::./hooks/pre-tool-use.sh::4
 G.latest-image::./docker-compose.yml::33
-G.latest-image::./docker-compose.local.yml::29
+G.latest-image::./docker-compose.local.yml::32
 G.latest-image::./docker-compose.yml::51
 G.latest-image::./docker-compose.yml::119
 G.latest-image::./docker-compose.local.yml::85
