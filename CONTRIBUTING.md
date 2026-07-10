@@ -93,7 +93,7 @@ cd reembed-rs
 cargo run --release -- \
   --database-url postgres://engram:PASSWORD@localhost:5432/engram \
   --litellm-url http://localhost:4000 \
-  --engram-embed-model mxbai-embed-large
+  --engram-embed-model bge-m3
 ```
 
 See `reembed-rs/README.md` for detailed Rust-specific documentation.

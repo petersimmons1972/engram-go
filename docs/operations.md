@@ -206,7 +206,7 @@ Once a project stores its first embedding, that project is locked to the embeddi
 To switch models for a project:
 
 ```python
-memory_migrate_embedder(project="my-app", new_model="mxbai-embed-large")
+memory_migrate_embedder(project="my-app", new_model="bge-m3")
 ```
 
 This triggers a background re-embedding. The re-embedder goroutine runs on a 30-second tick and processes chunks in batches. BM25 and recency continue working immediately. Vector search returns partial or degraded results until re-embedding is complete.

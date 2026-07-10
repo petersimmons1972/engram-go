@@ -13,14 +13,18 @@ migration tool is used to switch.
 
 ## Available Models
 
+**Canonical: `bge-m3`** — the production embedder (served by Infinity on the
+hybrid path, pulled via Ollama locally). The others remain supported for
+existing deployments and comparisons, not for new setups.
+
 Pull any of the supported models with `ollama pull <name>` and set
 `ENGRAM_OLLAMA_MODEL` to switch.
 
 | Model | Dim | Size | Best for |
 |---|---:|---:|---|
-| `nomic-embed-text` | 768 | 274 MB | Smallest footprint, solid English baseline |
-| `mxbai-embed-large` | 1024 | 669 MB | Strong English retrieval quality |
-| `bge-m3` | 1024 | 1200 MB | Multilingual corpora — 100+ languages |
+| `bge-m3` | 1024 | 1200 MB | **Canonical.** Multilingual, 100+ languages |
+| `mxbai-embed-large` | 1024 | 669 MB | Legacy: strong English retrieval quality |
+| `nomic-embed-text` | 768 | 274 MB | Legacy: smallest footprint, English baseline |
 
 ---
 
@@ -29,8 +33,8 @@ Pull any of the supported models with `ollama pull <name>` and set
 Selects the embedder at server startup (`cmd/engram/main.go:46`).
 
 ```
-ENGRAM_OLLAMA_MODEL=bge-m3               # multilingual corpus
-ENGRAM_OLLAMA_MODEL=mxbai-embed-large    # English, higher recall
+ENGRAM_OLLAMA_MODEL=bge-m3               # canonical (default for new setups)
+ENGRAM_OLLAMA_MODEL=mxbai-embed-large    # legacy English-only deployments
 ENGRAM_OLLAMA_MODEL=nomic-embed-text     # legacy 768-dim option
 ```
 

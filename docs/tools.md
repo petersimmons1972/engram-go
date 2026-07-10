@@ -413,7 +413,7 @@ memory_summarize(project="my-app")
 Switch embedding models for a project. All chunks are re-embedded in the background using the new model. BM25 and recency continue working during migration; vector search returns partial results until the re-embedding is complete.
 
 ```python
-memory_migrate_embedder(project="my-app", new_model="mxbai-embed-large")
+memory_migrate_embedder(project="my-app", new_model="bge-m3")
 ```
 
 After the first memory is stored, a project is locked to its embedding model. This is the only way to change it. Do not start a migration unless you intend to finish it — partial migrations leave vector search degraded until the re-embedder goroutine catches up.
@@ -706,8 +706,8 @@ List available and suggested Ollama embedding models. Shows which models are ins
 memory_models()
 # Returns:
 # {
-#   current: "mxbai-embed-large",
-#   installed: ["mxbai-embed-large:latest"],
+#   current: "bge-m3",
+#   installed: ["bge-m3:latest"],
 #   suggested: [
 #     {name: "bge-m3", dimensions: 1024, size_mb: 1200, recommended: true, installed: false},
 #     {name: "nomic-embed-text", dimensions: 768, size_mb: 274, recommended: false, installed: false}

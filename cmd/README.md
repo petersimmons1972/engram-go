@@ -190,7 +190,7 @@ go run ./cmd/instinct/main.go -buffer /tmp/events.jsonl -project myapp
 
 ```bash
 go run ./cmd/benchmark/main.go \
-  -model mxbai-embed-large \
+  -model bge-m3 \
   -batch-size 32 \
   -concurrency 8 \
   -iterations 100
