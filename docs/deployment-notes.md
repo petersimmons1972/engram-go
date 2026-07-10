@@ -39,14 +39,16 @@ The `docker-compose.local.yml` profile brings Ollama into the Docker network. No
 **Configuration:**
 
 ```bash
+docker compose -f docker-compose.local.yml up -d ollama
+docker compose -f docker-compose.local.yml exec ollama ollama pull bge-m3
 docker compose -f docker-compose.local.yml up -d
 ```
 
-Ollama runs in a separate container with 8 GB memory limit. On first start, it downloads the configured model (default: `mxbai-embed-large`, ~600 MB). The container persists the model in the `ollama_storage` Docker volume, so subsequent starts are fast.
+Ollama runs in a separate container with an 8 GB memory limit. The local-only profile uses the exact Ollama model name `bge-m3`. Pull it once before starting Engram; the `ollama_storage` Docker volume persists it for subsequent starts.
 
 ```bash
 # .env (when using local profile)
-ENGRAM_EMBED_MODEL=mxbai-embed-large
+ENGRAM_EMBED_MODEL=bge-m3
 ENGRAM_SUMMARIZE_MODEL=llama3.2:3b
 # LITELLM_URL and LITELLM_API_KEY are not used; Ollama serves both roles
 ```
@@ -124,25 +126,18 @@ Engram's retrieval quality depends heavily on the embedding model. Here are cano
 
 | Model | Dimensions | Container | Speed | Notes |
 |-------|-----------|-----------|-------|-------|
-| `mxbai-embed-large` | 1024 | Ollama | 2× (GPU) / 30× (CPU) | **Default for local profile.** Strong semantic quality, good open-source baseline. |
-| `nomic-embed-text` | 768 | Ollama | 3× | Smaller memory footprint. Good for resource-constrained environments. |
-| `bge-m3` | 1024 | Ollama | Slower | Strong multilingual support. Larger model, 6+ GB VRAM. |
+| `bge-m3` | 1024 | Ollama | Slower | **Default for local profile.** Strong multilingual support. Larger model, 6+ GB VRAM. |
 | `qwen3-embedding:8b` | 1024 | LiteLLM | 1× (GPU) | **Default for hybrid profile.** State-of-the-art semantic quality. Requires external LiteLLM. |
 
 See [docs/how-it-works.md](how-it-works.md) for how embeddings feed into Engram's retrieval pipeline.
 
-To switch models:
+The local-only profile is pinned to `bge-m3`:
 
 ```bash
-# Update .env
 ENGRAM_EMBED_MODEL=bge-m3
-
-# Migrate existing embeddings
-memory_embedding_eval(project="myapp", model_a="mxbai-embed-large", model_b="bge-m3")
-memory_migrate_embedder(project="myapp", model="bge-m3")
 ```
 
-The migration tool compares quality against your stored memories before committing. See [tools.md](tools.md) for the full tool reference.
+See [tools.md](tools.md) for the full embedding tool reference.
 
 ---
 

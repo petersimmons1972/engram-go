@@ -82,10 +82,14 @@ You only need to run this on a fresh clone. `make up` will do it automatically i
 ## Step 4: Start
 
 ```bash
+docker compose -f docker-compose.local.yml up -d ollama
+docker compose -f docker-compose.local.yml exec ollama ollama pull bge-m3
 docker compose -f docker-compose.local.yml up -d
 ```
 
 For a predictable fresh-clone first run, use the local-only profile above.
+`bge-m3` is the exact model name Engram expects in Ollama; the pull command
+provisions it without any environment override.
 It uses the CPU-portable Ollama image by default, so it works without GPU
 device access on CPU-only Linux, macOS, NVIDIA, and other non-ROCm hosts.
 `make up` is the hybrid profile and assumes an external embed/LLM backend
@@ -120,13 +124,15 @@ That hybrid profile starts:
 - `engram-postgres` — PostgreSQL 16 with the pgvector extension installed
 - `engram-go-app` — The MCP server, listening on port 8788 and routing embed/LLM traffic to `ENGRAM_ROUTER_URL`
 
-**First local-only start takes 2–3 minutes.** Ollama downloads the configured embedding model before it reports healthy. Watch progress with:
+**First local-only start takes 2–3 minutes.** The explicit `ollama pull bge-m3`
+downloads the embedding model. Watch progress in the terminal running that
+command. To inspect Ollama afterward, run:
 
 ```bash
 docker compose -f docker-compose.local.yml logs ollama -f
 ```
 
-Subsequent local-only starts are fast — the model is cached in the Ollama volume.
+Subsequent local-only starts are fast — `bge-m3` is cached in the Ollama volume.
 
 ---
 
@@ -242,7 +248,7 @@ ENGRAM_API_KEY=                            # Required: bearer token for all MCP 
 OLLAMA_URL=http://ollama:11434             # Default: Ollama inside Docker
 # OLLAMA_URL=http://host.docker.internal:11434  # Mac: native Ollama outside Docker
 
-ENGRAM_EMBED_MODEL=mxbai-embed-large      # Ollama local-only path default; Infinity/olla path uses BAAI/bge-m3
+ENGRAM_EMBED_MODEL=bge-m3                 # Exact model name expected in Ollama
 
 # ============================================================
 # Background summarization
@@ -393,13 +399,14 @@ And comment out the `ollama` service in `docker-compose.yml` so Docker does not 
 Something else claimed that port before Engram did. Set `ENGRAM_PORT=8789` (or any free port) in `.env`, restart the same profile you started, and update the port in your IDE config. For local-only, use `docker compose -f docker-compose.local.yml up -d`. For hybrid, re-run `make up`.
 
 **Embedding model not found / connection errors on first start.**
-Ollama is still downloading the model — it can look like a crash when it is really just slow. Watch it finish:
+Confirm that the canonical local-only model is present, pulling it if needed:
 
 ```bash
-docker compose -f docker-compose.local.yml logs ollama -f
+docker compose -f docker-compose.local.yml exec ollama ollama list
+docker compose -f docker-compose.local.yml exec ollama ollama pull bge-m3
 ```
 
-Wait for a line like `llm server listening`. Then the `engram-go-app` container will become healthy.
+Then restart `engram-go-app`; it should become healthy with `bge-m3` available.
 
 **IDE says connection refused.**
 Either a container is not up yet, or `engram-go-app` is waiting on its dependencies. Confirm the state:
