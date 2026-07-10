@@ -9,8 +9,11 @@
 #   engram-go       — MCP server (port 8788)
 #   engram-reembed  — background embedding worker
 #
-# Start with:
+# Start on CPU (portable default):
 #   docker compose -f docker-compose.local.yml up -d
+#
+# Start with AMD ROCm acceleration:
+#   docker compose -f docker-compose.local.yml -f docker-compose.rocm.yml up -d
 #
 # First time setup:
 #   docker volume create engram_pgdata
@@ -56,14 +59,11 @@ services:
 
   ollama:
     container_name: engram-ollama
-    image: ollama/ollama:rocm
+    image: ollama/ollama
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama_storage:/root/.ollama
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       # KV-cache tuning (2026-05-07): cut jina VRAM ~8.9 GB → ~4 GB on 7900 XT

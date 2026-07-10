@@ -90,8 +90,17 @@ docker compose -f docker-compose.local.yml up -d
 For a predictable fresh-clone first run, use the local-only profile above.
 `bge-m3` is the exact model name Engram expects in Ollama; the pull command
 provisions it without any environment override.
+It uses the CPU-portable Ollama image by default, so it works without GPU
+device access on CPU-only Linux, macOS, NVIDIA, and other non-ROCm hosts.
 `make up` is the hybrid profile and assumes an external embed/LLM backend
 already exists at `ENGRAM_ROUTER_URL` (or legacy `LITELLM_URL`).
+
+On a Linux host configured for AMD ROCm, add the explicit acceleration
+override:
+
+```bash
+docker compose -f docker-compose.local.yml -f docker-compose.rocm.yml up -d
+```
 
 This local-only profile starts:
 
@@ -349,7 +358,15 @@ Remove the `#` characters. Then ensure you have the [NVIDIA Container Toolkit](h
 
 ### AMD (ROCm)
 
-Change the Ollama image to `ollama/ollama:rocm` and uncomment the `devices` block in `docker-compose.yml`. Your user must be in the `render` and `video` groups:
+The default local-only command uses CPU and does not require AMD device nodes.
+To use ROCm acceleration, apply the provided override, which selects the ROCm
+Ollama image and passes `/dev/kfd` and `/dev/dri` into the container:
+
+```bash
+docker compose -f docker-compose.local.yml -f docker-compose.rocm.yml up -d
+```
+
+Your user must be in the `render` and `video` groups:
 
 ```bash
 sudo usermod -aG render,video $USER
