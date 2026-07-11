@@ -191,11 +191,14 @@ _do_baseline_audit() {
     echo -e "${YLW}SKIP${RST}  keys file missing on disk: ${keys_file}"
     return 0
   fi
-  local stale=0 total=0
+  local stale=0 total=0 entry_prefix
   while IFS= read -r entry; do
     [[ -z "$entry" || "$entry" == \#* ]] && continue
     ((total++)) || true
-    if ! grep -Fxq "$entry" "$keys_file" 2>/dev/null; then
+    # Finding keys are rule::file::sha1; baseline entries may carry an
+    # informational ::<line> suffix after the 40-hex hash — strip it to compare.
+    entry_prefix="$(sed -E 's/(::[0-9a-f]{40})::[0-9]+$/\1/' <<<"$entry")"
+    if ! grep -Fxq "$entry_prefix" "$keys_file" 2>/dev/null; then
       echo -e "${YLW}STALE${RST}  $entry"
       ((stale++)) || true
       ((FINDINGS++)) || true

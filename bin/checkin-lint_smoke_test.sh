@@ -102,6 +102,54 @@ else
   fi
 fi
 
+# ── test_duplicate_cardinality_change_keeps_baseline ─────────────────────────
+# Multiset semantics: a baselined unique line stays suppressed when a second
+# identical line appears elsewhere in the file (1→2 must not un-baseline the
+# old occurrence; the NEW occurrence must go live as a real finding).
+echo ""
+echo "test_duplicate_cardinality_change_keeps_baseline"
+mkdir -p "${TEST_FIXTURE}"
+fixture_file="${TEST_FIXTURE}/dup.env"
+matched_line='DATABASE_URL=postgres://localhost/engram-dup'
+printf '%s\n' "${matched_line}" > "${fixture_file}"
+fixture_rel=".${fixture_file#"${REPO_ROOT}"}"
+content_hash="$(printf '%s' "${matched_line}" | sha1sum | awk '{print $1}')"
+fixture_baseline="$(mktemp)"
+cp "${REPO_ROOT}/bin/checkin-lint.baseline" "${fixture_baseline}"
+printf 'P1.hardcoded-dsn::%s::%s\n' "${fixture_rel}" "${content_hash}" >> "${fixture_baseline}"
+
+printf '%s\nUNRELATED=1\n%s\n' "${matched_line}" "${matched_line}" > "${fixture_file}"
+dup_output="$(cd "${REPO_ROOT}" && CHECKIN_LINT_BASELINE="${fixture_baseline}" bash bin/checkin-lint.sh 2>&1)" || dup_exit=$?
+dup_exit="${dup_exit:-0}"
+rm -f "${fixture_baseline}"
+dup_plain="$(sed 's/\x1b\[[0-9;]*m//g' <<< "${dup_output}")"
+baselined_n="$(grep -c "^baselined .*${fixture_rel}" <<< "${dup_plain}" || true)"
+live_n="$(grep -c "^FINDING .*${fixture_rel}" <<< "${dup_plain}" || true)"
+if [[ "${dup_exit}" -ne 0 && "${baselined_n}" -eq 1 && "${live_n}" -eq 1 ]]; then
+  pass "1→2 duplication: old occurrence stays baselined, new occurrence goes live"
+else
+  fail "duplicate-cardinality change mishandled (exit ${dup_exit}, baselined=${baselined_n}, live=${live_n}; want fail/1/1)"
+  grep -E "${fixture_rel}" <<< "${dup_plain}" | head -5 | sed 's/^/  /'
+fi
+rm -rf "${TEST_FIXTURE}"
+
+# ── test_migration_preserves_unresolved_entries ──────────────────────────────
+# A legacy line-keyed entry whose file no longer exists must be preserved
+# unmigrated (and exit 1), never silently dropped.
+echo ""
+echo "test_migration_preserves_unresolved_entries"
+mig_baseline="$(mktemp)"
+printf 'P1.hardcoded-dsn::./no/such/file.env::42\n' > "${mig_baseline}"
+mig_out="$(cd "${REPO_ROOT}" && bash bin/migrate-checkin-lint-baseline.sh "${mig_baseline}" 2>&1)" || mig_exit=$?
+mig_exit="${mig_exit:-0}"
+if [[ "${mig_exit}" -eq 1 ]] && grep -Fxq 'P1.hardcoded-dsn::./no/such/file.env::42' "${mig_baseline}"; then
+  pass "migration preserves unresolved entries and exits 1"
+else
+  fail "migration dropped an unresolved entry or exited ${mig_exit} (want 1)"
+  echo "${mig_out}" | tail -3 | sed 's/^/  /'
+fi
+rm -f "${mig_baseline}"
+
 # ── test_clean_tree_passes ────────────────────────────────────────────────────
 # Running the linter on the current tree (which should match what a clean
 # checkout of this PR looks like) must exit 0 — no net-new findings beyond the

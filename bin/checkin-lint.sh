@@ -23,31 +23,38 @@ source "${SCRIPT_DIR}/checkin-lint-core.sh"
 
 # ── Override finding() to suppress baselined entries ──────────────────────────
 # Baseline key format: <rule>::<file>::<sha1-of-matched-line-content>[::<line>]
-# The line suffix is present only when identical content occurs more than once
-# in the same file.
+# The optional line suffix is informational only (kept for humans reading the
+# baseline). Matching is multiset by the rule::file::sha1 prefix: N baseline
+# entries with the same prefix suppress up to N occurrences, so a change in
+# duplicate cardinality never flips the key format of unchanged content.
 baseline_key() {
   local rule="$1" file="$2" line="$3"
-  local content="" content_hash duplicate_count=0
+  local content="" content_hash
 
   if [[ "$line" =~ ^[0-9]+$ && -f "$file" ]]; then
     content="$(sed -n "${line}p" "$file")"
-    duplicate_count="$(grep -Fxc -- "$content" "$file" || true)"
   fi
   content_hash="$(printf '%s' "$content" | sha1sum | awk '{print $1}')"
+  printf '%s::%s::%s\n' "$rule" "$file" "$content_hash"
+}
 
-  if [[ "$duplicate_count" -gt 1 ]]; then
-    printf '%s::%s::%s::%s\n' "$rule" "$file" "$content_hash" "$line"
-  else
-    printf '%s::%s::%s\n' "$rule" "$file" "$content_hash"
-  fi
+# Count baseline entries whose rule::file::sha1 prefix matches (entry may
+# carry an informational ::<line> suffix).
+_baseline_allowance() {
+  local prefix="$1"
+  awk -v p="$prefix" 'index($0, p) == 1 && (length($0) == length(p) || substr($0, length(p) + 1, 2) == "::") { c++ } END { print c + 0 }' \
+    "${CHECKIN_LINT_BASELINE}"
 }
 
 finding() {
   local rule="$1" file="$2" line="$3" why="$4"
-  local key
+  local key allowed=0 used=0
   key="$(baseline_key "$rule" "$file" "$line")"
-  if [[ -f "${CHECKIN_LINT_BASELINE}" ]] && \
-     grep -Fxq "$key" "${CHECKIN_LINT_BASELINE}" 2>/dev/null; then
+  [[ -f "${CHECKIN_LINT_BASELINE}" ]] && allowed="$(_baseline_allowance "$key")"
+  [[ -n "${_BASELINE_USED_FILE:-}" && -f "${_BASELINE_USED_FILE}" ]] && \
+    used="$(grep -Fxc -- "$key" "${_BASELINE_USED_FILE}" 2>/dev/null || true)"
+  if [[ "$allowed" -gt "$used" ]]; then
+    [[ -n "${_BASELINE_USED_FILE:-}" ]] && echo "$key" >> "${_BASELINE_USED_FILE}"
     echo -e "${YLW}baselined${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
     ((BASELINED++)) || true
     [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
@@ -60,7 +67,13 @@ finding() {
   ((FINDINGS++)) || true
 }
 # Re-export so subprocesses spawned after this point see the overridden version, not core's.
-export -f baseline_key finding
+export -f baseline_key _baseline_allowance finding
+
+# Per-run multiset state: how many occurrences each baseline prefix has already
+# suppressed (file-backed so finding() works from subshells too).
+_BASELINE_USED_FILE="$(mktemp "${TMPDIR:-/tmp}/checkin-lint-used.XXXXXX")"
+export _BASELINE_USED_FILE
+trap 'rm -f "${_BASELINE_USED_FILE}"' EXIT
 
 _core_exit=0
 run_core_checks "$@" || _core_exit=$?
