@@ -168,6 +168,12 @@ type Config struct {
 	AtomOracle        bool   // --atom-oracle: bypass Engram recall, extract atoms from gold sessions only
 	AtomOracleVariant string // --atom-oracle-variant: "atom-only" | "atom-plus-source"
 
+	// #1292: when reusing a checkpoint-ingest.jsonl, spot-check that referenced
+	// projects still contain memories before any generation call. Default is
+	// fail-fast; --allow-empty-projects overrides with a loud WARN (intentional
+	// empty experiments only).
+	AllowEmptyProjects bool
+
 	Now func() time.Time
 
 	scorerThinkingSet  bool
@@ -373,6 +379,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	// Phase 2A (#1079): oracle atom-ceiling probe flags. OFF by default.
 	fs.BoolVar(&cfg.AtomOracle, "atom-oracle", false, "#1079: oracle ceiling probe — extract atoms from gold sessions only, bypass Engram recall (benchmark-only, off by default)")
 	fs.StringVar(&cfg.AtomOracleVariant, "atom-oracle-variant", "atom-only", "#1079: atom-only = atoms only; atom-plus-source = atoms + raw gold session text")
+	// #1292: fail-fast when a reused ingest checkpoint points at empty projects
+	// (common when the source run used --cleanup-policy=auto). Override only for
+	// intentional empty-corpus experiments.
+	fs.BoolVar(&cfg.AllowEmptyProjects, "allow-empty-projects", false, "#1292: proceed with run even when a spot-check of ingest-checkpoint projects finds empty projects (default: fail-fast before generation)")
 
 	// prune has its own flag set and early return — it does not share the
 	// ingest/run/score data-file workflow. See cmd/longmemeval/prune.go (#754).
