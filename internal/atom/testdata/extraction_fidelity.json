@@ -18,5 +18,17 @@
       "organizes their closet by season",
       "prefers seasonal closet organization"
     ]
+  },
+  {
+    "name": "assistant-assigned persona is not the user",
+    "session": "Human: You are Sari, a cheerful mother of two who is pregnant with her third child and lives in Jakarta. Staying in character, write a first-person diary entry titled 'hamil anak ketiga' about preparing for the baby while managing your catering business.\n\nAssistant: Dear diary, today the little one kicked while I was planning next week's catering menu...",
+    "forbidden_user_facts": [
+      "pregnant",
+      "third child",
+      "lives in jakarta",
+      "catering business",
+      "mother of two"
+    ],
+    "forbidden_habits": []
   }
 ]

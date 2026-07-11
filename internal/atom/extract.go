@@ -75,6 +75,7 @@ Rules:
 - use profile for relatively stable user descriptors (diet, location, profession, timezone, routine).
 - use status_change for explicit updates or transitions in user state ("started", "moved", "switched", "stopped").
 - Attribute facts to the actual speaker or subject. Facts about roleplay personas, characters the user asks you to play,
+  personas assigned to the assistant via role prompts ("You are <name/role>...", "staying in character"),
   article or story subjects, or hypothetical people are NOT user facts — skip them rather than assigning them to "the user".
 - Preserve tense and quantifiers: one-off events and plans stay episodic; do not generalise them into routines,
   preferences, or profile facts; only repeated or explicitly stated habits become standing preferences or routines.

@@ -338,7 +338,7 @@ func TestExtractionPrompt_ContainsPreferenceFocus(t *testing.T) {
 
 func TestExtractionPrompt_GuardsExtractionFidelity(t *testing.T) {
 	fixtures := loadExtractionFidelityFixtures(t)
-	require.Len(t, fixtures, 2)
+	require.Len(t, fixtures, 3)
 
 	for _, fixture := range fixtures {
 		t.Run(fixture.Name, func(t *testing.T) {
@@ -351,6 +351,7 @@ func TestExtractionPrompt_GuardsExtractionFidelity(t *testing.T) {
 			assert.Contains(t, stub.system, "roleplay personas")
 			assert.Contains(t, stub.system, "article or story subjects")
 			assert.Contains(t, stub.system, "hypothetical people")
+			assert.Contains(t, stub.system, "personas assigned to the assistant")
 			assert.Contains(t, stub.system, "NOT user facts")
 			assert.Contains(t, stub.system, "only repeated or explicitly stated habits")
 			assert.Contains(t, stub.system, "one-off events and plans")
@@ -389,15 +390,20 @@ func TestManualExtractionFidelity(t *testing.T) {
 			require.NoError(t, err)
 
 			for _, extracted := range atoms {
-				text := strings.ToLower(extracted.Statement + " " + extracted.Value)
-				if strings.EqualFold(extracted.Subject, "the user") {
+				text := strings.ToLower(extracted.Subject + " " + extracted.Statement + " " + extracted.Value)
+				userAttributed := strings.Contains(strings.ToLower(extracted.Subject), "user") ||
+					strings.Contains(strings.ToLower(extracted.Statement), "the user")
+				if userAttributed {
 					for _, forbidden := range fixture.ForbiddenUserFacts {
-						assert.NotContains(t, text, strings.ToLower(forbidden))
+						assert.NotContains(t, text, strings.ToLower(forbidden),
+							"persona/subject fact attributed to the user (atom_type=%s)", extracted.Type)
 					}
 				}
-				if extracted.Type == atom.TypePreference || extracted.Type == atom.TypeProfile {
+				// A standing claim can hide under any non-event type — gate them all.
+				if extracted.Type != atom.TypeEvent && extracted.Type != atom.TypeStatusChange {
 					for _, forbidden := range fixture.ForbiddenHabits {
-						assert.NotContains(t, text, strings.ToLower(forbidden))
+						assert.NotContains(t, text, strings.ToLower(forbidden),
+							"one-off plan generalised into a standing claim (atom_type=%s)", extracted.Type)
 					}
 				}
 			}
