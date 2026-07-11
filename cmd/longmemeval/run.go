@@ -337,6 +337,25 @@ func runRun(cfg *Config) int {
 	}
 	log.Printf("run: %d ingest entries loaded, %d already done", len(ingestMap), len(skip))
 
+	// #1292: when reusing a checkpoint-ingest.jsonl, fail-fast if the referenced
+	// projects no longer contain memories (e.g. source run used
+	// --cleanup-policy=auto). Probe before starting workers so we never burn
+	// LLM compute on a zero-recall corpus.
+	if !cfg.AtomOracle {
+		pending := make([]longmemeval.IngestEntry, 0, len(ingestEntries))
+		for _, e := range ingestEntries {
+			if e.Status == "done" && !skip[e.QuestionID] {
+				pending = append(pending, e)
+			}
+		}
+		if len(pending) > 0 {
+			if err := checkIngestProjectsBeforeRun(cfg, pending); err != nil {
+				log.Printf("ERROR %v", err)
+				return 1
+			}
+		}
+	}
+
 	// #703: track error vs success outcome counts to determine exit code.
 	var attempted, errors atomic.Int64
 
