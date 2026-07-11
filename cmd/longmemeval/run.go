@@ -38,6 +38,8 @@ const (
 	generationContextFullTimeline = "full_timeline_context"
 )
 
+var runRunWorker = runWorker
+
 // add appends name to the log. Safe for concurrent use.
 func (pl *preservedLog) add(name string) {
 	pl.mu.Lock()
@@ -337,6 +339,44 @@ func runRun(cfg *Config) int {
 	}
 	log.Printf("run: %d ingest entries loaded, %d already done", len(ingestMap), len(skip))
 
+	pendingEntries := make([]longmemeval.IngestEntry, 0, len(ingestEntries))
+	for _, entry := range ingestEntries {
+		if entry.Status == "done" && !skip[entry.QuestionID] {
+			pendingEntries = append(pendingEntries, entry)
+		}
+	}
+
+	if !cfg.AtomOracle && !cfg.FullTimelineContext && len(pendingEntries) > 0 {
+		checkpointPath := filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl")
+		ctx := context.Background()
+		projectQuery, closeClient, err := newCheckpointProjectQuery(ctx, cfg)
+		if err != nil {
+			log.Printf(
+				"ERROR validate projects referenced by checkpoint %q: connect Engram: %v",
+				checkpointPath,
+				err,
+			)
+			return 1
+		}
+		validation, validationErr := validateCheckpointProjects(
+			ctx,
+			checkpointPath,
+			pendingEntries,
+			projectQuery,
+		)
+		closeErr := closeClient()
+		if validationErr != nil {
+			log.Printf("ERROR checkpoint project validation: %v", validationErr)
+			return 1
+		}
+		if closeErr != nil {
+			log.Printf("WARN checkpoint project validation: close client: %v", closeErr)
+		}
+		if warning := validation.Warning(); warning != "" {
+			log.Print(warning)
+		}
+	}
+
 	// #703: track error vs success outcome counts to determine exit code.
 	var attempted, errors atomic.Int64
 
@@ -363,11 +403,9 @@ func runRun(cfg *Config) int {
 		writerErr <- longmemeval.WriteCheckpoint(ckptPath, ckptCh)
 	}()
 
-	work := make(chan longmemeval.IngestEntry, len(ingestEntries))
-	for _, e := range ingestEntries {
-		if e.Status == "done" && !skip[e.QuestionID] {
-			work <- e
-		}
+	work := make(chan longmemeval.IngestEntry, len(pendingEntries))
+	for _, entry := range pendingEntries {
+		work <- entry
 	}
 	close(work)
 
@@ -383,7 +421,7 @@ func runRun(cfg *Config) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(cfg, itemMap, work, innerCh, pl)
+			runRunWorker(cfg, itemMap, work, innerCh, pl)
 		}()
 	}
 	wg.Wait()
