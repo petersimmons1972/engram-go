@@ -29,7 +29,7 @@ PRs submitted by any AI-assisted development (Claude Code, Cursor, GitHub Copilo
 
 ## Coverage Gate
 
-CI enforces a 60% minimum statement coverage on every PR (`.github/workflows/ci.yml`). The four integration tests previously blocked on #429 (`TestHandleMemoryRecall_IncludeConflicts_Integration`, `TestFederatedRecall_IncludeConflicts_NotSilentlyDropped`, `TestEmbedDeadline_RecallWithinMemory`, `TestRetrievalTracking_PrecisionUpdated`) are fixed and un-skipped; #429 is closed. Measured coverage with `TEST_DATABASE_URL` set is 65.9%. New files should aim for 60%+ to keep the per-file bar above the global gate. The safety tools rewrite (safety.go) serves as the reference for what adequate coverage looks like.
+CI enforces a statement-coverage floor on every PR — see `.github/workflows/ci.yml` for the current value, kept there (not in this always-loaded file) so it can't silently drift. The integration tests once blocked on #429 are now fixed and un-skipped (#429 closed). New files should aim comfortably above the CI floor to keep the per-file bar above the global gate. The safety tools rewrite (safety.go) serves as the reference for what adequate coverage looks like.
 
 ## Test Policy
 
@@ -39,7 +39,7 @@ CI enforces a 60% minimum statement coverage on every PR (`.github/workflows/ci.
 
 ## Retrieval Miss Handling
 
-When `memory_recall` returns nothing useful, use `memory_feedback` with `failure_class` instead of manually calling `memory_store`.
+When `memory_recall` returns nothing useful, record the miss with `memory_feedback` (empty `memory_ids` + a `failure_class`) rather than reflexively calling `memory_store`. Empty-ids feedback records the gap **without** applying an edge boost — it captures the failure signal without reinforcing a wrong result.
 
 `event_id` only appears in `memory_recall`'s response when the call passes `record_event=true` (off by default so plain recall stays side-effect free). Pass it when you plan to follow up with `memory_feedback`:
 
@@ -50,15 +50,11 @@ memory_recall(query="...", record_event=true)
 
 # Record the miss (do not reinforce — no edge boost applied)
 memory_feedback(event_id="<event_id from recall>", memory_ids=[], failure_class="<class>")
-
-# Triage the distribution of misses
-memory_aggregate(by="failure_class")
-→ [{label: "aggregation_failure", count: N, ...}]
 ```
 
 Valid `failure_class` values: `vocabulary_mismatch`, `aggregation_failure`, `stale_ranking`, `missing_content`, `scope_mismatch`, `other`.
 
-Use `memory_aggregate(by="failure_class")` periodically to see where recall is failing most. This data feeds retrieval quality benchmarking.
+To see where recall fails most, query the feedback events over `failure_class` (the exact tool for a server-side aggregate depends on the deployed build — derive it from the live tool surface rather than assuming a specific tool name). This data feeds retrieval-quality benchmarking.
 
 ## MCP Read-Only Hint Annotations
 
