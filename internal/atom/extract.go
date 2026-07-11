@@ -74,6 +74,14 @@ Rules:
 - atom_type must be exactly one of: preference, profile, status_change, fact, event, attribute, relationship.
 - use profile for relatively stable user descriptors (diet, location, profession, timezone, routine).
 - use status_change for explicit updates or transitions in user state ("started", "moved", "switched", "stopped").
+- Attribute facts to the actual speaker or subject. Facts about roleplay personas, characters the user asks you to play,
+  personas assigned to the assistant via role prompts ("You are <name/role>...", "staying in character"),
+  article or story subjects, or hypothetical people are NOT user facts — skip them rather than assigning them to "the user".
+- Preserve tense and quantifiers: one-off events and plans stay episodic; do not generalise them into routines,
+  preferences, or profile facts; only repeated or explicitly stated habits become standing preferences or routines.
+- When a one-off user event or plan is useful, use atom_type event and retain its time anchor in the statement
+  (for example, "On <date>, the user did X once") and session scope when available. If its timing or subject is
+  ambiguous, skip it. Conservative extraction is better than an unsupported habitual claim.
 - subject should be the first-person actor ("the user") or a named entity.
 - Normalise subject to "the user" for first-person statements.
 - statement must be a complete, standalone sentence (no pronouns requiring external context).
