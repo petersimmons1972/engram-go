@@ -1,0 +1,22 @@
+[
+  {
+    "name": "article subject is not the user",
+    "session": "Human: Write a warm first-person magazine article about Maya, who is pregnant with her third child and lives in Portland. Include how she is balancing pregnancy with running her bakery.\n\nAssistant: Maya is pregnant with her third child, and life in Portland has never felt fuller. Between prenatal appointments and early mornings at her bakery, she is learning to ask for help.",
+    "forbidden_user_facts": [
+      "pregnant with her third child",
+      "lives in Portland",
+      "runs a bakery"
+    ],
+    "forbidden_habits": []
+  },
+  {
+    "name": "one-off plan remains episodic",
+    "session": "Human: I'm thinking of organizing my closet by season this Saturday so packing for my trip is easier.\n\nAssistant: That sounds like a useful weekend project.",
+    "forbidden_user_facts": [],
+    "forbidden_habits": [
+      "uses seasonal rotation",
+      "organizes their closet by season",
+      "prefers seasonal closet organization"
+    ]
+  }
+]

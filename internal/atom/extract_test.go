@@ -2,7 +2,11 @@ package atom_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,10 +20,41 @@ import (
 type stubCompleter struct {
 	response string
 	err      error
+	system   string
+	prompt   string
 }
 
-func (s *stubCompleter) Complete(_ context.Context, _, _, _, _ string, _, _ int) (string, error) {
+func (s *stubCompleter) Complete(_ context.Context, system, prompt, _, _ string, _, _ int) (string, error) {
+	s.system = system
+	s.prompt = prompt
 	return s.response, s.err
+}
+
+type extractionFidelityFixture struct {
+	Name               string   `json:"name"`
+	Session            string   `json:"session"`
+	ForbiddenUserFacts []string `json:"forbidden_user_facts"`
+	ForbiddenHabits    []string `json:"forbidden_habits"`
+}
+
+type claudeCLICompleter struct{}
+
+func (claudeCLICompleter) Complete(
+	ctx context.Context,
+	system string,
+	prompt string,
+	_ string,
+	_ string,
+	_ int,
+	_ int,
+) (string, error) {
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--model", "sonnet")
+	cmd.Stdin = strings.NewReader(system + "\n\n" + prompt)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", errors.New(string(out))
+	}
+	return string(out), nil
 }
 
 const preferenceAtomJSON = `[
@@ -299,4 +334,73 @@ func TestExtractionPrompt_ContainsPreferenceFocus(t *testing.T) {
 	assert.Contains(t, prompt, "preference")
 	assert.Contains(t, prompt, "casual")
 	assert.Contains(t, prompt, "I usually prefer")
+}
+
+func TestExtractionPrompt_GuardsExtractionFidelity(t *testing.T) {
+	fixtures := loadExtractionFidelityFixtures(t)
+	require.Len(t, fixtures, 2)
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			stub := &stubCompleter{response: `[]`}
+			ext := atom.NewClaudeExtractor(stub)
+
+			_, err := ext.Extract(context.Background(), fixture.Session)
+			require.NoError(t, err)
+			assert.Contains(t, stub.prompt, fixture.Session)
+			assert.Contains(t, stub.system, "roleplay personas")
+			assert.Contains(t, stub.system, "article or story subjects")
+			assert.Contains(t, stub.system, "hypothetical people")
+			assert.Contains(t, stub.system, "NOT user facts")
+			assert.Contains(t, stub.system, "only repeated or explicitly stated habits")
+			assert.Contains(t, stub.system, "one-off events and plans")
+			assert.Contains(t, stub.system, "atom_type event")
+		})
+	}
+}
+
+func loadExtractionFidelityFixtures(t *testing.T) []extractionFidelityFixture {
+	t.Helper()
+
+	path := filepath.Join("testdata", "extraction_fidelity.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	fixtures := []extractionFidelityFixture{}
+	require.NoError(t, json.Unmarshal(data, &fixtures))
+	return fixtures
+}
+
+// TestManualExtractionFidelity exercises the non-deterministic LLM boundary.
+// Run it via bin/manual-eval-atom-extraction.sh; normal unit test runs skip it.
+func TestManualExtractionFidelity(t *testing.T) {
+	if os.Getenv("ENGRAM_MANUAL_ATOM_EVAL") != "1" {
+		t.Skip("set ENGRAM_MANUAL_ATOM_EVAL=1 to run the Claude-backed evaluation")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude CLI is not installed")
+	}
+
+	fixtures := loadExtractionFidelityFixtures(t)
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			ext := atom.NewClaudeExtractor(claudeCLICompleter{})
+			atoms, err := ext.Extract(context.Background(), fixture.Session)
+			require.NoError(t, err)
+
+			for _, extracted := range atoms {
+				text := strings.ToLower(extracted.Statement + " " + extracted.Value)
+				if strings.EqualFold(extracted.Subject, "the user") {
+					for _, forbidden := range fixture.ForbiddenUserFacts {
+						assert.NotContains(t, text, strings.ToLower(forbidden))
+					}
+				}
+				if extracted.Type == atom.TypePreference || extracted.Type == atom.TypeProfile {
+					for _, forbidden := range fixture.ForbiddenHabits {
+						assert.NotContains(t, text, strings.ToLower(forbidden))
+					}
+				}
+			}
+		})
+	}
 }
