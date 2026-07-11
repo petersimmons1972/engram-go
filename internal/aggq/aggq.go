@@ -1,5 +1,12 @@
-// Package aggq holds the aggregation-question classifiers shared by the
-// longmemeval harness and the Layer B deterministic-aggregation post-pass.
+// Package aggq holds the fleet's CANONICAL multi-fact composition predicate.
+// Multi-fact composition questions require combining multiple stored facts,
+// including counts, sums, differences, and other derived values. Issue #1345's
+// 12/12 analysis established this framing. Duramind mirrors the predicate
+// verbatim, and both repositories pin parity with the frozen composition vector
+// file.
+//
+// The predicate is shared by the longmemeval harness and the Layer B
+// deterministic-aggregation post-pass.
 // It is a leaf package (stdlib-only) specifically so that internal/layerb can
 // use these helpers without importing internal/longmemeval, whose engram
 // client pulls in internal/search and internal/db — the exact import cycle
@@ -50,13 +57,19 @@ var monetaryAggRe = regexp.MustCompile(
 var aggregationStripRe = regexp.MustCompile(
 	`(?i)^(how many (times )?|how often |how much total |what is the total (number of )?|what is the sum of |give me a count of |count of )`)
 
-// IsAggregationQuestion (H8) returns true when the question matches the
-// aggregation pattern that requires exhaustive population recall.
-func IsAggregationQuestion(question string) bool {
+// IsMultiFactComposition reports whether answering question requires combining
+// multiple stored facts.
+func IsMultiFactComposition(question string) bool {
 	if temporalQuantityRe.MatchString(question) {
 		return false
 	}
 	return aggregationRe.MatchString(question) || monetaryAggRe.MatchString(question)
+}
+
+// IsAggregationQuestion reports whether question is a multi-fact composition.
+// Deprecated: use IsMultiFactComposition.
+func IsAggregationQuestion(question string) bool {
+	return IsMultiFactComposition(question)
 }
 
 // ExtractAggregationAnchor (H8) strips the counting interrogative prefix and
