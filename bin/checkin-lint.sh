@@ -22,25 +22,45 @@ export CHECKIN_LINT_BASELINE="$BASELINE_FILE"
 source "${SCRIPT_DIR}/checkin-lint-core.sh"
 
 # ── Override finding() to suppress baselined entries ──────────────────────────
-# Baseline key format: <rule>::<file>::<line>
+# Baseline key format: <rule>::<file>::<sha1-of-matched-line-content>[::<line>]
+# The line suffix is present only when identical content occurs more than once
+# in the same file.
+baseline_key() {
+  local rule="$1" file="$2" line="$3"
+  local content="" content_hash duplicate_count=0
+
+  if [[ "$line" =~ ^[0-9]+$ && -f "$file" ]]; then
+    content="$(sed -n "${line}p" "$file")"
+    duplicate_count="$(grep -Fxc -- "$content" "$file" || true)"
+  fi
+  content_hash="$(printf '%s' "$content" | sha1sum | awk '{print $1}')"
+
+  if [[ "$duplicate_count" -gt 1 ]]; then
+    printf '%s::%s::%s::%s\n' "$rule" "$file" "$content_hash" "$line"
+  else
+    printf '%s::%s::%s\n' "$rule" "$file" "$content_hash"
+  fi
+}
+
 finding() {
   local rule="$1" file="$2" line="$3" why="$4"
-  local key="${rule}::${file}::${line}"
+  local key
+  key="$(baseline_key "$rule" "$file" "$line")"
   if [[ -f "${CHECKIN_LINT_BASELINE}" ]] && \
      grep -Fxq "$key" "${CHECKIN_LINT_BASELINE}" 2>/dev/null; then
     echo -e "${YLW}baselined${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
     ((BASELINED++)) || true
     [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
-      echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
+      echo "$key" >> "$_ALL_FINDING_KEYS_FILE"
     return 0
   fi
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
   [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
-    echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
+    echo "$key" >> "$_ALL_FINDING_KEYS_FILE"
   ((FINDINGS++)) || true
 }
 # Re-export so subprocesses spawned after this point see the overridden version, not core's.
-export -f finding
+export -f baseline_key finding
 
 _core_exit=0
 run_core_checks "$@" || _core_exit=$?
@@ -75,9 +95,13 @@ while IFS= read -r hit; do
 done < <(grep -rn \
   --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
   --exclude='*_test.go' \
-  --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+  --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
   'postgres://[^$][^{]' . 2>/dev/null || true)
 [[ $p1_n -eq 0 ]] && pass_rule "P1.hardcoded-dsn" "no hardcoded postgres:// DSNs"
+
+if [[ "${_CORE_AUDIT_BASELINE:-0}" -eq 1 ]]; then
+  _do_baseline_audit
+fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
