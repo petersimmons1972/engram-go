@@ -1,7 +1,0 @@
-{
-  "task": "night2-eg1395-atom-hardening",
-  "branch": "dispatch/night2-eg1395-atom-hardening",
-  "base": "origin/main",
-  "harness": "codex",
-  "agent_start_time": "184122673"
-}
