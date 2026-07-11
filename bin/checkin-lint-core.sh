@@ -16,6 +16,7 @@
 RED='\033[0;31m'; YLW='\033[1;33m'; GRN='\033[0;32m'; BLU='\033[0;34m'
 BOLD='\033[1m'; RST='\033[0m'
 _CORE_FIX_HINTS=0
+_CORE_AUDIT_BASELINE=0
 _ALL_FINDING_KEYS_FILE="${_ALL_FINDING_KEYS_FILE:-}"
 export _ALL_FINDING_KEYS_FILE
 
@@ -67,7 +68,7 @@ _check_home_literal() {
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' --include='*.sh' \
     --include='*.conf' --include='*.service' --include='*.toml' --include='*.env' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
     --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
     '/home/[a-z][a-z0-9_-]*' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "C.home-literal" "no hardcoded /home/<user> paths"
@@ -86,7 +87,7 @@ _check_version_pinned_path() {
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' --include='*.sh' \
     --include='*.conf' --include='*.service' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
     --exclude='checkin-lint*.sh' \
     -E '(\.nvm/versions/node/v[0-9]|/versions/node/v[0-9]|/node/v[0-9]+\.[0-9]+\.[0-9]+[^-])' \
     . 2>/dev/null || true)
@@ -108,7 +109,7 @@ _check_exit_zero_wrapper() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.sh' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
     --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
     'exit 0' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "D.exit-zero-wrapper" "no unconditional 'exit 0' in shell scripts"
@@ -126,7 +127,7 @@ _check_latest_image() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
     -E 'image:\s+[^@[:space:]]+:latest' . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "G.latest-image" "no ':latest' image tags"
 }
@@ -144,7 +145,7 @@ _check_hardcoded_ip() {
     ((n++)) || true
   done < <(grep -rn \
     --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
     -E '(ip:|cidr:)\s+[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
     . 2>/dev/null || true)
   [[ $n -eq 0 ]] && pass_rule "G.hardcoded-ip" "no hardcoded IPs in NetworkPolicy"
@@ -156,10 +157,10 @@ _check_missing_namespace() {
   local system_ns="default kube-system kube-public kube-node-lease"
   local referenced_ns defined_ns
   referenced_ns=$(grep -rh --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' -E '^\s+namespace:\s+\S+' . 2>/dev/null \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' -E '^\s+namespace:\s+\S+' . 2>/dev/null \
     | sed 's/.*namespace:[[:space:]]*//' | sort -u || true)
   defined_ns=$(grep -rhl 'kind: Namespace' --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' . 2>/dev/null \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' . 2>/dev/null \
     | xargs grep -h '^  name:' 2>/dev/null \
     | sed 's/.*name:[[:space:]]*//' | sort -u || true)
   while IFS= read -r ns; do
@@ -190,11 +191,14 @@ _do_baseline_audit() {
     echo -e "${YLW}SKIP${RST}  keys file missing on disk: ${keys_file}"
     return 0
   fi
-  local stale=0 total=0
+  local stale=0 total=0 entry_prefix
   while IFS= read -r entry; do
     [[ -z "$entry" || "$entry" == \#* ]] && continue
     ((total++)) || true
-    if ! grep -Fxq "$entry" "$keys_file" 2>/dev/null; then
+    # Finding keys are rule::file::sha1; baseline entries may carry an
+    # informational ::<line> suffix after the 40-hex hash — strip it to compare.
+    entry_prefix="$(sed -E 's/(::[0-9a-f]{40})::[0-9]+$/\1/' <<<"$entry")"
+    if ! grep -Fxq "$entry_prefix" "$keys_file" 2>/dev/null; then
       echo -e "${YLW}STALE${RST}  $entry"
       ((stale++)) || true
       ((FINDINGS++)) || true
@@ -209,13 +213,12 @@ _do_baseline_audit() {
 }
 
 run_core_checks() {
-  local _audit_baseline=0
   for arg in "$@"; do
     [[ "$arg" == "--fix-hints" ]] && _CORE_FIX_HINTS=1
-    [[ "$arg" == "--audit-baseline" ]] && _audit_baseline=1
+    [[ "$arg" == "--audit-baseline" ]] && _CORE_AUDIT_BASELINE=1
   done
 
-  if [[ $_audit_baseline -eq 1 ]]; then
+  if [[ $_CORE_AUDIT_BASELINE -eq 1 ]]; then
     _ALL_FINDING_KEYS_FILE="$(mktemp)"
     export _ALL_FINDING_KEYS_FILE
   fi
@@ -230,9 +233,6 @@ run_core_checks() {
     _check_missing_namespace
   fi
 
-  if [[ $_audit_baseline -eq 1 ]]; then
-    _do_baseline_audit
-  fi
 }
 export -f run_core_checks _check_home_literal _check_version_pinned_path
 export -f _check_exit_zero_wrapper _check_latest_image _check_hardcoded_ip
