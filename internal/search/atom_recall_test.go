@@ -39,7 +39,11 @@ func (s *stubAtomBackend) GetActiveAtoms(_ context.Context, _ string, atomType s
 
 func (s *stubAtomBackend) GetActiveAtomsFiltered(_ context.Context, _ string, opts db.AtomQueryOpts) ([]atom.Atom, error) {
 	s.lastOpts = opts
-	return s.filtered, s.err
+	filtered := s.filtered
+	if opts.Limit > 0 && len(filtered) > opts.Limit {
+		filtered = filtered[:opts.Limit]
+	}
+	return filtered, s.err
 }
 
 func makeTestAtom(id, atomType, statement string, confidence float64) atom.Atom {
@@ -190,7 +194,7 @@ func TestRecallEventWindowAtoms_PadsOrdersAndCaps(t *testing.T) {
 	windowSince := time.Date(2024, 1, 10, 18, 45, 0, 0, time.FixedZone("west", -5*60*60))
 	windowBefore := time.Date(2024, 1, 12, 9, 30, 0, 0, time.FixedZone("east", 9*60*60))
 	backend := &stubAtomBackend{}
-	for i := 31; i >= 0; i-- {
+	for i := 0; i <= 31; i++ {
 		validFrom := time.Date(2024, 1, 3+i, 12, 0, 0, 0, time.UTC)
 		backend.filtered = append(backend.filtered, atom.Atom{
 			ID:         fmt.Sprintf("event-%02d", i),
@@ -210,7 +214,10 @@ func TestRecallEventWindowAtoms_PadsOrdersAndCaps(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotEmpty(t, block)
+	require.Contains(t, block, "=== Dated Events (window) ===")
+	require.NotContains(t, block, "=== Extracted Preference Atoms ===")
 	require.Equal(t, atom.TypeEvent, backend.lastOpts.AtomType)
+	require.Equal(t, 31, backend.lastOpts.Limit)
 	require.NotNil(t, backend.lastOpts.ValidFromSince)
 	require.NotNil(t, backend.lastOpts.ValidFromBefore)
 	require.Equal(t, "2024-01-03", backend.lastOpts.ValidFromSince.Format(time.DateOnly))
@@ -220,7 +227,7 @@ func TestRecallEventWindowAtoms_PadsOrdersAndCaps(t *testing.T) {
 	require.Less(t, strings.Index(block, "Event 00"), strings.Index(block, "Event 01"))
 	require.Contains(t, block, "Event 29")
 	require.NotContains(t, block, "Event 30")
-	require.Contains(t, block, "(+2 more)")
+	require.Contains(t, block, "(+1 more)")
 }
 
 func TestRecallEventWindowAtoms_BypassAndFailurePaths(t *testing.T) {

@@ -19,6 +19,7 @@ type AtomQueryOpts struct {
 	ValidFromBefore *time.Time
 	LatestOnly      bool
 	OrderValidFrom  bool
+	Limit           int
 }
 
 // InsertAtom inserts a new atom into the atoms table. A UUIDv4 ID is generated
@@ -91,6 +92,15 @@ func (p *PostgresBackend) GetActiveAtoms(ctx context.Context, project string, at
 
 // GetActiveAtomsFiltered returns active atoms with optional type/as-of/latest filtering.
 func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project string, opts AtomQueryOpts) ([]atom.Atom, error) {
+	query, args := buildActiveAtomsQuery(project, opts)
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanAtomRows(rows)
+}
+
+func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interface{}) {
 	where := []string{"project = $1", "valid_to IS NULL"}
 	args := []interface{}{project}
 	nextArg := 2
@@ -113,6 +123,7 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	if opts.ValidFromBefore != nil {
 		where = append(where, fmt.Sprintf("valid_from < $%d", nextArg))
 		args = append(args, *opts.ValidFromBefore)
+		nextArg++
 	}
 
 	selectClause := `
@@ -138,14 +149,18 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 		orderBy = "ORDER BY valid_from ASC, created_at ASC"
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		`+selectClause+`
-		WHERE `+strings.Join(where, " AND ")+`
-		`+orderBy, args...)
-	if err != nil {
-		return nil, err
+	limitClause := ""
+	if opts.Limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", nextArg)
+		args = append(args, opts.Limit)
 	}
-	return scanAtomRows(rows)
+
+	query := `
+		` + selectClause + `
+		WHERE ` + strings.Join(where, " AND ") + `
+		` + orderBy + `
+		` + limitClause
+	return query, args
 }
 
 // EnqueueAtomExtractionJob inserts a pending job for the given memory.

@@ -683,7 +683,13 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, recallResult.IDs)
 		}
 	}
-	if !fullTimelineContext && cfg.EventWindowRecall && item.QuestionType == "temporal-reasoning" {
+	if shouldUseEventWindowRecall(
+		cfg.EventWindowRecall,
+		fullTimelineContext,
+		item.QuestionType,
+		item.Question,
+		item.QuestionDate,
+	) {
 		eventResult, eventErr := mcpClient.RecallWithEventWindow(
 			ctx,
 			ingest.Project,
@@ -900,6 +906,20 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		AtomRetrieved:         atomPreamble != "",
 		AtomInContext:         atomContextBlock != "",
 	}
+}
+
+func shouldUseEventWindowRecall(
+	enabled bool,
+	fullTimelineContext bool,
+	questionType string,
+	question string,
+	questionDate string,
+) bool {
+	if !enabled || fullTimelineContext || questionType != "temporal-reasoning" {
+		return false
+	}
+	since, before := search.ParseTemporalWindow(question, questionDate)
+	return since != nil && before != nil
 }
 
 func appendEventWindowContext(contextBlocks []string, eventWindowContext string) []string {

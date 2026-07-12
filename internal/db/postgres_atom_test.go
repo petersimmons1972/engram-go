@@ -76,6 +76,47 @@ func TestGetActiveAtomsFiltered_LatestOnly_AsOf(t *testing.T) {
 	require.Equal(t, "coffee", valueForPredicate(t, asOfAtoms, "prefers_drink"))
 }
 
+func TestGetActiveAtomsFiltered_ValidFromBoundsWithLatestOnlyAndAsOf(t *testing.T) {
+	proj := uniqueProject("atoms-valid-from-filtered")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	since := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+	asOf := time.Date(2024, 2, 20, 0, 0, 0, 0, time.UTC)
+	fixtures := []struct {
+		value      string
+		validFrom  time.Time
+		observedAt time.Time
+	}{
+		{value: "too-early", validFrom: since.Add(-time.Hour), observedAt: asOf.Add(-48 * time.Hour)},
+		{value: "in-window-old", validFrom: since, observedAt: asOf.Add(-24 * time.Hour)},
+		{value: "in-window-new", validFrom: before.Add(-time.Hour), observedAt: asOf.Add(-time.Hour)},
+		{value: "observed-too-late", validFrom: since.Add(24 * time.Hour), observedAt: asOf.Add(time.Hour)},
+		{value: "at-before", validFrom: before, observedAt: asOf.Add(-time.Hour)},
+	}
+	for _, fixture := range fixtures {
+		validFrom := fixture.validFrom
+		observedAt := fixture.observedAt
+		require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+			Project: proj, Type: atom.TypeEvent, Subject: "the user", Predicate: "visited",
+			Value: fixture.value, Statement: fixture.value, Scope: atom.ScopeGlobal,
+			Confidence: 1, ValidFrom: &validFrom, ObservedAt: &observedAt,
+		}))
+	}
+
+	atoms, err := backend.GetActiveAtomsFiltered(ctx, proj, db.AtomQueryOpts{
+		AtomType: atom.TypeEvent, AsOf: &asOf, ValidFromSince: &since,
+		ValidFromBefore: &before, LatestOnly: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	require.Equal(t, "in-window-new", atoms[0].Value)
+}
+
 func valueForPredicate(t *testing.T, atoms []atom.Atom, predicate string) string {
 	t.Helper()
 	for _, a := range atoms {

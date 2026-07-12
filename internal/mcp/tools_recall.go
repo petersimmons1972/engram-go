@@ -612,9 +612,13 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 				before,
 			)
 			if err != nil {
-				return nil, err
+				slog.Warn("event-window recall failed; continuing without event context",
+					"project", project,
+					"err", err,
+				)
+				eventWindowContext = ""
 			}
-			if eventWindowContext == "" {
+			if err == nil && eventWindowContext == "" {
 				slog.Debug("event-window recall found no atoms", "project", project)
 			}
 		}

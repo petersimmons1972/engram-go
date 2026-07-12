@@ -76,11 +76,16 @@ func RecallAtoms(ctx context.Context, backend AtomBackend, project string, opts 
 // for injection into a generation prompt (--atom-mode). Each atom is rendered
 // as a single line: "[TYPE] Statement (confidence: N)".
 func FormatAtomsAsContext(atoms []atom.Atom) string {
+	return formatAtomsAsContext(atoms, "=== Extracted Preference Atoms ===")
+}
+
+func formatAtomsAsContext(atoms []atom.Atom, header string) string {
 	if len(atoms) == 0 {
 		return ""
 	}
 	var b []byte
-	b = append(b, "=== Extracted Preference Atoms ===\n"...)
+	b = append(b, header...)
+	b = append(b, '\n')
 	for _, a := range atoms {
 		b = append(b, '[')
 		b = append(b, a.Type...)
@@ -143,6 +148,7 @@ func RecallEventWindowAtoms(
 		ValidFromSince:  &paddedSince,
 		ValidFromBefore: &paddedBefore,
 		OrderValidFrom:  true,
+		Limit:           eventWindowAtomCap + 1,
 	})
 	if err != nil {
 		return "", fmt.Errorf("recalling event-window atoms: %w", err)
@@ -165,7 +171,7 @@ func RecallEventWindowAtoms(
 	if omitted > 0 {
 		atoms = atoms[:eventWindowAtomCap]
 	}
-	block := FormatAtomsAsContext(atoms)
+	block := formatAtomsAsContext(atoms, "=== Dated Events (window) ===")
 	if omitted > 0 {
 		block += fmt.Sprintf("(+%d more)\n", omitted)
 	}

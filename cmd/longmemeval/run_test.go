@@ -58,6 +58,32 @@ func TestAppendEventWindowContext_IsAdditiveAndNoOpWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestShouldUseEventWindowRecall_GatesPreserveBaselineContext(t *testing.T) {
+	baseline := []string{"memory one", "memory two"}
+	tests := []struct {
+		name         string
+		enabled      bool
+		questionType string
+		question     string
+		questionDate string
+	}{
+		{name: "flag off", questionType: "temporal-reasoning", question: "What happened yesterday?", questionDate: "2024/02/20"},
+		{name: "non-temporal type", enabled: true, questionType: "single-session-user", question: "What happened yesterday?", questionDate: "2024/02/20"},
+		{name: "unparseable window", enabled: true, questionType: "temporal-reasoning", question: "What happened yesterday?", questionDate: "not-a-date"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if shouldUseEventWindowRecall(tt.enabled, false, tt.questionType, tt.question, tt.questionDate) {
+				t.Fatal("gate = true, want false")
+			}
+			got := appendEventWindowContext(baseline, "")
+			if !reflect.DeepEqual(got, baseline) || fmt.Sprintf("%q", got) != fmt.Sprintf("%q", baseline) {
+				t.Fatalf("gated path changed baseline context: got %q, want %q", got, baseline)
+			}
+		})
+	}
+}
+
 // TestResolveContextTopK_SSPrefOverrideOffIsNoOp verifies default (0) leaves
 // single-session-preference at the existing per-type default (15) — no
 // behavior change when the flag is unset (baseline-safe).
