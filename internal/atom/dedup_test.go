@@ -164,16 +164,40 @@ func TestDeduplicate_DifferentPredicateBothFresh(t *testing.T) {
 }
 
 func TestDeduplicate_DuplicateCandidateWithinBatch(t *testing.T) {
-	// Two candidates with the same (subject, predicate) in the same batch.
+	// Two candidates with the same normalized key and value in the same batch.
 	candidates := []atom.Atom{
 		makeAtom("", "proj", "the user", "prefers", "coffee"),
-		makeAtom("", "proj", "the user", "prefers", "tea"),
+		makeAtom("", "proj", "the user", "prefers", " COFFEE "),
 	}
 
 	result := atom.Deduplicate(nil, candidates, testNow)
-	// First one wins; second is dropped as intra-batch duplicate.
+	// First one wins; second is dropped as an exact intra-batch duplicate.
 	assert.Len(t, result.Fresh, 1)
 	assert.Equal(t, "coffee", result.Fresh[0].Value)
+}
+
+func TestDeduplicate_SameValueEventsOnDifferentDatesWithinBatchAreFresh(t *testing.T) {
+	first := makeAtom("", "proj", "Alice", "attended", "Go meetup")
+	first.Type = atom.TypeEvent
+	first.ValidFrom = timePointer(time.Date(2026, 7, 4, 18, 0, 0, 0, time.FixedZone("EDT", -4*60*60)))
+	second := makeAtom("", "proj", "Alice", "attended", "go MEETUP")
+	second.Type = atom.TypeEvent
+	second.ValidFrom = timePointer(time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC))
+
+	result := atom.Deduplicate(nil, []atom.Atom{first, second}, testNow)
+
+	assert.Len(t, result.Fresh, 2)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_DifferentValuesWithinBatchAreFresh(t *testing.T) {
+	first := makeAtom("", "proj", "Alice", "employment", "Acme")
+	second := makeAtom("", "proj", "Alice", "employment", "Globex")
+
+	result := atom.Deduplicate(nil, []atom.Atom{first, second}, testNow)
+
+	assert.Len(t, result.Fresh, 2)
+	assert.Empty(t, result.Superseded)
 }
 
 func TestDeduplicate_EmptyInputs(t *testing.T) {

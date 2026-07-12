@@ -119,6 +119,26 @@ func TestB1CorruptionProbeChunkingSupersetAndExactDedup(t *testing.T) {
 	}
 }
 
+func TestExtractThenDeduplicateStoresDistinctDatedEventsFromSeparateWindows(t *testing.T) {
+	first := `[{"atom_type":"event","subject":"the user","predicate":"attended","value":"weekly meetup","statement":"On 2026-07-04, the user attended the weekly meetup.","scope":"global","confidence":0.9,"event_date":"2026-07-04"}]`
+	second := `[{"atom_type":"event","subject":"the user","predicate":"attended","value":"weekly meetup","statement":"On 2026-07-11, the user attended the weekly meetup.","scope":"global","confidence":0.9,"event_date":"2026-07-11"}]`
+	stub := &stubCompleter{responses: []string{first, second}}
+	session := strings.Repeat("a", 6000) + "\n[user]\nOn 2026-07-11, I attended the weekly meetup."
+
+	candidates, err := atom.NewClaudeExtractor(stub).Extract(
+		context.Background(),
+		session,
+		time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC),
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+
+	result := atom.Deduplicate(nil, candidates, time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC))
+
+	assert.Len(t, result.Fresh, 2)
+	assert.Empty(t, result.Superseded)
+}
+
 func TestClaudeExtractorRetriesFailedWindowOnceThenFailsClosed(t *testing.T) {
 	sessionDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
 	stub := &stubCompleter{responses: []string{`[]`, `not json`, `still not json`}}

@@ -14,6 +14,12 @@ type SupersessionKey struct {
 	Predicate string
 }
 
+type batchDeduplicationKey struct {
+	SupersessionKey
+	Value     string
+	EventDate time.Time
+}
+
 // supersessionKey returns the dedup key for a.
 func supersessionKey(a *Atom) SupersessionKey {
 	return SupersessionKey{
@@ -21,6 +27,17 @@ func supersessionKey(a *Atom) SupersessionKey {
 		Subject:   strings.ToLower(strings.TrimSpace(a.Subject)),
 		Predicate: strings.ToLower(strings.TrimSpace(a.Predicate)),
 	}
+}
+
+func candidateBatchKey(a *Atom) batchDeduplicationKey {
+	key := batchDeduplicationKey{
+		SupersessionKey: supersessionKey(a),
+		Value:           strings.ToLower(strings.TrimSpace(a.Value)),
+	}
+	if a.Type == TypeEvent && a.ValidFrom != nil {
+		key.EventDate = eventOccurrenceDate(*a.ValidFrom)
+	}
+	return key
 }
 
 // DeduplicationResult is the output of Deduplicate.
@@ -58,18 +75,23 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 	}
 
 	var result DeduplicationResult
-	seen := make(map[SupersessionKey]bool) // dedup within candidates
+	seen := make(map[batchDeduplicationKey]bool) // dedup exact candidates within the batch
 
 	for i := range candidates {
 		c := candidates[i]
 		k := supersessionKey(&c)
+		batchKey := candidateBatchKey(&c)
 
-		if seen[k] {
+		if seen[batchKey] {
 			// Duplicate within the candidate batch — skip.
-			slog.Debug("atom deduplication: dropped duplicate candidate within batch", "key", k)
+			slog.Debug(
+				"atom deduplication: dropped duplicate candidate within batch",
+				"key", k,
+				"value", c.Value,
+			)
 			continue
 		}
-		seen[k] = true
+		seen[batchKey] = true
 
 		existing, exists := index[k]
 		if !exists {
