@@ -72,7 +72,7 @@ func TestB1CorruptionProbeRejectsAdversarialEventDates(t *testing.T) {
 		{name: "mixed separators", eventDate: "2026/07-04"},
 		{name: "far future", eventDate: "2028-07-12"},
 		{name: "pre 1990", eventDate: "1989-12-31"},
-		{name: "date range is not a single ISO date", eventDate: "2026-07-12/2026-07-10"},
+		{name: "range string rejected by length guard", eventDate: "2026-07-12/2026-07-10"},
 	}
 
 	for _, tt := range tests {

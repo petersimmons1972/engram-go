@@ -1,6 +1,7 @@
 package atom
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -65,6 +66,7 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 
 		if seen[k] {
 			// Duplicate within the candidate batch — skip.
+			slog.Debug("atom deduplication: dropped duplicate candidate within batch", "key", k)
 			continue
 		}
 		seen[k] = true
@@ -105,8 +107,7 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 }
 
 func isDistinctDatedOccurrence(existing, candidate Atom) bool {
-	isEvent := candidate.Type == TypeEvent || candidate.Type == TypeStatusChange
-	if !isEvent || existing.ValidFrom == nil || candidate.ValidFrom == nil {
+	if candidate.Type != TypeEvent || existing.ValidFrom == nil || candidate.ValidFrom == nil {
 		return false
 	}
 	return !eventOccurrenceDate(*existing.ValidFrom).Equal(eventOccurrenceDate(*candidate.ValidFrom))

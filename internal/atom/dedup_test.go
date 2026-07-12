@@ -83,6 +83,22 @@ func TestDeduplicateSameValueSameDateEventIsReinforced(t *testing.T) {
 	assert.Empty(t, result.Superseded)
 }
 
+func TestDeduplicateSameValueStatusChangeWithoutExplicitEventDateIsReinforced(t *testing.T) {
+	existingDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old-1", "proj", "the user", "employment status", "employed")
+	existing.Type = atom.TypeStatusChange
+	existing.ValidFrom = timePointer(existingDate)
+	candidateDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	candidate := makeAtom("", "proj", "the user", "employment status", "employed")
+	candidate.Type = atom.TypeStatusChange
+	candidate.ValidFrom = timePointer(candidateDate)
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	assert.Empty(t, result.Fresh, "a restated status change must not create another active row")
+	assert.Empty(t, result.Superseded, "a restated status change is reinforcement, not supersession")
+}
+
 func TestDeduplicate_SupersessionOnValueChange(t *testing.T) {
 	existing := []atom.Atom{
 		makeAtom("old-1", "proj", "the user", "prefers", "dark chocolate"),
