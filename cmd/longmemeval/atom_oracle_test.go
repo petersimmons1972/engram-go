@@ -341,6 +341,93 @@ func TestRunOneOracleWithDeps(t *testing.T) {
 	})
 }
 
+func TestRunOneOracleWithDeps_SelectsGenerationPrompt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		cfg         Config
+		item        longmemeval.Item
+		checkPrompt func(t *testing.T, prompt string, contextBlocks []string)
+	}{
+		{
+			name: "default preserves baseline prompt",
+			cfg:  Config{AtomOracle: true, AtomOracleVariant: "atom-only"},
+			item: buildTestItem(),
+			checkPrompt: func(t *testing.T, prompt string, contextBlocks []string) {
+				t.Helper()
+				item := buildTestItem()
+				want := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
+				if prompt != want {
+					t.Fatalf("default oracle prompt changed\nwant:\n%s\n\ngot:\n%s", want, prompt)
+				}
+			},
+		},
+		{
+			name: "inject question date prefixes temporal prompt",
+			cfg: Config{
+				AtomOracle:         true,
+				AtomOracleVariant:  "atom-only",
+				InjectQuestionDate: true,
+			},
+			item: func() longmemeval.Item {
+				item := buildTestItem()
+				item.Question = "When did I start preferring dark chocolate?"
+				item.QuestionType = "temporal-reasoning"
+				return item
+			}(),
+			checkPrompt: func(t *testing.T, prompt string, _ []string) {
+				t.Helper()
+				if !strings.HasPrefix(prompt, "Today's date is:") {
+					t.Fatalf("--inject-question-date oracle prompt must start with date, got:\n%s", prompt)
+				}
+			},
+		},
+		{
+			name: "enumerate first prefixes aggregation prompt",
+			cfg: Config{
+				AtomOracle:        true,
+				AtomOracleVariant: "atom-only",
+				EnumerateFirst:    true,
+			},
+			item: func() longmemeval.Item {
+				item := buildTestItem()
+				item.Question = "How many times did I mention chocolate?"
+				item.QuestionType = "multi-session"
+				return item
+			}(),
+			checkPrompt: func(t *testing.T, prompt string, _ []string) {
+				t.Helper()
+				if !strings.Contains(prompt, longmemeval.EnumerateFirstPrefix()) {
+					t.Fatalf("--enumerate-first oracle prompt missing enumerate instruction:\n%s", prompt)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stub := &stubCompleter{atoms: twoTestAtoms()}
+			contextBlocks, _, _, err := buildOracleContext(context.Background(), stub, &tt.cfg, tt.item)
+			if err != nil {
+				t.Fatalf("buildOracleContext: %v", err)
+			}
+
+			var gotPrompt string
+			generateFn := func(_ context.Context, prompt string) (string, error) {
+				gotPrompt = prompt
+				return "answer", nil
+			}
+			entry := runOneOracleWithDeps(context.Background(), &tt.cfg, stub, generateFn, tt.item, longmemeval.IngestEntry{})
+			if entry.Status != "done" {
+				t.Fatalf("status: want done, got %q (err: %q)", entry.Status, entry.Error)
+			}
+			tt.checkPrompt(t, gotPrompt, contextBlocks)
+		})
+	}
+}
+
 // --- Test 7: AtomOracle flag defaults ---
 
 func TestOracleModeDefaultOff(t *testing.T) {

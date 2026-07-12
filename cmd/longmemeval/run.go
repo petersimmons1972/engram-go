@@ -843,36 +843,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			atomContextBlock = fetchAtomContextBlock(ctx, mcpClient, ingest.Project, item.QuestionID, cfg.AtomCacheDir)
 		}
 	}
-	// Exp-14: --temporal-prompt-aug takes priority over --inject-question-date;
-	// the two are mutually exclusive. When both are set, aug wins.
-	// H12 (--enumerate-first) is applied after the per-type prompt is chosen
-	// (via runOpts.ApplyEnumerateFirst below) so it prefixes the baseline prompt
-	// instead of replacing it.
-	// H-PE (--preference-enumerate) is orthogonal — it only fires for
-	// single-session-preference questions and is independent of the other flags.
-	// H-KUR (--ku-recency-prompt) is likewise orthogonal — it only fires for
-	// knowledge-update questions and is independent of the other flags.
-	// L2 (--anti-hedge-prompts) is likewise orthogonal — it only fires for
-	// single-session-preference and inferred-preference questions and is a
-	// pure prompt-addendum lever independent of the other flags.
-	var prompt string
-	switch {
-	case cfg.TemporalPromptAug:
-		prompt = longmemeval.GenerationPromptForTypeWithTemporalAug(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.InjectQuestionDate:
-		prompt = longmemeval.GenerationPromptForTypeWithDateInjection(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.PreferenceEnumerate:
-		prompt = longmemeval.GenerationPromptForTypePreferenceEnumerate(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.PreferenceGround:
-		prompt = longmemeval.GenerationPromptForTypePreferenceGround(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.AntiHedgePrompts:
-		prompt = longmemeval.GenerationPromptForTypeAntiHedge(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	case cfg.KURecencyPrompt:
-		prompt = longmemeval.GenerationPromptForTypeKURecency(item.Question, item.QuestionType, item.QuestionDate, contextBlocks, true)
-	default:
-		prompt = longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
-	}
-	prompt = runOpts.ApplyEnumerateFirst(prompt, item.Question, item.QuestionType)
+	prompt := selectGenerationPrompt(cfg, runOpts, item, contextBlocks)
 
 	// #938: prepend atom context block before the memory context when --atom-mode is set.
 	if atomContextBlock != "" {

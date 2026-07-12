@@ -138,9 +138,14 @@ func runOneOracleWithDeps(ctx context.Context, cfg *Config, completer atom.Claud
 	oracleZeroAtoms := atomCount == 0
 	log.Printf("oracle [%s] atoms=%d sessions=%d variant=%s zero_atoms=%v", item.QuestionID, atomCount, sessionCount, cfg.AtomOracleVariant, oracleZeroAtoms)
 
-	// Build generation prompt using the same prompt-assembly path as normal mode.
-	// contextBlocks already contains oracle atoms (and optionally raw session text).
-	prompt := longmemeval.GenerationPromptForType(item.Question, item.QuestionType, item.QuestionDate, contextBlocks)
+	// Build the generation prompt through the same flag-aware selection path as
+	// normal recall. contextBlocks already contains oracle atoms (and optionally
+	// raw session text).
+	runOpts := longmemeval.RunOpts{
+		ExhaustiveAggregation: cfg.ExhaustiveAggregation,
+		EnumerateFirst:        cfg.EnumerateFirst,
+	}
+	prompt := selectGenerationPrompt(cfg, runOpts, item, contextBlocks)
 
 	hypothesis, genErr := generateFn(ctx, prompt)
 	if genErr != nil {
