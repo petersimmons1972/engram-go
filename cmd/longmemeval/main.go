@@ -95,6 +95,7 @@ type Config struct {
 
 	// H-NEW-1: server-side two-pass date-windowed temporal recall
 	TemporalWindowRecall bool // enable server-side two-pass date-windowed recall for temporal-reasoning questions (default off)
+	EventWindowRecall    bool // add date-windowed event atoms for temporal-reasoning questions (default off)
 
 	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
 	TemporalPromptAug bool // inject H-M5 ordering instruction and H-M1 entity enumeration step into temporal-reasoning prompts (default off)
@@ -309,6 +310,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.InjectQuestionDate, "inject-question-date", false, "prepend 'Today's date is: {question_date}' as the first line of temporal-reasoning prompts to anchor relative-time references before the model reads memory context (default off)")
 	// H-NEW-1: server-side two-pass date-windowed temporal recall
 	fs.BoolVar(&cfg.TemporalWindowRecall, "temporal-window-recall", false, "H-NEW-1: enable server-side two-pass date-windowed recall — the server parses the question's temporal anchor against question_date and unions a valid_from-filtered pass with the unfiltered pass to temporally scope the candidate set for temporal-reasoning questions (default off)")
+	fs.BoolVar(&cfg.EventWindowRecall, "event-window-recall", false, "Layer C B3: union event atoms whose valid_from date falls in the parsed temporal window padded by 7 days (temporal-reasoning questions only; default off)")
 	// Exp-14: H-M5 chrono-sort forcing + H-M1 entity enumeration pass
 	fs.BoolVar(&cfg.TemporalPromptAug, "temporal-prompt-aug", false, "inject ordering and entity-enumeration instructions into temporal-reasoning prompts: asks the model to list events chronologically and enumerate all matching events before committing to an answer (default off)")
 	// H15: paraphrased multi-pass BM25 union.

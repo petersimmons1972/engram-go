@@ -621,6 +621,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		retrievedIDs        []string
 		temporalFallbackIDs []string
 		atomPreamble        string
+		eventWindowContext  string
 		primaryScoredHits   []longmemeval.ScoredMemoryID
 		contextBlocks       []string
 		err                 error
@@ -681,6 +682,31 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			}
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, recallResult.IDs)
 		}
+	}
+	if shouldUseEventWindowRecall(
+		cfg.EventWindowRecall,
+		fullTimelineContext,
+		item.QuestionType,
+		item.Question,
+		item.QuestionDate,
+	) {
+		eventResult, eventErr := mcpClient.RecallWithEventWindow(
+			ctx,
+			ingest.Project,
+			recallQuery,
+			1,
+			item.Question,
+			item.QuestionDate,
+			false,
+		)
+		if eventErr != nil {
+			return longmemeval.RunEntry{
+				QuestionID: item.QuestionID,
+				Status:     "error",
+				Error:      fmt.Sprintf("event-window recall: %v", eventErr),
+			}
+		}
+		eventWindowContext = eventResult.EventWindowContext
 	}
 
 	// H8 (lme-h8h12h15): exhaustive aggregation keeps the deep primary recall
@@ -835,6 +861,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		// evidence-first packing would displace temporally-proximate blocks.
 		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
+	contextBlocks = appendEventWindowContext(contextBlocks, eventWindowContext)
 
 	var atomContextBlock string
 	if !fullTimelineContext && cfg.AtomMode {
@@ -879,6 +906,29 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		AtomRetrieved:         atomPreamble != "",
 		AtomInContext:         atomContextBlock != "",
 	}
+}
+
+func shouldUseEventWindowRecall(
+	enabled bool,
+	fullTimelineContext bool,
+	questionType string,
+	question string,
+	questionDate string,
+) bool {
+	if !enabled || fullTimelineContext || questionType != "temporal-reasoning" {
+		return false
+	}
+	since, before := search.ParseTemporalWindow(question, questionDate)
+	return since != nil && before != nil
+}
+
+func appendEventWindowContext(contextBlocks []string, eventWindowContext string) []string {
+	if eventWindowContext == "" {
+		return contextBlocks
+	}
+	combined := make([]string, 0, len(contextBlocks)+1)
+	combined = append(combined, contextBlocks...)
+	return append(combined, eventWindowContext)
 }
 
 func buildRecallVariants(question, primary string, disableRewrite, includeIdentifiers bool) []string {

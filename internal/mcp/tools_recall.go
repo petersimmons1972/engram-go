@@ -359,6 +359,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// question_text (falling back to query) against question_date and runs a
 	// second, date-filtered pass unioned with the first.
 	temporalWindowRecall := getBool(args, "temporal_window_recall", false) // #1282: lenient, default-off experiment flag
+	eventWindowRecall := getBool(args, "event_window_recall", false)       // Layer C B3: additive event-atom window
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
 	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
@@ -374,6 +375,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		return nil, fmt.Errorf("projects: %w", err)
 	}
 	if len(projectNames) > 0 {
+		if eventWindowRecall {
+			return mcpgo.NewToolResultError("event_window_recall is only supported for single-project recall"), nil
+		}
 		if since != nil || before != nil {
 			return mcpgo.NewToolResultError("since/before date filters are only supported for single-project recall"), nil
 		}
@@ -485,6 +489,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	opts.TopicAnchorBoost = getBool(args, "topic_anchor_boost", false)                  // #1282: lenient, default-off experiment flag
 	opts.SessionDiversityN = getInt(args, "session_diversity_n", cfg.SessionDiversityN) // #1282: lenient, ranking-tuning knob
 	opts.TemporalWindowRecall = temporalWindowRecall
+	opts.EventWindowRecall = eventWindowRecall
 	opts.QuestionText = questionText
 	opts.QuestionDate = questionDate
 	// Claude reranker is opt-in via rerank=true.
@@ -592,6 +597,32 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		results = search.OrderResultsEvidenceFirst(results, query)
 	}
 	atomPreamble := atomPreambleForResults(results)
+	var eventWindowContext string
+	if opts.EventWindowRecall {
+		anchorText := questionText
+		if anchorText == "" {
+			anchorText = query
+		}
+		since, before := search.ParseTemporalWindow(anchorText, questionDate)
+		if since != nil && before != nil {
+			eventWindowContext, err = h.Engine.RecallEventWindowContext(
+				ctx,
+				project,
+				since,
+				before,
+			)
+			if err != nil {
+				slog.Warn("event-window recall failed; continuing without event context",
+					"project", project,
+					"err", err,
+				)
+				eventWindowContext = ""
+			}
+			if err == nil && eventWindowContext == "" {
+				slog.Debug("event-window recall found no atoms", "project", project)
+			}
+		}
+	}
 
 	// When ENGRAM_DEGRADED_ERROR_MODE=structured and the embed pipeline degraded,
 	// surface a structured error instead of silently returning BM25 results.
@@ -627,6 +658,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
 		}
+		if eventWindowContext != "" {
+			out["event_window_context"] = eventWindowContext
+		}
 		if eventID != "" {
 			out["event_id"] = eventID
 			out["feedback_hint"] = "Call memory_feedback with this event_id and the memory_ids you used"
@@ -643,6 +677,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		attachSynthesisDirective(out, query)
 		if atomPreamble != "" {
 			out["atom_preamble"] = atomPreamble
+		}
+		if eventWindowContext != "" {
+			out["event_window_context"] = eventWindowContext
 		}
 		if eventID != "" {
 			out["event_id"] = eventID

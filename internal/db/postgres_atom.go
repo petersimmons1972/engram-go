@@ -13,9 +13,13 @@ import (
 
 // AtomQueryOpts controls filtered active-atom queries.
 type AtomQueryOpts struct {
-	AtomType   string
-	AsOf       *time.Time
-	LatestOnly bool
+	AtomType        string
+	AsOf            *time.Time
+	ValidFromSince  *time.Time
+	ValidFromBefore *time.Time
+	LatestOnly      bool
+	OrderValidFrom  bool
+	Limit           int
 }
 
 // InsertAtom inserts a new atom into the atoms table. A UUIDv4 ID is generated
@@ -88,6 +92,15 @@ func (p *PostgresBackend) GetActiveAtoms(ctx context.Context, project string, at
 
 // GetActiveAtomsFiltered returns active atoms with optional type/as-of/latest filtering.
 func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project string, opts AtomQueryOpts) ([]atom.Atom, error) {
+	query, args := buildActiveAtomsQuery(project, opts)
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanAtomRows(rows)
+}
+
+func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interface{}) {
 	where := []string{"project = $1", "valid_to IS NULL"}
 	args := []interface{}{project}
 	nextArg := 2
@@ -100,8 +113,17 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	if opts.AsOf != nil {
 		where = append(where, fmt.Sprintf("observed_at <= $%d", nextArg))
 		args = append(args, *opts.AsOf)
-		// nextArg is intentionally not incremented here: AsOf is the last
-		// positional clause. Re-add `nextArg++` if another $-clause is appended below.
+		nextArg++
+	}
+	if opts.ValidFromSince != nil {
+		where = append(where, fmt.Sprintf("valid_from >= $%d", nextArg))
+		args = append(args, *opts.ValidFromSince)
+		nextArg++
+	}
+	if opts.ValidFromBefore != nil {
+		where = append(where, fmt.Sprintf("valid_from < $%d", nextArg))
+		args = append(args, *opts.ValidFromBefore)
+		nextArg++
 	}
 
 	selectClause := `
@@ -123,16 +145,22 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	orderBy := "ORDER BY observed_at DESC NULLS LAST, created_at DESC"
 	if opts.LatestOnly {
 		orderBy = "ORDER BY subject, predicate, observed_at DESC NULLS LAST, created_at DESC"
+	} else if opts.OrderValidFrom {
+		orderBy = "ORDER BY valid_from ASC, created_at ASC"
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		`+selectClause+`
-		WHERE `+strings.Join(where, " AND ")+`
-		`+orderBy, args...)
-	if err != nil {
-		return nil, err
+	limitClause := ""
+	if opts.Limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", nextArg)
+		args = append(args, opts.Limit)
 	}
-	return scanAtomRows(rows)
+
+	query := `
+		` + selectClause + `
+		WHERE ` + strings.Join(where, " AND ") + `
+		` + orderBy + `
+		` + limitClause
+	return query, args
 }
 
 // EnqueueAtomExtractionJob inserts a pending job for the given memory.

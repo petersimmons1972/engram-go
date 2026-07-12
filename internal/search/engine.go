@@ -156,6 +156,10 @@ type RecallOpts struct {
 	// date-filtered pass and unions it with the unfiltered pass so the caller
 	// receives a temporally-scoped candidate set. Default false = baseline.
 	TemporalWindowRecall bool
+	// EventWindowRecall enables Layer C B3 additive event-atom context. The MCP
+	// layer uses this option after normal memory recall to request a separately
+	// formatted event block; it never changes the ranked memory result set.
+	EventWindowRecall bool
 	// QuestionText is the raw natural-language question used only for temporal
 	// anchor parsing when TemporalWindowRecall is true. When empty the recall
 	// query itself is used. Has no effect unless TemporalWindowRecall is true.

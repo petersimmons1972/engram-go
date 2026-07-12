@@ -778,6 +778,53 @@ func TestRecallWithDiversityOverride_SendsExplicitValue(t *testing.T) {
 	}
 }
 
+func TestRecallWithEventWindow_SendsOptInAndReturnsContext(t *testing.T) {
+	const eventContext = "=== Extracted Preference Atoms ===\n[event] Dentist appointment.\n"
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if args["event_window_recall"] != true {
+				t.Fatalf("event_window_recall = %#v, want true", args["event_window_recall"])
+			}
+			if args["question_text"] != "What happened yesterday?" {
+				t.Fatalf("question_text = %#v", args["question_text"])
+			}
+			if args["question_date"] != "2024/01/12" {
+				t.Fatalf("question_date = %#v", args["question_date"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles":              []map[string]any{{"id": "h-aaa", "score": 0.8}},
+				"event_window_context": eventContext,
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallWithEventWindow(
+		ctx,
+		"proj",
+		"query",
+		5,
+		"What happened yesterday?",
+		"2024/01/12",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("RecallWithEventWindow: %v", err)
+	}
+	if result.EventWindowContext != eventContext {
+		t.Fatalf("EventWindowContext = %q, want %q", result.EventWindowContext, eventContext)
+	}
+}
+
 // TestFetchContent_HappyPath verifies content fetching.
 func TestFetchContent_HappyPath(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
