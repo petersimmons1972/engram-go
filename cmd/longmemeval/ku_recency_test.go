@@ -26,15 +26,21 @@ func TestKURecencyPrompt_FlagRegistered(t *testing.T) {
 // TestKURecencyPrompt_RunGoWiresPromptSelection verifies that run.go contains
 // the ku-recency-prompt prompt selection path.
 func TestKURecencyPrompt_RunGoWiresPromptSelection(t *testing.T) {
-	src, err := os.ReadFile("run.go")
-	if err != nil {
-		t.Fatalf("read run.go: %v", err)
+	// Prompt selection moved into the shared selectGenerationPrompt helper
+	// (generation_prompt.go, #1402) so both the normal and atom-oracle paths
+	// honor the flags; read both files so the check is location-robust.
+	var text string
+	for _, f := range []string{"run.go", "generation_prompt.go"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		text += string(src)
 	}
-	text := string(src)
 	if !strings.Contains(text, "cfg.KURecencyPrompt") {
-		t.Error("run.go missing cfg.KURecencyPrompt check — H-KUR flag not applied during prompt selection")
+		t.Error("prompt selection missing cfg.KURecencyPrompt check — H-KUR flag not applied during prompt selection")
 	}
 	if !strings.Contains(text, "GenerationPromptForTypeKURecency") {
-		t.Error("run.go missing GenerationPromptForTypeKURecency call — H-KUR prompt variant not wired")
+		t.Error("prompt selection missing GenerationPromptForTypeKURecency call — H-KUR prompt variant not wired")
 	}
 }
