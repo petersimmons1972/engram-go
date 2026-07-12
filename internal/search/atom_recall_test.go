@@ -2,6 +2,8 @@ package search_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ type stubAtomBackend struct {
 	atoms    []atom.Atom
 	filtered []atom.Atom
 	lastOpts db.AtomQueryOpts
+	err      error
 }
 
 func (s *stubAtomBackend) GetActiveAtoms(_ context.Context, _ string, atomType string) ([]atom.Atom, error) {
@@ -36,7 +39,7 @@ func (s *stubAtomBackend) GetActiveAtoms(_ context.Context, _ string, atomType s
 
 func (s *stubAtomBackend) GetActiveAtomsFiltered(_ context.Context, _ string, opts db.AtomQueryOpts) ([]atom.Atom, error) {
 	s.lastOpts = opts
-	return s.filtered, nil
+	return s.filtered, s.err
 }
 
 func makeTestAtom(id, atomType, statement string, confidence float64) atom.Atom {
@@ -181,4 +184,70 @@ func TestRecallPreferenceAtoms_LatestAndColdStart(t *testing.T) {
 	preamble, err = search.RecallPreferenceAtoms(context.Background(), backend, "proj", "what tea do I like", nil)
 	require.NoError(t, err)
 	assert.Empty(t, preamble, "cold start must return an empty preamble, not an error")
+}
+
+func TestRecallEventWindowAtoms_PadsOrdersAndCaps(t *testing.T) {
+	windowSince := time.Date(2024, 1, 10, 18, 45, 0, 0, time.FixedZone("west", -5*60*60))
+	windowBefore := time.Date(2024, 1, 12, 9, 30, 0, 0, time.FixedZone("east", 9*60*60))
+	backend := &stubAtomBackend{}
+	for i := 31; i >= 0; i-- {
+		validFrom := time.Date(2024, 1, 3+i, 12, 0, 0, 0, time.UTC)
+		backend.filtered = append(backend.filtered, atom.Atom{
+			ID:         fmt.Sprintf("event-%02d", i),
+			Type:       atom.TypeEvent,
+			Statement:  fmt.Sprintf("Event %02d", i),
+			ValidFrom:  &validFrom,
+			Confidence: 1,
+		})
+	}
+
+	block, err := search.RecallEventWindowAtoms(
+		context.Background(),
+		backend,
+		"project-a",
+		&windowSince,
+		&windowBefore,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, block)
+	require.Equal(t, atom.TypeEvent, backend.lastOpts.AtomType)
+	require.NotNil(t, backend.lastOpts.ValidFromSince)
+	require.NotNil(t, backend.lastOpts.ValidFromBefore)
+	require.Equal(t, "2024-01-03", backend.lastOpts.ValidFromSince.Format(time.DateOnly))
+	require.Equal(t, "2024-01-19", backend.lastOpts.ValidFromBefore.Format(time.DateOnly))
+	require.Equal(t, time.UTC, backend.lastOpts.ValidFromSince.Location())
+	require.Equal(t, time.UTC, backend.lastOpts.ValidFromBefore.Location())
+	require.Less(t, strings.Index(block, "Event 00"), strings.Index(block, "Event 01"))
+	require.Contains(t, block, "Event 29")
+	require.NotContains(t, block, "Event 30")
+	require.Contains(t, block, "(+2 more)")
+}
+
+func TestRecallEventWindowAtoms_BypassAndFailurePaths(t *testing.T) {
+	t.Run("missing window does not query or change context", func(t *testing.T) {
+		backend := &stubAtomBackend{filtered: []atom.Atom{makeTestAtom("a1", atom.TypeEvent, "event", 1)}}
+
+		block, err := search.RecallEventWindowAtoms(context.Background(), backend, "project-a", nil, nil)
+
+		require.NoError(t, err)
+		require.Empty(t, block)
+		require.Equal(t, db.AtomQueryOpts{}, backend.lastOpts)
+	})
+
+	t.Run("no atoms is a quiet no-op", func(t *testing.T) {
+		since := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
+		before := since.AddDate(0, 0, 1)
+		block, err := search.RecallEventWindowAtoms(context.Background(), &stubAtomBackend{}, "project-a", &since, &before)
+		require.NoError(t, err)
+		require.Empty(t, block)
+	})
+
+	t.Run("backend error fails loudly", func(t *testing.T) {
+		since := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
+		before := since.AddDate(0, 0, 1)
+		backend := &stubAtomBackend{err: errors.New("query failed")}
+		block, err := search.RecallEventWindowAtoms(context.Background(), backend, "project-a", &since, &before)
+		require.ErrorContains(t, err, "query failed")
+		require.Empty(t, block)
+	})
 }

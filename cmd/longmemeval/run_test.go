@@ -41,6 +41,23 @@ func TestResolveContextTopK_SSPrefOverrideAppliesOnlyToSSPref(t *testing.T) {
 	}
 }
 
+func TestAppendEventWindowContext_IsAdditiveAndNoOpWhenEmpty(t *testing.T) {
+	baseline := []string{"memory one", "memory two"}
+
+	got := appendEventWindowContext(baseline, "event atoms")
+	if !reflect.DeepEqual([]string{"memory one", "memory two", "event atoms"}, got) {
+		t.Fatalf("additive context = %q", got)
+	}
+	if !reflect.DeepEqual([]string{"memory one", "memory two"}, baseline) {
+		t.Fatalf("mutated existing context = %q", baseline)
+	}
+
+	got = appendEventWindowContext(baseline, "")
+	if !reflect.DeepEqual(baseline, got) || fmt.Sprintf("%q", baseline) != fmt.Sprintf("%q", got) {
+		t.Fatalf("empty block changed context: got %q, want %q", got, baseline)
+	}
+}
+
 // TestResolveContextTopK_SSPrefOverrideOffIsNoOp verifies default (0) leaves
 // single-session-preference at the existing per-type default (15) — no
 // behavior change when the flag is unset (baseline-safe).

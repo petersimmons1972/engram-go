@@ -2,11 +2,19 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/db"
+)
+
+const (
+	// eventWindowPadDays follows duramind results/layerc-2026-07/MISS-TAXONOMY-133.md.
+	// Keep this package-level so a future option can tune it without changing retrieval semantics.
+	eventWindowPadDays = 7
+	eventWindowAtomCap = 30
 )
 
 // AtomRecallOpts controls atom-level retrieval.
@@ -24,6 +32,20 @@ type AtomRecallOpts struct {
 type AtomBackend interface {
 	GetActiveAtoms(ctx context.Context, project string, atomType string) ([]atom.Atom, error)
 	GetActiveAtomsFiltered(ctx context.Context, project string, opts db.AtomQueryOpts) ([]atom.Atom, error)
+}
+
+// RecallEventWindowContext resolves event atoms through the engine's backend
+// without changing any memory recall pass or writing atom state.
+func (e *SearchEngine) RecallEventWindowContext(
+	ctx context.Context,
+	project string,
+	since, before *time.Time,
+) (string, error) {
+	backend, ok := e.backend.(AtomBackend)
+	if !ok {
+		return "", fmt.Errorf("backend does not support atom queries")
+	}
+	return RecallEventWindowAtoms(ctx, backend, project, since, before)
 }
 
 // RecallAtoms returns active atoms for the project, filtered by opts.AtomType
@@ -99,4 +121,57 @@ func RecallPreferenceAtoms(ctx context.Context, backend AtomBackend, project, qu
 		}
 	})
 	return FormatAtomsAsContext(atoms), nil
+}
+
+// RecallEventWindowAtoms returns an additive context block containing event atoms
+// whose date-only valid_from falls within the parsed temporal window plus padding.
+// Missing bounds and empty corpora are quiet no-ops.
+func RecallEventWindowAtoms(
+	ctx context.Context,
+	backend AtomBackend,
+	project string,
+	since, before *time.Time,
+) (string, error) {
+	if since == nil || before == nil {
+		return "", nil
+	}
+
+	paddedSince := dateOnlyUTC(*since).AddDate(0, 0, -eventWindowPadDays)
+	paddedBefore := dateOnlyUTC(*before).AddDate(0, 0, eventWindowPadDays)
+	atoms, err := backend.GetActiveAtomsFiltered(ctx, project, db.AtomQueryOpts{
+		AtomType:        atom.TypeEvent,
+		ValidFromSince:  &paddedSince,
+		ValidFromBefore: &paddedBefore,
+		OrderValidFrom:  true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("recalling event-window atoms: %w", err)
+	}
+	if len(atoms) == 0 {
+		return "", nil
+	}
+
+	sort.SliceStable(atoms, func(i, j int) bool {
+		if atoms[i].ValidFrom == nil {
+			return false
+		}
+		if atoms[j].ValidFrom == nil {
+			return true
+		}
+		return atoms[i].ValidFrom.Before(*atoms[j].ValidFrom)
+	})
+
+	omitted := len(atoms) - eventWindowAtomCap
+	if omitted > 0 {
+		atoms = atoms[:eventWindowAtomCap]
+	}
+	block := FormatAtomsAsContext(atoms)
+	if omitted > 0 {
+		block += fmt.Sprintf("(+%d more)\n", omitted)
+	}
+	return block, nil
+}
+
+func dateOnlyUTC(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }

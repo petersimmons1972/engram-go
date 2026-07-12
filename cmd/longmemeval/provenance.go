@@ -208,6 +208,9 @@ func buildFeatureFlags(cfg *Config) map[string]any {
 	if cfg.TemporalWindowRecall {
 		flags["temporal_window_recall"] = true
 	}
+	if cfg.EventWindowRecall {
+		flags["event_window_recall"] = true
+	}
 	if cfg.TemporalPromptAug {
 		flags["temporal_prompt_aug"] = true
 	}

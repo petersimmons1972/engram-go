@@ -356,8 +356,9 @@ func MergeScoredRecall(primary, secondary []ScoredMemoryID) []ScoredMemoryID {
 // RecallResult is the structured memory_recall response used by LongMemEval
 // when auxiliary metadata such as atom preambles must survive transport.
 type RecallResult struct {
-	IDs          []string
-	AtomPreamble string
+	IDs                []string
+	AtomPreamble       string
+	EventWindowContext string
 	// Hits carries the scored recall results for callers that need score-based
 	// merging (e.g. H15 dual preference recall). IDsFromScoredRecall(Hits) == IDs.
 	Hits []ScoredMemoryID
@@ -371,6 +372,27 @@ type RecallResult struct {
 	// LayerB carries the additive layer_b summary returned by non-handle
 	// recall modes when the server detects an aggregation-shaped query.
 	LayerB *layerb.Summary
+}
+
+// RecallWithEventWindow enables additive event-atom context for a parsed
+// temporal window. temporalWindow also enables the existing H-NEW-1 memory
+// two-pass recall; the two options are independent and may be composed.
+func (c *Client) RecallWithEventWindow(
+	ctx context.Context,
+	project, query string,
+	topK int,
+	questionText, questionDate string,
+	temporalWindow bool,
+) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project:           project,
+		query:             query,
+		topK:              topK,
+		temporalWindow:    temporalWindow,
+		eventWindowRecall: true,
+		questionText:      questionText,
+		questionDate:      questionDate,
+	})
 }
 
 // RecallWithTemporalWindow enables the server-side H-NEW-1 two-pass date-windowed
@@ -511,6 +533,7 @@ type recallParams struct {
 	since             *time.Time
 	before            *time.Time
 	temporalWindow    bool
+	eventWindowRecall bool
 	questionText      string
 	questionDate      string
 	exactFactBoost    bool
@@ -623,8 +646,13 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	}
 	if p.temporalWindow {
 		args["temporal_window_recall"] = true
+	}
+	if p.temporalWindow || p.eventWindowRecall {
 		args["question_text"] = p.questionText
 		args["question_date"] = p.questionDate
+	}
+	if p.eventWindowRecall {
+		args["event_window_recall"] = true
 	}
 	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
 	if p.topicAnchorBoost {
@@ -671,10 +699,11 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	//   handle: {"handles":[{"id":"...","score":...}, ...]}
 	// Parse both and prefer whichever is populated.
 	var resp struct {
-		AtomPreamble string               `json:"atom_preamble"`
-		LayerB       *layerb.Summary      `json:"layer_b"`
-		Results      []types.SearchResult `json:"results"`
-		Handles      []struct {
+		AtomPreamble       string               `json:"atom_preamble"`
+		EventWindowContext string               `json:"event_window_context"`
+		LayerB             *layerb.Summary      `json:"layer_b"`
+		Results            []types.SearchResult `json:"results"`
+		Handles            []struct {
 			ID    string   `json:"id"`
 			Score float64  `json:"score"`
 			Tags  []string `json:"tags"`
@@ -699,12 +728,13 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 		}
 	}
 	return RecallResult{
-		IDs:          IDsFromScoredRecall(hits),
-		AtomPreamble: resp.AtomPreamble,
-		Hits:         hits,
-		MemoryMap:    memoryMap,
-		Results:      resp.Results,
-		LayerB:       resp.LayerB,
+		IDs:                IDsFromScoredRecall(hits),
+		AtomPreamble:       resp.AtomPreamble,
+		EventWindowContext: resp.EventWindowContext,
+		Hits:               hits,
+		MemoryMap:          memoryMap,
+		Results:            resp.Results,
+		LayerB:             resp.LayerB,
 	}, nil
 }
 

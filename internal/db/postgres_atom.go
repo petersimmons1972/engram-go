@@ -13,9 +13,12 @@ import (
 
 // AtomQueryOpts controls filtered active-atom queries.
 type AtomQueryOpts struct {
-	AtomType   string
-	AsOf       *time.Time
-	LatestOnly bool
+	AtomType        string
+	AsOf            *time.Time
+	ValidFromSince  *time.Time
+	ValidFromBefore *time.Time
+	LatestOnly      bool
+	OrderValidFrom  bool
 }
 
 // InsertAtom inserts a new atom into the atoms table. A UUIDv4 ID is generated
@@ -100,8 +103,16 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	if opts.AsOf != nil {
 		where = append(where, fmt.Sprintf("observed_at <= $%d", nextArg))
 		args = append(args, *opts.AsOf)
-		// nextArg is intentionally not incremented here: AsOf is the last
-		// positional clause. Re-add `nextArg++` if another $-clause is appended below.
+		nextArg++
+	}
+	if opts.ValidFromSince != nil {
+		where = append(where, fmt.Sprintf("valid_from >= $%d", nextArg))
+		args = append(args, *opts.ValidFromSince)
+		nextArg++
+	}
+	if opts.ValidFromBefore != nil {
+		where = append(where, fmt.Sprintf("valid_from < $%d", nextArg))
+		args = append(args, *opts.ValidFromBefore)
 	}
 
 	selectClause := `
@@ -123,6 +134,8 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	orderBy := "ORDER BY observed_at DESC NULLS LAST, created_at DESC"
 	if opts.LatestOnly {
 		orderBy = "ORDER BY subject, predicate, observed_at DESC NULLS LAST, created_at DESC"
+	} else if opts.OrderValidFrom {
+		orderBy = "ORDER BY valid_from ASC, created_at ASC"
 	}
 
 	rows, err := p.pool.Query(ctx, `
