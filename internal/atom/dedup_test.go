@@ -190,14 +190,15 @@ func TestDeduplicate_SameValueEventsOnDifferentDatesWithinBatchAreFresh(t *testi
 	assert.Empty(t, result.Superseded)
 }
 
-func TestDeduplicate_DifferentValuesWithinBatchAreFresh(t *testing.T) {
-	first := makeAtom("", "proj", "Alice", "employment", "Acme")
-	second := makeAtom("", "proj", "Alice", "employment", "Globex")
+func TestDeduplicate_DifferentNonEventValuesWithinBatchChain(t *testing.T) {
+	first := makeAtom("first", "proj", "Alice", "employment", "Acme")
+	second := makeAtom("second", "proj", "Alice", "employment", "Globex")
 
 	result := atom.Deduplicate(nil, []atom.Atom{first, second}, testNow)
 
-	assert.Len(t, result.Fresh, 2)
-	assert.Empty(t, result.Superseded)
+	require.Len(t, result.Fresh, 1)
+	require.Len(t, result.Superseded, 1)
+	assert.Equal(t, result.Fresh[0].ID, result.Superseded[0].New.Supersedes)
 }
 
 func TestDeduplicate_EmptyInputs(t *testing.T) {
@@ -222,4 +223,202 @@ func TestDeduplicate_MultipleProjects(t *testing.T) {
 	result := atom.Deduplicate(existing, candidates, testNow)
 	assert.Len(t, result.Fresh, 1)
 	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_TypeAwareSupersessionKey(t *testing.T) {
+	existing := makeAtom("event-1", "proj", "deploy", "state", "started")
+	existing.Type = atom.TypeEvent
+	candidate := makeAtom("status-1", "proj", "deploy", "state", "complete")
+	candidate.Type = atom.TypeStatusChange
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Fresh, 1)
+	assert.Equal(t, "status-1", result.Fresh[0].ID)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_ConfidenceGate(t *testing.T) {
+	tests := []struct {
+		name                string
+		candidateConfidence float64
+		wantSuperseded      bool
+	}{
+		{name: "exact boundary supersedes", candidateConfidence: 0.7, wantSuperseded: true},
+		{name: "computed boundary supersedes", candidateConfidence: 0.73 - 0.2, wantSuperseded: true},
+		{name: "below boundary coexists", candidateConfidence: 0.699, wantSuperseded: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			existing := makeAtom("old-1", "proj", "the user", "prefers", "coffee")
+			existing.Confidence = 0.9
+			if tt.name == "computed boundary supersedes" {
+				existing.Confidence = 0.73
+			}
+			candidate := makeAtom("new-1", "proj", "the user", "prefers", "tea")
+			candidate.Confidence = tt.candidateConfidence
+
+			result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+			if tt.wantSuperseded {
+				require.Len(t, result.Superseded, 1)
+				assert.Empty(t, result.Fresh)
+				return
+			}
+			require.Len(t, result.Fresh, 1)
+			assert.Empty(t, result.Superseded)
+			assert.Empty(t, result.Fresh[0].Supersedes)
+		})
+	}
+}
+
+func TestDeduplicate_RetiresAtCandidateAssertionTime(t *testing.T) {
+	existingObservedAt := time.Date(2024, 2, 2, 0, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2024, 2, 3, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old-1", "proj", "the user", "prefers", "coffee")
+	existing.ObservedAt = &existingObservedAt
+	candidate := makeAtom("new-1", "proj", "the user", "prefers", "tea")
+	candidate.ObservedAt = &observedAt
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Superseded, 1)
+	require.NotNil(t, result.Superseded[0].Old.ValidTo)
+	assert.Equal(t, observedAt, *result.Superseded[0].Old.ValidTo)
+}
+
+func TestDeduplicate_StatusChangesChainByAssertionTime(t *testing.T) {
+	firstTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	lastTime := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	first := makeAtom("first", "proj", "release", "status", "queued")
+	first.Type = atom.TypeStatusChange
+	first.ObservedAt = &firstTime
+	last := makeAtom("last", "proj", "release", "status", "complete")
+	last.Type = atom.TypeStatusChange
+	last.ObservedAt = &lastTime
+	middle := makeAtom("middle", "proj", "release", "status", "running")
+	middle.Type = atom.TypeStatusChange
+	middle.ObservedAt = &firstTime
+
+	result := atom.Deduplicate(nil, []atom.Atom{last, first, middle}, testNow)
+
+	require.Len(t, result.Superseded, 2)
+	assert.Equal(t, "first", result.Superseded[0].Old.ID)
+	assert.Equal(t, "first", result.Superseded[0].New.Supersedes)
+	assert.Equal(t, "middle", result.Superseded[0].New.ID, "equal assertion times preserve input order")
+	assert.Equal(t, "middle", result.Superseded[1].Old.ID)
+	assert.Equal(t, "middle", result.Superseded[1].New.Supersedes)
+	assert.Equal(t, "last", result.Superseded[1].New.ID)
+	assert.Equal(t, firstTime, *result.Superseded[0].Old.ValidTo)
+	assert.Equal(t, lastTime, *result.Superseded[1].Old.ValidTo)
+	require.Len(t, result.Fresh, 1, "the first status must be inserted before it can be retired")
+	assert.Equal(t, "first", result.Fresh[0].ID)
+}
+
+func TestDeduplicate_EventsNeverSupersedeExistingDifferentValue(t *testing.T) {
+	existing := makeAtom("event-1", "proj", "release", "deployed", "v1")
+	existing.Type = atom.TypeEvent
+	candidate := makeAtom("event-2", "proj", "release", "deployed", "v2")
+	candidate.Type = atom.TypeEvent
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Fresh, 1)
+	assert.Empty(t, result.Superseded)
+	assert.Empty(t, result.Fresh[0].Supersedes)
+}
+
+func TestDeduplicate_NonStatusCandidatesChainWithinBatch(t *testing.T) {
+	oldTime := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+	firstTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	secondTime := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old", "proj", "user", "drink", "coffee")
+	existing.ObservedAt = &oldTime
+	first := makeAtom("first", "proj", "user", "drink", "tea")
+	first.ObservedAt = &firstTime
+	second := makeAtom("second", "proj", "user", "drink", "water")
+	second.ObservedAt = &secondTime
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{first, second}, testNow)
+
+	require.Len(t, result.Superseded, 2)
+	assert.Equal(t, "old", result.Superseded[0].Old.ID)
+	assert.Equal(t, "old", result.Superseded[0].New.Supersedes)
+	assert.Equal(t, "first", result.Superseded[1].Old.ID)
+	assert.Equal(t, "first", result.Superseded[1].New.Supersedes)
+}
+
+func TestDeduplicate_BackfilledNonStatusCandidateCoexists(t *testing.T) {
+	validFrom := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	backfilledAt := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("current", "proj", "service", "region", "east")
+	existing.Type = atom.TypeAttribute
+	existing.ValidFrom = &validFrom
+	candidate := makeAtom("backfilled", "proj", "service", "region", "west")
+	candidate.Type = atom.TypeAttribute
+	candidate.ObservedAt = &backfilledAt
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Fresh, 1)
+	assert.Equal(t, "backfilled", result.Fresh[0].ID)
+	assert.Empty(t, result.Fresh[0].Supersedes)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_StaleStatusDoesNotSupersedeCurrentStatus(t *testing.T) {
+	currentTime := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	staleTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	current := makeAtom("current", "proj", "release", "status", "complete")
+	current.Type = atom.TypeStatusChange
+	current.ObservedAt = &currentTime
+	stale := makeAtom("stale", "proj", "release", "status", "queued")
+	stale.Type = atom.TypeStatusChange
+	stale.ObservedAt = &staleTime
+
+	result := atom.Deduplicate([]atom.Atom{current}, []atom.Atom{stale}, testNow)
+
+	require.Len(t, result.Fresh, 1)
+	assert.Equal(t, "stale", result.Fresh[0].ID)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_StaleLowConfidenceStatusCoexists(t *testing.T) {
+	currentTime := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	staleTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	current := makeAtom("current", "proj", "release", "status", "complete")
+	current.Type = atom.TypeStatusChange
+	current.Confidence = 0.9
+	current.ObservedAt = &currentTime
+	stale := makeAtom("stale-low", "proj", "release", "status", "queued")
+	stale.Type = atom.TypeStatusChange
+	stale.Confidence = 0.1
+	stale.ObservedAt = &staleTime
+
+	result := atom.Deduplicate([]atom.Atom{current}, []atom.Atom{stale}, testNow)
+
+	require.Len(t, result.Fresh, 1)
+	assert.Equal(t, "stale-low", result.Fresh[0].ID)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_SelectsNewestActivePredecessor(t *testing.T) {
+	oldTime := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	candidateTime := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	old := makeAtom("old", "proj", "service", "region", "east")
+	old.Type = atom.TypeAttribute
+	old.ObservedAt = &oldTime
+	current := makeAtom("current", "proj", "service", "region", "west")
+	current.Type = atom.TypeAttribute
+	current.ObservedAt = &newTime
+	candidate := makeAtom("candidate", "proj", "service", "region", "central")
+	candidate.Type = atom.TypeAttribute
+	candidate.ObservedAt = &candidateTime
+
+	result := atom.Deduplicate([]atom.Atom{current, old}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Superseded, 1)
+	assert.Equal(t, "current", result.Superseded[0].Old.ID)
+	assert.Equal(t, "current", result.Superseded[0].New.Supersedes)
 }

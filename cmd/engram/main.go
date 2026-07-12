@@ -640,7 +640,8 @@ func runServer(args []string) error {
 			adapter := &atomDBAdapter{backend: atomBackend}
 			extractor := atom.NewClaudeExtractor(cc)
 			w := atom.NewWorker(adapter, extractor, atom.WorkerConfig{
-				Projects: []string{""},
+				Projects:           []string{""},
+				SupersessionDryRun: envBool("ENGRAM_ATOM_SUPERSESSION_DRY_RUN", false),
 			})
 			workersWg.Add(1)
 			go func() {
@@ -930,8 +931,13 @@ func (a *atomDBAdapter) InsertAtom(ctx context.Context, at *atom.Atom) error {
 	return a.backend.InsertAtom(ctx, at)
 }
 
-func (a *atomDBAdapter) RetireAtom(ctx context.Context, atomID string, validTo time.Time) error {
-	return a.backend.RetireAtom(ctx, atomID, validTo)
+func (a *atomDBAdapter) RetireAtom(
+	ctx context.Context,
+	atomID string,
+	validTo time.Time,
+	superseding *atom.Atom,
+) error {
+	return a.backend.RetireAtom(ctx, atomID, validTo, superseding)
 }
 
 // auditRecallerAdapter adapts the engine pool to the audit.Recaller interface.

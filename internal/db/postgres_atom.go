@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/petersimmons1972/engram/internal/atom"
 	pgvector "github.com/pgvector/pgvector-go"
 )
@@ -26,6 +28,15 @@ type AtomQueryOpts struct {
 // if a.ID is empty. The atom's Project must be set by the caller.
 // Embedding is NOT written here — that is a separate step via InsertAtomEmbedding.
 func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
+	_, err := insertAtom(ctx, p.pool, a)
+	return err
+}
+
+type atomExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func insertAtom(ctx context.Context, execer atomExecer, a *atom.Atom) (bool, error) {
 	if a.ID == "" {
 		a.ID = uuid.New().String()
 	}
@@ -36,7 +47,7 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 		observedAt := a.CreatedAt
 		a.ObservedAt = &observedAt
 	}
-	_, err := p.pool.Exec(ctx, `
+	tag, err := execer.Exec(ctx, `
 		INSERT INTO atoms (
 			id, project, atom_type, subject, predicate, value,
 			statement, scope, valid_from, valid_to, confidence,
@@ -51,7 +62,10 @@ func (p *PostgresBackend) InsertAtom(ctx context.Context, a *atom.Atom) error {
 		nullableString(a.ProvenanceMemoryID), nullableString(a.ProvenanceSpan),
 		nullableString(a.Supersedes), a.ObservedAt, a.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // InsertAtomEmbedding upserts the vector embedding for the given atom into the
@@ -74,14 +88,41 @@ func (p *PostgresBackend) InsertAtomEmbedding(ctx context.Context, atomID string
 	return err
 }
 
-// RetireAtom sets valid_to on the atom with the given ID, effectively marking
-// it as superseded. Idempotent: a second call with the same ID is a no-op if
-// valid_to is already set.
-func (p *PostgresBackend) RetireAtom(ctx context.Context, atomID string, validTo time.Time) error {
-	_, err := p.pool.Exec(ctx,
+// RetireAtom atomically inserts superseding with its backward link and then
+// sets valid_to on the active predecessor. The INSERT precedes the sole UPDATE
+// inside the transaction, so no reader can observe an unlinked active overlap.
+func (p *PostgresBackend) RetireAtom(
+	ctx context.Context,
+	atomID string,
+	validTo time.Time,
+	superseding *atom.Atom,
+) error {
+	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin atom supersession: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	inserted, err := insertAtom(ctx, tx, superseding)
+	if err != nil {
+		return fmt.Errorf("insert superseding atom: %w", err)
+	}
+	if !inserted {
+		return fmt.Errorf("insert superseding atom %q: ID already exists", superseding.ID)
+	}
+	tag, err := tx.Exec(ctx,
 		`UPDATE atoms SET valid_to = $1 WHERE id = $2 AND valid_to IS NULL`,
 		validTo, atomID)
-	return err
+	if err != nil {
+		return fmt.Errorf("retire superseded atom: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("retire superseded atom %q: active row not found", atomID)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit atom supersession: %w", err)
+	}
+	return nil
 }
 
 // GetActiveAtoms returns all atoms for the project with valid_to IS NULL.
