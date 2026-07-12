@@ -13,15 +13,17 @@ import (
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-// AtomQueryOpts controls filtered active-atom queries.
+// AtomQueryOpts controls filtered atom queries. Active-only is the default;
+// IncludeSuperseded is reserved for history views that need retired rows.
 type AtomQueryOpts struct {
-	AtomType        string
-	AsOf            *time.Time
-	ValidFromSince  *time.Time
-	ValidFromBefore *time.Time
-	LatestOnly      bool
-	OrderValidFrom  bool
-	Limit           int
+	AtomType          string
+	AsOf              *time.Time
+	ValidFromSince    *time.Time
+	ValidFromBefore   *time.Time
+	IncludeSuperseded bool
+	LatestOnly        bool
+	OrderValidFrom    bool
+	Limit             int
 }
 
 // InsertAtom inserts a new atom into the atoms table. A UUIDv4 ID is generated
@@ -131,7 +133,8 @@ func (p *PostgresBackend) GetActiveAtoms(ctx context.Context, project string, at
 	return p.GetActiveAtomsFiltered(ctx, project, AtomQueryOpts{AtomType: atomType})
 }
 
-// GetActiveAtomsFiltered returns active atoms with optional type/as-of/latest filtering.
+// GetActiveAtomsFiltered returns active atoms with optional filtering. Callers
+// may explicitly include superseded rows for chronology/history views.
 func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project string, opts AtomQueryOpts) ([]atom.Atom, error) {
 	query, args := buildActiveAtomsQuery(project, opts)
 	rows, err := p.pool.Query(ctx, query, args...)
@@ -142,7 +145,10 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 }
 
 func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interface{}) {
-	where := []string{"project = $1", "valid_to IS NULL"}
+	where := []string{"project = $1"}
+	if !opts.IncludeSuperseded {
+		where = append(where, "valid_to IS NULL")
+	}
 	args := []interface{}{project}
 	nextArg := 2
 
@@ -188,6 +194,9 @@ func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interf
 		orderBy = "ORDER BY subject, predicate, observed_at DESC NULLS LAST, created_at DESC"
 	} else if opts.OrderValidFrom {
 		orderBy = "ORDER BY valid_from ASC, created_at ASC"
+		if opts.IncludeSuperseded {
+			orderBy += ", id ASC"
+		}
 	}
 
 	limitClause := ""

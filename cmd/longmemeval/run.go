@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 	"github.com/petersimmons1972/engram/internal/search"
 )
@@ -622,6 +623,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		temporalFallbackIDs []string
 		atomPreamble        string
 		eventWindowContext  string
+		eventWindowAtoms    []atom.Atom
 		primaryScoredHits   []longmemeval.ScoredMemoryID
 		contextBlocks       []string
 		err                 error
@@ -683,8 +685,9 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			retrievedIDs = longmemeval.UnionMemoryIDs(retrievedIDs, recallResult.IDs)
 		}
 	}
-	if shouldUseEventWindowRecall(
+	if shouldFetchEventWindowAtoms(
 		cfg.EventWindowRecall,
+		cfg.ChronoLedgerInject,
 		fullTimelineContext,
 		item.QuestionType,
 		item.Question,
@@ -698,6 +701,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 			item.Question,
 			item.QuestionDate,
 			false,
+			cfg.ChronoLedgerInject,
 		)
 		if eventErr != nil {
 			return longmemeval.RunEntry{
@@ -706,7 +710,10 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 				Error:      fmt.Sprintf("event-window recall: %v", eventErr),
 			}
 		}
-		eventWindowContext = eventResult.EventWindowContext
+		if cfg.EventWindowRecall {
+			eventWindowContext = eventResult.EventWindowContext
+		}
+		eventWindowAtoms = eventResult.EventWindowAtoms
 	}
 
 	// H8 (lme-h8h12h15): exhaustive aggregation keeps the deep primary recall
@@ -862,6 +869,15 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 	contextBlocks = appendEventWindowContext(contextBlocks, eventWindowContext)
+	contextBlocks = prependChronoLedger(
+		cfg.ChronoLedgerInject,
+		item.QuestionType,
+		contextBlocks,
+		eventWindowAtoms,
+	)
+	if cfg.ChronoLedgerInject && item.QuestionType == "temporal-reasoning" && formatChronoLedger(eventWindowAtoms) == "" {
+		log.Printf("DEBUG run [%s] chronology ledger found no event atoms", item.QuestionID)
+	}
 
 	var atomContextBlock string
 	if !fullTimelineContext && cfg.AtomMode {
@@ -906,6 +922,23 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		AtomRetrieved:         atomPreamble != "",
 		AtomInContext:         atomContextBlock != "",
 	}
+}
+
+func shouldFetchEventWindowAtoms(
+	eventWindowRecall bool,
+	chronoLedgerInject bool,
+	fullTimelineContext bool,
+	questionType string,
+	question string,
+	questionDate string,
+) bool {
+	return shouldUseEventWindowRecall(
+		eventWindowRecall || chronoLedgerInject,
+		fullTimelineContext,
+		questionType,
+		question,
+		questionDate,
+	)
 }
 
 func shouldUseEventWindowRecall(

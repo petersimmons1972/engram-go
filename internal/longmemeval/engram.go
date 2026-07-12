@@ -359,6 +359,7 @@ type RecallResult struct {
 	IDs                []string
 	AtomPreamble       string
 	EventWindowContext string
+	EventWindowAtoms   []atom.Atom
 	// Hits carries the scored recall results for callers that need score-based
 	// merging (e.g. H15 dual preference recall). IDsFromScoredRecall(Hits) == IDs.
 	Hits []ScoredMemoryID
@@ -383,15 +384,17 @@ func (c *Client) RecallWithEventWindow(
 	topK int,
 	questionText, questionDate string,
 	temporalWindow bool,
+	includeSuperseded bool,
 ) (RecallResult, error) {
 	return c.recallResultWithParams(ctx, recallParams{
-		project:           project,
-		query:             query,
-		topK:              topK,
-		temporalWindow:    temporalWindow,
-		eventWindowRecall: true,
-		questionText:      questionText,
-		questionDate:      questionDate,
+		project:                      project,
+		query:                        query,
+		topK:                         topK,
+		temporalWindow:               temporalWindow,
+		eventWindowRecall:            true,
+		eventWindowIncludeSuperseded: includeSuperseded,
+		questionText:                 questionText,
+		questionDate:                 questionDate,
 	})
 }
 
@@ -526,21 +529,22 @@ func (c *Client) RecallFullResult(ctx context.Context, project, query string, to
 
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
-	project           string
-	query             string
-	topK              int
-	mode              string
-	since             *time.Time
-	before            *time.Time
-	temporalWindow    bool
-	eventWindowRecall bool
-	questionText      string
-	questionDate      string
-	exactFactBoost    bool
-	topicAnchorBoost  bool
-	atomRecall        bool
-	atomRecallAsOf    *time.Time
-	sessionDiversityN int
+	project                      string
+	query                        string
+	topK                         int
+	mode                         string
+	since                        *time.Time
+	before                       *time.Time
+	temporalWindow               bool
+	eventWindowRecall            bool
+	eventWindowIncludeSuperseded bool
+	questionText                 string
+	questionDate                 string
+	exactFactBoost               bool
+	topicAnchorBoost             bool
+	atomRecall                   bool
+	atomRecallAsOf               *time.Time
+	sessionDiversityN            int
 }
 
 func (c *Client) recallResultWithParams(ctx context.Context, p recallParams) (RecallResult, error) {
@@ -653,6 +657,9 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	}
 	if p.eventWindowRecall {
 		args["event_window_recall"] = true
+		if p.eventWindowIncludeSuperseded {
+			args["event_window_include_superseded"] = true
+		}
 	}
 	// H-TAB (LME exp #3): pass topic-anchor boost flag to server.
 	if p.topicAnchorBoost {
@@ -701,6 +708,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 	var resp struct {
 		AtomPreamble       string               `json:"atom_preamble"`
 		EventWindowContext string               `json:"event_window_context"`
+		EventWindowAtoms   []atom.Atom          `json:"event_window_atoms"`
 		LayerB             *layerb.Summary      `json:"layer_b"`
 		Results            []types.SearchResult `json:"results"`
 		Handles            []struct {
@@ -731,6 +739,7 @@ func (c *Client) recall(ctx context.Context, p recallParams) (RecallResult, erro
 		IDs:                IDsFromScoredRecall(hits),
 		AtomPreamble:       resp.AtomPreamble,
 		EventWindowContext: resp.EventWindowContext,
+		EventWindowAtoms:   resp.EventWindowAtoms,
 		Hits:               hits,
 		MemoryMap:          memoryMap,
 		Results:            resp.Results,

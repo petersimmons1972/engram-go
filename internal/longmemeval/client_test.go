@@ -8,10 +8,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/layerb"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 	"github.com/petersimmons1972/engram/internal/search"
@@ -780,11 +782,15 @@ func TestRecallWithDiversityOverride_SendsExplicitValue(t *testing.T) {
 
 func TestRecallWithEventWindow_SendsOptInAndReturnsContext(t *testing.T) {
 	const eventContext = "=== Extracted Preference Atoms ===\n[event] Dentist appointment.\n"
+	validFrom := time.Date(2024, 1, 11, 15, 30, 0, 0, time.UTC)
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
 			if args["event_window_recall"] != true {
 				t.Fatalf("event_window_recall = %#v, want true", args["event_window_recall"])
+			}
+			if args["event_window_include_superseded"] != true {
+				t.Fatalf("event_window_include_superseded = %#v, want true", args["event_window_include_superseded"])
 			}
 			if args["question_text"] != "What happened yesterday?" {
 				t.Fatalf("question_text = %#v", args["question_text"])
@@ -795,6 +801,12 @@ func TestRecallWithEventWindow_SendsOptInAndReturnsContext(t *testing.T) {
 			resp, _ := json.Marshal(map[string]any{
 				"handles":              []map[string]any{{"id": "h-aaa", "score": 0.8}},
 				"event_window_context": eventContext,
+				"event_window_atoms": []atom.Atom{{
+					ID:        "event-1",
+					Type:      atom.TypeEvent,
+					Statement: "Dentist appointment.",
+					ValidFrom: &validFrom,
+				}},
 			})
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
@@ -816,12 +828,16 @@ func TestRecallWithEventWindow_SendsOptInAndReturnsContext(t *testing.T) {
 		"What happened yesterday?",
 		"2024/01/12",
 		false,
+		true,
 	)
 	if err != nil {
 		t.Fatalf("RecallWithEventWindow: %v", err)
 	}
 	if result.EventWindowContext != eventContext {
 		t.Fatalf("EventWindowContext = %q, want %q", result.EventWindowContext, eventContext)
+	}
+	if len(result.EventWindowAtoms) != 1 || result.EventWindowAtoms[0].ID != "event-1" {
+		t.Fatalf("EventWindowAtoms = %#v, want event-1", result.EventWindowAtoms)
 	}
 }
 

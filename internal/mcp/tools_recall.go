@@ -10,6 +10,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/claude"
 	"github.com/petersimmons1972/engram/internal/search"
 	"github.com/petersimmons1972/engram/internal/types"
@@ -358,8 +359,9 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	// default off). When enabled, the engine parses temporal anchors from
 	// question_text (falling back to query) against question_date and runs a
 	// second, date-filtered pass unioned with the first.
-	temporalWindowRecall := getBool(args, "temporal_window_recall", false) // #1282: lenient, default-off experiment flag
-	eventWindowRecall := getBool(args, "event_window_recall", false)       // Layer C B3: additive event-atom window
+	temporalWindowRecall := getBool(args, "temporal_window_recall", false)                  // #1282: lenient, default-off experiment flag
+	eventWindowRecall := getBool(args, "event_window_recall", false)                        // Layer C B3: additive event-atom window
+	eventWindowIncludeSuperseded := getBool(args, "event_window_include_superseded", false) // Layer C B4: chronology history
 	questionText := getString(args, "question_text", "")
 	questionDate := getString(args, "question_date", "")
 	atomRecallAsOf, err := parseRecallTimeArg(args, "atom_recall_as_of")
@@ -598,6 +600,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 	}
 	atomPreamble := atomPreambleForResults(results)
 	var eventWindowContext string
+	var eventWindowAtoms []atom.Atom
 	if opts.EventWindowRecall {
 		anchorText := questionText
 		if anchorText == "" {
@@ -605,18 +608,24 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		since, before := search.ParseTemporalWindow(anchorText, questionDate)
 		if since != nil && before != nil {
-			eventWindowContext, err = h.Engine.RecallEventWindowContext(
+			eventWindowResult, eventWindowErr := h.Engine.RecallEventWindow(
 				ctx,
 				project,
 				since,
 				before,
+				eventWindowIncludeSuperseded,
 			)
+			err = eventWindowErr
 			if err != nil {
 				slog.Warn("event-window recall failed; continuing without event context",
 					"project", project,
 					"err", err,
 				)
 				eventWindowContext = ""
+				eventWindowAtoms = nil
+			} else {
+				eventWindowContext = eventWindowResult.Context
+				eventWindowAtoms = eventWindowResult.Atoms
 			}
 			if err == nil && eventWindowContext == "" {
 				slog.Debug("event-window recall found no atoms", "project", project)
@@ -660,6 +669,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		if eventWindowContext != "" {
 			out["event_window_context"] = eventWindowContext
+			out["event_window_atoms"] = eventWindowAtoms
 		}
 		if eventID != "" {
 			out["event_id"] = eventID
@@ -680,6 +690,7 @@ func handleMemoryRecall(ctx context.Context, pool *EnginePool, req mcpgo.CallToo
 		}
 		if eventWindowContext != "" {
 			out["event_window_context"] = eventWindowContext
+			out["event_window_atoms"] = eventWindowAtoms
 		}
 		if eventID != "" {
 			out["event_id"] = eventID

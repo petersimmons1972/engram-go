@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petersimmons1972/engram/internal/atom"
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
@@ -81,6 +82,144 @@ func TestShouldUseEventWindowRecall_GatesPreserveBaselineContext(t *testing.T) {
 				t.Fatalf("gated path changed baseline context: got %q, want %q", got, baseline)
 			}
 		})
+	}
+}
+
+func TestShouldFetchEventWindowAtoms_AllFlagCombinationsCompose(t *testing.T) {
+	tests := []struct {
+		name               string
+		eventWindowRecall  bool
+		chronoLedgerInject bool
+		want               bool
+	}{
+		{name: "both off"},
+		{name: "B3 only", eventWindowRecall: true, want: true},
+		{name: "B4 only", chronoLedgerInject: true, want: true},
+		{name: "B3 and B4", eventWindowRecall: true, chronoLedgerInject: true, want: true},
+		{name: "full timeline bypasses B3 source", eventWindowRecall: true, chronoLedgerInject: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fullTimeline := tt.name == "full timeline bypasses B3 source"
+			got := shouldFetchEventWindowAtoms(
+				tt.eventWindowRecall,
+				tt.chronoLedgerInject,
+				fullTimeline,
+				"temporal-reasoning",
+				"What happened yesterday?",
+				"2024/02/20",
+			)
+			if got != tt.want {
+				t.Fatalf("gate = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChronoLedgerFlagOff_PreservesGenerationContextByteForByte(t *testing.T) {
+	item := longmemeval.Item{
+		Question:     "What happened yesterday?",
+		QuestionType: "temporal-reasoning",
+		QuestionDate: "2024/02/20",
+	}
+	baseline := []string{"[Date: 2024-02-19]\nraw session"}
+	wouldBeEventDate := time.Date(2024, 2, 19, 23, 30, 0, 0, time.UTC)
+	atoms := []atom.Atom{{Statement: "Visited the dentist.", ValidFrom: &wouldBeEventDate}}
+	want := selectGenerationPrompt(&Config{}, longmemeval.RunOpts{}, item, baseline)
+
+	gotBlocks := prependChronoLedger(false, item.QuestionType, baseline, atoms)
+	got := selectGenerationPrompt(&Config{}, longmemeval.RunOpts{}, item, gotBlocks)
+
+	if got != want {
+		t.Fatalf("flag-off prompt changed:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestChronoLedgerInject_FlagDefaultsOffAndIsRegistered(t *testing.T) {
+	cfg := Config{}
+	if cfg.ChronoLedgerInject {
+		t.Fatal("ChronoLedgerInject default = true, want false")
+	}
+
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(src), `BoolVar(&cfg.ChronoLedgerInject, "chrono-ledger-inject", false`) {
+		t.Fatal("--chrono-ledger-inject is not registered as an opt-in boolean flag")
+	}
+}
+
+func TestFormatChronoLedger_OrdersAnnotatesAndStablyBreaksTies(t *testing.T) {
+	jan10 := time.Date(2024, 1, 10, 20, 0, 0, 0, time.FixedZone("west", -5*60*60))
+	jan11Morning := time.Date(2024, 1, 11, 8, 0, 0, 0, time.UTC)
+	jan11Evening := time.Date(2024, 1, 11, 18, 0, 0, 0, time.UTC)
+	jan12 := time.Date(2024, 1, 12, 3, 0, 0, 0, time.UTC)
+	atoms := []atom.Atom{
+		{Statement: "Zoo visit.", ValidFrom: &jan11Evening},
+		{Statement: "Dentist appointment.", ValidFrom: &jan10, ValidTo: &jan12},
+		{Statement: "Alpha appointment.", ValidFrom: &jan11Morning, Supersedes: "older"},
+	}
+
+	got := formatChronoLedger(atoms)
+	want := "=== Event Timeline (chronological) ===\n" +
+		"2024-01-10: Dentist appointment. [superseded 2024-01-12]\n" +
+		"2024-01-11: Alpha appointment. [current]\n" +
+		"2024-01-11: Zoo visit. [current]\n"
+	if got != want {
+		t.Fatalf("timeline:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatChronoLedger_CapsAtFortyWithDenumberedTruncation(t *testing.T) {
+	atoms := make([]atom.Atom, 0, 41)
+	for i := 40; i >= 0; i-- {
+		date := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i)
+		atoms = append(atoms, atom.Atom{Statement: fmt.Sprintf("Event %02d", i), ValidFrom: &date})
+	}
+
+	got := formatChronoLedger(atoms)
+	if strings.Count(got, " [current]") != 40 {
+		t.Fatalf("timeline line count = %d, want 40", strings.Count(got, " [current]"))
+	}
+	if strings.Contains(got, "Event 40") || !strings.Contains(got, "(+more events truncated)") {
+		t.Fatalf("unexpected capped timeline: %q", got)
+	}
+}
+
+func TestPrependChronoLedger_EmptyAndNonTemporalAreNoOps(t *testing.T) {
+	baseline := []string{"session one", "session two"}
+	date := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, got := range [][]string{
+		prependChronoLedger(true, "temporal-reasoning", baseline, nil),
+		prependChronoLedger(true, "single-session-user", baseline, []atom.Atom{{Statement: "Event", ValidFrom: &date}}),
+	} {
+		if !reflect.DeepEqual(got, baseline) {
+			t.Fatalf("no-op changed blocks: got %q, want %q", got, baseline)
+		}
+	}
+}
+
+func TestChronoLedger_ComposesFirstWithTemporalAugAndEventWindowContext(t *testing.T) {
+	date := time.Date(2024, 1, 11, 0, 0, 0, 0, time.UTC)
+	item := longmemeval.Item{
+		Question:     "What happened yesterday?",
+		QuestionType: "temporal-reasoning",
+		QuestionDate: "2024/01/12",
+	}
+	blocks := appendEventWindowContext([]string{"raw session"}, "=== Dated Events (window) ===\n[event] raw event\n")
+	blocks = prependChronoLedger(true, item.QuestionType, blocks, []atom.Atom{{Statement: "Dentist appointment.", ValidFrom: &date}})
+	prompt := selectGenerationPrompt(&Config{TemporalPromptAug: true}, longmemeval.RunOpts{}, item, blocks)
+
+	timelineAt := strings.Index(prompt, "=== Event Timeline (chronological) ===")
+	sessionAt := strings.Index(prompt, "raw session")
+	windowAt := strings.Index(prompt, "=== Dated Events (window) ===")
+	if timelineAt < 0 || sessionAt < 0 || windowAt < 0 || timelineAt >= sessionAt || sessionAt >= windowAt {
+		t.Fatalf("context order timeline=%d session=%d window=%d in prompt %q", timelineAt, sessionAt, windowAt, prompt)
+	}
+	if !strings.Contains(prompt, "chronological") {
+		t.Fatalf("temporal prompt augmentation missing from composed prompt: %q", prompt)
 	}
 }
 

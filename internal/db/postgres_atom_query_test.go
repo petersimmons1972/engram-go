@@ -25,3 +25,18 @@ func TestBuildActiveAtomsQuery_PlaceholderOrderingAndLimit(t *testing.T) {
 	require.Contains(t, query, "LIMIT $6")
 	require.Equal(t, []interface{}{"project-a", atom.TypeEvent, asOf, since, before, 31}, args)
 }
+
+func TestBuildActiveAtomsQuery_IncludeSupersededChangesOnlyValidityPredicate(t *testing.T) {
+	query, args := buildActiveAtomsQuery("project-a", AtomQueryOpts{
+		AtomType:          atom.TypeEvent,
+		IncludeSuperseded: true,
+		OrderValidFrom:    true,
+		Limit:             41,
+	})
+
+	require.NotContains(t, query, "valid_to IS NULL")
+	require.Contains(t, query, "project = $1")
+	require.Contains(t, query, "atom_type = $2")
+	require.Contains(t, query, "ORDER BY valid_from ASC, created_at ASC, id ASC")
+	require.Equal(t, []interface{}{"project-a", atom.TypeEvent, 41}, args)
+}
