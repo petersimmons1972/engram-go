@@ -85,6 +85,16 @@ func (s *stubBackend) RetireAtom(_ context.Context, atomID string, validTo time.
 	if s.retireErr != nil {
 		return s.retireErr
 	}
+	predecessorActive := false
+	for i := range s.existing {
+		if s.existing[i].ID == atomID && s.existing[i].ValidTo == nil {
+			predecessorActive = true
+			break
+		}
+	}
+	if !predecessorActive {
+		return errors.New("active predecessor not found")
+	}
 	for _, existing := range s.existing {
 		if existing.ID == superseding.ID {
 			return errors.New("superseding atom ID already exists")
@@ -102,6 +112,22 @@ func (s *stubBackend) RetireAtom(_ context.Context, atomID string, validTo time.
 		}
 	}
 	return nil
+}
+
+func TestStubBackend_RetireAtomRejectsRetiredPredecessorWithoutMutation(t *testing.T) {
+	backend := newStubBackend()
+	retiredAt := testNow.Add(-time.Hour)
+	predecessor := makeAtom("old", "proj", "user", "drink", "coffee")
+	predecessor.ValidTo = &retiredAt
+	backend.existing = []atom.Atom{predecessor}
+	replacement := makeAtom("new", "proj", "user", "drink", "tea")
+
+	err := backend.RetireAtom(context.Background(), predecessor.ID, testNow, &replacement)
+
+	require.Error(t, err)
+	assert.Len(t, backend.existing, 1)
+	assert.Empty(t, backend.inserted)
+	assert.Empty(t, backend.retired)
 }
 
 // ── stub extractor ────────────────────────────────────────────────────────────
@@ -159,12 +185,12 @@ func TestWorker_ProcessesFreshAtom(t *testing.T) {
 func TestWorker_SupersessionRetiresThenInserts(t *testing.T) {
 	backend := newStubBackend()
 	backend.jobs = []atom.ExtractionJob{{ID: "job-1", MemoryID: "mem-1", Project: "proj"}}
-	backend.memories["mem-1"] = &types.Memory{ID: "mem-1", Content: "I changed my mind."}
+	backend.memories["mem-1"] = &types.Memory{ID: "mem-1", Content: "I changed my mind.", CreatedAt: testNow}
 
 	// Existing atom for same subject+predicate but different value.
-	backend.existing = []atom.Atom{
-		makeAtom("existing-1", "proj", "the user", "prefers", "coffee"),
-	}
+	existing := makeAtom("existing-1", "proj", "the user", "prefers", "coffee")
+	existing.ObservedAt = timePointer(testNow.Add(-time.Hour))
+	backend.existing = []atom.Atom{existing}
 
 	ext := &stubExtractor{atoms: []atom.Atom{
 		// New value for same predicate → triggers supersession.
@@ -331,7 +357,9 @@ func TestWorker_SupersessionUsesAssertionTimeAndInsertThenRetire(t *testing.T) {
 	backend.memories["mem-assertion"] = &types.Memory{
 		ID: "mem-assertion", Content: "Tea now.", CreatedAt: assertedAt,
 	}
-	backend.existing = []atom.Atom{makeAtom("old", "proj", "the user", "prefers", "coffee")}
+	predecessor := makeAtom("old", "proj", "the user", "prefers", "coffee")
+	predecessor.ObservedAt = timePointer(assertedAt.Add(-time.Hour))
+	backend.existing = []atom.Atom{predecessor}
 	ext := &stubExtractor{atoms: []atom.Atom{
 		makeAtom("new", "", "the user", "prefers", "tea"),
 	}}
@@ -349,7 +377,9 @@ func TestWorker_DryRunInsertsWithoutLinksOrRetirement(t *testing.T) {
 	assertedAt := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
 	backend.jobs = []atom.ExtractionJob{{ID: "job-audit", MemoryID: "mem-audit", Project: "proj"}}
 	backend.memories["mem-audit"] = &types.Memory{ID: "mem-audit", Content: "Tea now.", CreatedAt: assertedAt}
-	backend.existing = []atom.Atom{makeAtom("old", "proj", "the user", "prefers", "coffee")}
+	predecessor := makeAtom("old", "proj", "the user", "prefers", "coffee")
+	predecessor.ObservedAt = timePointer(assertedAt.Add(-time.Hour))
+	backend.existing = []atom.Atom{predecessor}
 	ext := &stubExtractor{atoms: []atom.Atom{makeAtom("new", "", "the user", "prefers", "tea")}}
 
 	runWorkerOnce(t, backend, ext, atom.WorkerConfig{
@@ -367,7 +397,9 @@ func TestWorker_RetirementFailureMarksJobFailed(t *testing.T) {
 	backend.retireErr = errors.New("retirement failed")
 	backend.jobs = []atom.ExtractionJob{{ID: "job-failure", MemoryID: "mem-failure", Project: "proj"}}
 	backend.memories["mem-failure"] = &types.Memory{ID: "mem-failure", Content: "Tea now.", CreatedAt: testNow}
-	backend.existing = []atom.Atom{makeAtom("old", "proj", "the user", "prefers", "coffee")}
+	predecessor := makeAtom("old", "proj", "the user", "prefers", "coffee")
+	predecessor.ObservedAt = timePointer(testNow.Add(-time.Hour))
+	backend.existing = []atom.Atom{predecessor}
 	ext := &stubExtractor{atoms: []atom.Atom{makeAtom("new", "", "the user", "prefers", "tea")}}
 
 	runWorkerOnce(t, backend, ext, atom.WorkerConfig{Projects: []string{"proj"}})
@@ -381,6 +413,7 @@ func TestWorker_SupersedingIDConflictLeavesPredecessorActive(t *testing.T) {
 	backend.jobs = []atom.ExtractionJob{{ID: "job-conflict", MemoryID: "mem-conflict", Project: "proj"}}
 	backend.memories["mem-conflict"] = &types.Memory{ID: "mem-conflict", Content: "Tea now.", CreatedAt: testNow}
 	predecessor := makeAtom("old", "proj", "the user", "prefers", "coffee")
+	predecessor.ObservedAt = timePointer(testNow.Add(-time.Hour))
 	conflicting := makeAtom("new", "proj", "unrelated", "key", "unchanged")
 	backend.existing = []atom.Atom{predecessor, conflicting}
 	beforeConflict, err := json.Marshal(conflicting)
@@ -410,13 +443,16 @@ func TestB2CorruptionProbeSeededCorpusAndIdempotence(t *testing.T) {
 	backend.jobs = []atom.ExtractionJob{{ID: "pass-1", MemoryID: "fixture", Project: "proj"}}
 	runWorkerOnce(t, backend, ext, atom.WorkerConfig{Projects: []string{"proj"}})
 
-	assert.ElementsMatch(t, []string{"pref-old", "status-old", "status-running", "mode-current"}, backend.retired,
+	assert.ElementsMatch(t, []string{"pref-old", "pref-middle", "status-old", "status-running", "mode-current"}, backend.retired,
 		"the probe must have zero false invalidations and zero missed true invalidations")
 	byID := atomsByID(backend.existing)
-	for _, id := range []string{"event-old", "attribute-old", "mixed-event", "mode-old"} {
+	for _, id := range []string{
+		"event-old", "recurring-event-old", "recurring-event-new", "attribute-old",
+		"mixed-event", "mode-old", "timezone-current", "timezone-backfill",
+	} {
 		require.Nil(t, byID[id].ValidTo, "%s must remain active", id)
 	}
-	for _, replacementID := range []string{"pref-new", "status-running", "status-done", "mode-new"} {
+	for _, replacementID := range []string{"pref-middle", "pref-new", "status-running", "status-done", "mode-new"} {
 		replacement := byID[replacementID]
 		require.NotEmpty(t, replacement.Supersedes, "%s must carry linkage", replacementID)
 		predecessor, exists := byID[replacement.Supersedes]
@@ -424,6 +460,7 @@ func TestB2CorruptionProbeSeededCorpusAndIdempotence(t *testing.T) {
 		require.NotNil(t, predecessor.ValidTo, "%s references an active predecessor", replacementID)
 	}
 	require.Equal(t, day1, *byID["pref-old"].ValidTo)
+	require.Equal(t, day2, *byID["pref-middle"].ValidTo)
 	require.Equal(t, day1, *byID["status-old"].ValidTo)
 	require.Equal(t, day2, *byID["status-running"].ValidTo)
 
@@ -467,6 +504,10 @@ func b2SeedAtoms(observedAt time.Time) []atom.Atom {
 	event := makeAtom("event-old", "proj", "release", "deployed", "v1")
 	event.Type = atom.TypeEvent
 	event.ObservedAt = &observedAt
+	recurringEvent := makeAtom("recurring-event-old", "proj", "user", "attended", "weekly meetup")
+	recurringEvent.Type = atom.TypeEvent
+	recurringEvent.ValidFrom = timePointer(observedAt)
+	recurringEvent.ObservedAt = &observedAt
 	attribute := makeAtom("attribute-old", "proj", "service", "region", "east")
 	attribute.Type = atom.TypeAttribute
 	attribute.Confidence = 1
@@ -483,12 +524,21 @@ func b2SeedAtoms(observedAt time.Time) []atom.Atom {
 	modeCurrent := makeAtom("mode-current", "proj", "service", "mode", "current")
 	modeCurrent.Type = atom.TypeFact
 	modeCurrent.ObservedAt = &observedAt
-	return []atom.Atom{preference, event, attribute, status, mixedEvent, modeCurrent, modeOld}
+	timezoneCurrent := makeAtom("timezone-current", "proj", "user", "timezone", "America/New_York")
+	timezoneCurrent.Type = atom.TypeProfile
+	timezoneCurrent.ValidFrom = timePointer(observedAt)
+	timezoneCurrent.ObservedAt = &observedAt
+	return []atom.Atom{
+		preference, event, recurringEvent, attribute, status, mixedEvent,
+		modeCurrent, modeOld, timezoneCurrent,
+	}
 }
 
 func b2CandidateAtoms(day1, day2 time.Time) []atom.Atom {
-	preference := makeAtom("pref-new", "", "user", "drink", "tea")
-	preference.ObservedAt = &day1
+	preferenceMiddle := makeAtom("pref-middle", "", "user", "drink", "tea")
+	preferenceMiddle.ObservedAt = &day1
+	preference := makeAtom("pref-new", "", "user", "drink", "water")
+	preference.ObservedAt = &day2
 	lowConfidence := makeAtom("attribute-low", "", "service", "region", "west")
 	lowConfidence.Type = atom.TypeAttribute
 	lowConfidence.Confidence = 0.79
@@ -496,6 +546,10 @@ func b2CandidateAtoms(day1, day2 time.Time) []atom.Atom {
 	recurringEvent := makeAtom("event-new", "", "release", "deployed", "v2")
 	recurringEvent.Type = atom.TypeEvent
 	recurringEvent.ObservedAt = &day1
+	sameValueRecurringEvent := makeAtom("recurring-event-new", "", "user", "attended", "weekly meetup")
+	sameValueRecurringEvent.Type = atom.TypeEvent
+	sameValueRecurringEvent.ValidFrom = timePointer(day1)
+	sameValueRecurringEvent.ObservedAt = &day1
 	running := makeAtom("status-running", "", "release", "status", "running")
 	running.Type = atom.TypeStatusChange
 	running.ObservedAt = &day1
@@ -505,7 +559,13 @@ func b2CandidateAtoms(day1, day2 time.Time) []atom.Atom {
 	mode := makeAtom("mode-new", "", "service", "mode", "future")
 	mode.Type = atom.TypeFact
 	mode.ObservedAt = &day2
-	return []atom.Atom{done, recurringEvent, lowConfidence, preference, running, mode}
+	timezoneBackfill := makeAtom("timezone-backfill", "", "user", "timezone", "UTC")
+	timezoneBackfill.Type = atom.TypeProfile
+	timezoneBackfill.ObservedAt = timePointer(day1.Add(-48 * time.Hour))
+	return []atom.Atom{
+		done, recurringEvent, sameValueRecurringEvent, lowConfidence, preferenceMiddle,
+		preference, running, mode, timezoneBackfill,
+	}
 }
 
 func atomsByID(atoms []atom.Atom) map[string]atom.Atom {

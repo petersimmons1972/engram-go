@@ -7,9 +7,14 @@ import (
 	"time"
 )
 
-// confidenceSupersessionTolerance permits a candidate to supersede an atom up
-// to 0.2 more confident than itself. Lower-confidence contradictions coexist.
-const confidenceSupersessionTolerance = 0.2
+const (
+	// confidenceSupersessionTolerance permits a candidate to supersede an atom
+	// up to 0.2 more confident than itself. Lower-confidence contradictions coexist.
+	confidenceSupersessionTolerance = 0.2
+	// confidenceComparisonEpsilon keeps values computed at the confidence gate
+	// from falling on the wrong side because of floating-point rounding.
+	confidenceComparisonEpsilon = 1e-9
+)
 
 // SupersessionKey is the dedup key for an atom: (project, type, subject, predicate).
 // Two atoms with the same key represent competing beliefs about the same property.
@@ -138,7 +143,7 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 		current, exists := index[k]
 		if !exists {
 			result.Fresh = append(result.Fresh, c)
-			if c.Type == TypeStatusChange {
+			if c.Type != TypeEvent {
 				index[k] = c
 			}
 			continue
@@ -156,7 +161,7 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 			result.Fresh = append(result.Fresh, c)
 			continue
 		}
-		if c.Confidence < current.Confidence-confidenceSupersessionTolerance {
+		if c.Confidence+confidenceSupersessionTolerance+confidenceComparisonEpsilon < current.Confidence {
 			slog.Info(
 				"atom supersession skipped: candidate below confidence gate",
 				"existing_id", current.ID,
@@ -167,18 +172,20 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 			result.Fresh = append(result.Fresh, c)
 			continue
 		}
-		if c.Type == TypeStatusChange && assertionTime(c, now).Before(assertionTime(current, now)) {
+		candidateAssertion := assertionTime(c, now)
+		if candidateAssertion.Before(validityStart(current, now)) {
 			slog.Info(
-				"atom supersession skipped: stale status candidate",
+				"atom supersession skipped: candidate predates active atom",
 				"existing_id", current.ID,
 				"candidate_id", c.ID,
 			)
+			result.Fresh = append(result.Fresh, c)
 			continue
 		}
 
 		c.Supersedes = current.ID
 
-		retiredAt := assertionTime(c, now)
+		retiredAt := candidateAssertion
 		retired := current
 		retired.ValidTo = &retiredAt
 
@@ -186,12 +193,17 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 			Old: retired,
 			New: c,
 		})
-		if c.Type == TypeStatusChange {
-			index[k] = c
-		}
+		index[k] = c
 	}
 
 	return result
+}
+
+func validityStart(a Atom, fallback time.Time) time.Time {
+	if a.ValidFrom != nil {
+		return *a.ValidFrom
+	}
+	return assertionTime(a, fallback)
 }
 
 func assertionTime(a Atom, fallback time.Time) time.Time {
