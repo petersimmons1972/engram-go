@@ -14,14 +14,14 @@ var testNow = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 func makeAtom(id, project, subject, predicate, value string) atom.Atom {
 	return atom.Atom{
-		ID:        id,
-		Project:   project,
-		Type:      atom.TypePreference,
-		Subject:   subject,
-		Predicate: predicate,
-		Value:     value,
-		Statement: subject + " " + predicate + " " + value + ".",
-		Scope:     atom.ScopeGlobal,
+		ID:         id,
+		Project:    project,
+		Type:       atom.TypePreference,
+		Subject:    subject,
+		Predicate:  predicate,
+		Value:      value,
+		Statement:  subject + " " + predicate + " " + value + ".",
+		Scope:      atom.ScopeGlobal,
 		Confidence: 0.9,
 	}
 }
@@ -50,6 +50,53 @@ func TestDeduplicate_IdenticalValueReinforced(t *testing.T) {
 	// Same value → reinforce only, no new insert.
 	assert.Empty(t, result.Fresh)
 	assert.Empty(t, result.Superseded)
+}
+
+func TestB1CorruptionProbeSameValueDifferentDateEventsAreFresh(t *testing.T) {
+	existing := makeAtom("old-1", "proj", "the user", "attended", "Go meetup")
+	existing.Type = atom.TypeEvent
+	existingDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing.ValidFrom = &existingDate
+	candidate := makeAtom("", "proj", "the user", "attended", "Go meetup")
+	candidate.Type = atom.TypeEvent
+	candidateDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	candidate.ValidFrom = &candidateDate
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Fresh, 1, "a recurring event on a different date must be inserted")
+	assert.Empty(t, result.Superseded, "a recurring event must not retire the earlier occurrence")
+}
+
+func TestDeduplicateSameValueSameDateEventIsReinforced(t *testing.T) {
+	eventDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old-1", "proj", "the user", "attended", "Go meetup")
+	existing.Type = atom.TypeEvent
+	existing.ValidFrom = timePointer(eventDate)
+	candidate := makeAtom("", "proj", "the user", "attended", "Go meetup")
+	candidate.Type = atom.TypeEvent
+	candidate.ValidFrom = timePointer(eventDate)
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	assert.Empty(t, result.Fresh)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicateSameValueStatusChangeWithoutExplicitEventDateIsReinforced(t *testing.T) {
+	existingDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old-1", "proj", "the user", "employment status", "employed")
+	existing.Type = atom.TypeStatusChange
+	existing.ValidFrom = timePointer(existingDate)
+	candidateDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	candidate := makeAtom("", "proj", "the user", "employment status", "employed")
+	candidate.Type = atom.TypeStatusChange
+	candidate.ValidFrom = timePointer(candidateDate)
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	assert.Empty(t, result.Fresh, "a restated status change must not create another active row")
+	assert.Empty(t, result.Superseded, "a restated status change is reinforcement, not supersession")
 }
 
 func TestDeduplicate_SupersessionOnValueChange(t *testing.T) {
@@ -117,16 +164,40 @@ func TestDeduplicate_DifferentPredicateBothFresh(t *testing.T) {
 }
 
 func TestDeduplicate_DuplicateCandidateWithinBatch(t *testing.T) {
-	// Two candidates with the same (subject, predicate) in the same batch.
+	// Two candidates with the same normalized key and value in the same batch.
 	candidates := []atom.Atom{
 		makeAtom("", "proj", "the user", "prefers", "coffee"),
-		makeAtom("", "proj", "the user", "prefers", "tea"),
+		makeAtom("", "proj", "the user", "prefers", " COFFEE "),
 	}
 
 	result := atom.Deduplicate(nil, candidates, testNow)
-	// First one wins; second is dropped as intra-batch duplicate.
+	// First one wins; second is dropped as an exact intra-batch duplicate.
 	assert.Len(t, result.Fresh, 1)
 	assert.Equal(t, "coffee", result.Fresh[0].Value)
+}
+
+func TestDeduplicate_SameValueEventsOnDifferentDatesWithinBatchAreFresh(t *testing.T) {
+	first := makeAtom("", "proj", "Alice", "attended", "Go meetup")
+	first.Type = atom.TypeEvent
+	first.ValidFrom = timePointer(time.Date(2026, 7, 4, 18, 0, 0, 0, time.FixedZone("EDT", -4*60*60)))
+	second := makeAtom("", "proj", "Alice", "attended", "go MEETUP")
+	second.Type = atom.TypeEvent
+	second.ValidFrom = timePointer(time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC))
+
+	result := atom.Deduplicate(nil, []atom.Atom{first, second}, testNow)
+
+	assert.Len(t, result.Fresh, 2)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestDeduplicate_DifferentValuesWithinBatchAreFresh(t *testing.T) {
+	first := makeAtom("", "proj", "Alice", "employment", "Acme")
+	second := makeAtom("", "proj", "Alice", "employment", "Globex")
+
+	result := atom.Deduplicate(nil, []atom.Atom{first, second}, testNow)
+
+	assert.Len(t, result.Fresh, 2)
+	assert.Empty(t, result.Superseded)
 }
 
 func TestDeduplicate_EmptyInputs(t *testing.T) {

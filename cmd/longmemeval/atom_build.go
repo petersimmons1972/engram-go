@@ -318,7 +318,7 @@ func atomBuildWorker(
 			// 5-minute cap per session. Each session is small (well under the
 			// extractor's 6000-char window), so this is generous.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			sa, err := extractor.Extract(ctx, st.text)
+			sa, err := extractor.Extract(ctx, st.text, st.date)
 			cancel()
 			if err != nil {
 				// Record the first error but keep going — one bad session must not
@@ -385,6 +385,7 @@ func atomBuildWorker(
 type sessionText struct {
 	sessionID string
 	text      string
+	date      time.Time
 }
 
 // buildSessionTexts formats each haystack session independently so the extractor
@@ -409,7 +410,11 @@ func buildSessionTexts(item longmemeval.Item, maxSessions int) []sessionText {
 		if i < len(item.HaystackSessionIDs) {
 			sid = item.HaystackSessionIDs[i]
 		}
-		all = append(all, sessionText{sessionID: sid, text: format(session)})
+		var sessionDate time.Time
+		if i < len(item.HaystackDates) {
+			sessionDate, _ = parseLongMemEvalQuestionDate(item.HaystackDates[i])
+		}
+		all = append(all, sessionText{sessionID: sid, text: format(session), date: sessionDate})
 	}
 
 	if maxSessions <= 0 || len(all) <= maxSessions {

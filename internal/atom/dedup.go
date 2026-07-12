@@ -1,6 +1,7 @@
 package atom
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -13,6 +14,12 @@ type SupersessionKey struct {
 	Predicate string
 }
 
+type batchDeduplicationKey struct {
+	SupersessionKey
+	Value     string
+	EventDate time.Time
+}
+
 // supersessionKey returns the dedup key for a.
 func supersessionKey(a *Atom) SupersessionKey {
 	return SupersessionKey{
@@ -20,6 +27,17 @@ func supersessionKey(a *Atom) SupersessionKey {
 		Subject:   strings.ToLower(strings.TrimSpace(a.Subject)),
 		Predicate: strings.ToLower(strings.TrimSpace(a.Predicate)),
 	}
+}
+
+func candidateBatchKey(a *Atom) batchDeduplicationKey {
+	key := batchDeduplicationKey{
+		SupersessionKey: supersessionKey(a),
+		Value:           strings.ToLower(strings.TrimSpace(a.Value)),
+	}
+	if a.Type == TypeEvent && a.ValidFrom != nil {
+		key.EventDate = eventOccurrenceDate(*a.ValidFrom)
+	}
+	return key
 }
 
 // DeduplicationResult is the output of Deduplicate.
@@ -57,17 +75,23 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 	}
 
 	var result DeduplicationResult
-	seen := make(map[SupersessionKey]bool) // dedup within candidates
+	seen := make(map[batchDeduplicationKey]bool) // dedup exact candidates within the batch
 
 	for i := range candidates {
 		c := candidates[i]
 		k := supersessionKey(&c)
+		batchKey := candidateBatchKey(&c)
 
-		if seen[k] {
+		if seen[batchKey] {
 			// Duplicate within the candidate batch — skip.
+			slog.Debug(
+				"atom deduplication: dropped duplicate candidate within batch",
+				"key", k,
+				"value", c.Value,
+			)
 			continue
 		}
-		seen[k] = true
+		seen[batchKey] = true
 
 		existing, exists := index[k]
 		if !exists {
@@ -78,6 +102,10 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 
 		// Same subject+predicate.
 		if strings.EqualFold(strings.TrimSpace(existing.Value), strings.TrimSpace(c.Value)) {
+			if isDistinctDatedOccurrence(existing, c) {
+				result.Fresh = append(result.Fresh, c)
+				continue
+			}
 			// Identical value — reinforce (no action needed; existing stays active).
 			continue
 		}
@@ -98,4 +126,15 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 	}
 
 	return result
+}
+
+func isDistinctDatedOccurrence(existing, candidate Atom) bool {
+	if candidate.Type != TypeEvent || existing.ValidFrom == nil || candidate.ValidFrom == nil {
+		return false
+	}
+	return !eventOccurrenceDate(*existing.ValidFrom).Equal(eventOccurrenceDate(*candidate.ValidFrom))
+}
+
+func eventOccurrenceDate(value time.Time) time.Time {
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }

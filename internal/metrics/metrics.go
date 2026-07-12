@@ -116,6 +116,13 @@ var (
 		Help: "Entity extraction jobs dropped (semaphore_full or queue_error)",
 	}, []string{"reason"})
 
+	// AtomEventDateRejections counts event_date values discarded by the atom
+	// extractor because they are malformed or outside the accepted time range.
+	AtomEventDateRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_atom_event_date_rejections_total",
+		Help: "Atom event dates rejected before storage by rejection class",
+	}, []string{"reason"})
+
 	// EmbedCircuitState records the current state of the embed circuit breaker.
 	// Labels: state=open|closed|half_open.
 	EmbedCircuitState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -223,6 +230,7 @@ func init() {
 		EmbedGatewayConcurrency,
 		WorkerPanics,
 		ExtractionDropped,
+		AtomEventDateRejections,
 		EmbedCircuitState,
 		EmbedCircuitTransitions,
 		StoreEmbedAsyncTotal,
