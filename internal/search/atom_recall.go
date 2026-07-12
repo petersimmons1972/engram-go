@@ -173,7 +173,7 @@ func RecallEventWindowAtoms(
 	}
 	block := formatAtomsAsContext(atoms, "=== Dated Events (window) ===")
 	if omitted > 0 {
-		block += fmt.Sprintf("(+%d more)\n", omitted)
+		block += "(+more events truncated)\n"
 	}
 	return block, nil
 }

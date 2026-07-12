@@ -227,7 +227,7 @@ func TestRecallEventWindowAtoms_PadsOrdersAndCaps(t *testing.T) {
 	require.Less(t, strings.Index(block, "Event 00"), strings.Index(block, "Event 01"))
 	require.Contains(t, block, "Event 29")
 	require.NotContains(t, block, "Event 30")
-	require.Contains(t, block, "(+1 more)")
+	require.Contains(t, block, "(+more events truncated)")
 }
 
 func TestRecallEventWindowAtoms_BypassAndFailurePaths(t *testing.T) {
