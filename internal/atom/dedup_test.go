@@ -14,14 +14,14 @@ var testNow = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 func makeAtom(id, project, subject, predicate, value string) atom.Atom {
 	return atom.Atom{
-		ID:        id,
-		Project:   project,
-		Type:      atom.TypePreference,
-		Subject:   subject,
-		Predicate: predicate,
-		Value:     value,
-		Statement: subject + " " + predicate + " " + value + ".",
-		Scope:     atom.ScopeGlobal,
+		ID:         id,
+		Project:    project,
+		Type:       atom.TypePreference,
+		Subject:    subject,
+		Predicate:  predicate,
+		Value:      value,
+		Statement:  subject + " " + predicate + " " + value + ".",
+		Scope:      atom.ScopeGlobal,
 		Confidence: 0.9,
 	}
 }
@@ -48,6 +48,37 @@ func TestDeduplicate_IdenticalValueReinforced(t *testing.T) {
 
 	result := atom.Deduplicate(existing, candidates, testNow)
 	// Same value → reinforce only, no new insert.
+	assert.Empty(t, result.Fresh)
+	assert.Empty(t, result.Superseded)
+}
+
+func TestB1CorruptionProbeSameValueDifferentDateEventsAreFresh(t *testing.T) {
+	existing := makeAtom("old-1", "proj", "the user", "attended", "Go meetup")
+	existing.Type = atom.TypeEvent
+	existingDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing.ValidFrom = &existingDate
+	candidate := makeAtom("", "proj", "the user", "attended", "Go meetup")
+	candidate.Type = atom.TypeEvent
+	candidateDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	candidate.ValidFrom = &candidateDate
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
+	require.Len(t, result.Fresh, 1, "a recurring event on a different date must be inserted")
+	assert.Empty(t, result.Superseded, "a recurring event must not retire the earlier occurrence")
+}
+
+func TestDeduplicateSameValueSameDateEventIsReinforced(t *testing.T) {
+	eventDate := time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)
+	existing := makeAtom("old-1", "proj", "the user", "attended", "Go meetup")
+	existing.Type = atom.TypeEvent
+	existing.ValidFrom = timePointer(eventDate)
+	candidate := makeAtom("", "proj", "the user", "attended", "Go meetup")
+	candidate.Type = atom.TypeEvent
+	candidate.ValidFrom = timePointer(eventDate)
+
+	result := atom.Deduplicate([]atom.Atom{existing}, []atom.Atom{candidate}, testNow)
+
 	assert.Empty(t, result.Fresh)
 	assert.Empty(t, result.Superseded)
 }

@@ -115,7 +115,7 @@ type atomResponse struct {
 func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessionDates ...time.Time) ([]Atom, error) {
 	var sessionDate time.Time
 	if len(sessionDates) > 0 {
-		sessionDate = sessionDates[0].UTC()
+		sessionDate = sessionDates[0]
 	}
 
 	windows := sessionWindows(sessionText, maxSessionChars)
@@ -123,6 +123,9 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessi
 	seen := make(map[exactAtomKey]struct{})
 	for i, window := range windows {
 		windowAtoms, err := e.extractWindow(ctx, window, sessionDate)
+		if err != nil {
+			windowAtoms, err = e.extractWindow(ctx, window, sessionDate)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("atom extraction: window %d of %d: %w", i+1, len(windows), err)
 		}
@@ -190,6 +193,7 @@ type exactAtomKey struct {
 	predicate string
 	value     string
 	statement string
+	scope     string
 }
 
 func exactKey(a Atom) exactAtomKey {
@@ -199,6 +203,7 @@ func exactKey(a Atom) exactAtomKey {
 		predicate: a.Predicate,
 		value:     a.Value,
 		statement: a.Statement,
+		scope:     a.Scope,
 	}
 }
 
@@ -241,7 +246,7 @@ func lastMessageBoundary(runes []rune) int {
 
 func applyEventTime(a *Atom, rawEventDate string, sessionDate time.Time) {
 	if !sessionDate.IsZero() {
-		observedAt := sessionDate
+		observedAt := dateOnly(sessionDate)
 		a.ObservedAt = &observedAt
 	}
 	if a.Type != TypeEvent && a.Type != TypeStatusChange {
@@ -287,7 +292,6 @@ func dateOnly(value time.Time) time.Time {
 	if value.IsZero() {
 		return time.Time{}
 	}
-	value = value.UTC()
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 

@@ -72,7 +72,7 @@ func TestB1CorruptionProbeRejectsAdversarialEventDates(t *testing.T) {
 		{name: "mixed separators", eventDate: "2026/07-04"},
 		{name: "far future", eventDate: "2028-07-12"},
 		{name: "pre 1990", eventDate: "1989-12-31"},
-		{name: "swapped range", eventDate: "2026-07-12/2026-07-10"},
+		{name: "date range is not a single ISO date", eventDate: "2026-07-12/2026-07-10"},
 	}
 
 	for _, tt := range tests {
@@ -119,14 +119,84 @@ func TestB1CorruptionProbeChunkingSupersetAndExactDedup(t *testing.T) {
 	}
 }
 
-func TestClaudeExtractorStopsWhenAnyWindowFails(t *testing.T) {
+func TestClaudeExtractorRetriesFailedWindowOnceThenFailsClosed(t *testing.T) {
 	sessionDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
-	stub := &stubCompleter{responses: []string{`[]`, `not json`}}
+	stub := &stubCompleter{responses: []string{`[]`, `not json`, `still not json`}}
 	session := strings.Repeat("a", 6000) + "\n" + strings.Repeat("b", 100)
 
 	_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), session, sessionDate)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "window 2")
+	assert.Len(t, stub.prompts, 3, "the failed window must be attempted exactly twice")
+}
+
+func TestClaudeExtractorRetriesFailedWindowOnceThenSucceeds(t *testing.T) {
+	stub := &stubCompleter{responses: []string{`not json`, `[]`}}
+
+	atoms, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), "session", time.Now())
+
+	require.NoError(t, err)
+	assert.Empty(t, atoms)
+	assert.Len(t, stub.prompts, 2)
+}
+
+func TestSessionWindowsPreserveEveryRune(t *testing.T) {
+	original := strings.Repeat("a", 5900) + "\nassistant: " + strings.Repeat("界", 6200)
+	stub := &stubCompleter{response: `[]`}
+
+	_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), original)
+
+	require.NoError(t, err)
+	windows := make([]string, 0, len(stub.prompts))
+	for _, prompt := range stub.prompts {
+		windows = append(windows, strings.TrimPrefix(prompt, "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n"))
+	}
+	assert.Equal(t, original, strings.Join(windows, ""))
+}
+
+func TestClaudeExtractorWindowBoundaries(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantWindows int
+	}{
+		{name: "empty", content: "", wantWindows: 1},
+		{name: "exactly 6000", content: strings.Repeat("a", 6000), wantWindows: 1},
+		{name: "6001", content: strings.Repeat("a", 6001), wantWindows: 2},
+		{name: "multibyte at hard cut", content: strings.Repeat("a", 5999) + "界b", wantWindows: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubCompleter{response: `[]`}
+			_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), tt.content)
+			require.NoError(t, err)
+			assert.Len(t, stub.prompts, tt.wantWindows)
+		})
+	}
+}
+
+func TestClaudeExtractorExactDedupIncludesScope(t *testing.T) {
+	response := `[{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"Alpha exists.","scope":"global","confidence":0.9}]`
+	sessionResponse := `[{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"Alpha exists.","scope":"session:s1","confidence":0.9}]`
+	stub := &stubCompleter{responses: []string{response, sessionResponse}}
+
+	atoms, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), strings.Repeat("a", 6001))
+
+	require.NoError(t, err)
+	assert.Len(t, atoms, 2)
+}
+
+func TestClaudeExtractorSessionDateKeepsLocalCalendarDay(t *testing.T) {
+	sessionDate := time.Date(2026, 7, 11, 23, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
+	stub := &stubCompleter{response: `[{"atom_type":"event","subject":"the user","predicate":"visited","value":"Rome","statement":"The user visited Rome.","scope":"global","confidence":0.9}]`}
+
+	atoms, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), "session", sessionDate)
+
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	want := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, want, *atoms[0].ObservedAt)
+	assert.Equal(t, want, *atoms[0].ValidFrom)
 }
 
 func TestClaudeExtractorIgnoresPathologicallyEarlyBoundary(t *testing.T) {
@@ -369,13 +439,14 @@ func TestExtract_NonJSONErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse response JSON")
 }
 
-func TestClaudeExtractor_TruncatesLongContent(t *testing.T) {
+func TestClaudeExtractorWindowsLongContent(t *testing.T) {
 	bigContent := strings.Repeat("a", 20000)
 	stub := &stubCompleter{response: `[]`}
 	ext := atom.NewClaudeExtractor(stub)
 
 	_, err := ext.Extract(context.Background(), bigContent)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	assert.Len(t, stub.prompts, 4)
 }
 
 func TestClaudeExtractor_InvalidAtomSkipped(t *testing.T) {

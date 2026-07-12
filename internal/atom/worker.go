@@ -123,7 +123,11 @@ func (w *Worker) processJob(ctx context.Context, job ExtractionJob) {
 		return
 	}
 
-	candidates, err := w.ext.Extract(ctx, mem.Content, mem.CreatedAt)
+	sessionDate := mem.CreatedAt
+	if mem.ValidFrom != nil {
+		sessionDate = *mem.ValidFrom
+	}
+	candidates, err := w.ext.Extract(ctx, mem.Content, sessionDate)
 	if err != nil {
 		slog.Warn("atom worker: extraction failed", "job", job.ID, "err", err)
 		if cerr := w.db.CompleteAtomExtractionJob(ctx, job.ID, err); cerr != nil {
@@ -135,10 +139,6 @@ func (w *Worker) processJob(ctx context.Context, job ExtractionJob) {
 	for i := range candidates {
 		candidates[i].Project = job.Project
 		candidates[i].ProvenanceMemoryID = job.MemoryID
-		if !mem.CreatedAt.IsZero() {
-			observedAt := mem.CreatedAt
-			candidates[i].ObservedAt = &observedAt
-		}
 	}
 
 	// Load all active atoms for the project to drive deduplication.

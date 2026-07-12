@@ -183,7 +183,7 @@ func TestWorker_MarkJobCompleteOnSuccess(t *testing.T) {
 	assert.NoError(t, jobErr)
 }
 
-func TestWorkerSetsObservedAt(t *testing.T) {
+func TestWorkerThreadsCreatedAtWhenValidFromIsNil(t *testing.T) {
 	backend := newStubBackend()
 	createdAt := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
 	backend.jobs = []atom.ExtractionJob{{ID: "job-observed", MemoryID: "mem-observed", Project: "proj"}}
@@ -211,8 +211,30 @@ func TestWorkerSetsObservedAt(t *testing.T) {
 
 	require.NotEmpty(t, backend.inserted)
 	require.Equal(t, []time.Time{createdAt}, ext.sessionDates)
-	require.NotNil(t, backend.inserted[0].ObservedAt)
-	assert.True(t, backend.inserted[0].ObservedAt.Equal(createdAt))
+}
+
+func TestWorkerPrefersMemoryValidFromAsSessionDate(t *testing.T) {
+	backend := newStubBackend()
+	createdAt := time.Date(2026, 7, 11, 3, 30, 0, 0, time.UTC)
+	validFrom := time.Date(2023, 5, 9, 0, 0, 0, 0, time.UTC)
+	backend.jobs = []atom.ExtractionJob{{ID: "job-valid-from", MemoryID: "mem-valid-from", Project: "proj"}}
+	backend.memories["mem-valid-from"] = &types.Memory{
+		ID: "mem-valid-from", Content: "I attended a meetup.", CreatedAt: createdAt, ValidFrom: &validFrom,
+	}
+	ext := &stubExtractor{atoms: []atom.Atom{{
+		Type: atom.TypeEvent, Subject: "the user", Predicate: "attended", Value: "meetup",
+		Statement: "The user attended a meetup.", Scope: atom.ScopeGlobal, Confidence: 0.9,
+	}}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go atom.NewWorker(backend, ext, atom.WorkerConfig{
+		PollInterval: time.Millisecond,
+		Projects:     []string{"proj"},
+	}).Run(ctx)
+	<-ctx.Done()
+
+	require.Equal(t, []time.Time{validFrom}, ext.sessionDates)
 }
 
 func TestB1CorruptionProbeRepeatedIngestPreservesExistingRows(t *testing.T) {
@@ -265,6 +287,41 @@ func TestB1CorruptionProbeRepeatedIngestPreservesExistingRows(t *testing.T) {
 	assert.Empty(t, backend.inserted, "exact duplicates must not create replacement rows")
 	assert.Contains(t, backend.completedJobs, "first-pass")
 	assert.Contains(t, backend.completedJobs, "second-pass")
+}
+
+func TestB1CorruptionProbeSameValueDifferentDateEventsBothStored(t *testing.T) {
+	backend := newStubBackend()
+	firstDate := time.Date(2023, 5, 9, 0, 0, 0, 0, time.UTC)
+	secondDate := time.Date(2023, 5, 16, 0, 0, 0, 0, time.UTC)
+	backend.existing = []atom.Atom{{
+		ID: "first-event", Project: "proj", Type: atom.TypeEvent,
+		Subject: "the user", Predicate: "attended", Value: "weekly meetup",
+		Statement: "On 2023-05-09, the user attended the weekly meetup.",
+		Scope:     atom.ScopeGlobal, Confidence: 0.9, ValidFrom: &firstDate,
+	}}
+	backend.jobs = []atom.ExtractionJob{{ID: "second-event-job", MemoryID: "second-event-memory", Project: "proj"}}
+	backend.memories["second-event-memory"] = &types.Memory{
+		ID: "second-event-memory", Content: "On 2023-05-16, I attended the weekly meetup.",
+		CreatedAt: time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC), ValidFrom: &secondDate,
+	}
+	ext := &stubExtractor{atoms: []atom.Atom{{
+		Type: atom.TypeEvent, Subject: "the user", Predicate: "attended", Value: "weekly meetup",
+		Statement: "On 2023-05-16, the user attended the weekly meetup.",
+		Scope:     atom.ScopeGlobal, Confidence: 0.9, ValidFrom: &secondDate,
+	}}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go atom.NewWorker(backend, ext, atom.WorkerConfig{
+		PollInterval: time.Millisecond,
+		Projects:     []string{"proj"},
+	}).Run(ctx)
+	<-ctx.Done()
+
+	require.Len(t, backend.existing, 2, "both dated event occurrences must be stored")
+	assert.Equal(t, firstDate, *backend.existing[0].ValidFrom)
+	assert.Equal(t, secondDate, *backend.existing[1].ValidFrom)
+	assert.Empty(t, backend.retired, "storing a recurrence must not mutate the earlier event")
 }
 
 func timePointer(value time.Time) *time.Time {

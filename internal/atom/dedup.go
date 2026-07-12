@@ -78,6 +78,10 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 
 		// Same subject+predicate.
 		if strings.EqualFold(strings.TrimSpace(existing.Value), strings.TrimSpace(c.Value)) {
+			if isDistinctDatedOccurrence(existing, c) {
+				result.Fresh = append(result.Fresh, c)
+				continue
+			}
 			// Identical value — reinforce (no action needed; existing stays active).
 			continue
 		}
@@ -98,4 +102,16 @@ func Deduplicate(existing []Atom, candidates []Atom, now time.Time) Deduplicatio
 	}
 
 	return result
+}
+
+func isDistinctDatedOccurrence(existing, candidate Atom) bool {
+	isEvent := candidate.Type == TypeEvent || candidate.Type == TypeStatusChange
+	if !isEvent || existing.ValidFrom == nil || candidate.ValidFrom == nil {
+		return false
+	}
+	return !eventOccurrenceDate(*existing.ValidFrom).Equal(eventOccurrenceDate(*candidate.ValidFrom))
+}
+
+func eventOccurrenceDate(value time.Time) time.Time {
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
