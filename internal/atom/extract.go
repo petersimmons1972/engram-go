@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 // ClaudeCompleter is the narrow interface satisfied by *claude.Client.
@@ -17,7 +21,7 @@ type ClaudeCompleter interface {
 
 // Extractor extracts atoms from session text.
 type Extractor interface {
-	Extract(ctx context.Context, sessionText string) ([]Atom, error)
+	Extract(ctx context.Context, sessionText string, sessionDate ...time.Time) ([]Atom, error)
 }
 
 // ClaudeExtractor uses a Claude language model to extract typed atoms from
@@ -32,8 +36,7 @@ func NewClaudeExtractor(client ClaudeCompleter) *ClaudeExtractor {
 	return &ClaudeExtractor{client: client}
 }
 
-// maxSessionChars truncates session text before sending to the model.
-// Keeps atom prompts within the token budget; mirrors entity.maxContentChars.
+// maxSessionChars is the maximum size of each model extraction window.
 const maxSessionChars = 6000
 
 // extractionSystem is the system prompt for preference-focused atom extraction.
@@ -66,7 +69,8 @@ Return ONLY a JSON array of atom objects — no prose, no markdown fences — in
     "statement": "<canonical NL sentence, e.g. 'Alice prefers dark chocolate over milk chocolate.'>",
     "scope":     "<global | session:<id> | entity:<id>>",
     "confidence": <0.0–1.0>,
-    "source_span": "<optional verbatim quote or char range>"
+    "source_span": "<optional verbatim quote or char range>",
+    "event_date": "<optional event date, ISO YYYY-MM-DD>"
   }
 ]
 
@@ -82,6 +86,8 @@ Rules:
 - When a one-off user event or plan is useful, use atom_type event and retain its time anchor in the statement
   (for example, "On <date>, the user did X once") and session scope when available. If its timing or subject is
   ambiguous, skip it. Conservative extraction is better than an unsupported habitual claim.
+- For event and status_change atoms, set event_date to YYYY-MM-DD only when the source states or clearly implies
+  the event's own date. Keep that same date anchor in statement. Omit event_date rather than guessing.
 - subject should be the first-person actor ("the user") or a named entity.
 - Normalise subject to "the user" for first-person statements.
 - statement must be a complete, standalone sentence (no pronouns requiring external context).
@@ -100,16 +106,39 @@ type atomResponse struct {
 	Scope      string  `json:"scope"`
 	Confidence float64 `json:"confidence"`
 	SourceSpan string  `json:"source_span"`
+	EventDate  string  `json:"event_date"`
 }
 
-// Extract calls Claude and parses the JSON result into Atom slices.
-// Session text is silently truncated to maxSessionChars before sending.
+// Extract calls Claude once per message-aligned window and unions the results.
+// sessionDate is the authoritative assertion time supplied by the ingest path.
 // No real LLM call is made in tests — inject a mock via ClaudeCompleter.
-func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]Atom, error) {
-	if len([]rune(sessionText)) > maxSessionChars {
-		sessionText = string([]rune(sessionText)[:maxSessionChars])
+func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessionDates ...time.Time) ([]Atom, error) {
+	var sessionDate time.Time
+	if len(sessionDates) > 0 {
+		sessionDate = sessionDates[0].UTC()
 	}
 
+	windows := sessionWindows(sessionText, maxSessionChars)
+	atoms := make([]Atom, 0)
+	seen := make(map[exactAtomKey]struct{})
+	for i, window := range windows {
+		windowAtoms, err := e.extractWindow(ctx, window, sessionDate)
+		if err != nil {
+			return nil, fmt.Errorf("atom extraction: window %d of %d: %w", i+1, len(windows), err)
+		}
+		for _, candidate := range windowAtoms {
+			key := exactKey(candidate)
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			atoms = append(atoms, candidate)
+		}
+	}
+	return atoms, nil
+}
+
+func (e *ClaudeExtractor) extractWindow(ctx context.Context, sessionText string, sessionDate time.Time) ([]Atom, error) {
 	prompt := "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n" + sessionText
 
 	raw, err := e.client.Complete(ctx, extractionSystem, prompt,
@@ -149,9 +178,117 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string) ([]At
 		if !a.IsValid() {
 			continue // skip malformed atoms silently
 		}
+		applyEventTime(&a, r.EventDate, sessionDate)
 		atoms = append(atoms, a)
 	}
 	return atoms, nil
+}
+
+type exactAtomKey struct {
+	typeName  string
+	subject   string
+	predicate string
+	value     string
+	statement string
+}
+
+func exactKey(a Atom) exactAtomKey {
+	return exactAtomKey{
+		typeName:  a.Type,
+		subject:   a.Subject,
+		predicate: a.Predicate,
+		value:     a.Value,
+		statement: a.Statement,
+	}
+}
+
+func sessionWindows(text string, maxRunes int) []string {
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return []string{text}
+	}
+
+	windows := make([]string, 0, (len(runes)+maxRunes-1)/maxRunes)
+	for len(runes) > maxRunes {
+		end := maxRunes
+		if boundaryEnd := lastMessageBoundary(runes[:maxRunes]); boundaryEnd >= maxRunes/2 {
+			end = boundaryEnd
+		}
+		windows = append(windows, string(runes[:end]))
+		runes = runes[end:]
+	}
+	windows = append(windows, string(runes))
+	return windows
+}
+
+func lastMessageBoundary(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] != '\n' || i+1 == len(runes) {
+			continue
+		}
+		nextLine := strings.ToLower(string(runes[i+1:]))
+		for _, prefix := range []string{
+			"user:", "human:", "assistant:", "system:", "tool:",
+			"[user]", "[human]", "[assistant]", "[system]", "[tool]",
+		} {
+			if strings.HasPrefix(nextLine, prefix) {
+				return i + 1
+			}
+		}
+	}
+	return 0
+}
+
+func applyEventTime(a *Atom, rawEventDate string, sessionDate time.Time) {
+	if !sessionDate.IsZero() {
+		observedAt := sessionDate
+		a.ObservedAt = &observedAt
+	}
+	if a.Type != TypeEvent && a.Type != TypeStatusChange {
+		return
+	}
+	if rawEventDate == "" {
+		if !sessionDate.IsZero() {
+			validFrom := dateOnly(sessionDate)
+			a.ValidFrom = &validFrom
+		}
+		return
+	}
+
+	eventDate, reason := parseEventDate(rawEventDate, sessionDate)
+	if reason != "" {
+		metrics.AtomEventDateRejections.WithLabelValues(reason).Inc()
+		slog.Warn("atom extraction: rejected event_date", "event_date", rawEventDate, "reason", reason)
+		return
+	}
+	a.ValidFrom = &eventDate
+}
+
+func parseEventDate(raw string, observedAt time.Time) (time.Time, string) {
+	if len(raw) != len(time.DateOnly) || (raw[4] != '-' && raw[4] != '/') || raw[7] != raw[4] {
+		return time.Time{}, "invalid_format"
+	}
+	normalized := strings.ReplaceAll(raw, "/", "-")
+	parsed, err := time.Parse(time.DateOnly, normalized)
+	if err != nil {
+		return time.Time{}, "invalid_format"
+	}
+	parsed = dateOnly(parsed)
+	if parsed.Before(time.Date(1990, time.January, 1, 0, 0, 0, 0, time.UTC)) {
+		return time.Time{}, "before_1990"
+	}
+	if !observedAt.IsZero() && parsed.After(observedAt.AddDate(1, 0, 0)) {
+		return time.Time{}, "more_than_one_year_future"
+	}
+	return parsed, ""
+}
+
+func dateOnly(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	value = value.UTC()
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func extractAtomJSON(raw string) (string, error) {

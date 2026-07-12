@@ -2,6 +2,7 @@ package atom_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -59,22 +60,30 @@ func (s *stubBackend) GetActiveAtoms(_ context.Context, _ string, _ string) ([]a
 
 func (s *stubBackend) InsertAtom(_ context.Context, a *atom.Atom) error {
 	s.inserted = append(s.inserted, *a)
+	s.existing = append(s.existing, *a)
 	return nil
 }
 
-func (s *stubBackend) RetireAtom(_ context.Context, atomID string, _ time.Time) error {
+func (s *stubBackend) RetireAtom(_ context.Context, atomID string, validTo time.Time) error {
 	s.retired = append(s.retired, atomID)
+	for i := range s.existing {
+		if s.existing[i].ID == atomID {
+			s.existing[i].ValidTo = timePointer(validTo)
+		}
+	}
 	return nil
 }
 
 // ── stub extractor ────────────────────────────────────────────────────────────
 
 type stubExtractor struct {
-	atoms []atom.Atom
-	err   error
+	atoms        []atom.Atom
+	err          error
+	sessionDates []time.Time
 }
 
-func (s *stubExtractor) Extract(_ context.Context, _ string) ([]atom.Atom, error) {
+func (s *stubExtractor) Extract(_ context.Context, _ string, sessionDates ...time.Time) ([]atom.Atom, error) {
+	s.sessionDates = append(s.sessionDates, sessionDates...)
 	return s.atoms, s.err
 }
 
@@ -201,6 +210,63 @@ func TestWorkerSetsObservedAt(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	require.NotEmpty(t, backend.inserted)
+	require.Equal(t, []time.Time{createdAt}, ext.sessionDates)
 	require.NotNil(t, backend.inserted[0].ObservedAt)
 	assert.True(t, backend.inserted[0].ObservedAt.Equal(createdAt))
+}
+
+func TestB1CorruptionProbeRepeatedIngestPreservesExistingRows(t *testing.T) {
+	backend := newStubBackend()
+	createdAt := time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)
+	preExisting := atom.Atom{
+		ID: "existing-1", Project: "proj", Type: atom.TypeEvent,
+		Subject: "the user", Predicate: "attended", Value: "Go meetup",
+		Statement: "On 2026-07-04, the user attended a Go meetup.",
+		Scope:     atom.ScopeGlobal, Confidence: 0.9,
+		ValidFrom:  timePointer(time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)),
+		ObservedAt: timePointer(createdAt),
+	}
+	backend.existing = []atom.Atom{preExisting}
+	backend.jobs = []atom.ExtractionJob{
+		{ID: "first-pass", MemoryID: "fixture", Project: "proj"},
+		{ID: "second-pass", MemoryID: "fixture", Project: "proj"},
+	}
+	backend.memories["fixture"] = &types.Memory{
+		ID: "fixture", Content: "On 2026-07-04, I attended a Go meetup.", CreatedAt: createdAt,
+	}
+	ext := &stubExtractor{atoms: []atom.Atom{{
+		Type: atom.TypeEvent, Subject: "the user", Predicate: "attended", Value: "Go meetup",
+		Statement: "On 2026-07-04, the user attended a Go meetup.", Scope: atom.ScopeGlobal,
+		Confidence: 0.9, ValidFrom: timePointer(time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC)),
+	}}}
+	before, err := json.Marshal(backend.existing)
+	require.NoError(t, err)
+	mutationProbe := newStubBackend()
+	mutationProbe.existing = append(mutationProbe.existing, preExisting)
+	require.NoError(t, mutationProbe.RetireAtom(context.Background(), preExisting.ID, createdAt.Add(time.Hour)))
+	mutated, err := json.Marshal(mutationProbe.existing)
+	require.NoError(t, err)
+	require.NotEqual(t, before, mutated, "probe backend must expose persisted row mutations")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	worker := atom.NewWorker(backend, ext, atom.WorkerConfig{
+		PollInterval: time.Millisecond,
+		Projects:     []string{"proj"},
+	})
+	go worker.Run(ctx)
+	<-ctx.Done()
+	time.Sleep(20 * time.Millisecond)
+
+	after, err := json.Marshal(backend.existing)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "pre-existing atom rows must remain byte-identical")
+	assert.Empty(t, backend.retired, "repeat ingestion must not retire pre-existing atoms")
+	assert.Empty(t, backend.inserted, "exact duplicates must not create replacement rows")
+	assert.Contains(t, backend.completedJobs, "first-pass")
+	assert.Contains(t, backend.completedJobs, "second-pass")
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
 }

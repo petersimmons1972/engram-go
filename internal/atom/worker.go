@@ -123,7 +123,7 @@ func (w *Worker) processJob(ctx context.Context, job ExtractionJob) {
 		return
 	}
 
-	candidates, err := w.ext.Extract(ctx, mem.Content)
+	candidates, err := w.ext.Extract(ctx, mem.Content, mem.CreatedAt)
 	if err != nil {
 		slog.Warn("atom worker: extraction failed", "job", job.ID, "err", err)
 		if cerr := w.db.CompleteAtomExtractionJob(ctx, job.ID, err); cerr != nil {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,16 +20,138 @@ import (
 
 // stubCompleter implements atom.ClaudeCompleter for tests — no real LLM calls.
 type stubCompleter struct {
-	response string
-	err      error
-	system   string
-	prompt   string
+	response  string
+	responses []string
+	err       error
+	system    string
+	prompt    string
+	prompts   []string
 }
 
 func (s *stubCompleter) Complete(_ context.Context, system, prompt, _, _ string, _, _ int) (string, error) {
 	s.system = system
 	s.prompt = prompt
+	s.prompts = append(s.prompts, prompt)
+	if len(s.responses) > 0 {
+		response := s.responses[0]
+		s.responses = s.responses[1:]
+		return response, s.err
+	}
 	return s.response, s.err
+}
+
+func TestClaudeExtractorAssignsEventTimeFromSessionDate(t *testing.T) {
+	sessionDate := time.Date(2026, 7, 11, 18, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
+	stub := &stubCompleter{response: `[
+{"atom_type":"event","subject":"the user","predicate":"attended","value":"Go meetup","statement":"On 2026-07-04, the user attended a Go meetup.","scope":"global","confidence":0.9,"event_date":"2026/07/04"},
+{"atom_type":"status_change","subject":"the user","predicate":"employment","value":"joined Acme","statement":"The user joined Acme.","scope":"global","confidence":0.9},
+{"atom_type":"fact","subject":"Acme","predicate":"location","value":"Boston","statement":"Acme is in Boston.","scope":"global","confidence":0.9,"event_date":"2020-01-01"}
+]`}
+
+	atoms, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), "dated session", sessionDate)
+	require.NoError(t, err)
+	require.Len(t, atoms, 3)
+
+	assert.Equal(t, "2026-07-04", atoms[0].ValidFrom.Format(time.DateOnly))
+	assert.Equal(t, "2026-07-11", atoms[0].ObservedAt.Format(time.DateOnly))
+	assert.Equal(t, "2026-07-11", atoms[1].ValidFrom.Format(time.DateOnly))
+	assert.Equal(t, "2026-07-11", atoms[1].ObservedAt.Format(time.DateOnly))
+	assert.Nil(t, atoms[2].ValidFrom, "event_date must not set valid_from for non-event atoms")
+	assert.Equal(t, "2026-07-11", atoms[2].ObservedAt.Format(time.DateOnly))
+	assert.Contains(t, stub.system, `"event_date"`)
+	assert.Contains(t, atoms[0].Statement, "2026-07-04", "statement must retain its date anchor")
+}
+
+func TestB1CorruptionProbeRejectsAdversarialEventDates(t *testing.T) {
+	sessionDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		eventDate string
+	}{
+		{name: "garbage", eventDate: "last Tuesday"},
+		{name: "mixed separators", eventDate: "2026/07-04"},
+		{name: "far future", eventDate: "2028-07-12"},
+		{name: "pre 1990", eventDate: "1989-12-31"},
+		{name: "swapped range", eventDate: "2026-07-12/2026-07-10"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := fmt.Sprintf(`[{"atom_type":"event","subject":"the user","predicate":"visited","value":"Rome","statement":"The user visited Rome.","scope":"global","confidence":0.9,"event_date":%q}]`, tt.eventDate)
+			atoms, err := atom.NewClaudeExtractor(&stubCompleter{response: response}).Extract(context.Background(), "session", sessionDate)
+			require.NoError(t, err)
+			require.Len(t, atoms, 1)
+			assert.Nil(t, atoms[0].ValidFrom)
+			assert.NotNil(t, atoms[0].ObservedAt)
+		})
+	}
+}
+
+func TestB1CorruptionProbeChunkingSupersetAndExactDedup(t *testing.T) {
+	sessionDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	first := `[{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"Alpha exists.","scope":"global","confidence":0.9}]`
+	second := `[
+{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"Alpha exists.","scope":"global","confidence":0.9},
+{"atom_type":"fact","subject":"Beyond6000","predicate":"exists","value":"yes","statement":"Beyond6000 exists.","scope":"global","confidence":0.9}
+]`
+	stub := &stubCompleter{responses: []string{first, second, `[]`}}
+	session := strings.Repeat("a", 6000) + "\n[user]\nBeyond6000 appears here.\n" + strings.Repeat("b", 9000)
+	truncatedAtoms, err := atom.NewClaudeExtractor(&stubCompleter{response: first}).Extract(
+		context.Background(),
+		string([]rune(session)[:6000]),
+		sessionDate,
+	)
+	require.NoError(t, err)
+
+	atoms, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), session, sessionDate)
+	require.NoError(t, err)
+	require.Greater(t, len(atoms), len(truncatedAtoms), "chunked extraction must be a strict superset")
+	assert.Len(t, stub.prompts, 3)
+	assert.Equal(t, "Alpha", atoms[0].Subject)
+	assert.Equal(t, "Beyond6000", atoms[1].Subject)
+	assert.Contains(t, stub.prompts[1], "Beyond6000")
+	for _, truncated := range truncatedAtoms {
+		assert.Contains(t, atoms, truncated, "every atom from the old truncated path must survive windowing")
+	}
+	for _, prompt := range stub.prompts {
+		window := strings.TrimPrefix(prompt, "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n")
+		assert.LessOrEqual(t, len([]rune(window)), 6000)
+	}
+}
+
+func TestClaudeExtractorStopsWhenAnyWindowFails(t *testing.T) {
+	sessionDate := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+	stub := &stubCompleter{responses: []string{`[]`, `not json`}}
+	session := strings.Repeat("a", 6000) + "\n" + strings.Repeat("b", 100)
+
+	_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), session, sessionDate)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "window 2")
+}
+
+func TestClaudeExtractorIgnoresPathologicallyEarlyBoundary(t *testing.T) {
+	stub := &stubCompleter{response: `[]`}
+	session := "user: " + strings.Repeat("a", 5494) + "\n" + strings.Repeat("continued", 800)
+
+	_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), session, time.Now())
+	require.NoError(t, err)
+	require.Len(t, stub.prompts, 3)
+	firstWindow := strings.TrimPrefix(stub.prompts[0], "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n")
+	assert.Len(t, []rune(firstWindow), 6000, "an early newline must not create a tiny extraction window")
+}
+
+func TestClaudeExtractorPrefersRecognizedMessageBoundary(t *testing.T) {
+	stub := &stubCompleter{response: `[]`}
+	firstMessage := "user: " + strings.Repeat("a", 5494) + "\n"
+	session := firstMessage + "assistant: " + strings.Repeat("b", 1000)
+
+	_, err := atom.NewClaudeExtractor(stub).Extract(context.Background(), session, time.Now())
+	require.NoError(t, err)
+	require.Len(t, stub.prompts, 2)
+	firstWindow := strings.TrimPrefix(stub.prompts[0], "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n")
+	secondWindow := strings.TrimPrefix(stub.prompts[1], "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n")
+	assert.Equal(t, firstMessage, firstWindow)
+	assert.True(t, strings.HasPrefix(secondWindow, "assistant: "))
 }
 
 type extractionFidelityFixture struct {
