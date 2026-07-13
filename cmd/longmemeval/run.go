@@ -869,6 +869,25 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		contextBlocks = orderContextEvidenceFirst(contextBlocks, item.Question)
 	}
 	contextBlocks = appendEventWindowContext(contextBlocks, eventWindowContext)
+	var ledgerErr error
+	contextBlocks, ledgerErr = injectChronoLedger(
+		ctx,
+		mcpClient,
+		chronoLedgerRunRequest{
+			enabled:      cfg.ChronoLedgerInject,
+			questionType: item.QuestionType,
+			project:      ingest.Project,
+			questionID:   item.QuestionID,
+		},
+		contextBlocks,
+	)
+	if ledgerErr != nil {
+		return longmemeval.RunEntry{
+			QuestionID: item.QuestionID,
+			Status:     "error",
+			Error:      fmt.Sprintf("chrono ledger fetch: %v", ledgerErr),
+		}
+	}
 
 	var atomContextBlock string
 	if !fullTimelineContext && cfg.AtomMode {

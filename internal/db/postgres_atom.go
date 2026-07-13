@@ -141,6 +141,50 @@ func (p *PostgresBackend) GetActiveAtomsFiltered(ctx context.Context, project st
 	return scanAtomRows(rows)
 }
 
+// GetChronoLedgerAtoms returns the earliest distinct dated event and
+// status-change rows for a project, including superseded history.
+func (p *PostgresBackend) GetChronoLedgerAtoms(ctx context.Context, project string, limit int) ([]atom.Atom, error) {
+	query, args := buildChronoLedgerAtomsQuery(project, limit)
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanAtomRows(rows)
+}
+
+func buildChronoLedgerAtomsQuery(project string, limit int) (string, []interface{}) {
+	query := `
+		SELECT id, project, atom_type, subject, predicate, value,
+		       statement, scope, valid_from, valid_to, observed_at, confidence,
+		       provenance_memory_id, provenance_span, supersedes, created_at
+		FROM (
+			SELECT DISTINCT ON (
+				valid_from::date,
+				statement,
+				COALESCE(valid_to::date, 'infinity'::date)
+			)
+				id, project, atom_type, subject, predicate, value,
+				statement, scope, valid_from, valid_to, observed_at, confidence,
+				COALESCE(provenance_memory_id, '') AS provenance_memory_id,
+				COALESCE(provenance_span, '') AS provenance_span,
+				COALESCE(supersedes, '') AS supersedes,
+				created_at
+			FROM atoms
+			WHERE project = $1
+			  AND atom_type IN ('event', 'status_change')
+			  AND valid_from IS NOT NULL
+			ORDER BY valid_from::date ASC,
+			         statement ASC,
+			         COALESCE(valid_to::date, 'infinity'::date) ASC,
+			         valid_from ASC,
+			         created_at ASC,
+			         id ASC
+		) AS dated_atoms
+		ORDER BY valid_from ASC, statement ASC, id ASC
+		LIMIT $2`
+	return query, []interface{}{project, limit}
+}
+
 func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interface{}) {
 	where := []string{"project = $1", "valid_to IS NULL"}
 	args := []interface{}{project}

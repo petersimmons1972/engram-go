@@ -3,8 +3,9 @@ package mcp
 // atoms_handler.go — Milestone 1 (#938) /atoms REST endpoint.
 //
 // POST /atoms dispatches on the "action" field:
-//   - action="store"  → insert atom + embedding (called by atom-build)
-//   - (omitted/empty) → fetch active atoms for a project (called by --atom-mode via FetchAtoms)
+//   - action="store" → insert atom + embedding (called by atom-build)
+//   - action="fetch" → fetch the dated project chronology (called by --chrono-ledger-inject)
+//   - omitted/empty  → fetch active atoms for a project (called by --atom-mode via FetchAtoms)
 //
 // Authorization: Bearer <token> (handled by applyMiddleware before this handler runs).
 //
@@ -79,10 +80,34 @@ func (s *Server) handleAtoms(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "store":
 		s.handleAtomStore(w, r, pg, &req)
+	case "fetch":
+		s.handleChronoLedgerAtomFetch(w, r, pg, req.Project, req.TopK)
 	default:
 		// No action or unrecognised → fetch (GET-like via POST for FetchAtoms compatibility).
 		s.handleAtomFetch(w, r, pg, req.Project, req.AtomType, req.TopK)
 	}
+}
+
+// handleChronoLedgerAtomFetch returns the first 41 distinct dated timeline
+// atoms. The extra row is a truncation sentinel for the 40-line prompt cap.
+func (s *Server) handleChronoLedgerAtomFetch(
+	w http.ResponseWriter,
+	r *http.Request,
+	pg *db.PostgresBackend,
+	project string,
+	topK int,
+) {
+	const maxChronoLedgerAtoms = 41
+	if topK <= 0 || topK > maxChronoLedgerAtoms {
+		topK = maxChronoLedgerAtoms
+	}
+	atoms, err := pg.GetChronoLedgerAtoms(r.Context(), project, topK)
+	if err != nil {
+		slog.Error("atoms chronology fetch: GetChronoLedgerAtoms failed", "project", project, "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "GetChronoLedgerAtoms failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"atoms": atoms})
 }
 
 // handleAtomStore inserts one atom and its embedding into the database.

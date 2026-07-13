@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -24,4 +25,26 @@ func TestBuildActiveAtomsQuery_PlaceholderOrderingAndLimit(t *testing.T) {
 	require.Contains(t, query, "valid_from < $5")
 	require.Contains(t, query, "LIMIT $6")
 	require.Equal(t, []interface{}{"project-a", atom.TypeEvent, asOf, since, before, 31}, args)
+}
+
+func TestBuildChronoLedgerAtomsQuery_FiltersDeduplicatesOrdersAndCaps(t *testing.T) {
+	query, args := buildChronoLedgerAtomsQuery("project-a", 41)
+
+	required := []string{
+		"project = $1",
+		"atom_type IN ('event', 'status_change')",
+		"valid_from IS NOT NULL",
+		"DISTINCT ON",
+		"ORDER BY valid_from ASC",
+		"LIMIT $2",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(query, fragment) {
+			t.Errorf("query missing %q:\n%s", fragment, query)
+		}
+	}
+	if strings.Contains(query, "valid_to IS NULL") {
+		t.Fatalf("chronology query excludes superseded atoms:\n%s", query)
+	}
+	require.Equal(t, []interface{}{"project-a", 41}, args)
 }

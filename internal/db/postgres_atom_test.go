@@ -127,3 +127,49 @@ func valueForPredicate(t *testing.T, atoms []atom.Atom, predicate string) string
 	t.Fatalf("predicate %q not found in result set", predicate)
 	return ""
 }
+
+func TestGetChronoLedgerAtoms_IncludesSupersededAndFiltersTimelineTypes(t *testing.T) {
+	project := uniqueProject("chrono-ledger")
+	ctx := context.Background()
+	backend, err := db.NewPostgresBackend(ctx, project, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	jan1 := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+	jan2 := time.Date(2024, 1, 2, 9, 0, 0, 0, time.UTC)
+	jan3 := time.Date(2024, 1, 3, 9, 0, 0, 0, time.UTC)
+	oldStatus := &atom.Atom{
+		Project: project, Type: atom.TypeStatusChange, Subject: "deploy", Predicate: "status",
+		Value: "running", Statement: "The deploy was running.", Scope: atom.ScopeGlobal,
+		Confidence: 1, ValidFrom: &jan1,
+	}
+	require.NoError(t, backend.InsertAtom(ctx, oldStatus))
+	require.NoError(t, backend.RetireAtom(ctx, oldStatus.ID, jan2, &atom.Atom{
+		Project: project, Type: atom.TypeStatusChange, Subject: "deploy", Predicate: "status",
+		Value: "done", Statement: "The deploy was done.", Scope: atom.ScopeGlobal,
+		Confidence: 1, ValidFrom: &jan2, Supersedes: oldStatus.ID,
+	}))
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project: project, Type: atom.TypeEvent, Subject: "user", Predicate: "visited",
+		Value: "Boston", Statement: "The user visited Boston.", Scope: atom.ScopeGlobal,
+		Confidence: 1, ValidFrom: &jan3,
+	}))
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project: project, Type: atom.TypePreference, Subject: "user", Predicate: "likes",
+		Value: "tea", Statement: "The user likes tea.", Scope: atom.ScopeGlobal,
+		Confidence: 1, ValidFrom: &jan1,
+	}))
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project: project, Type: atom.TypeEvent, Subject: "user", Predicate: "planned",
+		Value: "trip", Statement: "The user planned a trip.", Scope: atom.ScopeGlobal,
+		Confidence: 1,
+	}))
+
+	atoms, err := backend.GetChronoLedgerAtoms(ctx, project, 41)
+	require.NoError(t, err)
+	require.Len(t, atoms, 3)
+	require.Equal(t, "The deploy was running.", atoms[0].Statement)
+	require.NotNil(t, atoms[0].ValidTo, "superseded status row must be present")
+	require.Equal(t, "The deploy was done.", atoms[1].Statement)
+	require.Equal(t, "The user visited Boston.", atoms[2].Statement)
+}

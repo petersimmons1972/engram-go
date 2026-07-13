@@ -1148,14 +1148,8 @@ func SanitizeStoreContent(s string) string {
 	return sb.String()
 }
 
-// FetchAtoms retrieves active preference atoms for a project via the REST
-// /atoms endpoint. This is the Milestone 1 (#938) atom recall path used by
-// the --atom-mode flag in cmd/longmemeval/run.go.
-//
-// The /atoms endpoint does not exist in the current server — it is a
-// forward-reference for the M2 server-side implementation. Until M2, this
-// method returns an empty slice (non-fatal; the run continues without atoms).
-// This enables the --atom-mode code path to be exercised in unit tests.
+// FetchAtoms retrieves active atoms for a project via the REST /atoms endpoint.
+// This is the Milestone 1 (#938) atom recall path used by --atom-mode.
 //
 // topK: maximum number of atoms to return (0 = server default).
 func (c *Client) FetchAtoms(ctx context.Context, project string, atomType string, topK int) ([]atom.Atom, error) {
@@ -1199,6 +1193,72 @@ func (c *Client) FetchAtoms(ctx context.Context, project string, atomType string
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("fetch atoms decode: %w", err)
+	}
+	return result.Atoms, nil
+}
+
+// FetchChronoLedgerAtoms retrieves the project-wide dated event timeline,
+// including superseded event and status-change rows. Unlike the optional
+// atom-mode fetch, every non-200 response is an error so a missing dependency
+// cannot masquerade as an empty project.
+func (c *Client) FetchChronoLedgerAtoms(ctx context.Context, project string, limit int) ([]atom.Atom, error) {
+	req, err := newChronoLedgerAtomsRequest(ctx, c.serverURL, c.apiKey, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch chronology atoms: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return decodeChronoLedgerAtomsResponse(resp)
+}
+
+func newChronoLedgerAtomsRequest(
+	ctx context.Context,
+	serverURL string,
+	apiKey string,
+	project string,
+	limit int,
+) (*http.Request, error) {
+	body := struct {
+		Action  string `json:"action"`
+		Project string `json:"project"`
+		TopK    int    `json:"top_k"`
+	}{
+		Action:  "fetch",
+		Project: project,
+		TopK:    limit,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal chronology atoms body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		baseServerURL(serverURL)+"/atoms",
+		bytes.NewReader(data),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create chronology atoms request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	return req, nil
+}
+
+func decodeChronoLedgerAtomsResponse(resp *http.Response) ([]atom.Atom, error) {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch chronology atoms: unexpected status %d", resp.StatusCode)
+	}
+	var result struct {
+		Atoms []atom.Atom `json:"atoms"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("fetch chronology atoms decode: %w", err)
 	}
 	return result.Atoms, nil
 }
