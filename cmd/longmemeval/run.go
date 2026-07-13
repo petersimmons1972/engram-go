@@ -36,6 +36,12 @@ type contextBlock struct {
 const (
 	generationContextRetrieval    = "retrieval"
 	generationContextFullTimeline = "full_timeline_context"
+
+	// LongMemEval-S full haystacks are approximately 115k tokens. A 115k-token
+	// input cap leaves roughly 16k tokens in a 131k-token model window for the
+	// question, prompt framing, and output. The harness budgets context in chars,
+	// so retain its conventional four-characters-per-token estimate.
+	fullContextCharBudget = 115_000 * 4
 )
 
 // add appends name to the log. Safe for concurrent use.
@@ -274,6 +280,51 @@ func fullTimelineContextBlocks(item longmemeval.Item, maxBlockChars int) []strin
 	return blocks
 }
 
+// fullContextBlocks renders every non-empty haystack session, orders dated
+// sessions chronologically, then drops whole oldest sessions until the total
+// context fits maxContextChars. The caller logs dropped so truncation is never
+// silent. maxBlockChars retains the existing per-session truncation behavior.
+func fullContextBlocks(
+	item longmemeval.Item,
+	maxBlockChars int,
+	maxContextChars int,
+) ([]string, int) {
+	blocks := sortBlocksChronologically(fullTimelineContextBlocks(item, maxBlockChars))
+	dropped := 0
+	for maxContextChars > 0 && contextBlocksCharCount(blocks) > maxContextChars {
+		blocks = blocks[1:]
+		dropped++
+	}
+	if len(blocks) == 0 {
+		return []string{}, dropped
+	}
+	return blocks, dropped
+}
+
+func baselineContextBlocks(cfg *Config, item longmemeval.Item) ([]string, bool, int) {
+	switch {
+	case cfg.ClosedBook:
+		return []string{}, true, 0
+	case cfg.FullContext:
+		blocks, dropped := fullContextBlocks(item, cfg.MaxBlockChars, fullContextCharBudget)
+		return blocks, true, dropped
+	default:
+		return nil, false, 0
+	}
+}
+
+func contextBlocksCharCount(blocks []string) int {
+	if len(blocks) == 0 {
+		return 0
+	}
+	const separator = "\n\n---\n\n"
+	total := (len(blocks) - 1) * len(separator)
+	for _, block := range blocks {
+		total += len(block)
+	}
+	return total
+}
+
 // runRun executes the run stage. Returns the process exit code: 0 on success,
 // 1 when zero items completed successfully out of any that were attempted
 // (#703 — total-failure guard so scripted pipelines don't proceed when every
@@ -300,11 +351,11 @@ func runRun(cfg *Config) int {
 		itemMap[item.QuestionID] = item
 	}
 
-	// #1079: oracle mode bypasses Engram entirely — no ingest checkpoint exists
+	// Dataset-only modes bypass Engram entirely, so no ingest checkpoint exists
 	// or is needed. Synthesize a minimal IngestEntry per item so the run loop
-	// processes all items without requiring a prior ingest stage.
+	// still processes every item through generation and checkpointing.
 	var ingestEntries []longmemeval.IngestEntry
-	if cfg.AtomOracle {
+	if bypassesEngram(cfg) {
 		ingestEntries = make([]longmemeval.IngestEntry, 0, len(items))
 		for _, item := range items {
 			ingestEntries = append(ingestEntries, longmemeval.IngestEntry{
@@ -313,7 +364,11 @@ func runRun(cfg *Config) int {
 				Status:     "done",
 			})
 		}
-		log.Printf("run: oracle mode — synthesized %d ingest entries (no checkpoint required)", len(ingestEntries))
+		if cfg.AtomOracle {
+			log.Printf("run: oracle mode — synthesized %d ingest entries (no checkpoint required)", len(ingestEntries))
+		} else {
+			log.Printf("run: baseline mode — synthesized %d ingest entries (no checkpoint required)", len(ingestEntries))
+		}
 	} else {
 		var err error
 		ingestEntries, err = longmemeval.ReadAllIngest(filepath.Join(cfg.OutDir, "checkpoint-ingest.jsonl"))
@@ -341,7 +396,7 @@ func runRun(cfg *Config) int {
 	// projects no longer contain memories (e.g. source run used
 	// --cleanup-policy=auto). Probe before starting workers so we never burn
 	// LLM compute on a zero-recall corpus.
-	if !cfg.AtomOracle {
+	if !bypassesEngram(cfg) {
 		pending := make([]longmemeval.IngestEntry, 0, len(ingestEntries))
 		for _, e := range ingestEntries {
 			if e.Status == "done" && !skip[e.QuestionID] {
@@ -448,6 +503,10 @@ func shouldLockGeneratorBackend(cfg *Config) bool {
 	return cfg.Generator != "codex" || cfg.AtomOracle
 }
 
+func bypassesEngram(cfg *Config) bool {
+	return cfg.AtomOracle || cfg.ClosedBook || cfg.FullContext
+}
+
 // exitCodeForRunOutcome decides the runRun exit code from the attempted+error
 // counts. Returns 1 when at least one item was attempted and zero succeeded;
 // returns 0 otherwise (including resume-clean runs that attempted nothing).
@@ -493,9 +552,14 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 			continue
 		}
 
-		// #1079: oracle mode bypasses Engram entirely — no MCP connection needed.
-		if cfg.AtomOracle {
-			entry := runOneOracle(ctx, cfg, item, ingestEntry)
+		// Dataset-only modes bypass Engram entirely — no MCP connection needed.
+		if bypassesEngram(cfg) {
+			var entry longmemeval.RunEntry
+			if cfg.AtomOracle {
+				entry = runOneOracle(ctx, cfg, item, ingestEntry)
+			} else {
+				entry = runOne(ctx, cfg, nil, item, ingestEntry)
+			}
 			out <- entry
 			if entry.Status == "error" {
 				log.Printf("run [%s] status=%s hypothesis_len=%d error=%q", item.QuestionID, entry.Status, len(entry.Hypothesis), entry.Error)
@@ -545,13 +609,35 @@ func runWorker(cfg *Config, itemMap map[string]longmemeval.Item, work <-chan lon
 	}
 }
 
-func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, item longmemeval.Item, ingest longmemeval.IngestEntry) (entry longmemeval.RunEntry) {
+type hypothesisGenerator func(context.Context, *Config, string) (string, error)
+
+func runOne(
+	ctx context.Context,
+	cfg *Config,
+	mcpClient *longmemeval.Client,
+	item longmemeval.Item,
+	ingest longmemeval.IngestEntry,
+) longmemeval.RunEntry {
+	return runOneWithGenerator(ctx, cfg, mcpClient, item, ingest, generateHypothesis)
+}
+
+func runOneWithGenerator(
+	ctx context.Context,
+	cfg *Config,
+	mcpClient *longmemeval.Client,
+	item longmemeval.Item,
+	ingest longmemeval.IngestEntry,
+	generate hypothesisGenerator,
+) (entry longmemeval.RunEntry) {
 	defer func() {
 		if r := recover(); r != nil {
 			entry = longmemeval.RunEntry{
 				QuestionID: item.QuestionID,
 				Status:     "error",
 				Error:      fmt.Sprintf("panic: %v", r),
+			}
+			if cfg.ClosedBook || cfg.FullContext {
+				entry.RetrievedIDs = []string{}
 			}
 		}
 	}()
@@ -561,14 +647,41 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if cfg.AtomOracle {
 		return runOneOracle(ctx, cfg, item, ingest)
 	}
-
-	// Strip leading interrogative phrases for temporal questions so the recall
-	// query matches event noun-phrases rather than "how many weeks ago did...".
-	// When --disable-query-rewrite is set, use the raw question unchanged.
 	runOpts := longmemeval.RunOpts{
 		ExhaustiveAggregation: cfg.ExhaustiveAggregation,
 		EnumerateFirst:        cfg.EnumerateFirst,
 	}
+	if contextBlocks, handled, dropped := baselineContextBlocks(cfg, item); handled {
+		if dropped > 0 {
+			log.Printf(
+				"WARN run [%s] full-context exceeded context budget: dropped_sessions=%d oldest-first max_context_chars=%d",
+				item.QuestionID,
+				dropped,
+				fullContextCharBudget,
+			)
+		}
+		prompt := selectGenerationPrompt(cfg, runOpts, item, contextBlocks)
+		hypothesis, err := generate(ctx, cfg, prompt)
+		if err != nil {
+			return longmemeval.RunEntry{
+				QuestionID:   item.QuestionID,
+				RetrievedIDs: []string{},
+				Status:       "error",
+				Error:        fmt.Sprintf("generate: %v", err),
+			}
+		}
+		return longmemeval.RunEntry{
+			QuestionID:          item.QuestionID,
+			Hypothesis:          hypothesis,
+			RetrievedIDs:        []string{},
+			ContextSessionCount: len(contextBlocks),
+			Status:              "done",
+		}
+	}
+
+	// Strip leading interrogative phrases for temporal questions so the recall
+	// query matches event noun-phrases rather than "how many weeks ago did...".
+	// When --disable-query-rewrite is set, use the raw question unchanged.
 	recallQuery := buildRecallQuery(item.Question, item.QuestionType, cfg.DisableQueryRewrite)
 	effectiveRecallTopK := runOpts.EffectiveRecallTopK(item.Question, cfg.RecallTopK)
 	since, before := temporalRecallWindow(item.Question, item.QuestionType, item.QuestionDate)
@@ -902,7 +1015,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if atomContextBlock != "" {
 		prompt = atomContextBlock + "\n" + prompt
 	}
-	hypothesis, err := generateHypothesis(ctx, cfg, prompt)
+	hypothesis, err := generate(ctx, cfg, prompt)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID:   item.QuestionID,

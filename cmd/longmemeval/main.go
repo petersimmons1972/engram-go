@@ -67,6 +67,8 @@ type Config struct {
 	// retrieval ablation flags
 	RecallTopK          int  // memories recalled before context trim (default 100)
 	ContextTopKOverride int  // explicit context topK; 0 = per-type default
+	ClosedBook          bool // bypass retrieval and generate from the question alone
+	FullContext         bool // bypass retrieval and generate from all haystack sessions
 	FullTimelineContext bool // benchmark-only: bypass memory_recall/memory_fetch and inject the full dated haystack timeline into generation prompts
 	ChronoSort          bool // sort context blocks by Session date ascending before prompt assembly
 	DisableQueryRewrite bool // use raw question as recall query; skip temporal/preference rewriting
@@ -305,6 +307,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
 	fs.IntVar(&cfg.ContextTopKOverride, "context-topk", 0, "explicit context topK; 0 = per-type default")
+	fs.BoolVar(&cfg.ClosedBook, "closed-book", false, "baseline: bypass retrieval and answer from the question alone using empty context blocks")
+	fs.BoolVar(&cfg.FullContext, "full-context", false, "baseline: bypass retrieval and inject all haystack sessions in session order, subject to the model context budget")
 	fs.BoolVar(&cfg.FullTimelineContext, "full-timeline-context", false, "benchmark-only: bypass memory_recall and memory_fetch, and inject the full dated haystack timeline directly into generation prompts")
 	fs.BoolVar(&cfg.ChronoSort, "chrono-sort", false, "sort context blocks by Session date ascending before prompt assembly")
 	fs.BoolVar(&cfg.DisableQueryRewrite, "disable-query-rewrite", false, "use raw question as recall query; skip temporal/preference rewriting")
@@ -623,6 +627,12 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	if noExclusiveBackend {
 		cfg.ExclusiveBackend = false
 	}
+	if subcommand == "run" || subcommand == "all" {
+		if err := validateBaselineFlags(fs, cfg); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	if err := applyRepairPreset(cfg); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
@@ -752,6 +762,66 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		})
 	}
 	return 0
+}
+
+var baselineIncompatibleRetrievalFlags = map[string]struct{}{
+	"allow-empty-projects":        {},
+	"atom-cache-dir":              {},
+	"atom-mode":                   {},
+	"atom-oracle":                 {},
+	"atom-oracle-variant":         {},
+	"block-overlap-chars":         {},
+	"chrono-ledger-inject":        {},
+	"chrono-sort":                 {},
+	"context-topk":                {},
+	"context-topk-bump":           {},
+	"disable-query-rewrite":       {},
+	"dual-preference-recall":      {},
+	"embed-recall-timeout-ms":     {},
+	"event-window-recall":         {},
+	"exact-signal-boost":          {},
+	"exhaustive-aggregation":      {},
+	"evidence-first-pack":         {},
+	"full-timeline-context":       {},
+	"query-paraphrase-passes":     {},
+	"recall-topk":                 {},
+	"repair-preset":               {},
+	"retrieval-fusion":            {},
+	"session-diversity-n":         {},
+	"ss-pref-context-topk":        {},
+	"ss-pref-session-diversity-n": {},
+	"temporal-window-recall":      {},
+	"topic-anchor-boost":          {},
+}
+
+// validateBaselineFlags rejects ambiguous experiments before any item is
+// loaded. --max-block-chars is intentionally allowed: full-context reuses it
+// as the existing per-session guard before enforcing its total context budget.
+func validateBaselineFlags(fs *flag.FlagSet, cfg *Config) error {
+	if cfg.ClosedBook && cfg.FullContext {
+		return fmt.Errorf("--closed-book and --full-context are mutually exclusive")
+	}
+	if !cfg.ClosedBook && !cfg.FullContext {
+		return nil
+	}
+
+	baselineFlag := "--closed-book"
+	if cfg.FullContext {
+		baselineFlag = "--full-context"
+	}
+	var conflictingFlag string
+	fs.Visit(func(f *flag.Flag) {
+		if conflictingFlag != "" {
+			return
+		}
+		if _, incompatible := baselineIncompatibleRetrievalFlags[f.Name]; incompatible {
+			conflictingFlag = "--" + f.Name
+		}
+	})
+	if conflictingFlag != "" {
+		return fmt.Errorf("%s cannot be combined with retrieval flag %s", baselineFlag, conflictingFlag)
+	}
+	return nil
 }
 
 func runStageWithStatus(cfg *Config, stage string, commandLine []string, run func() int) int {

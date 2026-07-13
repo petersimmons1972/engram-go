@@ -97,6 +97,137 @@ func TestHelp_RunSubcommandDocumentsFullTimelineContext(t *testing.T) {
 	}
 }
 
+func TestHelp_RunSubcommandDocumentsBaselineModes(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch(run --help) exit = %d, want 0", exit)
+	}
+
+	combined := stdout.String() + stderr.String()
+	for _, want := range []string{"-closed-book", "question alone", "-full-context", "haystack sessions"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("run help missing %q:\n%s", want, combined)
+		}
+	}
+}
+
+func TestDispatch_BaselineModesAreMutuallyExclusiveAtStartup(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch(
+		[]string{"longmemeval", "run", "--closed-book", "--full-context"},
+		&stdout,
+		&stderr,
+	)
+
+	if exit == 0 {
+		t.Fatal("dispatch accepted --closed-book with --full-context")
+	}
+	if got := stderr.String(); !strings.Contains(got, "--closed-book and --full-context are mutually exclusive") {
+		t.Fatalf("startup error = %q, want explicit baseline-mode conflict", got)
+	}
+}
+
+func TestDispatch_BaselineModesRejectExplicitRetrievalFlags(t *testing.T) {
+	tests := []struct {
+		name         string
+		baselineFlag string
+		retrievalArg []string
+	}{
+		{name: "closed book recall topk", baselineFlag: "--closed-book", retrievalArg: []string{"--recall-topk", "50"}},
+		{name: "full context retrieval fusion", baselineFlag: "--full-context", retrievalArg: []string{"--retrieval-fusion"}},
+		{name: "closed book legacy full timeline", baselineFlag: "--closed-book", retrievalArg: []string{"--full-timeline-context"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"longmemeval", "run", tt.baselineFlag}
+			args = append(args, tt.retrievalArg...)
+			var stdout, stderr bytes.Buffer
+			exit := dispatch(args, &stdout, &stderr)
+			if exit == 0 {
+				t.Fatalf("dispatch accepted incompatible flags %v", args[2:])
+			}
+			if got := stderr.String(); !strings.Contains(got, "cannot be combined with retrieval flag") {
+				t.Fatalf("startup error = %q, want explicit retrieval conflict", got)
+			}
+		})
+	}
+}
+
+func TestDispatch_ClosedBookRejectsEveryRetrievalFlag(t *testing.T) {
+	retrievalArgs := []string{
+		"--allow-empty-projects=true",
+		"--atom-cache-dir=/tmp/atoms",
+		"--atom-mode=true",
+		"--atom-oracle=true",
+		"--atom-oracle-variant=atom-only",
+		"--block-overlap-chars=100",
+		"--chrono-ledger-inject=true",
+		"--chrono-sort=true",
+		"--context-topk=1",
+		"--context-topk-bump=true",
+		"--disable-query-rewrite=true",
+		"--dual-preference-recall=true",
+		"--embed-recall-timeout-ms=100",
+		"--event-window-recall=true",
+		"--exact-signal-boost=true",
+		"--exhaustive-aggregation=true",
+		"--evidence-first-pack=true",
+		"--full-timeline-context=true",
+		"--query-paraphrase-passes=1",
+		"--recall-topk=50",
+		"--repair-preset=recall-repair",
+		"--retrieval-fusion=true",
+		"--session-diversity-n=1",
+		"--ss-pref-context-topk=1",
+		"--ss-pref-session-diversity-n=1",
+		"--temporal-window-recall=true",
+		"--topic-anchor-boost=true",
+	}
+	if len(retrievalArgs) != len(baselineIncompatibleRetrievalFlags) {
+		t.Fatalf(
+			"test enumerates %d retrieval flags, validation enumerates %d",
+			len(retrievalArgs),
+			len(baselineIncompatibleRetrievalFlags),
+		)
+	}
+
+	for _, retrievalArg := range retrievalArgs {
+		t.Run(strings.TrimPrefix(retrievalArg, "--"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exit := dispatch(
+				[]string{"longmemeval", "run", "--closed-book", retrievalArg},
+				&stdout,
+				&stderr,
+			)
+			if exit == 0 {
+				t.Fatalf("dispatch accepted --closed-book with %s", retrievalArg)
+			}
+			if got := stderr.String(); !strings.Contains(got, "cannot be combined with retrieval flag") {
+				t.Fatalf("startup error for %s = %q, want retrieval conflict", retrievalArg, got)
+			}
+		})
+	}
+}
+
+func TestDispatch_FullContextAllowsMaxBlockCharsBudgetGuard(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch(
+		[]string{"longmemeval", "run", "--full-context", "--max-block-chars=1000"},
+		&stdout,
+		&stderr,
+	)
+	if exit == 0 {
+		t.Fatal("dispatch without --data unexpectedly succeeded")
+	}
+	if got := stderr.String(); strings.Contains(got, "cannot be combined") {
+		t.Fatalf("--max-block-chars must remain available to --full-context: %q", got)
+	}
+	if got := stderr.String(); !strings.Contains(got, "--data is required") {
+		t.Fatalf("dispatch progressed to unexpected error: %q", got)
+	}
+}
+
 func TestHelp_RunSubcommandDocumentsGeneratorFlagsAndDefaults(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
