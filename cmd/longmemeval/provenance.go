@@ -211,6 +211,9 @@ func buildFeatureFlags(cfg *Config) map[string]any {
 	if cfg.EventWindowRecall {
 		flags["event_window_recall"] = true
 	}
+	if cfg.ChronoLedgerInject {
+		flags["chrono_ledger_inject"] = true
+	}
 	if cfg.TemporalPromptAug {
 		flags["temporal_prompt_aug"] = true
 	}
