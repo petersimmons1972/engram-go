@@ -97,6 +97,37 @@ func TestHelp_RunSubcommandDocumentsFullTimelineContext(t *testing.T) {
 	}
 }
 
+func TestHelp_RunSubcommandDocumentsGeneratorFlagsAndDefaults(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch([]string{"longmemeval", "run", "--help"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("dispatch(run --help) exit = %d, want 0", exit)
+	}
+
+	combined := stdout.String() + stderr.String()
+	for _, want := range []string{"-generator", `default "vllm"`, "-generator-model", `default "gpt-5.6-sol"`} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("run help missing %q:\n%s", want, combined)
+		}
+	}
+}
+
+func TestDispatch_RunUnknownGeneratorFailsAtStartup(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := dispatch(
+		[]string{"longmemeval", "run", "--generator", "unknown"},
+		&stdout,
+		&stderr,
+	)
+
+	if exit == 0 {
+		t.Fatalf("dispatch(run --generator unknown) exit = 0, want nonzero")
+	}
+	if !strings.Contains(stderr.String(), `--generator "unknown"`) || !strings.Contains(stderr.String(), "vllm, codex") {
+		t.Fatalf("unknown-generator error is unclear: %q", stderr.String())
+	}
+}
+
 func TestDispatch_SpecialSubcommandsReturnControlledHelpAndParseExitCodes(t *testing.T) {
 	if os.Getenv("LONGMEMEVAL_DISPATCH_HELPER") == "1" {
 		args := strings.Split(os.Getenv("LONGMEMEVAL_DISPATCH_ARGS"), "\n")

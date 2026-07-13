@@ -57,7 +57,9 @@ type Config struct {
 	ScorerBatchAPIKey string // Anthropic API key (env: ANTHROPIC_API_KEY)
 
 	// generation flags
-	GenerationModel string // claude model alias for answer generation (default "sonnet")
+	GenerationModel string // claude model alias for legacy CLI answer generation (default "sonnet")
+	Generator       string // answer generator: vllm (default) or codex
+	GeneratorModel  string // codex model name (default "gpt-5.6-sol")
 	ContextTopKBump bool   // raise all contextTopK categories to 15 when true
 	// Benchmark recall timeout override for MCP memory_recall (ms; 0 = no timeout)
 	EmbedRecallTimeoutMS int
@@ -296,6 +298,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.ItemSet, "item-set", "", "item cohort identifier for this scoring run (for example: lme-s-500q)")
 	fs.StringVar(&cfg.System, "system", "", "system under test identifier to stamp on every score row")
 	fs.StringVar(&cfg.GenerationModel, "generation-model", "sonnet", "Claude model for answer generation: opus, sonnet, or haiku")
+	fs.StringVar(&cfg.Generator, "generator", "vllm", "Answer generator for run: vllm or codex")
+	fs.StringVar(&cfg.GeneratorModel, "generator-model", "gpt-5.6-sol", "Model passed to codex when --generator=codex")
 	fs.IntVar(&cfg.EmbedRecallTimeoutMS, "embed-recall-timeout-ms", envInt("LME_EMBED_RECALL_TIMEOUT_MS", 1500), "MCP memory_recall embed timeout in ms (0 = no timeout; parent context governs)")
 	fs.BoolVar(&cfg.ContextTopKBump, "context-topk-bump", false, "Raise context topK to 15 for all question types")
 	fs.IntVar(&cfg.RecallTopK, "recall-topk", 100, "memories to recall before context trim (1–500)")
@@ -654,6 +658,15 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		)
 		return 1
 	}
+	if subcommand == "run" || subcommand == "all" {
+		switch cfg.Generator {
+		case "vllm", "codex":
+			// valid
+		default:
+			_, _ = fmt.Fprintf(stderr, "--generator %q is not allowed; must be one of: vllm, codex\n", cfg.Generator)
+			return 1
+		}
+	}
 
 	if cfg.DataFile == "" {
 		_, _ = fmt.Fprintln(stderr, "--data is required")
@@ -680,7 +693,6 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "--generation-model %q is not allowed; must be one of: opus, sonnet, haiku\n", cfg.GenerationModel)
 		return 1
 	}
-
 	if cfg.RecallTopK <= 0 || cfg.RecallTopK > 500 {
 		_, _ = fmt.Fprintf(stderr, "--recall-topk %d is out of range; must be 1–500\n", cfg.RecallTopK)
 		return 1

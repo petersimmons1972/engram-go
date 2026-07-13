@@ -175,16 +175,8 @@ func runOneOracle(ctx context.Context, cfg *Config, item longmemeval.Item, inges
 		model:   cfg.LLMModel,
 		retries: cfg.Retries,
 	}
-	opts := longmemeval.OAIOptions{
-		EnableThinking: cfg.EnableThinking,
-		MaxTokens:      cfg.LLMMaxTokens,
-		APIKey:         cfg.LLMApiKey,
-	}
-	if opts.MaxTokens == 0 && cfg.EnableThinking {
-		opts.MaxTokens = 8192
-	}
 	generateFn := func(ctx context.Context, prompt string) (string, error) {
-		return longmemeval.GenerateOAIWithOpts(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
+		return generateHypothesis(ctx, cfg, prompt)
 	}
 	return runOneOracleWithDeps(ctx, cfg, completer, generateFn, item, ingest)
 }

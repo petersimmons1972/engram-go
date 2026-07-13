@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -187,6 +189,159 @@ func TestRunOne_HappyPath(t *testing.T) {
 	}
 	if entry.Hypothesis == "" {
 		t.Error("hypothesis should not be empty on success")
+	}
+}
+
+func TestGenerateHypothesis_VLLMDefaultPathIsByteForByteUnchanged(t *testing.T) {
+	type call struct {
+		prompt  string
+		baseURL string
+		model   string
+		retries int
+		opts    longmemeval.OAIOptions
+	}
+	calls := make([]call, 0, 2)
+	deps := generatorDeps{
+		generateOAI: func(
+			_ context.Context,
+			prompt string,
+			baseURL string,
+			model string,
+			retries int,
+			opts longmemeval.OAIOptions,
+		) (string, error) {
+			calls = append(calls, call{
+				prompt:  prompt,
+				baseURL: baseURL,
+				model:   model,
+				retries: retries,
+				opts:    opts,
+			})
+			return "answer", nil
+		},
+		generateClaude: func(context.Context, string, string, int) (string, error) {
+			t.Fatal("default vLLM path called Claude generator")
+			return "", nil
+		},
+		generateCodex: func(context.Context, string, string) (string, error) {
+			t.Fatal("default vLLM path called Codex generator")
+			return "", nil
+		},
+	}
+
+	base := Config{
+		LLMBaseURL:     "http://vllm.test/v1",
+		LLMModel:       "test-model",
+		Retries:        2,
+		EnableThinking: true,
+		LLMMaxTokens:   4096,
+		LLMApiKey:      "test-key",
+	}
+	for _, generator := range []string{"", "vllm"} {
+		cfg := base
+		cfg.Generator = generator
+		got, err := generateHypothesisWithDeps(context.Background(), &cfg, "same prompt bytes", deps)
+		if err != nil {
+			t.Fatalf("generateHypothesis(generator=%q) error = %v", generator, err)
+		}
+		if got != "answer" {
+			t.Fatalf("generateHypothesis(generator=%q) = %q, want answer", generator, got)
+		}
+	}
+
+	if len(calls) != 2 {
+		t.Fatalf("vLLM generator call count = %d, want 2", len(calls))
+	}
+	if !reflect.DeepEqual(calls[0], calls[1]) {
+		t.Fatalf("legacy/default vLLM call changed:\nlegacy: %#v\nexplicit: %#v", calls[0], calls[1])
+	}
+	if calls[0].prompt != "same prompt bytes" {
+		t.Fatalf("vLLM prompt = %q, want byte-identical input", calls[0].prompt)
+	}
+}
+
+func TestGenerateHypothesis_CodexRoutesIdenticalPrompt(t *testing.T) {
+	binDir := t.TempDir()
+	promptPath := filepath.Join(t.TempDir(), "prompt")
+	script := "#!/bin/sh\nprintf '%s' \"$8\" > \"$CODEX_PROMPT_FILE\"\nprintf 'codex\\nfrontier answer\\ntokens used\\n1\\n'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("CODEX_PROMPT_FILE", promptPath)
+
+	const prompt = "same assembled prompt\nwith context"
+	cfg := &Config{
+		Generator:      "codex",
+		GeneratorModel: "gpt-5.6-sol",
+		LLMBaseURL:     "http://127.0.0.1:1",
+	}
+	got, err := generateHypothesis(context.Background(), cfg, prompt)
+	if err != nil {
+		t.Fatalf("generateHypothesis() error = %v", err)
+	}
+	if got != "frontier answer" {
+		t.Fatalf("generateHypothesis() = %q, want frontier answer", got)
+	}
+	forwarded, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read forwarded prompt: %v", err)
+	}
+	if string(forwarded) != prompt {
+		t.Fatalf("codex prompt = %q, want identical %q", forwarded, prompt)
+	}
+}
+
+func TestRunOneOracle_UsesSelectedAnswerGenerator(t *testing.T) {
+	src, err := os.ReadFile("atom_oracle.go")
+	if err != nil {
+		t.Fatalf("read atom_oracle.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "generateHypothesis(ctx, cfg, prompt)") {
+		t.Fatal("atom-oracle final answer bypasses --generator selection")
+	}
+}
+
+func TestShouldLockGeneratorBackend(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{
+			name: "default vLLM with URL locks",
+			cfg:  Config{LLMBaseURL: "http://vllm.test/v1"},
+			want: true,
+		},
+		{
+			name: "explicit vLLM with URL locks",
+			cfg:  Config{Generator: "vllm", LLMBaseURL: "http://vllm.test/v1"},
+			want: true,
+		},
+		{
+			name: "Codex without oracle does not lock unused vLLM",
+			cfg:  Config{Generator: "codex", LLMBaseURL: "http://vllm.test/v1"},
+			want: false,
+		},
+		{
+			name: "Codex oracle locks vLLM extraction backend",
+			cfg:  Config{Generator: "codex", AtomOracle: true, LLMBaseURL: "http://vllm.test/v1"},
+			want: true,
+		},
+		{
+			name: "missing URL never locks",
+			cfg:  Config{Generator: "vllm"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldLockGeneratorBackend(&tt.cfg); got != tt.want {
+				t.Fatalf("shouldLockGeneratorBackend() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
