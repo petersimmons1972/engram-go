@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrDisallowedModel is a permanent error returned when the model name is not
@@ -26,10 +27,11 @@ var ErrDisallowedModel = errors.New("disallowed model")
 // response text is redacted because benchmark prompts can contain private memory.
 var debugOAIRequests = os.Getenv("LME_DEBUG_REQUESTS") == "1"
 
-// claudePrintTimeout is the hard cap for one claude --print call.
-
 // generateTimeout is the hard cap for one OAI generation call. 1200s needed for 120B vLLM on 40-block contexts.
 const generateTimeout = 600 * time.Second
+
+// codexExecTimeout is the hard cap for one frontier-model generation item.
+const codexExecTimeout = 300 * time.Second
 
 // GenerateForType generates an answer using Sonnet for all question types.
 func GenerateForType(ctx context.Context, prompt, questionType string, retries int) (string, error) {
@@ -148,6 +150,212 @@ func runClaude(ctx context.Context, prompt, model string) (string, error) {
 		return "", fmt.Errorf("claude --print: %s", out)
 	}
 	return out, nil
+}
+
+// GenerateCodex invokes the Codex CLI once with the supplied model and prompt.
+func GenerateCodex(ctx context.Context, prompt, model string) (string, error) {
+	return runCodex(ctx, prompt, model)
+}
+
+func runCodex(ctx context.Context, prompt, model string) (string, error) {
+	tctx, cancel := context.WithTimeout(ctx, codexExecTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		tctx,
+		"codex",
+		"exec",
+		"--model",
+		model,
+		"-c",
+		"model_reasoning_effort=high",
+		"--sandbox",
+		"read-only",
+	)
+	// Pass the prompt via stdin, not argv: generation prompts carry full
+	// retrieved context and exceed ARG_MAX ("argument list too long"). codex
+	// reads the prompt from stdin when no positional prompt is given.
+	cmd.Stdin = strings.NewReader(prompt)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("codex exec: %w", ctx.Err())
+		}
+		if tctx.Err() != nil {
+			return "", fmt.Errorf("codex exec timed out after %s", codexExecTimeout)
+		}
+		stderrSnippet := strings.TrimSpace(stderr.String())
+		if len(stderrSnippet) > 200 {
+			stderrSnippet = stderrSnippet[:200] + "…"
+		}
+		if stderrSnippet != "" {
+			return "", fmt.Errorf("codex exec: %w: %s", err, stderrSnippet)
+		}
+		return "", fmt.Errorf("codex exec: %w", err)
+	}
+
+	out := finalCodexAssistantText(string(raw))
+	if out == "" {
+		return "", errors.New("codex exec: empty assistant output")
+	}
+	return out, nil
+}
+
+func finalCodexAssistantText(raw string) string {
+	cleaned := stripTerminalControls(raw)
+	lines := strings.Split(cleaned, "\n")
+	firstNonEmpty := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			firstNonEmpty = i
+			break
+		}
+	}
+
+	blockStart := -1
+	blockEnd := -1
+	sawAnalysis := false
+	for i := 0; i < len(lines); i++ {
+		marker := strings.TrimSpace(lines[i])
+		if marker == "assistant/analysis" {
+			sawAnalysis = true
+			continue
+		}
+
+		end := -1
+		for j := i + 1; j < len(lines); j++ {
+			if isCodexTokenFooter(lines, j) {
+				end = j
+				break
+			}
+		}
+		switch {
+		case marker == "codex" && end >= 0:
+			blockStart, blockEnd = i+1, end
+			i = end
+		case marker == "assistant/final" && (sawAnalysis || i == firstNonEmpty):
+			blockStart = i + 1
+			blockEnd = len(lines)
+			if end >= 0 {
+				blockEnd = end
+				i = end
+			} else {
+				i = len(lines)
+			}
+		}
+	}
+	if blockStart >= 0 {
+		lines = lines[blockStart:blockEnd]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func isCodexTokenFooter(lines []string, index int) bool {
+	if strings.TrimSpace(lines[index]) != "tokens used" || index+1 >= len(lines) {
+		return false
+	}
+	count := strings.TrimSpace(lines[index+1])
+	if count == "" {
+		return false
+	}
+	for _, char := range count {
+		if (char < '0' || char > '9') && char != ',' {
+			return false
+		}
+	}
+	for _, trailing := range lines[index+2:] {
+		if strings.TrimSpace(trailing) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func stripTerminalControls(raw string) string {
+	var cleaned strings.Builder
+	cleaned.Grow(len(raw))
+	for i := 0; i < len(raw); {
+		char := raw[i]
+		switch char {
+		case 0x1b:
+			i = consumeEscapeSequence(raw, i)
+		case 0x9b:
+			i = consumeCSI(raw, i+1)
+		case 0x9d:
+			i = consumeControlString(raw, i+1, true)
+		case 0x90, 0x98, 0x9e, 0x9f:
+			i = consumeControlString(raw, i+1, false)
+		default:
+			switch {
+			case char == '\n' || char == '\r' || char == '\t':
+				cleaned.WriteByte(char)
+				i++
+			case char < 0x20 || char == 0x7f:
+				i++
+			case char >= utf8.RuneSelf:
+				_, size := utf8.DecodeRuneInString(raw[i:])
+				if size > 1 {
+					cleaned.WriteString(raw[i : i+size])
+					i += size
+					continue
+				}
+				if char < 0x80 || char > 0x9f {
+					cleaned.WriteByte(char)
+				}
+				i++
+			default:
+				cleaned.WriteByte(char)
+				i++
+			}
+		}
+	}
+	return cleaned.String()
+}
+
+func consumeEscapeSequence(raw string, index int) int {
+	if index+1 >= len(raw) {
+		return len(raw)
+	}
+	switch raw[index+1] {
+	case '[':
+		return consumeCSI(raw, index+2)
+	case ']':
+		return consumeControlString(raw, index+2, true)
+	case 'P', 'X', '^', '_':
+		return consumeControlString(raw, index+2, false)
+	case '(', ')', '*', '+', '-', '.', '/', '#', '%':
+		return min(index+3, len(raw))
+	default:
+		return min(index+2, len(raw))
+	}
+}
+
+func consumeCSI(raw string, index int) int {
+	for index < len(raw) {
+		if raw[index] >= 0x40 && raw[index] <= 0x7e {
+			return index + 1
+		}
+		index++
+	}
+	return len(raw)
+}
+
+func consumeControlString(raw string, index int, bellTerminates bool) int {
+	for index < len(raw) {
+		switch {
+		case bellTerminates && raw[index] == 0x07:
+			return index + 1
+		case raw[index] == 0x9c:
+			return index + 1
+		case raw[index] == 0x1b && index+1 < len(raw) && raw[index+1] == '\\':
+			return index + 2
+		default:
+			index++
+		}
+	}
+	return len(raw)
 }
 
 // OAIOptions controls generation quality parameters for OpenAI-compatible endpoints.

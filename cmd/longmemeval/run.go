@@ -281,7 +281,7 @@ func fullTimelineContextBlocks(item longmemeval.Item, maxBlockChars int) []strin
 func runRun(cfg *Config) int {
 	// #749: acquire per-backend lock before doing any work so parallel lme
 	// invocations against the same vLLM endpoint are detected and rejected.
-	if cfg.LLMBaseURL != "" {
+	if shouldLockGeneratorBackend(cfg) {
 		lockCfg := &BackendLockConfig{
 			ExclusiveBackend: cfg.ExclusiveBackend,
 			BackendLockDir:   cfg.BackendLockDir,
@@ -439,6 +439,13 @@ func runRun(cfg *Config) int {
 		return code
 	}
 	return 0
+}
+
+func shouldLockGeneratorBackend(cfg *Config) bool {
+	if cfg.LLMBaseURL == "" {
+		return false
+	}
+	return cfg.Generator != "codex" || cfg.AtomOracle
 }
 
 // exitCodeForRunOutcome decides the runRun exit code from the attempted+error
@@ -876,17 +883,7 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 	if atomContextBlock != "" {
 		prompt = atomContextBlock + "\n" + prompt
 	}
-	var hypothesis string
-	if cfg.LLMBaseURL != "" {
-		maxTok := cfg.LLMMaxTokens
-		if maxTok == 0 && cfg.EnableThinking {
-			maxTok = 8192 // thinking mode default: room for reasoning chain + answer
-		}
-		opts := longmemeval.OAIOptions{EnableThinking: cfg.EnableThinking, MaxTokens: maxTok, APIKey: cfg.LLMApiKey}
-		hypothesis, err = longmemeval.GenerateOAIWithOpts(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
-	} else {
-		hypothesis, err = longmemeval.GenerateForModel(ctx, prompt, cfg.GenerationModel, cfg.Retries)
-	}
+	hypothesis, err := generateHypothesis(ctx, cfg, prompt)
 	if err != nil {
 		return longmemeval.RunEntry{
 			QuestionID:   item.QuestionID,
@@ -906,6 +903,50 @@ func runOne(ctx context.Context, cfg *Config, mcpClient *longmemeval.Client, ite
 		AtomRetrieved:         atomPreamble != "",
 		AtomInContext:         atomContextBlock != "",
 	}
+}
+
+type generatorDeps struct {
+	generateOAI func(
+		context.Context,
+		string,
+		string,
+		string,
+		int,
+		longmemeval.OAIOptions,
+	) (string, error)
+	generateClaude func(context.Context, string, string, int) (string, error)
+	generateCodex  func(context.Context, string, string) (string, error)
+}
+
+func generateHypothesis(ctx context.Context, cfg *Config, prompt string) (string, error) {
+	return generateHypothesisWithDeps(ctx, cfg, prompt, generatorDeps{
+		generateOAI:    longmemeval.GenerateOAIWithOpts,
+		generateClaude: longmemeval.GenerateForModel,
+		generateCodex:  longmemeval.GenerateCodex,
+	})
+}
+
+func generateHypothesisWithDeps(
+	ctx context.Context,
+	cfg *Config,
+	prompt string,
+	deps generatorDeps,
+) (string, error) {
+	if cfg.Generator == "codex" {
+		return deps.generateCodex(ctx, prompt, cfg.GeneratorModel)
+	}
+	if cfg.Generator != "" && cfg.Generator != "vllm" {
+		return "", fmt.Errorf("unknown generator %q", cfg.Generator)
+	}
+	if cfg.LLMBaseURL != "" {
+		maxTok := cfg.LLMMaxTokens
+		if maxTok == 0 && cfg.EnableThinking {
+			maxTok = 8192 // thinking mode default: room for reasoning chain + answer
+		}
+		opts := longmemeval.OAIOptions{EnableThinking: cfg.EnableThinking, MaxTokens: maxTok, APIKey: cfg.LLMApiKey}
+		return deps.generateOAI(ctx, prompt, cfg.LLMBaseURL, cfg.LLMModel, cfg.Retries, opts)
+	}
+	return deps.generateClaude(ctx, prompt, cfg.GenerationModel, cfg.Retries)
 }
 
 func shouldUseEventWindowRecall(
