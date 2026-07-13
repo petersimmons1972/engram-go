@@ -35,15 +35,20 @@ func TestRunCodex_ForwardsExactArgumentsAndReturnsFinalAssistantBlock(t *testing
 	binDir := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args")
 	argcPath := filepath.Join(t.TempDir(), "argc")
+	stdinPath := filepath.Join(t.TempDir(), "stdin")
 	writeFakeCodex(t, binDir, `
 printf '%s\n' "$@" > "$CODEX_ARGS_FILE"
 printf '%s' "$#" > "$CODEX_ARGC_FILE"
+cat > "$CODEX_STDIN_FILE"
 printf '\033[31massistant/analysis\033[0m\nignore this reasoning\n'
 printf '\033[32massistant/final\033[0m\n  frontier answer  \n'
 `)
-	t.Setenv("PATH", binDir)
+	// binDir first so the fake codex shadows any real one; keep the system PATH
+	// so the fake script's `cat` (used to capture stdin) resolves.
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CODEX_ARGS_FILE", argsPath)
 	t.Setenv("CODEX_ARGC_FILE", argcPath)
+	t.Setenv("CODEX_STDIN_FILE", stdinPath)
 
 	const prompt = "question with\nidentical context"
 	got, err := runCodex(context.Background(), prompt, "gpt-5.6-sol")
@@ -67,8 +72,6 @@ printf '\033[32massistant/final\033[0m\n  frontier answer  \n'
 		"model_reasoning_effort=high",
 		"--sandbox",
 		"read-only",
-		"question with",
-		"identical context",
 	}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("codex args = %#v, want %#v", gotArgs, wantArgs)
@@ -77,8 +80,17 @@ printf '\033[32massistant/final\033[0m\n  frontier answer  \n'
 	if err != nil {
 		t.Fatalf("read captured argc: %v", err)
 	}
-	if string(argc) != "8" {
-		t.Fatalf("codex argc = %q, want 8 (prompt must remain one argument)", argc)
+	if string(argc) != "7" {
+		t.Fatalf("codex argc = %q, want 7 (prompt goes via stdin, not argv)", argc)
+	}
+	// The prompt must arrive via stdin: a generation prompt carries full
+	// retrieved context and would exceed ARG_MAX as an argv argument.
+	gotStdin, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read captured stdin: %v", err)
+	}
+	if string(gotStdin) != prompt {
+		t.Fatalf("codex stdin = %q, want %q (exact prompt via stdin)", gotStdin, prompt)
 	}
 }
 

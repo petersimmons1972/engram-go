@@ -263,11 +263,13 @@ func TestGenerateHypothesis_VLLMDefaultPathIsByteForByteUnchanged(t *testing.T) 
 func TestGenerateHypothesis_CodexRoutesIdenticalPrompt(t *testing.T) {
 	binDir := t.TempDir()
 	promptPath := filepath.Join(t.TempDir(), "prompt")
-	script := "#!/bin/sh\nprintf '%s' \"$8\" > \"$CODEX_PROMPT_FILE\"\nprintf 'codex\\nfrontier answer\\ntokens used\\n1\\n'\n"
+	// Prompt now arrives on stdin (argv would exceed ARG_MAX with full context).
+	script := "#!/bin/sh\ncat > \"$CODEX_PROMPT_FILE\"\nprintf 'codex\\nfrontier answer\\ntokens used\\n1\\n'\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
-	t.Setenv("PATH", binDir)
+	// binDir first shadows any real codex; system PATH kept so `cat` resolves.
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CODEX_PROMPT_FILE", promptPath)
 
 	const prompt = "same assembled prompt\nwith context"

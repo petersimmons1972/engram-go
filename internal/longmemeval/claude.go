@@ -171,8 +171,11 @@ func runCodex(ctx context.Context, prompt, model string) (string, error) {
 		"model_reasoning_effort=high",
 		"--sandbox",
 		"read-only",
-		prompt,
 	)
+	// Pass the prompt via stdin, not argv: generation prompts carry full
+	// retrieved context and exceed ARG_MAX ("argument list too long"). codex
+	// reads the prompt from stdin when no positional prompt is given.
+	cmd.Stdin = strings.NewReader(prompt)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	raw, err := cmd.Output()
