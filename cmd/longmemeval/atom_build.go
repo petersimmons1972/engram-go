@@ -117,7 +117,7 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 	// Embedding always needs a real endpoint (Claude has no embedding API).
 	if cfg.EmbedURL == "" {
 		_, _ = fmt.Fprintln(stderr, "--embed-url is required (the embeddings endpoint; it is NOT the same server as --llm-url).")
-		_, _ = fmt.Fprintln(stderr, "Pass the base WITHOUT a trailing /v1 — the client appends /v1/embeddings itself.")
+		_, _ = fmt.Fprintln(stderr, "Pass the embeddings base URL; a trailing /v1 is optional (the client normalizes it before appending /v1/embeddings).")
 		return 1
 	}
 
