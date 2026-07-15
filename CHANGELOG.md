@@ -6,6 +6,10 @@ All notable changes to engram-go are documented here.
 
 ## [Unreleased] — v3.3.0
 
+### Atom extraction validation (#1415)
+
+- Atom extraction now returns an error when a model attempts one or more atoms and every candidate is invalid; a genuine empty `[]` response remains successful. The `engram_atom_extraction_candidates_total{kind="attempted|valid|invalid"}` metric and structured warning logs expose validation counts for mixed and all-invalid responses.
+
 ### LME scratch-project TTL (PR #754)
 
 - **`project_ttl` sidecar table (migration 022):** Stores `created_at` and `expires_at` per project without altering the first-class `memories.project` column. `NULL expires_at` means durable (no expiry).

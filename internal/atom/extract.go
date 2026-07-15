@@ -31,6 +31,30 @@ type ClaudeExtractor struct {
 	client ClaudeCompleter
 }
 
+// ExtractionValidationError reports a model response in which every attempted
+// atom candidate failed validation. An empty model response is not an error.
+type ExtractionValidationError struct {
+	Attempted int
+	Valid     int
+	Invalid   int
+}
+
+// Error implements error.
+func (e *ExtractionValidationError) Error() string {
+	return fmt.Sprintf(
+		"atom extraction: all attempted candidates were invalid: attempted=%d valid=%d invalid=%d",
+		e.Attempted,
+		e.Valid,
+		e.Invalid,
+	)
+}
+
+type extractionCounts struct {
+	attempted int
+	valid     int
+	invalid   int
+}
+
 // NewClaudeExtractor returns a ClaudeExtractor backed by client.
 func NewClaudeExtractor(client ClaudeCompleter) *ClaudeExtractor {
 	return &ClaudeExtractor{client: client}
@@ -110,6 +134,8 @@ type atomResponse struct {
 }
 
 // Extract calls Claude once per message-aligned window and unions the results.
+// It returns ExtractionValidationError when the model attempted one or more
+// candidates but none passed validation; a JSON empty array remains successful.
 // sessionDate is the authoritative assertion time supplied by the ingest path.
 // No real LLM call is made in tests — inject a mock via ClaudeCompleter.
 func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessionDates ...time.Time) ([]Atom, error) {
@@ -121,14 +147,16 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessi
 	windows := sessionWindows(sessionText, maxSessionChars)
 	atoms := make([]Atom, 0)
 	seen := make(map[exactAtomKey]struct{})
+	var counts extractionCounts
 	for i, window := range windows {
-		windowAtoms, err := e.extractWindow(ctx, window, sessionDate)
+		windowAtoms, windowCounts, err := e.extractWindow(ctx, window, sessionDate)
 		if err != nil {
-			windowAtoms, err = e.extractWindow(ctx, window, sessionDate)
+			windowAtoms, windowCounts, err = e.extractWindow(ctx, window, sessionDate)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("atom extraction: window %d of %d: %w", i+1, len(windows), err)
 		}
+		counts.add(windowCounts)
 		for _, candidate := range windowAtoms {
 			key := exactKey(candidate)
 			if _, duplicate := seen[key]; duplicate {
@@ -138,28 +166,44 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, sessionText string, sessi
 			atoms = append(atoms, candidate)
 		}
 	}
+	observeExtractionCounts(counts)
+	if counts.attempted > 0 && counts.valid == 0 {
+		return nil, &ExtractionValidationError{
+			Attempted: counts.attempted,
+			Valid:     counts.valid,
+			Invalid:   counts.invalid,
+		}
+	}
 	return atoms, nil
 }
 
-func (e *ClaudeExtractor) extractWindow(ctx context.Context, sessionText string, sessionDate time.Time) ([]Atom, error) {
+func (e *ClaudeExtractor) extractWindow(
+	ctx context.Context,
+	sessionText string,
+	sessionDate time.Time,
+) ([]Atom, extractionCounts, error) {
 	prompt := "Extract typed atoms (focus on preferences, profile facts, and status changes) from the following session text:\n\n" + sessionText
 
 	raw, err := e.client.Complete(ctx, extractionSystem, prompt,
 		"claude-sonnet-4-6", "claude-opus-4-6", 0, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("atom extraction: claude call failed: %w", err)
+		return nil, extractionCounts{}, fmt.Errorf("atom extraction: claude call failed: %w", err)
 	}
 
 	raw, err = extractAtomJSON(raw)
 	if err != nil {
-		return nil, fmt.Errorf("atom extraction: failed to parse response JSON: %w", err)
+		return nil, extractionCounts{}, fmt.Errorf("atom extraction: failed to parse response JSON: %w", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(raw), "[") {
+		return nil, extractionCounts{}, fmt.Errorf("atom extraction: failed to parse response JSON: expected JSON array")
 	}
 
 	var resp []atomResponse
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return nil, fmt.Errorf("atom extraction: failed to parse response JSON: %w", err)
+		return nil, extractionCounts{}, fmt.Errorf("atom extraction: failed to parse response JSON: %w", err)
 	}
 
+	counts := extractionCounts{attempted: len(resp)}
 	atoms := make([]Atom, 0, len(resp))
 	for _, r := range resp {
 		a := Atom{
@@ -179,12 +223,37 @@ func (e *ClaudeExtractor) extractWindow(ctx context.Context, sessionText string,
 			a.Confidence = 1.0
 		}
 		if !a.IsValid() {
-			continue // skip malformed atoms silently
+			counts.invalid++
+			continue
 		}
+		counts.valid++
 		applyEventTime(&a, r.EventDate, sessionDate)
 		atoms = append(atoms, a)
 	}
-	return atoms, nil
+	return atoms, counts, nil
+}
+
+func (c *extractionCounts) add(other extractionCounts) {
+	c.attempted += other.attempted
+	c.valid += other.valid
+	c.invalid += other.invalid
+}
+
+func observeExtractionCounts(counts extractionCounts) {
+	if counts.attempted == 0 {
+		return
+	}
+	metrics.AtomExtractionCandidates.WithLabelValues("attempted").Add(float64(counts.attempted))
+	metrics.AtomExtractionCandidates.WithLabelValues("valid").Add(float64(counts.valid))
+	metrics.AtomExtractionCandidates.WithLabelValues("invalid").Add(float64(counts.invalid))
+	if counts.invalid > 0 && counts.valid > 0 {
+		slog.Warn(
+			"atom extraction: invalid candidates rejected",
+			"attempted", counts.attempted,
+			"valid", counts.valid,
+			"invalid", counts.invalid,
+		)
+	}
 }
 
 type exactAtomKey struct {
