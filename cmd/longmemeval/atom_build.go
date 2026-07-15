@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/petersimmons1972/engram/internal/atom"
@@ -110,15 +111,13 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if cfg.EmbedURL == "" {
-		cfg.EmbedURL = cfg.LLMBaseURL
-	}
 	if cfg.EmbedModel == "" {
 		cfg.EmbedModel = "BAAI/bge-m3"
 	}
 	// Embedding always needs a real endpoint (Claude has no embedding API).
 	if cfg.EmbedURL == "" {
-		_, _ = fmt.Fprintln(stderr, "--embed-url is required (bge-m3 via olla)")
+		_, _ = fmt.Fprintln(stderr, "--embed-url is required (the embeddings endpoint; it is NOT the same server as --llm-url).")
+		_, _ = fmt.Fprintln(stderr, "Pass the base WITHOUT a trailing /v1 — the client appends /v1/embeddings itself.")
 		return 1
 	}
 
@@ -246,12 +245,13 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
+	stats := &atomBuildStats{}
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			atomBuildWorker(extractor, embedClient, storeAtom, cfg.AtomCacheDir, cfg.MaxSessions, workCh, ckptCh)
+			atomBuildWorker(extractor, embedClient, storeAtom, cfg.AtomCacheDir, cfg.MaxSessions, workCh, ckptCh, stats)
 		}()
 	}
 	wg.Wait()
@@ -262,8 +262,30 @@ func runAtomBuild(cfg *AtomBuildConfig, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "atom-build checkpoint write error: %v\n", writerErr)
 		return 1
 	}
+	if exit := atomBuildExitCode(stats, stderr); exit != 0 {
+		return exit
+	}
 	log.Printf("atom-build: complete")
 	return 0
+}
+
+type atomBuildStats struct {
+	processed atomic.Int64
+	stored    atomic.Int64
+}
+
+func atomBuildExitCode(stats *atomBuildStats, stderr io.Writer) int {
+	processed := stats.processed.Load()
+	if processed == 0 || stats.stored.Load() > 0 {
+		return 0
+	}
+
+	_, _ = fmt.Fprintf(
+		stderr,
+		"atom-build: processed %d sessions but stored 0 atoms; check extraction, --embed-url, and atom storage errors above\n",
+		processed,
+	)
+	return 1
 }
 
 // atomBuildWorkItem is the unit of work for atomBuildWorker.
@@ -279,14 +301,16 @@ type atomStoreFunc func(project string, a *atom.Atom, vec []float32) error
 // embeds them, and stores them in Engram.
 func atomBuildWorker(
 	extractor atom.Extractor,
-	embedClient *embed.LiteLLMClient,
+	embedClient embed.Client,
 	storeAtom atomStoreFunc,
 	atomCacheDir string,
 	maxSessions int,
 	workCh <-chan atomBuildWorkItem,
 	ckptCh chan<- atomBuildEntry,
+	stats *atomBuildStats,
 ) {
 	for w := range workCh {
+		stats.processed.Add(1)
 		entry := w.entry
 		item := w.item
 
@@ -366,6 +390,7 @@ func atomBuildWorker(
 				continue
 			}
 			ok++
+			stats.stored.Add(1)
 		}
 		result.AtomsOK = ok
 		result.Status = "done"

@@ -416,7 +416,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		abfs.StringVar(&ab.APIKey, "api-key", "", "Engram API key")
 		abfs.StringVar(&ab.LLMBaseURL, "llm-url", envOr("LME_LLM_URL", ""), "OAI-compatible LLM base URL for extraction (local olla)")
 		abfs.StringVar(&ab.LLMModel, "llm-model", envOr("LME_LLM_MODEL", ""), "model name for extraction")
-		abfs.StringVar(&ab.EmbedURL, "embed-url", envOr("LME_EMBED_URL", ""), "OAI-compatible embedding endpoint (defaults to --llm-url)")
+		abfs.StringVar(&ab.EmbedURL, "embed-url", envOr("LME_EMBED_URL", ""), "required OAI-compatible embedding base URL without /v1")
 		abfs.StringVar(&ab.EmbedModel, "embed-model", envOr("LME_EMBED_MODEL", "BAAI/bge-m3"), "embedding model name")
 		abfs.IntVar(&ab.Retries, "retries", 1, "retry count for LLM/embed calls")
 		abfs.StringVar(&ab.DatabaseURL, "direct-db", envOr("DATABASE_URL", ""), "write atoms directly to Postgres DSN instead of via REST /atoms endpoint (use when /atoms not deployed)")

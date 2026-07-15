@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,50 @@ func TestEmbedRetriesOn502(t *testing.T) {
 	if count-baslineRetries != 2.0 {
 		t.Errorf("expected engram_embed_retries_total delta=2, got %.0f", count-baslineRetries)
 	}
+}
+
+func TestLiteLLMClientNormalizesEmbeddingBaseURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		baseURL string
+	}{
+		{name: "base path", baseURL: "https://embed.example/openai"},
+		{name: "trailing slash", baseURL: "https://embed.example/openai/"},
+		{name: "version suffix", baseURL: "https://embed.example/openai/v1"},
+		{name: "version suffix and trailing slash", baseURL: "https://embed.example/openai/v1/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestedPath string
+			client := NewLiteLLMClientNoProbe(tt.baseURL, "test-model", "", 3)
+			client.http = &http.Client{Transport: embedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requestedPath = req.URL.Path
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(
+						`{"data":[{"embedding":[0.1,0.2,0.3]}]}`,
+					)),
+				}, nil
+			})}
+			_, err := client.Embed(context.Background(), "test text")
+			if err != nil {
+				t.Fatalf("Embed() error = %v", err)
+			}
+			if requestedPath != "/openai/v1/embeddings" {
+				t.Fatalf("requested path = %q, want %q", requestedPath, "/openai/v1/embeddings")
+			}
+		})
+	}
+}
+
+type embedRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f embedRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 // TestEmbed_NoConnectionLeakOnRetry verifies that response bodies are closed on
