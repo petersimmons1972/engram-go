@@ -34,6 +34,21 @@ type embedGateway interface {
 	Enqueue(chunkIDs []string)
 }
 
+// embedRecallClock creates the per-embed deadline used by recall. Production
+// engines use context.WithTimeout; tests inject a manually advanced clock.
+type embedRecallClock interface {
+	WithTimeout(context.Context, time.Duration) (context.Context, context.CancelFunc)
+}
+
+type realEmbedRecallClock struct{}
+
+func (realEmbedRecallClock) WithTimeout(
+	ctx context.Context,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, timeout)
+}
+
 // MergeReviewer reviews candidate near-duplicate pairs and returns merge decisions.
 // Implemented by *claude.Client via an adapter in internal/mcp; declared here to avoid import cycle.
 type MergeReviewer interface {
@@ -344,6 +359,7 @@ type SearchEngine struct {
 	// embedRecallTimeout is the bounded embed deadline for recall. Read from
 	// ENGRAM_EMBED_RECALL_TIMEOUT_MS at engine construction; default 500ms.
 	embedRecallTimeout time.Duration
+	embedRecallClock   embedRecallClock
 
 	// embedder metadata cache — eliminates 2-3 DB round-trips per recall/store.
 	// Protected by embedderMetaMu, which is SEPARATE from embedMu to avoid
@@ -489,6 +505,7 @@ func New(ctx context.Context, backend db.Backend, embedder embed.Client, project
 		decayer:             dec,
 		weightCache:         wc,
 		PreferenceExtractor: PatternPreferenceExtractor{}, // default; swap for Ollama-backed impl without changing callers
+		embedRecallClock:    realEmbedRecallClock{},
 		// env var is the engine-level default; the --embed-recall-timeout-ms flag overrides it via SetEmbedRecallTimeout (called by main.go).
 		// Apply the same 0 → noEmbedTimeout mapping as SetEmbedRecallTimeout so
 		// ENGRAM_EMBED_RECALL_TIMEOUT_MS=0 disables the embed deadline at startup
@@ -851,7 +868,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 	if e.embedRecallTimeout == noEmbedTimeout {
 		embedCtx, embedCancel = ctx, func() {}
 	} else {
-		embedCtx, embedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
+		embedCtx, embedCancel = e.embedRecallClock.WithTimeout(ctx, e.embedRecallTimeout)
 	}
 	defer embedCancel()
 	queryVec, err := e.getEmbedder().Embed(embedCtx, query)
@@ -1007,7 +1024,7 @@ func (e *SearchEngine) RecallWithOpts(ctx context.Context, query string, topK in
 			if e.embedRecallTimeout == noEmbedTimeout {
 				pEmbedCtx, pEmbedCancel = ctx, func() {}
 			} else {
-				pEmbedCtx, pEmbedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
+				pEmbedCtx, pEmbedCancel = e.embedRecallClock.WithTimeout(ctx, e.embedRecallTimeout)
 			}
 			pVec, pErr := e.getEmbedder().Embed(pEmbedCtx, pq)
 			pEmbedCancel()
@@ -1836,7 +1853,7 @@ func (e *SearchEngine) RecallWithinMemory(ctx context.Context, query string, mem
 	if e.embedRecallTimeout == noEmbedTimeout {
 		embedCtx, embedCancel = ctx, func() {}
 	} else {
-		embedCtx, embedCancel = context.WithTimeout(ctx, e.embedRecallTimeout)
+		embedCtx, embedCancel = e.embedRecallClock.WithTimeout(ctx, e.embedRecallTimeout)
 	}
 	defer embedCancel()
 	queryVec, embedErr := e.getEmbedder().Embed(embedCtx, query)
