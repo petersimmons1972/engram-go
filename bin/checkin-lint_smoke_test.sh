@@ -87,6 +87,37 @@ fi
 git -C "${SCOPE_REPO}" reset -q -- "$staged_name"
 rm -f "${SCOPE_REPO}/${staged_name}"
 
+# ── test_tracked_scope_catches_committed_violation_staged_scope_misses (#1418) ──
+# A violation committed in a tracked file (nothing staged) must be CAUGHT by
+# `--tracked` (whole-tracked-tree audit mode) and MISSED by the default staged
+# mode (which only scans the index) — this pair documents the CI contract:
+# staged mode alone would let CI's fresh checkout scan an empty tree and
+# always pass.
+echo ""
+echo "test_tracked_scope_catches_committed_violation_staged_scope_misses"
+tracked_name="tracked-violation.env"
+printf '%s\n' 'DATABASE_URL=postgres://localhost/engram-tracked' > "${SCOPE_REPO}/${tracked_name}"
+git -C "${SCOPE_REPO}" add -- "$tracked_name"
+git -C "${SCOPE_REPO}" commit -qm 'add tracked violation fixture'
+staged_mode_output="$(cd "${SCOPE_REPO}" && bash bin/checkin-lint.sh 2>&1)" || staged_mode_exit=$?
+staged_mode_exit="${staged_mode_exit:-0}"
+tracked_mode_output="$(cd "${SCOPE_REPO}" && bash bin/checkin-lint.sh --tracked 2>&1)" || tracked_mode_exit=$?
+tracked_mode_exit="${tracked_mode_exit:-0}"
+if [[ "${staged_mode_exit}" -eq 0 ]] && ! grep -Fq "$tracked_name" <<< "${staged_mode_output}"; then
+  pass "default (staged) scope does not see a committed-but-unstaged violation"
+else
+  fail "default scope unexpectedly caught the committed violation (exit ${staged_mode_exit})"
+  printf '%s\n' "${staged_mode_output}" | tail -10 | sed 's/^/  /'
+fi
+if [[ "${tracked_mode_exit}" -ne 0 ]] && grep -Fq "$tracked_name" <<< "${tracked_mode_output}"; then
+  pass "--tracked scope catches a committed violation the staged scope misses"
+else
+  fail "--tracked scope failed to catch the committed violation (exit ${tracked_mode_exit})"
+  printf '%s\n' "${tracked_mode_output}" | tail -10 | sed 's/^/  /'
+fi
+git -C "${SCOPE_REPO}" rm -q -- "$tracked_name" >/dev/null
+git -C "${SCOPE_REPO}" commit -qm 'remove tracked violation fixture'
+
 # ── test_scan_error_fails_loudly (#1416) ────────────────────────────────────
 echo ""
 echo "test_scan_error_fails_loudly"
