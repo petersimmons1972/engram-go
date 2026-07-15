@@ -23,9 +23,9 @@ import (
 // ── minimal fake Tx ───────────────────────────────────────────────────────────
 
 type fakeTx struct {
-	mu         sync.Mutex
-	committed  bool
-	rolled     bool
+	mu        sync.Mutex
+	committed bool
+	rolled    bool
 }
 
 func (t *fakeTx) Commit(_ context.Context) error {
@@ -89,7 +89,7 @@ func (b *autoSupersedeStub) SoftDeleteMemoryTx(_ context.Context, _ db.Tx, _, _,
 }
 
 // ── all the remaining interface methods as no-ops ────────────────────────────
-func (b *autoSupersedeStub) Close()                                             {}
+func (b *autoSupersedeStub) Close() {}
 func (b *autoSupersedeStub) GetMeta(_ context.Context, _, _ string) (string, bool, error) {
 	return "", false, nil
 }
@@ -111,7 +111,9 @@ func (b *autoSupersedeStub) GetMemoriesByIDs(_ context.Context, _ string, _ []st
 func (b *autoSupersedeStub) UpdateMemory(_ context.Context, _ string, _ *string, _ []string, _ *int, _ *float64) (*types.Memory, error) {
 	return nil, nil
 }
-func (b *autoSupersedeStub) DeleteMemory(_ context.Context, _ string) (bool, error) { return false, nil }
+func (b *autoSupersedeStub) DeleteMemory(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (b *autoSupersedeStub) DeleteMemoryAtomic(_ context.Context, _, _ string, _ bool) (bool, error) {
 	return false, nil
 }
@@ -121,8 +123,8 @@ func (b *autoSupersedeStub) MergeMemoriesAtomic(_ context.Context, _, _, _, _ st
 func (b *autoSupersedeStub) ListMemories(_ context.Context, _ string, _ db.ListOptions) ([]*types.Memory, error) {
 	return nil, nil
 }
-func (b *autoSupersedeStub) TouchMemory(_ context.Context, _ string) error   { return nil }
-func (b *autoSupersedeStub) TouchMemories(_ context.Context, _ []string) error { return nil }
+func (b *autoSupersedeStub) TouchMemory(_ context.Context, _ string) error         { return nil }
+func (b *autoSupersedeStub) TouchMemories(_ context.Context, _ []string) error     { return nil }
 func (b *autoSupersedeStub) StoreChunks(_ context.Context, _ []*types.Chunk) error { return nil }
 func (b *autoSupersedeStub) StoreChunksTx(_ context.Context, _ db.Tx, _ []*types.Chunk) error {
 	return nil

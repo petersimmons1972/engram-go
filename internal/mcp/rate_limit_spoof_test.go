@@ -45,7 +45,7 @@ func TestLoopbackSpoofNotExempted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/sse", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("X-Real-IP", "127.0.0.1") // spoofed loopback header
-	req.RemoteAddr = "10.0.0.1:12345"         // physical non-loopback address
+	req.RemoteAddr = "10.0.0.1:12345"        // physical non-loopback address
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

@@ -46,3 +46,7 @@ linters:
       - path: "ingest_document_test\\.go$"
         linters:
           - staticcheck
+
+formatters:
+  enable:
+    - gofmt         # enforce canonical Go formatting

@@ -53,11 +53,11 @@ func TestSetEmbedRecallTimeout_ZeroDisablesDeadline(t *testing.T) {
 // TestSetEmbedRecallTimeout_ZeroVsPositive contrasts zero vs a short positive
 // value to confirm the two paths are distinct.
 //
-// - ms>0: engine applies a short embed deadline; embed times out early and
-//   RecallWithOpts degrades to BM25 (no error) within that budget.
-// - ms==0: engine applies no embed deadline; a bounded parent ctx is required
-//   or the caller will block.  This test gives a 150ms parent so the parent
-//   expiry propagates as an error.
+//   - ms>0: engine applies a short embed deadline; embed times out early and
+//     RecallWithOpts degrades to BM25 (no error) within that budget.
+//   - ms==0: engine applies no embed deadline; a bounded parent ctx is required
+//     or the caller will block.  This test gives a 150ms parent so the parent
+//     expiry propagates as an error.
 func TestSetEmbedRecallTimeout_ZeroVsPositive(t *testing.T) {
 	t.Run("positive_ms_applies_budget", func(t *testing.T) {
 		proj := uniqueProject("embed-timeout-pos")

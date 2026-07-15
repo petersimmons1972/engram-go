@@ -234,12 +234,12 @@ func TemporalWeights() Weights {
 
 // ScoreInput holds the raw signals for composite scoring.
 type ScoreInput struct {
-	Cosine             float64  // cosine similarity [0,1]
-	BM25               float64  // normalized BM25 score [0,1]
-	HoursSince         float64  // hours since last access
-	Importance         int      // [0,4]; 0=critical (never pruned), 4=trivial (auto-pruned)
-	DynamicImportance  *float64 // learned importance from spaced repetition; overrides Importance when non-nil
-	RetrievalPrecision *float64 // times_useful/times_retrieved; nil during cold start (<5 retrievals) → treated as 0.5
+	Cosine               float64  // cosine similarity [0,1]
+	BM25                 float64  // normalized BM25 score [0,1]
+	HoursSince           float64  // hours since last access
+	Importance           int      // [0,4]; 0=critical (never pruned), 4=trivial (auto-pruned)
+	DynamicImportance    *float64 // learned importance from spaced repetition; overrides Importance when non-nil
+	RetrievalPrecision   *float64 // times_useful/times_retrieved; nil during cold start (<5 retrievals) → treated as 0.5
 	EpisodeMatch         bool     // true when memory.episode_id == current session episode
 	MemoryType           string   // memory_type field; used to apply type-specific boosts
 	IsPreferenceQuery    bool     // true when the recall query is preference-shaped (#364)

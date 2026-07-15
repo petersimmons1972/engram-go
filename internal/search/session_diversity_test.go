@@ -126,9 +126,9 @@ func TestSessionDiversity_AllChunksSingleSession(t *testing.T) {
 func TestSessionDiversity_MissingOrEmptySessionID(t *testing.T) {
 	input := []types.SearchResult{
 		makeDivResult("s1", 0.9),
-		makeDivResultWithTag("sid:", 0.8),                                   // empty value after prefix
-		{Memory: &types.Memory{ID: "no-tag", Content: "x"}, Score: 0.7},    // no tags at all
-		makeDivResultWithTag("category:foo", 0.65),                          // no sid: tag at all
+		makeDivResultWithTag("sid:", 0.8),                               // empty value after prefix
+		{Memory: &types.Memory{ID: "no-tag", Content: "x"}, Score: 0.7}, // no tags at all
+		makeDivResultWithTag("category:foo", 0.65),                      // no sid: tag at all
 		makeDivResult("s2", 0.6),
 	}
 	// Must not panic.
