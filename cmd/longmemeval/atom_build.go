@@ -393,7 +393,19 @@ func atomBuildWorker(
 			stats.stored.Add(1)
 		}
 		result.AtomsOK = ok
-		result.Status = "done"
+		// A session that extracted atoms but persisted none of them must NOT be
+		// checkpointed "done". readAtomBuildSkipSet skips exactly the "done"
+		// entries, so a "done" with atoms_ok:0 permanently excludes this session
+		// from later runs: after fixing --embed-url the re-run would find no work,
+		// report 0 sessions processed, and exit 0 — green, with the atoms still
+		// missing. That resurrects the very bug this fix exists to kill, one run
+		// later. Mark it "error" so the work is retried.
+		if len(atoms) > 0 && ok == 0 {
+			result.Status = "error"
+			result.Error = fmt.Sprintf("persisted 0 of %d extracted atoms (embed/store failed for every atom)", len(atoms))
+		} else {
+			result.Status = "done"
+		}
 		ckptCh <- result
 		log.Printf("atom-build [%s] project=%s atoms=%d/%d (sessions=%d)", entry.QuestionID, entry.Project, ok, len(atoms), len(sessionTexts))
 

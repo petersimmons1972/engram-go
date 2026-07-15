@@ -205,3 +205,76 @@ func TestAtomBuildAllEmbeddingRequests404ExitsNonZero(t *testing.T) {
 	require.Zero(t, storeCalls)
 	require.Contains(t, stderr.String(), "stored 0 atoms")
 }
+
+// A session that extracts atoms but persists none must be checkpointed "error",
+// not "done". readAtomBuildSkipSet skips exactly the "done" entries, so a "done"
+// with atoms_ok:0 would permanently exclude the session from later runs — the
+// re-run after fixing --embed-url would find no work and exit 0 while the atoms
+// are still missing. Regression test for the adversarial-review blocker on the
+// #1410 fix: fail loud ONCE then silently green forever is still silent failure.
+func TestAtomBuildTotalLossCheckpointsErrorNotDone(t *testing.T) {
+	workCh := make(chan atomBuildWorkItem, 1)
+	ckptCh := make(chan atomBuildEntry, 1)
+	workCh <- atomBuildWorkItem{
+		entry: longmemeval.IngestEntry{QuestionID: "q1", Project: "proj"},
+		item: longmemeval.Item{
+			QuestionID:         "q1",
+			HaystackSessionIDs: []string{"s1"},
+			HaystackSessions: [][]longmemeval.Turn{{
+				{Role: "user", Content: "I prefer tea."},
+			}},
+		},
+	}
+	close(workCh)
+
+	atomBuildWorker(
+		staticAtomExtractor{atoms: []atom.Atom{{
+			Type:       atom.TypePreference,
+			Subject:    "the user",
+			Predicate:  "prefers",
+			Value:      "tea",
+			Statement:  "The user prefers tea.",
+			Scope:      atom.ScopeGlobal,
+			Confidence: 0.9,
+		}}},
+		failingEmbedClient{},
+		func(string, *atom.Atom, []float32) error { return nil },
+		"",
+		0,
+		workCh,
+		ckptCh,
+		&atomBuildStats{},
+	)
+	close(ckptCh)
+
+	entry, ok := <-ckptCh
+	require.True(t, ok, "worker must checkpoint the session")
+	require.Equal(t, "error", entry.Status,
+		"a session that persisted 0 of its extracted atoms must not be checkpointed done")
+	require.Equal(t, 1, entry.AtomsFound)
+	require.Zero(t, entry.AtomsOK)
+	require.Contains(t, entry.Error, "persisted 0 of 1")
+}
+
+// The other half of the same guarantee: an "error" entry must not land in the
+// skip set, so the next run actually reprocesses that session.
+func TestReadAtomBuildSkipSetExcludesTotalLossSessions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-atom-build.jsonl")
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	require.NoError(t, enc.Encode(atomBuildEntry{
+		QuestionID: "q-lost", Project: "proj", AtomsFound: 3, AtomsOK: 0,
+		Status: "error", Error: "persisted 0 of 3 extracted atoms",
+	}))
+	require.NoError(t, enc.Encode(atomBuildEntry{
+		QuestionID: "q-good", Project: "proj", AtomsFound: 2, AtomsOK: 2, Status: "done",
+	}))
+	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o600))
+
+	skip, err := readAtomBuildSkipSet(path)
+	require.NoError(t, err)
+	require.False(t, skip["q-lost"], "a total-loss session must be retried, not skipped")
+	require.True(t, skip["q-good"], "a genuinely done session should still be skipped")
+}
