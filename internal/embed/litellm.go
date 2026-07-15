@@ -66,7 +66,7 @@ func newLiteLLMHTTPClient(baseURL string) *http.Client {
 			// Property 2 (SSRF #319): disable env HTTP_PROXY / HTTPS_PROXY bypass.
 			// nil Proxy field means ProxyFromEnvironment; http.ProxyURL(nil) returns a
 			// function that always returns (nil, nil) — no proxy — which is what we want.
-			Proxy:       http.ProxyURL(nil),
+			Proxy: http.ProxyURL(nil),
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil {
@@ -139,8 +139,9 @@ func newLiteLLMValidatedHTTPClient(baseURL string) *http.Client {
 // operator-configured host), this constructor rejects private/reserved IPs on
 // every dial regardless of the configured hostname (SSRF #319, closes #1186).
 func NewLiteLLMClientForValidatedUpstream(ctx context.Context, baseURL, model, apiKey string, targetDims int) (*LiteLLMClient, error) {
+	baseURL = normalizeLiteLLMBaseURL(baseURL)
 	c := &LiteLLMClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    baseURL,
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
@@ -160,8 +161,9 @@ func NewLiteLLMClientForValidatedUpstream(ctx context.Context, baseURL, model, a
 // a startup probe. apiKey may be empty for unauthenticated local deployments.
 // targetDims > 0 requests MRL truncation from the server (model-dependent).
 func NewLiteLLMClient(ctx context.Context, baseURL, model, apiKey string, targetDims int) (*LiteLLMClient, error) {
+	baseURL = normalizeLiteLLMBaseURL(baseURL)
 	c := &LiteLLMClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    baseURL,
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
@@ -187,8 +189,9 @@ func NewLiteLLMClientNoProbe(baseURL, model, apiKey string, targetDims int) *Lit
 // NewLiteLLMClientNoProbeWithCircuitBreaker constructs a LiteLLMClient without a connectivity
 // probe, with optional circuit breaker configuration.
 func NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey string, targetDims int, cbCfg CircuitConfig) *LiteLLMClient {
+	baseURL = normalizeLiteLLMBaseURL(baseURL)
 	c := &LiteLLMClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    baseURL,
 		model:      model,
 		apiKey:     apiKey,
 		targetDims: targetDims,
@@ -217,6 +220,12 @@ func NewLiteLLMClientNoProbeWithCircuitBreaker(baseURL, model, apiKey string, ta
 	}
 
 	return c
+}
+
+func normalizeLiteLLMBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	return strings.TrimRight(baseURL, "/")
 }
 
 // isRetryableError checks if an error is transient and should trigger a retry.
