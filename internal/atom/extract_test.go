@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/petersimmons1972/engram/internal/atom"
+	"github.com/petersimmons1972/engram/internal/metrics"
 )
 
 // stubCompleter implements atom.ClaudeCompleter for tests — no real LLM calls.
@@ -470,19 +472,162 @@ func TestClaudeExtractorWindowsLongContent(t *testing.T) {
 }
 
 func TestClaudeExtractor_InvalidAtomSkipped(t *testing.T) {
-	// Atom with missing required field (empty statement) should be silently skipped.
 	badJSON := `[
 	  {"atom_type":"preference","subject":"the user","predicate":"likes","value":"cats","statement":"","scope":"global","confidence":0.8},
 	  {"atom_type":"fact","subject":"Alice","predicate":"works at","value":"Acme","statement":"Alice works at Acme.","scope":"global","confidence":1.0}
 	]`
 	stub := &stubCompleter{response: badJSON}
 	ext := atom.NewClaudeExtractor(stub)
+	before := extractionCandidateCounts()
 
 	atoms, err := ext.Extract(context.Background(), "text")
 	require.NoError(t, err)
-	// The invalid atom (empty statement) is dropped; only the valid fact remains.
 	assert.Len(t, atoms, 1)
 	assert.Equal(t, atom.TypeFact, atoms[0].Type)
+	assert.Equal(t, extractionCounts{attempted: 2, valid: 1, invalid: 1}, extractionCandidateCounts().minus(before))
+}
+
+func TestClaudeExtractor_AllInvalidAtomsFailWithCounts(t *testing.T) {
+	badJSON := `[
+	  {"atom_type":"preference","subject":"the user","predicate":"likes","value":"cats","statement":"","scope":"global","confidence":0.8},
+	  {"atom_type":"invented","subject":"the user","predicate":"likes","value":"tea","statement":"The user likes tea.","scope":"global","confidence":0.8}
+	]`
+	before := extractionCandidateCounts()
+
+	atoms, err := atom.NewClaudeExtractor(&stubCompleter{response: badJSON}).Extract(context.Background(), "text")
+
+	require.Error(t, err)
+	assert.Empty(t, atoms)
+	assert.ErrorContains(t, err, "attempted=2 valid=0 invalid=2")
+	var validationErr *atom.ExtractionValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Equal(t, 2, validationErr.Attempted)
+	assert.Zero(t, validationErr.Valid)
+	assert.Equal(t, 2, validationErr.Invalid)
+	assert.Equal(t, extractionCounts{attempted: 2, invalid: 2}, extractionCandidateCounts().minus(before))
+}
+
+func TestClaudeExtractor_EmptyExtractionIsCleanAndUncounted(t *testing.T) {
+	before := extractionCandidateCounts()
+
+	atoms, err := atom.NewClaudeExtractor(&stubCompleter{response: `[]`}).Extract(context.Background(), "text")
+
+	require.NoError(t, err)
+	assert.Empty(t, atoms)
+	assert.Equal(t, extractionCounts{}, extractionCandidateCounts().minus(before))
+}
+
+func TestClaudeExtractor_NullResponseIsNotCleanEmpty(t *testing.T) {
+	before := extractionCandidateCounts()
+
+	atoms, err := atom.NewClaudeExtractor(&stubCompleter{response: `null`}).Extract(context.Background(), "text")
+
+	require.Error(t, err)
+	assert.Empty(t, atoms)
+	assert.ErrorContains(t, err, "expected JSON array")
+	assert.Equal(t, extractionCounts{}, extractionCandidateCounts().minus(before))
+}
+
+func TestClaudeExtractor_AggregatesValidationAcrossWindows(t *testing.T) {
+	invalid := `[{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"","scope":"global","confidence":0.9}]`
+	valid := `[{"atom_type":"fact","subject":"Beta","predicate":"exists","value":"yes","statement":"Beta exists.","scope":"global","confidence":0.9}]`
+	tests := []struct {
+		name      string
+		responses []string
+		wantAtoms int
+		wantErr   bool
+		want      extractionCounts
+	}{
+		{
+			name:      "invalid then empty remains all-invalid",
+			responses: []string{invalid, `[]`},
+			wantErr:   true,
+			want:      extractionCounts{attempted: 1, invalid: 1},
+		},
+		{
+			name:      "invalid then valid succeeds",
+			responses: []string{invalid, valid},
+			wantAtoms: 1,
+			want:      extractionCounts{attempted: 2, valid: 1, invalid: 1},
+		},
+		{
+			name:      "all empty remains clean",
+			responses: []string{`[]`, `[]`},
+			want:      extractionCounts{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := extractionCandidateCounts()
+
+			atoms, err := atom.NewClaudeExtractor(&stubCompleter{responses: tt.responses}).Extract(
+				context.Background(),
+				strings.Repeat("a", 6001),
+			)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Len(t, atoms, tt.wantAtoms)
+			assert.Equal(t, tt.want, extractionCandidateCounts().minus(before))
+		})
+	}
+}
+
+func TestClaudeExtractor_RetryCountsOnlySuccessfulResponse(t *testing.T) {
+	mixed := `[
+	  {"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"","scope":"global","confidence":0.9},
+	  {"atom_type":"fact","subject":"Beta","predicate":"exists","value":"yes","statement":"Beta exists.","scope":"global","confidence":0.9}
+	]`
+	before := extractionCandidateCounts()
+
+	atoms, err := atom.NewClaudeExtractor(&stubCompleter{responses: []string{`not json`, mixed}}).Extract(
+		context.Background(),
+		"text",
+	)
+
+	require.NoError(t, err)
+	assert.Len(t, atoms, 1)
+	assert.Equal(t, extractionCounts{attempted: 2, valid: 1, invalid: 1}, extractionCandidateCounts().minus(before))
+}
+
+func TestClaudeExtractor_CountsValidCandidatesBeforeExactDedup(t *testing.T) {
+	valid := `[{"atom_type":"fact","subject":"Alpha","predicate":"exists","value":"yes","statement":"Alpha exists.","scope":"global","confidence":0.9}]`
+	before := extractionCandidateCounts()
+
+	atoms, err := atom.NewClaudeExtractor(&stubCompleter{responses: []string{valid, valid}}).Extract(
+		context.Background(),
+		strings.Repeat("a", 6001),
+	)
+
+	require.NoError(t, err)
+	assert.Len(t, atoms, 1)
+	assert.Equal(t, extractionCounts{attempted: 2, valid: 2}, extractionCandidateCounts().minus(before))
+}
+
+type extractionCounts struct {
+	attempted float64
+	valid     float64
+	invalid   float64
+}
+
+func extractionCandidateCounts() extractionCounts {
+	return extractionCounts{
+		attempted: testutil.ToFloat64(metrics.AtomExtractionCandidates.WithLabelValues("attempted")),
+		valid:     testutil.ToFloat64(metrics.AtomExtractionCandidates.WithLabelValues("valid")),
+		invalid:   testutil.ToFloat64(metrics.AtomExtractionCandidates.WithLabelValues("invalid")),
+	}
+}
+
+func (c extractionCounts) minus(previous extractionCounts) extractionCounts {
+	return extractionCounts{
+		attempted: c.attempted - previous.attempted,
+		valid:     c.valid - previous.valid,
+		invalid:   c.invalid - previous.invalid,
+	}
 }
 
 func TestClaudeExtractor_ScopeDefaultsToGlobal(t *testing.T) {
