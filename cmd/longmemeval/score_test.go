@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"syscall"
 	"testing"
 	"time"
@@ -138,6 +139,50 @@ func TestWriteScoreReport_DeduplicatesByQuestionID(t *testing.T) {
 	}
 	if gotCorrect != 2 {
 		t.Errorf("overall.correct = %d, want 2 (last-write-wins for q1)", gotCorrect)
+	}
+}
+
+func TestWriteScoreReport_RollsUpRowLevelProvenance(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{
+		OutDir:      dir,
+		RunID:       "config-run",
+		GoldVersion: "config-gold",
+	}
+	want := longmemeval.ScoreProvenance{
+		GoldVersion:       "row-gold",
+		ScorerVersion:     "row-scorer",
+		FeatureFlags:      map[string]any{"preserve_correct": true},
+		System:            "row-system",
+		ItemSet:           "row-items",
+		RunID:             "row-run",
+		HarnessSHA:        "row-sha",
+		GenerationContext: "full_timeline_context",
+	}
+	scores := []longmemeval.ScoreEntry{
+		{
+			QuestionID:   "q1",
+			QuestionType: "single-session-user",
+			ScoreLabel:   "CORRECT",
+			Status:       "done",
+			Provenance:   want,
+		},
+	}
+
+	writeScoreReport(cfg, scores)
+
+	data, err := os.ReadFile(filepath.Join(dir, "score_report.json"))
+	if err != nil {
+		t.Fatalf("read score_report.json: %v", err)
+	}
+	var report struct {
+		Provenance longmemeval.ScoreProvenance `json:"provenance"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("parse score_report.json: %v", err)
+	}
+	if !reflect.DeepEqual(report.Provenance, want) {
+		t.Fatalf("report provenance = %#v, want row provenance %#v", report.Provenance, want)
 	}
 }
 
