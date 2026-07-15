@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# checkin-lint.sh — engram-go pre-check-in guard.
+# checkin-lint.sh — engram-go pre-check-in guard for staged ACM files.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,6 +12,43 @@ export EXPECTED_REMOTE CHECKIN_K8S
 FINDINGS=0
 BASELINED=0
 export FINDINGS BASELINED
+
+# The default pre-commit scope is exactly the added, copied, and modified files
+# in the index. --tracked is an audit mode for checking every tracked file.
+scope="staged"
+for arg in "$@"; do
+  [[ "$arg" == "--tracked" ]] && scope="tracked"
+done
+
+file_output=""
+if [[ "$scope" == "tracked" ]]; then
+  if ! file_output="$(git ls-files)"; then
+    echo "checkin-lint: failed to enumerate tracked files" >&2
+    exit 2
+  fi
+else
+  if ! file_output="$(git diff --cached --name-only --diff-filter=ACM)"; then
+    echo "checkin-lint: failed to enumerate staged files" >&2
+    exit 2
+  fi
+fi
+
+CHECKIN_LINT_FILES=()
+if [[ -n "$file_output" ]]; then
+  mapfile -t CHECKIN_LINT_FILES <<< "$file_output"
+fi
+
+# Materialize index blobs so every existing rule reads the content being
+# committed, not unstaged working-tree edits. A checkout failure is fatal.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCAN_ROOT="$(mktemp -d "${REPO_ROOT}/.checkin-lint-stage.XXXXXX")"
+trap 'rm -rf "${SCAN_ROOT}"' EXIT
+for file in "${CHECKIN_LINT_FILES[@]}"; do
+  if ! git checkout-index --prefix="${SCAN_ROOT}/" -- "$file"; then
+    echo "checkin-lint: failed to read staged file: $file" >&2
+    exit 2
+  fi
+done
 
 # ── Baseline file path (exported so finding() subshells can read it) ──────────
 BASELINE_FILE_DEFAULT="${SCRIPT_DIR}/checkin-lint.baseline"
@@ -73,7 +110,13 @@ export -f baseline_key _baseline_allowance finding
 # suppressed (file-backed so finding() works from subshells too).
 _BASELINE_USED_FILE="$(mktemp "${TMPDIR:-/tmp}/checkin-lint-used.XXXXXX")"
 export _BASELINE_USED_FILE
-trap 'rm -f "${_BASELINE_USED_FILE}"' EXIT
+cleanup() {
+  rm -f "${_BASELINE_USED_FILE}"
+  rm -rf "${SCAN_ROOT}"
+}
+trap cleanup EXIT
+
+cd "${SCAN_ROOT}"
 
 _core_exit=0
 run_core_checks "$@" || _core_exit=$?
@@ -81,9 +124,11 @@ run_core_checks "$@" || _core_exit=$?
 
 # ── D2. Documentation auth headers must stay copy-paste valid (#1340) ────────
 section "D2. Documentation auth header snippets"
-if out="$(scripts/check-doc-auth-headers.sh 2>&1)"; then
+doc_rc=0
+out="$(CHECK_DOC_ROOT="${SCAN_ROOT}" "${REPO_ROOT}/scripts/check-doc-auth-headers.sh" 2>&1)" || doc_rc=$?
+if [[ $doc_rc -eq 0 ]]; then
   pass_rule "D2.doc-auth-headers" "all Authorization header snippets use quoted \${VAR} placeholders"
-else
+elif [[ $doc_rc -eq 1 ]]; then
   while IFS= read -r hit; do
     [[ -z "$hit" ]] && continue
     file="${hit%%:*}"
@@ -92,12 +137,24 @@ else
     why="${rest#*: }"
     finding "D2.doc-auth-headers" "$file" "$lineno" "$why"
   done <<< "$out"
+else
+  echo "checkin-lint: documentation scan failed: $out" >&2
+  exit 2
 fi
 
 # ── P1. No hardcoded DB connection strings (FM-06 / secrets) ─────────────────
 section "P1. Hardcoded DB connection strings"
 p1_n=0
+p1_hits=""
+if ! p1_hits="$(scan_tree -rn \
+  --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
+  --exclude='*_test.go' \
+  --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+  'postgres://[^$][^{]' .)"; then
+  exit 2
+fi
 while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
   file="${hit%%:*}"; rest="${hit#*:}"; lineno="${rest%%:*}"
   finding "P1.hardcoded-dsn" "$file" "$lineno" \
     "hardcoded postgres:// DSN — use environment variable injection"
@@ -105,11 +162,7 @@ while IFS= read -r hit; do
   ((p1_n++)) || true
 # postgres://[^$][^{] — excludes $VAR and ${VAR} style env references; flags bare DSNs
 # *_test.go files are excluded: test DSNs are never production secrets.
-done < <(grep -rn \
-  --include='*.go' --include='*.yaml' --include='*.yml' --include='*.env' \
-  --exclude='*_test.go' \
-  --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-  'postgres://[^$][^{]' . 2>/dev/null || true)
+done <<< "$p1_hits"
 [[ $p1_n -eq 0 ]] && pass_rule "P1.hardcoded-dsn" "no hardcoded postgres:// DSNs"
 
 if [[ "${_CORE_AUDIT_BASELINE:-0}" -eq 1 ]]; then
