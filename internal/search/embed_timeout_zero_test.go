@@ -61,6 +61,31 @@ func requireStillBlocked(t *testing.T, done <-chan zeroTestRecallResult) {
 	}
 }
 
+// requireNeverArmed positively confirms embedRecallClock.WithTimeout was never
+// invoked for this call — the discriminator that catches a reintroduced #973
+// bug (ms==0 wrongly falling through to the 500ms default via the clock).
+//
+// A plain non-blocking check right after requireStillBlocked is not
+// sufficient: RecallWithOpts does a real DB round-trip (checkEmbedderMeta)
+// before it ever reaches the embed/timeout branch, so the async goroutine may
+// not have reached that branch yet regardless of whether the clock would be
+// armed — a bare require.Empty there would pass even with the bug
+// reintroduced (verified: the mutation check below caught exactly this
+// false-negative on the first attempt). We instead wait, bounded by a
+// generous window, for the clock to be armed; if nothing arrives, the ms==0
+// path structurally never calls WithTimeout, so absence during the window is
+// the correct pass condition — the window is a synchronization budget, not a
+// pass/fail elapsed-time measurement.
+func requireNeverArmed(t *testing.T, clock *fakeEmbedClock) {
+	t.Helper()
+	select {
+	case armed := <-clock.started:
+		t.Fatalf("zero timeout must not arm any deadline; got %v", armed)
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.Empty(t, clock.started, "zero timeout must not arm any deadline")
+}
+
 // awaitRecall waits for the async recall to complete, bounded by a generous
 // safety-net timeout that only guards against a genuine hang — it is not the
 // behavior assertion.
@@ -89,6 +114,15 @@ func TestSetEmbedRecallTimeout_ZeroDisablesDeadline(t *testing.T) {
 	// Disable the engine-level embed deadline (#973).
 	eng.SetEmbedRecallTimeout(0)
 
+	// Inject the fake clock so we can positively assert it is never armed —
+	// this is the discriminator that catches a #973 regression (ms==0 wrongly
+	// applying the 500ms default via clock.WithTimeout). Without this, the
+	// test below only proves the parent ctx eventually cancels the call,
+	// which is also true if a 500ms internal deadline fires first and merely
+	// delays the observation.
+	clock := newFakeEmbedClock()
+	eng.SetEmbedRecallClock(clock)
+
 	// Manually-cancelled parent context (not a real-time deadline): with the
 	// old bug (ms==0 → preserve 500ms default) the embed would be cancelled
 	// by an internal timer regardless of when we cancel here. With the fix
@@ -102,6 +136,14 @@ func TestSetEmbedRecallTimeout_ZeroDisablesDeadline(t *testing.T) {
 	// Confirm the call is genuinely blocked on the embed before we cancel —
 	// proves no internal deadline fired on its own.
 	requireStillBlocked(t, done)
+
+	// The clock must never have been armed: ms==0 must bypass
+	// embedRecallClock.WithTimeout entirely (see engine.go's
+	// `if e.embedRecallTimeout == noEmbedTimeout` branch). If the #973 bug is
+	// reintroduced (ms==0 wrongly applying the 500ms default), this call
+	// arms the clock and this assertion catches it — the wall-clock bound
+	// this test used to rely on is gone, so this is the sole discriminator.
+	requireNeverArmed(t, clock)
 
 	cancel()
 
@@ -154,16 +196,23 @@ func TestSetEmbedRecallTimeout_ZeroVsPositive(t *testing.T) {
 		eng := newEngineWithEmbedder(t, proj, &hangingEmbedder{dims: 768})
 		eng.SetEmbedRecallTimeout(0) // no embed deadline
 
-		// Manually-cancelled parent forces a bounded call deterministically —
-		// no embedRecallClock.WithTimeout call happens on the ms==0 path (see
-		// engine.go), so there is nothing to inject a fake clock into; the
-		// parent ctx itself is the only knob.
+		// Inject the fake clock so we can positively assert
+		// embedRecallClock.WithTimeout is never called on the ms==0 path (see
+		// engine.go's `if e.embedRecallTimeout == noEmbedTimeout` branch).
+		// This is the discriminator that catches a reintroduced #973 bug
+		// (ms==0 wrongly falling through to the 500ms default).
+		clock := newFakeEmbedClock()
+		eng.SetEmbedRecallClock(clock)
+
+		// Manually-cancelled parent forces a bounded call deterministically.
 		parentCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		done := runRecallAsync(eng, parentCtx)
 
 		requireStillBlocked(t, done)
+
+		requireNeverArmed(t, clock)
 
 		cancel()
 
