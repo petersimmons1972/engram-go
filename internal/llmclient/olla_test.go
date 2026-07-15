@@ -374,4 +374,3 @@ func TestNewOllaClient_RequiresEndpoint(t *testing.T) {
 		t.Fatal("NewOllaClient(Config{}) returned nil error, want non-nil error for empty Endpoint")
 	}
 }
-

@@ -61,9 +61,9 @@ func TestRecallEpisode_CrossProjectIsolation(t *testing.T) {
 
 	pool := backendA.Pool()
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM memories WHERE project = $1`, projA)  //nolint:errcheck
-		pool.Exec(ctx, `DELETE FROM memories WHERE project = $1`, projB)  //nolint:errcheck
-		pool.Exec(ctx, `DELETE FROM episodes WHERE id = $1`, ep.ID)       //nolint:errcheck
+		pool.Exec(ctx, `DELETE FROM memories WHERE project = $1`, projA) //nolint:errcheck
+		pool.Exec(ctx, `DELETE FROM memories WHERE project = $1`, projB) //nolint:errcheck
+		pool.Exec(ctx, `DELETE FROM episodes WHERE id = $1`, ep.ID)      //nolint:errcheck
 	})
 
 	// Store a memory in project A linked to the episode.

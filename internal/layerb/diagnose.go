@@ -9,18 +9,18 @@ import (
 
 // Diagnosis records which BuildSummary gate failed for a candidate recall set.
 type Diagnosis struct {
-	Anchor                string   `json:"anchor"`
-	AnchorTerms           []string `json:"anchor_terms"`
-	AnchorTermCount       int      `json:"anchor_term_count"`
-	UnionRequired         int      `json:"union_required"`
-	RecallCount           int      `json:"recall_count"`
-	ContributingMemories  int      `json:"contributing_memories"`
-	UnionMatchedTerms     []string `json:"union_matched_terms"`
-	UnionMatchedCount     int      `json:"union_matched_count"`
-	Connected             bool     `json:"connected"`
-	ConnectedComponents   int      `json:"connected_components"`
-	FailedGate            string   `json:"failed_gate"`
-	WouldFire             bool     `json:"would_fire"`
+	Anchor               string   `json:"anchor"`
+	AnchorTerms          []string `json:"anchor_terms"`
+	AnchorTermCount      int      `json:"anchor_term_count"`
+	UnionRequired        int      `json:"union_required"`
+	RecallCount          int      `json:"recall_count"`
+	ContributingMemories int      `json:"contributing_memories"`
+	UnionMatchedTerms    []string `json:"union_matched_terms"`
+	UnionMatchedCount    int      `json:"union_matched_count"`
+	Connected            bool     `json:"connected"`
+	ConnectedComponents  int      `json:"connected_components"`
+	FailedGate           string   `json:"failed_gate"`
+	WouldFire            bool     `json:"would_fire"`
 }
 
 // DiagnoseBuildSummary reports which v4 gate would block BuildSummary for the

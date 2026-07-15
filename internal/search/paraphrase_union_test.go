@@ -1,10 +1,10 @@
 // paraphrase_union_test.go — unit tests for the ParaphraseUnion retrieval path.
 //
 // Coverage targets:
-//  - unionCandidates: dedup, order preservation, empty inputs.
-//  - RuleBasedParaphraser.Paraphrase: rule correctness, n limit, no-dup guarantee,
-//    empty/blank input, flag-off (ParaphraseUnion=false) identity guarantee.
-//  - expandContractions, stripWHPrefix, stripAuxiliaryPrefix: rule correctness.
+//   - unionCandidates: dedup, order preservation, empty inputs.
+//   - RuleBasedParaphraser.Paraphrase: rule correctness, n limit, no-dup guarantee,
+//     empty/blank input, flag-off (ParaphraseUnion=false) identity guarantee.
+//   - expandContractions, stripWHPrefix, stripAuxiliaryPrefix: rule correctness.
 package search
 
 import (
@@ -382,4 +382,3 @@ func TestStripAuxiliaryPrefix_Is(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Helpers (used only by tests in this file)
 // ---------------------------------------------------------------------------
-
