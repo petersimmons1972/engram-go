@@ -456,8 +456,9 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 		byQType[qtype] = &scoreReportCounts{}
 	}
 	errorItems := make([]map[string]any, 0)
+	questionIDs := sortedScoreQuestionIDs(deduped)
 
-	for _, questionID := range sortedScoreQuestionIDs(deduped) {
+	for _, questionID := range questionIDs {
 		s := deduped[questionID]
 		if s.Status != "done" {
 			errorItems = append(errorItems, map[string]any{
@@ -509,6 +510,18 @@ func writeScoreReportWithCompleteness(cfg *Config, scores []longmemeval.ScoreEnt
 	scorerURL := redactURL(cfg.ScorerURL)
 	scorerMaxTokens := effectiveScorerMaxTokens(cfg)
 	provenance := scoreProvenanceForConfig(cfg)
+	// Persisted score rows are authoritative for report provenance. Keep the
+	// config-derived value as a fallback for legacy rows without provenance.
+	for _, questionID := range questionIDs {
+		rowProvenance := deduped[questionID].Provenance
+		if rowProvenance.GoldVersion != "" || rowProvenance.ScorerVersion != "" ||
+			len(rowProvenance.FeatureFlags) > 0 || rowProvenance.System != "" ||
+			rowProvenance.ItemSet != "" || rowProvenance.RunID != "" ||
+			rowProvenance.HarnessSHA != "" || rowProvenance.GenerationContext != "" {
+			provenance = rowProvenance
+			break
+		}
+	}
 
 	report := map[string]any{
 		"overall":               overall,
