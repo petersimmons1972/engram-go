@@ -19,6 +19,7 @@ import (
 	"github.com/petersimmons1972/engram/internal/embed"
 	"github.com/petersimmons1972/engram/internal/metrics"
 	"github.com/petersimmons1972/engram/internal/search"
+	"github.com/petersimmons1972/engram/internal/types"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +50,35 @@ func (b *blockingClient) Dimensions() int { return b.dims }
 // compile-time check
 var _ embed.Client = (*blockingClient)(nil)
 
+type fakeEmbedClock struct {
+	started chan time.Duration
+	cancel  chan context.CancelFunc
+}
+
+func newFakeEmbedClock() *fakeEmbedClock {
+	return &fakeEmbedClock{
+		started: make(chan time.Duration, 1),
+		cancel:  make(chan context.CancelFunc, 1),
+	}
+}
+
+func (c *fakeEmbedClock) WithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	c.started <- timeout
+	c.cancel <- cancel
+	return ctx, cancel
+}
+
+func (c *fakeEmbedClock) Advance(t *testing.T) {
+	t.Helper()
+	select {
+	case cancel := <-c.cancel:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("embed timeout was not armed")
+	}
+}
+
 func newEngineWithEmbedder(t *testing.T, project string, embedder embed.Client) *search.SearchEngine {
 	t.Helper()
 	ctx := context.Background()
@@ -67,20 +97,38 @@ func newEngineWithEmbedder(t *testing.T, project string, embedder embed.Client) 
 // fallback slack.
 func TestEmbedDeadline_RecallWithOpts(t *testing.T) {
 	proj := uniqueProject("embed-deadline-recall")
-	// Embedder blocks for 60s — far longer than the 500ms embed deadline.
+	// Embedder blocks until the injected clock advances the 500ms deadline.
 	eng := newEngineWithEmbedder(t, proj, &blockingClient{dims: 768, holdFor: 60 * time.Second})
+	clock := newFakeEmbedClock()
+	eng.SetEmbedRecallClock(clock)
 
-	callerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	type recallResult struct {
+		results []types.SearchResult
+		err     error
+	}
+	done := make(chan recallResult, 1)
+	go func() {
+		results, err := eng.RecallWithOpts(context.Background(), "test query", 5, "summary", search.RecallOpts{})
+		done <- recallResult{results: results, err: err}
+	}()
 
-	start := time.Now()
-	results, err := eng.RecallWithOpts(callerCtx, "test query", 5, "summary", search.RecallOpts{})
-	elapsed := time.Since(start)
+	require.Equal(t, 500*time.Millisecond, <-clock.started)
+	select {
+	case result := <-done:
+		t.Fatalf("RecallWithOpts returned before embed deadline advanced: %v", result.err)
+	default:
+	}
 
-	require.NoError(t, err, "RecallWithOpts must degrade to BM25+recency on embed failure, not return an error")
-	require.NotNil(t, results, "results slice must be non-nil even when degraded")
-	require.Less(t, elapsed, 1*time.Second,
-		"RecallWithOpts must return promptly when embed times out (500ms default); got %s", elapsed)
+	clock.Advance(t)
+	var result recallResult
+	select {
+	case result = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RecallWithOpts did not return after embed deadline advanced")
+	}
+
+	require.NoError(t, result.err, "RecallWithOpts must degrade to BM25+recency on embed failure, not return an error")
+	require.NotNil(t, result.results, "results slice must be non-nil even when degraded")
 }
 
 // TestEmbedDeadline_RecallWithinMemory verifies that RecallWithinMemory degrades
