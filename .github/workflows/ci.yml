@@ -97,4 +97,5 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run checkin-lint
-        run: bin/checkin-lint.sh
+        # --tracked: CI has no staged files; scan the whole tracked tree
+        run: bin/checkin-lint.sh --tracked

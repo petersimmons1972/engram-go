@@ -23,6 +23,18 @@ export _ALL_FINDING_KEYS_FILE
 section()   { echo -e "\n${BOLD}${BLU}── $* ──${RST}"; }
 pass_rule() { echo -e "${GRN}ok${RST}  [$1] $2"; }
 hint()      { [[ "${_CORE_FIX_HINTS:-0}" -eq 1 ]] && echo -e "    ${YLW}hint:${RST} $*" || true; }
+# grep returns 1 for a clean no-match result and >1 for a real scan error.
+# Normalize no-match to success while preserving errors as exit 2.
+scan_tree() {
+  local output rc=0
+  output="$(grep "$@" 2>&1)" || rc=$?
+  if [[ $rc -gt 1 ]]; then
+    echo -e "${RED}ERROR${RST}: repository scan failed: ${output:-grep exited ${rc}}" >&2
+    return 2
+  fi
+  [[ $rc -eq 0 ]] && printf '%s\n' "$output"
+  return 0
+}
 finding() {
   local rule="$1" file="$2" line="$3" why="$4"
   echo -e "${RED}FINDING${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
@@ -30,7 +42,7 @@ finding() {
     echo "${rule}::${file}::${line}" >> "$_ALL_FINDING_KEYS_FILE"
   ((FINDINGS++)) || true
 }
-export -f section pass_rule hint finding
+export -f section pass_rule hint scan_tree finding
 
 _check_remote_guard() {
   section "F.remote-guard (FM-12)"
@@ -56,8 +68,17 @@ _check_remote_guard() {
 
 _check_home_literal() {
   section "C.home-literal (FM-06)"
-  local n=0
+  local n=0 hits
+  if ! hits="$(scan_tree -rn \
+    --include='*.yaml' --include='*.yml' --include='*.sh' \
+    --include='*.conf' --include='*.service' --include='*.toml' --include='*.env' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
+    '/home/[a-z][a-z0-9_-]*' .)"; then
+    return 2
+  fi
   while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}" match="${rest#*:}"
     echo "$match" | grep -qE '/home/(user|runner)([/[:space:]]|$|["])' && continue
@@ -65,39 +86,48 @@ _check_home_literal() {
       "hardcoded /home/<user> path — use %h / __HOME__ / env-var injection"
     hint "In systemd units: %h expands in ExecStart but NOT in Environment= strings."
     ((n++)) || true
-  done < <(grep -rn \
-    --include='*.yaml' --include='*.yml' --include='*.sh' \
-    --include='*.conf' --include='*.service' --include='*.toml' --include='*.env' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-    --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
-    '/home/[a-z][a-z0-9_-]*' . 2>/dev/null || true)
+  done <<< "$hits"
   [[ $n -eq 0 ]] && pass_rule "C.home-literal" "no hardcoded /home/<user> paths"
+  return 0
 }
 
 _check_version_pinned_path() {
   section "C.version-pinned-path (FM-08)"
-  local n=0
+  local n=0 hits
+  if ! hits="$(scan_tree -rn \
+    --include='*.yaml' --include='*.yml' --include='*.sh' \
+    --include='*.conf' --include='*.service' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    --exclude='checkin-lint*.sh' \
+    -E '(\.nvm/versions/node/v[0-9]|/versions/node/v[0-9]|/node/v[0-9]+\.[0-9]+\.[0-9]+[^-])' \
+    .)"; then
+    return 2
+  fi
   while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}"
     finding "C.version-pinned-path" "$file" "$lineno" \
       "version-pinned tool path breaks on upgrade — use 'command -v' or a non-versioned symlink"
     hint "Replace with: \$(command -v node)  or add a non-versioned directory to PATH."
     ((n++)) || true
-  done < <(grep -rn \
-    --include='*.yaml' --include='*.yml' --include='*.sh' \
-    --include='*.conf' --include='*.service' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-    --exclude='checkin-lint*.sh' \
-    -E '(\.nvm/versions/node/v[0-9]|/versions/node/v[0-9]|/node/v[0-9]+\.[0-9]+\.[0-9]+[^-])' \
-    . 2>/dev/null || true)
+  done <<< "$hits"
   [[ $n -eq 0 ]] && pass_rule "C.version-pinned-path" "no version-pinned tool paths"
+  return 0
 }
 
 _check_exit_zero_wrapper() {
   section "D.exit-zero-wrapper (FM-18)"
-  local n=0
+  local n=0 hits
+  if ! hits="$(scan_tree -rn \
+    --include='*.sh' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
+    'exit 0' .)"; then
+    return 2
+  fi
   while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}" match="${rest#*:}"
     local trimmed
@@ -107,35 +137,45 @@ _check_exit_zero_wrapper() {
       "unconditional 'exit 0' may mask child-process failure (FM-18)"
     hint "Wrappers must propagate child exit code. Use: exec child_cmd  or  child_cmd; exit \$?"
     ((n++)) || true
-  done < <(grep -rn \
-    --include='*.sh' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-    --exclude='checkin-lint*.sh' --exclude='test-checkin-lint*.sh' \
-    'exit 0' . 2>/dev/null || true)
+  done <<< "$hits"
   [[ $n -eq 0 ]] && pass_rule "D.exit-zero-wrapper" "no unconditional 'exit 0' in shell scripts"
+  return 0
 }
 
 _check_latest_image() {
   section "G.latest-image (FM-15)"
-  local n=0
+  local n=0 hits
+  if ! hits="$(scan_tree -rn \
+    --include='*.yaml' --include='*.yml' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    -E 'image:\s+[^@[:space:]]+:latest' .)"; then
+    return 2
+  fi
   while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}"
     finding "G.latest-image" "$file" "$lineno" \
       "':latest' image tag — pin to digest or immutable tag (FM-15)"
     hint "Replace ':latest' with a digest: image: registry/name@sha256:..."
     ((n++)) || true
-  done < <(grep -rn \
-    --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-    -E 'image:\s+[^@[:space:]]+:latest' . 2>/dev/null || true)
+  done <<< "$hits"
   [[ $n -eq 0 ]] && pass_rule "G.latest-image" "no ':latest' image tags"
+  return 0
 }
 
 _check_hardcoded_ip() {
   section "G.hardcoded-ip (FM-16)"
-  local n=0
+  local n=0 hits
+  if ! hits="$(scan_tree -rn \
+    --include='*.yaml' --include='*.yml' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    -E '(ip:|cidr:)\s+[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+    .)"; then
+    return 2
+  fi
   while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
     local file="${hit%%:*}" rest="${hit#*:}"
     local lineno="${rest%%:*}"
     grep -q 'kind: NetworkPolicy' "$file" 2>/dev/null || continue
@@ -143,26 +183,36 @@ _check_hardcoded_ip() {
       "hardcoded IP in NetworkPolicy — use podSelector/namespaceSelector (FM-16)"
     hint "Replace ipBlock with: to: - podSelector: matchLabels: app: <name>"
     ((n++)) || true
-  done < <(grep -rn \
-    --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
-    -E '(ip:|cidr:)\s+[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
-    . 2>/dev/null || true)
+  done <<< "$hits"
   [[ $n -eq 0 ]] && pass_rule "G.hardcoded-ip" "no hardcoded IPs in NetworkPolicy"
+  return 0
 }
 
 _check_missing_namespace() {
   section "G.missing-namespace (FM-17)"
   local n=0
   local system_ns="default kube-system kube-public kube-node-lease"
-  local referenced_ns defined_ns
-  referenced_ns=$(grep -rh --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' -E '^\s+namespace:\s+\S+' . 2>/dev/null \
-    | sed 's/.*namespace:[[:space:]]*//' | sort -u || true)
-  defined_ns=$(grep -rhl 'kind: Namespace' --include='*.yaml' --include='*.yml' \
-    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' . 2>/dev/null \
-    | xargs grep -h '^  name:' 2>/dev/null \
-    | sed 's/.*name:[[:space:]]*//' | sort -u || true)
+  local referenced_hits defined_files referenced_ns defined_ns
+  local -a defined_paths=()
+  if ! referenced_hits="$(scan_tree -rh --include='*.yaml' --include='*.yml' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    -E '^\s+namespace:\s+\S+' .)"; then
+    return 2
+  fi
+  referenced_ns="$(printf '%s\n' "$referenced_hits" | sed 's/.*namespace:[[:space:]]*//' | sort -u)"
+  if ! defined_files="$(scan_tree -rl --include='*.yaml' --include='*.yml' \
+    --exclude-dir='.git' --exclude-dir='.claude' --exclude-dir='.worktrees' --exclude-dir='.dispatch' \
+    'kind: Namespace' .)"; then
+    return 2
+  fi
+  defined_ns=""
+  if [[ -n "$defined_files" ]]; then
+    mapfile -t defined_paths <<< "$defined_files"
+    if ! defined_ns="$(scan_tree -h '^  name:' "${defined_paths[@]}")"; then
+      return 2
+    fi
+    defined_ns="$(printf '%s\n' "$defined_ns" | sed 's/.*name:[[:space:]]*//' | sort -u)"
+  fi
   while IFS= read -r ns; do
     [[ -z "$ns" ]] && continue
     echo "$system_ns" | grep -qw "$ns" && continue
@@ -173,6 +223,7 @@ _check_missing_namespace() {
     ((n++)) || true
   done <<< "$referenced_ns"
   [[ $n -eq 0 ]] && pass_rule "G.missing-namespace" "all referenced namespaces have manifests"
+  return 0
 }
 
 _do_baseline_audit() {
@@ -223,14 +274,14 @@ run_core_checks() {
     export _ALL_FINDING_KEYS_FILE
   fi
 
-  _check_remote_guard
-  _check_home_literal
-  _check_version_pinned_path
-  _check_exit_zero_wrapper
+  _check_remote_guard || return $?
+  _check_home_literal || return $?
+  _check_version_pinned_path || return $?
+  _check_exit_zero_wrapper || return $?
   if [[ "${CHECKIN_K8S:-0}" -eq 1 ]]; then
-    _check_latest_image
-    _check_hardcoded_ip
-    _check_missing_namespace
+    _check_latest_image || return $?
+    _check_hardcoded_ip || return $?
+    _check_missing_namespace || return $?
   fi
 
 }
