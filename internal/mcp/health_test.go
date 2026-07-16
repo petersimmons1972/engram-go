@@ -410,9 +410,9 @@ func TestHealth_UnauthenticatedReturnsMinimalStatus(t *testing.T) {
 
 	const testKey = "health-gate-test-key"
 	s := &Server{
-		cfg:       Config{RouterURL: ollamaServer.URL},
+		cfg:           Config{RouterURL: ollamaServer.URL},
 		embedDegraded: &atomic.Bool{},
-		apiKey:    testKey,
+		apiKey:        testKey,
 	}
 
 	t.Run("unauthenticated_gets_minimal", func(t *testing.T) {

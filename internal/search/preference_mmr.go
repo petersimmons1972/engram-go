@@ -7,10 +7,10 @@
 // (e.g. books/reading matching a generic preference query).
 //
 // Algorithm (Approach A from advisory-gate decision):
-//   1. Sort primary results by composite score.
-//   2. Compute centroid of top-N (default 10) result embeddings.
-//   3. Re-score ALL candidates: mmr_score = λ·relevance - (1-λ)·sim(doc,centroid)
-//   4. Re-sort by mmr_score, return topK.
+//  1. Sort primary results by composite score.
+//  2. Compute centroid of top-N (default 10) result embeddings.
+//  3. Re-score ALL candidates: mmr_score = λ·relevance - (1-λ)·sim(doc,centroid)
+//  4. Re-sort by mmr_score, return topK.
 //
 // λ default: 0.7 (70% relevance, 30% anti-centroid diversity penalty).
 // Ablatable: flag-off (PreferenceMMR=false) → baseline unchanged.
@@ -37,7 +37,7 @@ const (
 // mmrCandidate bundles the fields needed for MMR re-scoring.
 type mmrCandidate struct {
 	memoryID  string
-	relevance float64  // composite score from primary recall
+	relevance float64   // composite score from primary recall
 	embedding []float32 // best-chunk embedding for this memory; nil = no embedding
 }
 

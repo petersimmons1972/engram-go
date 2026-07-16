@@ -9,11 +9,12 @@ import (
 // TestUpdateChunkEmbedding_NullGuard_SQLContainsAndEmbeddingIsNull verifies
 // that UpdateChunkEmbedding in postgres_chunk.go includes AND embedding IS NULL
 // on the UPDATE so that:
-//   (a) A second writer racing the same row gets rows_affected==0 (no overwrite).
-//   (b) A normal reembed of a NULL-embedding row still writes successfully.
-//   (c) A mixed-drainer attempt (global_worker + embed_gateway racing the same
-//       row after the claim transaction commits) PRESERVES the first committed
-//       embedding — the corruption gate for #1087 Patch A.
+//
+//	(a) A second writer racing the same row gets rows_affected==0 (no overwrite).
+//	(b) A normal reembed of a NULL-embedding row still writes successfully.
+//	(c) A mixed-drainer attempt (global_worker + embed_gateway racing the same
+//	    row after the claim transaction commits) PRESERVES the first committed
+//	    embedding — the corruption gate for #1087 Patch A.
 //
 // SQL-string assertion (no DB required). The companion integration test
 // (TestUpdateChunkEmbedding_NullGuard_RowsAffected, //go:build integration)

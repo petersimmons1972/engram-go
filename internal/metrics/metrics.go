@@ -116,6 +116,14 @@ var (
 		Help: "Entity extraction jobs dropped (semaphore_full or queue_error)",
 	}, []string{"reason"})
 
+	// AtomExtractionCandidates counts model-returned atom candidates by accounting
+	// kind. The kind label is attempted, valid, or invalid; attempted equals the
+	// sum of valid and invalid and must not be summed with the other series.
+	AtomExtractionCandidates = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "engram_atom_extraction_candidates_total",
+		Help: "Atom extraction candidate accounting by attempted, valid, or invalid kind",
+	}, []string{"kind"})
+
 	// AtomEventDateRejections counts event_date values discarded by the atom
 	// extractor because they are malformed or outside the accepted time range.
 	AtomEventDateRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -230,6 +238,7 @@ func init() {
 		EmbedGatewayConcurrency,
 		WorkerPanics,
 		ExtractionDropped,
+		AtomExtractionCandidates,
 		AtomEventDateRejections,
 		EmbedCircuitState,
 		EmbedCircuitTransitions,

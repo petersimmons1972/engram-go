@@ -3,7 +3,7 @@
 //
 // Primary path: calls /setup-token (requires Bearer auth since #540) to retrieve the
 // current token and writes the mcpServers.engram block in the Claude Code config.
-// 
+//
 // Fallback path (#614, #616): when /setup-token returns 401 (bootstrap scenario where
 // no valid token exists yet), engram-setup reads the key from disk in priority order:
 //  1. ~/.config/engram/api_key — backup written by `make init`, matches Infisical secret

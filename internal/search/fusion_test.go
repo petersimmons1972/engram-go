@@ -257,4 +257,3 @@ func TestRecallOpts_FusionDefaultOff(t *testing.T) {
 		t.Error("RecallOpts zero value must have Fusion=false (default OFF)")
 	}
 }
-

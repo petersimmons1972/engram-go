@@ -17,37 +17,37 @@ import (
 )
 
 type gateTrace struct {
-	QuestionID       string            `json:"question_id"`
-	Question         string            `json:"question"`
-	Project          string            `json:"project"`
-	GreenfieldProject string           `json:"greenfield_project,omitempty"`
-	SessionsIngested int              `json:"sessions_ingested"`
-	RecallCount      int              `json:"recall_count"`
-	GreenfieldMemoryCount int         `json:"greenfield_memory_count,omitempty"`
-	Exhaustive       bool             `json:"exhaustive_aggregation"`
-	BaselineGate     layerb.Diagnosis `json:"baseline_gate"`
-	ExhaustiveGate   *layerb.Diagnosis `json:"exhaustive_gate,omitempty"`
-	GreenfieldGate   *layerb.Diagnosis `json:"greenfield_gate,omitempty"`
-	RetrofitDBGate   *layerb.Diagnosis `json:"retrofit_db_gate,omitempty"`
-	RetrofitDBMemoryCount int         `json:"retrofit_db_memory_count,omitempty"`
-	LayerBFired      bool             `json:"layer_b_fired"`
-	GreenfieldWouldFire bool          `json:"greenfield_would_fire,omitempty"`
-	RetrofitDBWouldFire bool          `json:"retrofit_db_would_fire,omitempty"`
+	QuestionID            string            `json:"question_id"`
+	Question              string            `json:"question"`
+	Project               string            `json:"project"`
+	GreenfieldProject     string            `json:"greenfield_project,omitempty"`
+	SessionsIngested      int               `json:"sessions_ingested"`
+	RecallCount           int               `json:"recall_count"`
+	GreenfieldMemoryCount int               `json:"greenfield_memory_count,omitempty"`
+	Exhaustive            bool              `json:"exhaustive_aggregation"`
+	BaselineGate          layerb.Diagnosis  `json:"baseline_gate"`
+	ExhaustiveGate        *layerb.Diagnosis `json:"exhaustive_gate,omitempty"`
+	GreenfieldGate        *layerb.Diagnosis `json:"greenfield_gate,omitempty"`
+	RetrofitDBGate        *layerb.Diagnosis `json:"retrofit_db_gate,omitempty"`
+	RetrofitDBMemoryCount int               `json:"retrofit_db_memory_count,omitempty"`
+	LayerBFired           bool              `json:"layer_b_fired"`
+	GreenfieldWouldFire   bool              `json:"greenfield_would_fire,omitempty"`
+	RetrofitDBWouldFire   bool              `json:"retrofit_db_would_fire,omitempty"`
 }
 
 func main() {
 	var (
-		fixturePath   = flag.String("fixture", "/tmp/lme_s_multisession_133.json", "LME-S multi-session fixture")
-		idsCSV        = flag.String("ids", "", "comma-separated question_ids (required)")
-		projectPrefix = flag.String("project-prefix", "wp05-retrofit-2026-07-04c", "ingested project prefix")
-		serverURL     = flag.String("url", "http://127.0.0.1:8790", "Engram MCP server URL")
-		apiKey        = flag.String("api-key", "", "Engram API key")
-		limit         = flag.Int("limit", 200, "recall limit for baseline path")
-		exhaustive        = flag.Bool("exhaustive-aggregation", true, "also run exhaustive recall path and diagnose")
-		greenfieldDSN     = flag.String("greenfield-dsn", "", "optional Postgres DSN to diagnose greenfield raw_memories (e.g. engram_ng)")
-		greenfieldPrefix  = flag.String("greenfield-prefix", "wp05b-refire2-2026-07-04", "greenfield project prefix")
-		retrofitDSN       = flag.String("retrofit-dsn", "", "optional Postgres DSN to diagnose retrofit memories directly (e.g. engram_go_retrofit)")
-		outPath           = flag.String("out", "-", "output JSON path (- for stdout)")
+		fixturePath      = flag.String("fixture", "/tmp/lme_s_multisession_133.json", "LME-S multi-session fixture")
+		idsCSV           = flag.String("ids", "", "comma-separated question_ids (required)")
+		projectPrefix    = flag.String("project-prefix", "wp05-retrofit-2026-07-04c", "ingested project prefix")
+		serverURL        = flag.String("url", "http://127.0.0.1:8790", "Engram MCP server URL")
+		apiKey           = flag.String("api-key", "", "Engram API key")
+		limit            = flag.Int("limit", 200, "recall limit for baseline path")
+		exhaustive       = flag.Bool("exhaustive-aggregation", true, "also run exhaustive recall path and diagnose")
+		greenfieldDSN    = flag.String("greenfield-dsn", "", "optional Postgres DSN to diagnose greenfield raw_memories (e.g. engram_ng)")
+		greenfieldPrefix = flag.String("greenfield-prefix", "wp05b-refire2-2026-07-04", "greenfield project prefix")
+		retrofitDSN      = flag.String("retrofit-dsn", "", "optional Postgres DSN to diagnose retrofit memories directly (e.g. engram_go_retrofit)")
+		outPath          = flag.String("out", "-", "output JSON path (- for stdout)")
 	)
 	flag.Parse()
 	if strings.TrimSpace(*idsCSV) == "" {
@@ -146,13 +146,13 @@ func main() {
 	}
 
 	payload, err := json.MarshalIndent(map[string]any{
-		"system":            "engram-go-retrofit",
-		"project_prefix":    *projectPrefix,
-		"greenfield_prefix":   strings.TrimSpace(*greenfieldPrefix),
+		"system":             "engram-go-retrofit",
+		"project_prefix":     *projectPrefix,
+		"greenfield_prefix":  strings.TrimSpace(*greenfieldPrefix),
 		"greenfield_dsn_set": strings.TrimSpace(*greenfieldDSN) != "",
 		"retrofit_dsn_set":   strings.TrimSpace(*retrofitDSN) != "",
-		"exhaustive":        *exhaustive,
-		"traces":            traces,
+		"exhaustive":         *exhaustive,
+		"traces":             traces,
 	}, "", "  ")
 	if err != nil {
 		fatal("marshal: %v", err)

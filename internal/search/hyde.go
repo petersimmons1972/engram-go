@@ -161,7 +161,7 @@ func (hs *HydeScorer) Score(ctx context.Context, query, project string, limit in
 // mergeRRF combines raw chunk cosine scores with HyDE scores using
 // Reciprocal Rank Fusion (RRF).
 //
-//   merged[id] = 1/(k + rawRank(id)) + 1/(k + hydeRank(id))
+//	merged[id] = 1/(k + rawRank(id)) + 1/(k + hydeRank(id))
 //
 // k=60 is the standard RRF constant. IDs present in only one list receive
 // the worst possible rank (len+1) in the missing list, not a zero contribution.

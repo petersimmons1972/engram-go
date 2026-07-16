@@ -41,11 +41,11 @@ type itemTrace struct {
 
 func main() {
 	var (
-		fixturePath   = flag.String("fixture", "/tmp/lme_s_multisession_133.json", "LME-S multi-session fixture")
-		idsCSV        = flag.String("ids", "", "comma-separated question_ids to trace (required)")
-		projectPrefix = flag.String("project-prefix", "wp05-retrofit-2026-07-04c", "ingested project prefix")
-		serverURL     = flag.String("url", "http://127.0.0.1:8790", "Engram MCP server URL")
-		apiKey        = flag.String("api-key", "", "Engram API key (env ENGRAM_API_KEY)")
+		fixturePath           = flag.String("fixture", "/tmp/lme_s_multisession_133.json", "LME-S multi-session fixture")
+		idsCSV                = flag.String("ids", "", "comma-separated question_ids to trace (required)")
+		projectPrefix         = flag.String("project-prefix", "wp05-retrofit-2026-07-04c", "ingested project prefix")
+		serverURL             = flag.String("url", "http://127.0.0.1:8790", "Engram MCP server URL")
+		apiKey                = flag.String("api-key", "", "Engram API key (env ENGRAM_API_KEY)")
 		limit                 = flag.Int("limit", 200, "recall limit")
 		exhaustiveAggregation = flag.Bool("exhaustive-aggregation", false, "H8 exhaustive recall path")
 		outPath               = flag.String("out", "-", "output JSON path (- for stdout)")
@@ -143,12 +143,12 @@ func main() {
 	}
 
 	payload, err := json.MarshalIndent(map[string]any{
-		"system":         "engram-go-retrofit",
-		"project_prefix": *projectPrefix,
-		"limit":                   *limit,
-		"exhaustive_aggregation":  *exhaustiveAggregation,
-		"server_url":     *serverURL,
-		"traces":         traces,
+		"system":                 "engram-go-retrofit",
+		"project_prefix":         *projectPrefix,
+		"limit":                  *limit,
+		"exhaustive_aggregation": *exhaustiveAggregation,
+		"server_url":             *serverURL,
+		"traces":                 traces,
 	}, "", "  ")
 	if err != nil {
 		fatal("marshal: %v", err)

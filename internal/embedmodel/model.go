@@ -24,8 +24,8 @@ var aliasToCanonical = map[string]string{
 	"bge-m3":             CanonicalBGEM3,
 	"bge-m3-Q8_0.gguf":   CanonicalBGEM3,
 	"bge-m3-Q4_K_M.gguf": CanonicalBGEM3,
-	LiveAlias:           CanonicalBGEM3, // olla routing alias: MI-50 burst embedder
-	ReembedAlias:        CanonicalBGEM3, // olla routing alias: W6800+leviathan bulk embedder
+	LiveAlias:            CanonicalBGEM3, // olla routing alias: MI-50 burst embedder
+	ReembedAlias:         CanonicalBGEM3, // olla routing alias: W6800+leviathan bulk embedder
 }
 
 func IsLiveAlias(modelID string) bool {
