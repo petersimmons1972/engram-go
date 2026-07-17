@@ -7,16 +7,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/petersimmons1972/engram/internal/longmemeval"
 )
 
 // ingestProjectCheckMaxSample bounds how many unique projects are probed before
-// generation. 20 keeps healthy-run latency negligible (one memory_list limit=1
-// per sample) while making all-empty detection certain for the #1292 failure
-// mode (cleanup-policy=auto wiped every project) and near-certain for mass
-// partial deletion.
-const ingestProjectCheckMaxSample = 20
+// generation. 20 keeps healthy-run latency bounded (at most two memory_list
+// limit=1 attempts per sample) while making all-empty detection certain for the
+// #1292 failure mode (cleanup-policy=auto wiped every project) and near-certain
+// for mass partial deletion.
+const (
+	ingestProjectCheckMaxSample    = 20
+	ingestProjectCheckProbeTimeout = 5 * time.Second
+	ingestProjectCheckRetryBackoff = 25 * time.Millisecond
+)
 
 // projectHasMemoriesFunc reports whether project still contains ≥1 memory.
 // Injected for unit tests; production uses Client.ListProjectMemories(limit=1).
@@ -78,13 +83,35 @@ func validateIngestProjectsAlive(
 	allowEmpty bool,
 	ckptPath string,
 ) error {
+	return validateIngestProjectsAliveWithTiming(
+		ctx,
+		check,
+		projects,
+		allowEmpty,
+		ckptPath,
+		ingestProjectCheckProbeTimeout,
+		ingestProjectCheckRetryBackoff,
+	)
+}
+
+// validateIngestProjectsAliveWithTiming applies a deadline to each probe
+// attempt and retries one failed attempt after a bounded backoff.
+func validateIngestProjectsAliveWithTiming(
+	ctx context.Context,
+	check projectHasMemoriesFunc,
+	projects []string,
+	allowEmpty bool,
+	ckptPath string,
+	probeTimeout time.Duration,
+	retryBackoff time.Duration,
+) error {
 	if len(projects) == 0 || check == nil {
 		return nil
 	}
 
 	var empty []string
 	for _, p := range projects {
-		has, err := check(ctx, p)
+		has, err := checkIngestProjectWithRetry(ctx, check, p, probeTimeout, retryBackoff)
 		if err != nil {
 			return fmt.Errorf("ingest project memory check failed for %q (checkpoint=%s): %w", p, ckptPath, err)
 		}
@@ -102,6 +129,45 @@ func validateIngestProjectsAlive(
 		return nil
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+func checkIngestProjectWithRetry(
+	ctx context.Context,
+	check projectHasMemoriesFunc,
+	project string,
+	probeTimeout time.Duration,
+	retryBackoff time.Duration,
+) (bool, error) {
+	const attempts = 2
+
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+		hasMemories, checkErr := check(probeCtx, project)
+		probeErr := probeCtx.Err()
+		cancel()
+		if probeErr != nil {
+			checkErr = probeErr
+		}
+		if checkErr == nil {
+			return hasMemories, nil
+		}
+		err = checkErr
+
+		if attempt == attempts-1 || retryBackoff <= 0 {
+			continue
+		}
+		timer := time.NewTimer(retryBackoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return false, err
 }
 
 // formatIngestProjectEmptyError builds the fail-fast message. It names the

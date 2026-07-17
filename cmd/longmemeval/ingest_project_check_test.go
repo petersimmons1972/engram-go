@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -68,6 +69,36 @@ func TestValidateIngestProjectsAlive_HappyPath(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("validateIngestProjectsAlive: %v", err)
+	}
+}
+
+// TestValidateIngestProjectsAlive_TransientCheckerErrorRetries verifies a
+// transient probe failure does not reject an otherwise healthy checkpoint.
+func TestValidateIngestProjectsAlive_TransientCheckerErrorRetries(t *testing.T) {
+	var calls int
+	check := func(ctx context.Context, _ string) (bool, error) {
+		calls++
+		if _, ok := ctx.Deadline(); !ok {
+			return false, errors.New("probe context has no deadline")
+		}
+		if calls == 1 {
+			return false, errors.New("temporary connection reset")
+		}
+		return true, nil
+	}
+
+	err := validateIngestProjectsAlive(
+		context.Background(),
+		check,
+		[]string{"lme-a"},
+		false,
+		"/tmp/checkpoint-ingest.jsonl",
+	)
+	if err != nil {
+		t.Fatalf("validateIngestProjectsAlive: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("checker calls = %d, want 2", calls)
 	}
 }
 
@@ -168,24 +199,66 @@ func TestValidateIngestProjectsAlive_AllEmpty_WithOverrideProceeds(t *testing.T)
 	}
 }
 
-// TestValidateIngestProjectsAlive_CheckerError propagates probe failures
-// (network/tool errors) rather than treating them as empty.
+// TestValidateIngestProjectsAlive_CheckerError propagates a probe failure after
+// exactly two attempts rather than treating it as empty or retrying forever.
 func TestValidateIngestProjectsAlive_CheckerError(t *testing.T) {
+	var calls int
 	check := func(_ context.Context, _ string) (bool, error) {
+		calls++
 		return false, errors.New("connection refused")
 	}
-	err := validateIngestProjectsAlive(
+	err := validateIngestProjectsAliveWithTiming(
 		context.Background(),
 		check,
 		[]string{"lme-a"},
 		false,
 		"/tmp/checkpoint-ingest.jsonl",
+		time.Second,
+		0,
 	)
 	if err == nil {
 		t.Fatal("expected error when checker fails")
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("error should wrap checker failure: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("checker calls = %d, want exactly 2", calls)
+	}
+}
+
+// TestValidateIngestProjectsAlive_PerProbeTimeout verifies every attempt gets
+// a distinct deadline and a timed-out probe is retried once, then fails.
+func TestValidateIngestProjectsAlive_PerProbeTimeout(t *testing.T) {
+	var deadlines []time.Time
+	check := func(ctx context.Context, _ string) (bool, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return false, errors.New("probe context has no deadline")
+		}
+		deadlines = append(deadlines, deadline)
+		<-ctx.Done()
+		// A late nominal result must not override the attempt deadline.
+		return true, nil
+	}
+
+	err := validateIngestProjectsAliveWithTiming(
+		context.Background(),
+		check,
+		[]string{"lme-a"},
+		false,
+		"/tmp/checkpoint-ingest.jsonl",
+		time.Millisecond,
+		0,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline exceeded", err)
+	}
+	if len(deadlines) != 2 {
+		t.Fatalf("probe attempts with deadlines = %d, want 2", len(deadlines))
+	}
+	if !deadlines[1].After(deadlines[0]) {
+		t.Fatalf("probe deadlines = %v, want a fresh deadline per attempt", deadlines)
 	}
 }
 
