@@ -86,6 +86,8 @@ The Nemotron judge was returning HTTP 400 — root cause was **caller-side**: ve
    (`cd ~/projects/codex && cargo build --release --bin codex-guard`).
 4. Follow-up issue: scorer token-ratio safety margin (see Scorer fixes).
 
+engram-go scorer char-budget safety margin: DONE 2026-07-27, PR (dispatcher), see claude.go charBudgetSafetyMargin
+
 ## Standing constraints (still in effect)
 - "Ignore the engram key issues for now" (leaked ENGRAM_API_KEY remediation waived).
 - Never `git push` from an agent brief; pushes are founder-gated (explicit "merge on green" only).
