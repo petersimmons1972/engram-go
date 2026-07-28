@@ -515,6 +515,13 @@ type ScoringOptions struct {
 // context window (vLLM HTTP 400 fix).
 const DefaultScorerMaxTokens = 512
 
+// charBudgetSafetyMargin is a multiplicative headroom factor applied on top of the
+// chars-per-token-derived hypothesis char budget. The 4-chars/token estimate is not
+// tokenizer-aware (unicode, code, non-English can pack denser), so we keep only 85%
+// of the raw char budget before truncation. Do not change the 4-chars/token ratio
+// itself — this margin is the sole extra safety layer.
+const charBudgetSafetyMargin = 0.85
+
 // BuildScoringRequestBody returns an OAI request body for label classification.
 // maxTokens controls the response budget; pass DefaultScorerMaxTokens (512)
 // unless you have a specific reason to change it.
@@ -533,6 +540,8 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 	// Cap hypothesis length so the total request fits within the 65536-token context window.
 	// Budget: 65536 - maxTokens - overhead(question, referenceAnswer) = tokens available for hypothesis.
 	// Conservative chars-to-tokens ratio of 4 chars/token keeps us safely below the limit.
+	// charBudgetSafetyMargin (0.85) further reduces the char budget so denser-than-average
+	// text (unicode, code) does not blow the 65536-token judge window.
 	// CRITICAL: truncate from the END (tail) to preserve the graded answer when --enumerate-first
 	// is used (answer appears at end of hypothesis, not beginning). See callOAI line 217.
 	const scorerMaxModelLen = 65536
@@ -546,6 +555,8 @@ func buildScoringRequestBody(model, question, referenceAnswer, hypothesis string
 	if maxHypChars < 0 {
 		maxHypChars = 0
 	}
+	// Apply multiplicative safety margin after the raw chars/token budget (not instead of it).
+	maxHypChars = int(float64(maxHypChars) * charBudgetSafetyMargin)
 	if len(hypothesis) > maxHypChars {
 		log.Printf("WARN: scorer hypothesis truncated for question %q: %d->%d chars (--scorer-max-tokens=%d)",
 			question[:min(len(question), 60)], len(hypothesis), maxHypChars, maxTokens)

@@ -151,6 +151,120 @@ func TestBuildScoringRequestBody_NoNegativeBudget(t *testing.T) {
 	}
 }
 
+// unmarginedHypCharBudget mirrors the pre-margin char budget in buildScoringRequestBody
+// (4 chars/token, no safety margin) so tests can size hypotheses relative to both thresholds.
+func unmarginedHypCharBudget(question, referenceAnswer string, maxTokens int) int {
+	if maxTokens <= 0 {
+		maxTokens = DefaultScorerMaxTokens
+	}
+	const scorerMaxModelLen = 65536
+	overheadChars := len(ScoringPrompt(question, referenceAnswer, ""))
+	overheadTokens := (overheadChars + 3) / 4
+	maxHypTokens := scorerMaxModelLen - maxTokens - overheadTokens
+	maxHypChars := maxHypTokens * 4
+	if maxHypChars < 0 {
+		return 0
+	}
+	return maxHypChars
+}
+
+// TestBuildScoringRequestBody_CharBudgetSafetyMargin_StraddlesOldBoundary asserts
+// that the effective truncation threshold is 85% of the unmargined char budget.
+// A hypothesis sized between the margined (85%) and unmargined (100%) budgets
+// must truncate now where it previously would not have.
+func TestBuildScoringRequestBody_CharBudgetSafetyMargin_StraddlesOldBoundary(t *testing.T) {
+	const (
+		question = "What is the user's favourite food?"
+		gold     = "Pizza"
+		maxTok   = 512
+	)
+	unmargined := unmarginedHypCharBudget(question, gold, maxTok)
+	if unmargined <= 0 {
+		t.Fatalf("unmargined budget = %d, need positive budget for straddle test", unmargined)
+	}
+	margined := int(float64(unmargined) * charBudgetSafetyMargin)
+	if margined >= unmargined {
+		t.Fatalf("margin did not shrink budget: unmargined=%d margined=%d margin=%v",
+			unmargined, margined, charBudgetSafetyMargin)
+	}
+	// Straddle: larger than 85% budget, strictly under the old 100% budget.
+	// Midpoint between the two thresholds is the clearest "old keep / new truncate" size.
+	straddleLen := margined + (unmargined-margined)/2
+	if straddleLen <= margined || straddleLen > unmargined {
+		t.Fatalf("bad straddle size %d (margined=%d unmargined=%d)", straddleLen, margined, unmargined)
+	}
+	// Unique tail so we can prove tail-keep after truncation.
+	const sentinel = "STRADDLE_TAIL_SENTINEL"
+	if straddleLen <= len(sentinel) {
+		t.Fatalf("straddleLen %d too small for sentinel", straddleLen)
+	}
+	hypothesis := strings.Repeat("b", straddleLen-len(sentinel)) + sentinel
+
+	body, err := buildScoringRequestBody(
+		"nvidia/Nemotron-H-8B-Reasoning-HF",
+		question,
+		gold,
+		hypothesis,
+		maxTok,
+		ScoringOptions{},
+	)
+	if err != nil {
+		t.Fatalf("buildScoringRequestBody: %v", err)
+	}
+	// Adversarial: full pre-margin-length hypothesis must NOT survive intact.
+	if strings.Contains(string(body), hypothesis) {
+		t.Errorf("hypothesis of len %d (between margined=%d and unmargined=%d) should be truncated under %.0f%% safety margin; full string still present in body",
+			straddleLen, margined, unmargined, charBudgetSafetyMargin*100)
+	}
+	// Tail of the hypothesis (graded answer region) must still be present.
+	if !strings.Contains(string(body), sentinel) {
+		t.Errorf("truncated tail should preserve sentinel %q; not found in body", sentinel)
+	}
+	// Effective cap: retained hypothesis content length equals the margined budget.
+	// Body embeds the kept tail; verify the kept run of 'b'+sentinel length via prompt reconstruction.
+	kept := hypothesis[len(hypothesis)-margined:]
+	if !strings.Contains(string(body), kept) {
+		t.Errorf("expected kept tail of len %d (margined budget) in body", margined)
+	}
+	// Sanity: effective threshold is exactly 85% of unmargined (integer truncation of float).
+	if want := int(float64(unmargined) * charBudgetSafetyMargin); margined != want {
+		t.Errorf("margined budget = %d, want 85%% of unmargined %d = %d", margined, unmargined, want)
+	}
+}
+
+// TestBuildScoringRequestBody_CharBudgetSafetyMargin_ShortHypothesisUnchanged
+// asserts no regression for hypotheses well under both the margined and
+// unmargined budgets — short/normal text passes through verbatim.
+func TestBuildScoringRequestBody_CharBudgetSafetyMargin_ShortHypothesisUnchanged(t *testing.T) {
+	const (
+		question   = "What food does the user prefer?"
+		gold       = "Italian food"
+		hypothesis = "The user prefers Italian food, especially pasta and pizza from Naples."
+		maxTok     = 512
+	)
+	unmargined := unmarginedHypCharBudget(question, gold, maxTok)
+	margined := int(float64(unmargined) * charBudgetSafetyMargin)
+	if len(hypothesis) >= margined {
+		t.Fatalf("test hypothesis len %d not well under both budgets (margined=%d unmargined=%d)",
+			len(hypothesis), margined, unmargined)
+	}
+
+	body, err := buildScoringRequestBody(
+		"nvidia/Nemotron-H-8B-Reasoning-HF",
+		question,
+		gold,
+		hypothesis,
+		maxTok,
+		ScoringOptions{},
+	)
+	if err != nil {
+		t.Fatalf("buildScoringRequestBody: %v", err)
+	}
+	if !strings.Contains(string(body), hypothesis) {
+		t.Errorf("short hypothesis well under both budgets should be present verbatim; body=%s", body)
+	}
+}
+
 // TestBuildScoringRequestBody_DynamicBudgetIncludesQuestion verifies that the
 // character budget is computed dynamically from the question and referenceAnswer,
 // not from a fixed 400-char constant. The budget should account for the prompt overhead.
