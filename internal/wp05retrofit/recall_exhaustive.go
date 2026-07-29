@@ -15,6 +15,7 @@ const projectSweepLimit = 500
 type recallCall struct {
 	query string
 	topK  int
+	opts  longmemeval.RecallOpts
 }
 
 // layerbStubStore is an in-memory Layer B store for client-side BuildSummary.
@@ -141,7 +142,7 @@ func recallItemExhaustive(ctx context.Context, client Client, project string, it
 	runOpts := longmemeval.RunOpts{ExhaustiveAggregation: true}
 	effectiveTopK := runOpts.EffectiveRecallTopK(item.Question, limit)
 
-	primary, err := client.RecallFullResult(ctx, project, item.Question, effectiveTopK)
+	primary, err := client.RecallResultWithOpts(ctx, project, item.Question, effectiveTopK, fullRecallOpts)
 	if err != nil {
 		return longmemeval.RecallResult{}, err
 	}
@@ -149,7 +150,7 @@ func recallItemExhaustive(ctx context.Context, client Client, project string, it
 	batches := [][]types.SearchResult{primary.Results}
 	anchor := strings.TrimSpace(longmemeval.ExtractAggregationAnchor(item.Question))
 	if anchor != "" && !strings.EqualFold(anchor, strings.TrimSpace(item.Question)) {
-		anchorResult, anchorErr := client.RecallFullResult(ctx, project, anchor, effectiveTopK)
+		anchorResult, anchorErr := client.RecallResultWithOpts(ctx, project, anchor, effectiveTopK, fullRecallOpts)
 		if anchorErr != nil {
 			return longmemeval.RecallResult{}, fmt.Errorf("anchor recall: %w", anchorErr)
 		}

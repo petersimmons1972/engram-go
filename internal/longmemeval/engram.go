@@ -513,17 +513,6 @@ func (c *Client) RecallResultsWithOpts(ctx context.Context, project, query strin
 	return result.Results, nil
 }
 
-// RecallFullResult returns the full recall payload, including any additive
-// layer_b summary the server attaches outside handle mode.
-func (c *Client) RecallFullResult(ctx context.Context, project, query string, topK int) (RecallResult, error) {
-	return c.recallResultWithParams(ctx, recallParams{
-		project: project,
-		query:   query,
-		topK:    topK,
-		mode:    "full",
-	})
-}
-
 // recallParams carries the optional knobs for a single memory_recall call.
 type recallParams struct {
 	project           string
@@ -575,10 +564,29 @@ func (c *Client) recallScoredWithParams(ctx context.Context, p recallParams) ([]
 }
 
 // RecallOpts holds optional parameters for the LongMemEval recall client.
+// Prefer this struct over dedicated one-off methods (e.g. a hard-coded full-mode
+// helper) so call sites compose flags without growing the public method surface.
 type RecallOpts struct {
 	// ExactFactBoost passes exact_fact_boost=true to the server-side memory_recall
 	// handler, enabling the entity-identifier scoring boost (LME #938 improvement #3).
 	ExactFactBoost bool
+	// Mode selects the memory_recall response shape. Empty defaults to "handle"
+	// (lightweight IDs/handles). "full" returns SearchResult objects and any
+	// additive layer_b summary the server attaches outside handle mode.
+	Mode string
+}
+
+// RecallResultWithOpts calls memory_recall with the given options and returns the
+// structured RecallResult (IDs/Hits always; Results + LayerB when Mode is "full"
+// and the server attaches them).
+func (c *Client) RecallResultWithOpts(ctx context.Context, project, query string, topK int, opts RecallOpts) (RecallResult, error) {
+	return c.recallResultWithParams(ctx, recallParams{
+		project:        project,
+		query:          query,
+		topK:           topK,
+		mode:           opts.Mode,
+		exactFactBoost: opts.ExactFactBoost,
+	})
 }
 
 // RecallWithExactBoost calls recall with exact_fact_boost enabled.

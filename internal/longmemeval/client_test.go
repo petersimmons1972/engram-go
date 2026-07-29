@@ -482,15 +482,22 @@ func TestRecallResultsWithOpts_FullModeRequestsFullDetail(t *testing.T) {
 		t.Fatalf("content len = %d, want %d", got, len(fullContent))
 	}
 }
-func TestRecallFullResult_HappyPathIncludesLayerB(t *testing.T) {
+func TestRecallResultWithOpts_FullModeIncludesLayerB(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
 			if got := args["mode"]; got != "full" {
 				t.Fatalf("mode = %#v, want full", got)
 			}
+			if got := args["detail"]; got != "full" {
+				t.Fatalf("detail = %#v, want full", got)
+			}
 			if got, ok := args["record_event"].(bool); !ok || got {
 				t.Fatalf("record_event = %#v, want false", args["record_event"])
+			}
+			// Mode-only opts must not widen into exact_fact_boost (predicate enumeration).
+			if _, ok := args["exact_fact_boost"]; ok {
+				t.Fatalf("exact_fact_boost present = %#v, want absent when ExactFactBoost is false", args["exact_fact_boost"])
 			}
 			resp, _ := json.Marshal(map[string]any{
 				"results": []map[string]any{
@@ -521,9 +528,9 @@ func TestRecallFullResult_HappyPathIncludesLayerB(t *testing.T) {
 	}
 	defer c.Close()
 
-	result, err := c.RecallFullResult(ctx, "proj", "How many times did I bake cookies?", 5)
+	result, err := c.RecallResultWithOpts(ctx, "proj", "How many times did I bake cookies?", 5, longmemeval.RecallOpts{Mode: "full"})
 	if err != nil {
-		t.Fatalf("RecallFullResult: %v", err)
+		t.Fatalf("RecallResultWithOpts: %v", err)
 	}
 	if len(result.Results) != 1 {
 		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
@@ -542,6 +549,85 @@ func TestRecallFullResult_HappyPathIncludesLayerB(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.LayerB, want) {
 		t.Fatalf("LayerB = %+v, want %+v", *result.LayerB, *want)
+	}
+}
+
+// Adversarial: zero-value RecallOpts must not silently become full mode — empty
+// Mode defaults to handle (same as the other recall entry points). A dedicated
+// RecallFullResult helper used to hardcode full; the opts seam must not reintroduce
+// that trap via zero-value convenience.
+func TestRecallResultWithOpts_EmptyModeDefaultsToHandle(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "handle" {
+				t.Fatalf("mode = %#v, want handle for zero-value RecallOpts", got)
+			}
+			if got := args["detail"]; got != "summary" {
+				t.Fatalf("detail = %#v, want summary (handle path), not full", got)
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{
+					{"id": "h-aaa", "score": 0.8},
+				},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallResultWithOpts(ctx, "proj", "query", 5, longmemeval.RecallOpts{})
+	if err != nil {
+		t.Fatalf("RecallResultWithOpts: %v", err)
+	}
+	if len(result.IDs) != 1 || result.IDs[0] != "h-aaa" {
+		t.Fatalf("IDs = %v, want [h-aaa]", result.IDs)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("Results = %+v, want empty under handle mode", result.Results)
+	}
+}
+
+// Adversarial: Mode and ExactFactBoost compose independently — full mode alone
+// must not imply exact_fact_boost, and exact_fact_boost alone must not force full.
+func TestRecallResultWithOpts_ExactFactBoostComposesWithoutForcingFullMode(t *testing.T) {
+	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			if got := args["mode"]; got != "handle" {
+				t.Fatalf("mode = %#v, want handle when Mode is unset", got)
+			}
+			if got, ok := args["exact_fact_boost"].(bool); !ok || !got {
+				t.Fatalf("exact_fact_boost = %#v, want true", args["exact_fact_boost"])
+			}
+			resp, _ := json.Marshal(map[string]any{
+				"handles": []map[string]any{{"id": "h-boost", "score": 0.5}},
+			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(resp)}},
+			}, nil
+		},
+	})
+	ctx := context.Background()
+	c, err := longmemeval.Connect(ctx, url, "")
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	result, err := c.RecallResultWithOpts(ctx, "proj", "query", 3, longmemeval.RecallOpts{ExactFactBoost: true})
+	if err != nil {
+		t.Fatalf("RecallResultWithOpts: %v", err)
+	}
+	if len(result.IDs) != 1 || result.IDs[0] != "h-boost" {
+		t.Fatalf("IDs = %v, want [h-boost]", result.IDs)
 	}
 }
 
@@ -589,7 +675,7 @@ func TestListProjectMemories_HappyPath(t *testing.T) {
 	}
 }
 
-func TestRecallFullResult_OlderResponseWithoutLayerB(t *testing.T) {
+func TestRecallResultWithOpts_OlderResponseWithoutLayerB(t *testing.T) {
 	url := newTestMCPServer(t, map[string]func(mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"memory_recall": func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			resp, _ := json.Marshal(map[string]any{
@@ -612,9 +698,9 @@ func TestRecallFullResult_OlderResponseWithoutLayerB(t *testing.T) {
 	}
 	defer c.Close()
 
-	result, err := c.RecallFullResult(ctx, "proj", "How many times did I bake cookies?", 5)
+	result, err := c.RecallResultWithOpts(ctx, "proj", "How many times did I bake cookies?", 5, longmemeval.RecallOpts{Mode: "full"})
 	if err != nil {
-		t.Fatalf("RecallFullResult: %v", err)
+		t.Fatalf("RecallResultWithOpts: %v", err)
 	}
 	if result.LayerB != nil {
 		t.Fatalf("LayerB = %+v, want nil when layer_b is absent", result.LayerB)

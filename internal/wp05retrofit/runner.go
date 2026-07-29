@@ -115,7 +115,9 @@ type Provenance struct {
 type Client interface {
 	Store(context.Context, string, string, []string) (string, error)
 	StoreBatch(context.Context, string, []longmemeval.BatchItem) ([]string, error)
-	RecallFullResult(context.Context, string, string, int) (longmemeval.RecallResult, error)
+	// RecallResultWithOpts is the recall seam. Retrofit always passes
+	// Mode:"full" so SearchResult bodies and additive layer_b survive transport.
+	RecallResultWithOpts(context.Context, string, string, int, longmemeval.RecallOpts) (longmemeval.RecallResult, error)
 	ListProjectMemories(context.Context, string, int) ([]types.SearchResult, error)
 }
 
@@ -258,6 +260,10 @@ func sessionTags(item Item, idx int) []string {
 	return nil
 }
 
+// fullRecallOpts requests full-mode recall so SearchResult bodies and additive
+// layer_b data survive transport (handle mode strips both).
+var fullRecallOpts = longmemeval.RecallOpts{Mode: "full"}
+
 // RecallItem runs the full-mode recall path so additive layer_b data survives transport.
 // When cfg.ExhaustiveAggregation is set and the question is aggregation-shaped, H8
 // deep recall plus anchor and project sweeps are unioned and Layer B is built
@@ -266,7 +272,7 @@ func RecallItem(ctx context.Context, client Client, project string, item Item, c
 	if cfg.ExhaustiveAggregation && longmemeval.IsAggregationQuestion(item.Question) {
 		return recallItemExhaustive(ctx, client, project, item, cfg.Limit)
 	}
-	return client.RecallFullResult(ctx, project, item.Question, cfg.Limit)
+	return client.RecallResultWithOpts(ctx, project, item.Question, cfg.Limit, fullRecallOpts)
 }
 
 // ScoreItem ports duramind's wp05b scorer semantics to the retrofit harness.
