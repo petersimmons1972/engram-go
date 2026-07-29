@@ -57,22 +57,18 @@ export CHECKIN_LINT_BASELINE="$BASELINE_FILE"
 
 # Source core first (it defines and exports finding()), then override it.
 source "${SCRIPT_DIR}/checkin-lint-core.sh"
+# Shared with migrate-checkin-lint-baseline.sh so key generation cannot drift.
+source "${SCRIPT_DIR}/checkin-lint-baseline.sh"
 
 # ── Override finding() to suppress baselined entries ──────────────────────────
-# Baseline key format: <rule>::<file>::<sha1-of-matched-line-content>[::<line>]
-# The optional line suffix is informational only (kept for humans reading the
-# baseline). Matching is multiset by the rule::file::sha1 prefix: N baseline
-# entries with the same prefix suppress up to N occurrences, so a change in
-# duplicate cardinality never flips the key format of unchanged content.
 baseline_key() {
   local rule="$1" file="$2" line="$3"
-  local content="" content_hash
+  local content=""
 
   if [[ "$line" =~ ^[0-9]+$ && -f "$file" ]]; then
     content="$(sed -n "${line}p" "$file")"
   fi
-  content_hash="$(printf '%s' "$content" | sha1sum | awk '{print $1}')"
-  printf '%s::%s::%s\n' "$rule" "$file" "$content_hash"
+  checkin_lint_baseline_key "$rule" "$file" "$content"
 }
 
 # Count baseline entries whose rule::file::sha1 prefix matches (entry may
@@ -85,13 +81,14 @@ _baseline_allowance() {
 
 finding() {
   local rule="$1" file="$2" line="$3" why="$4"
-  local key allowed=0 used=0
+  local key allowed=0 claim_rc=0
   key="$(baseline_key "$rule" "$file" "$line")"
   [[ -f "${CHECKIN_LINT_BASELINE}" ]] && allowed="$(_baseline_allowance "$key")"
-  [[ -n "${_BASELINE_USED_FILE:-}" && -f "${_BASELINE_USED_FILE}" ]] && \
-    used="$(grep -Fxc -- "$key" "${_BASELINE_USED_FILE}" 2>/dev/null || true)"
-  if [[ "$allowed" -gt "$used" ]]; then
-    [[ -n "${_BASELINE_USED_FILE:-}" ]] && echo "$key" >> "${_BASELINE_USED_FILE}"
+  checkin_lint_claim_baseline "${_BASELINE_USED_FILE:-}" "$key" "$allowed" || claim_rc=$?
+  if [[ "$claim_rc" -eq 2 ]]; then
+    exit 2
+  fi
+  if [[ "$claim_rc" -eq 0 ]]; then
     echo -e "${YLW}baselined${RST} [${BOLD}${rule}${RST}] ${file}:${line}  —  ${why}"
     ((BASELINED++)) || true
     [[ -n "${_ALL_FINDING_KEYS_FILE:-}" ]] && \
@@ -111,7 +108,7 @@ export -f baseline_key _baseline_allowance finding
 _BASELINE_USED_FILE="$(mktemp "${TMPDIR:-/tmp}/checkin-lint-used.XXXXXX")"
 export _BASELINE_USED_FILE
 cleanup() {
-  rm -f "${_BASELINE_USED_FILE}"
+  rm -f "${_BASELINE_USED_FILE}" "${_BASELINE_USED_FILE}.lock"
   rm -rf "${SCAN_ROOT}"
 }
 trap cleanup EXIT

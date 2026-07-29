@@ -22,6 +22,7 @@ trap cleanup EXIT
 
 mkdir -p "${SCOPE_REPO}/bin" "${SCOPE_REPO}/docs" "${SCOPE_REPO}/results" "${SCOPE_REPO}/scripts"
 cp "${REPO_ROOT}/bin/checkin-lint.sh" "${REPO_ROOT}/bin/checkin-lint-core.sh" \
+  "${REPO_ROOT}/bin/checkin-lint-baseline.sh" \
   "${REPO_ROOT}/bin/checkin-lint.baseline" "${SCOPE_REPO}/bin/"
 cp "${REPO_ROOT}/scripts/check-doc-auth-headers.sh" "${SCOPE_REPO}/scripts/"
 printf '%s\n' 'results/' > "${SCOPE_REPO}/.gitignore"
@@ -35,6 +36,74 @@ git -C "${SCOPE_REPO}" commit -qm 'test fixture'
 echo ""
 echo -e "${BOLD}checkin-lint smoke tests${RST}"
 echo "────────────────────────────────────────"
+
+# ── test_baseline_key_contract ────────────────────────────────────────────────
+echo ""
+echo "test_baseline_key_contract"
+baseline_helper="${REPO_ROOT}/bin/checkin-lint-baseline.sh"
+if [[ ! -f "${baseline_helper}" ]]; then
+  fail "shared baseline helper is missing"
+else
+  # shellcheck source=bin/checkin-lint-baseline.sh
+  source "${baseline_helper}"
+  key="$(checkin_lint_baseline_key \
+    'P1.hardcoded-dsn' \
+    './fixture.env' \
+    'DATABASE_URL=postgres://localhost/shared')"
+  expected_key='P1.hardcoded-dsn::./fixture.env::ef87aff5314a3617062ac45fe4a7c17789701bf7'
+  if [[ "${key}" == "${expected_key}" ]]; then
+    pass "shared helper preserves the rule::file::sha1 key contract"
+  else
+    fail "shared helper produced '${key}' (want '${expected_key}')"
+  fi
+fi
+
+# ── test_baseline_claim_is_atomic ─────────────────────────────────────────────
+# One allowance is one token. Concurrent callers must never both observe it as
+# unused and claim it.
+echo ""
+echo "test_baseline_claim_is_atomic"
+if ! declare -F checkin_lint_claim_baseline >/dev/null; then
+  fail "shared baseline helper does not provide atomic allowance claims"
+else
+  used_file="$(mktemp)"
+  claim_results="$(mktemp)"
+  claim_key='P1.hardcoded-dsn::./fixture.env::ef87aff5314a3617062ac45fe4a7c17789701bf7'
+  for _ in {1..32}; do
+    (
+      claim_rc=0
+      checkin_lint_claim_baseline "${used_file}" "${claim_key}" 1 || claim_rc=$?
+      printf '%s\n' "${claim_rc}" >> "${claim_results}"
+    ) &
+  done
+  wait
+  claimed="$(grep -c '^0$' "${claim_results}" || true)"
+  rejected="$(grep -c '^1$' "${claim_results}" || true)"
+  errors="$(grep -vcE '^[01]$' "${claim_results}" || true)"
+  recorded="$(grep -Fxc -- "${claim_key}" "${used_file}" || true)"
+  if [[ "${claimed}" -eq 1 && "${rejected}" -eq 31 && "${errors}" -eq 0 && "${recorded}" -eq 1 ]]; then
+    pass "32 concurrent callers consume one baseline allowance exactly once"
+  else
+    fail "atomic claim admitted=${claimed}, rejected=${rejected}, errors=${errors}, recorded=${recorded} (want 1/31/0/1)"
+  fi
+  rm -f "${used_file}" "${used_file}.lock" "${claim_results}"
+fi
+
+# ── test_baseline_claim_lock_error_fails_loudly ───────────────────────────────
+echo ""
+echo "test_baseline_claim_lock_error_fails_loudly"
+missing_used_file="${SCOPE_REPO}/missing-parent/used"
+claim_error_output="$(
+  checkin_lint_claim_baseline "${missing_used_file}" \
+    'P1.hardcoded-dsn::./fixture.env::ef87aff5314a3617062ac45fe4a7c17789701bf7' \
+    1 2>&1
+)" || claim_error_rc=$?
+claim_error_rc="${claim_error_rc:-0}"
+if [[ "${claim_error_rc}" -eq 2 && "${claim_error_output}" == *"failed to open baseline usage lock"* ]]; then
+  pass "baseline lock I/O errors report an error and return 2"
+else
+  fail "baseline lock error returned ${claim_error_rc} with output '${claim_error_output}' (want loud exit 2)"
+fi
 
 # ── test_docs_only_stage_ignores_ignored_findings (#1416) ──────────────────
 echo ""

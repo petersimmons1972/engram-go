@@ -10,6 +10,10 @@ if [[ ! -f bin/checkin-lint.sh ]]; then
   exit 2
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=bin/checkin-lint-baseline.sh
+source "${SCRIPT_DIR}/checkin-lint-baseline.sh"
+
 baseline="${1:-bin/checkin-lint.baseline}"
 output="$(mktemp)"
 trap 'rm -f "$output"' EXIT
@@ -45,15 +49,15 @@ while IFS= read -r entry || [[ -n "$entry" ]]; do
     ((unresolved++)) || true
     continue
   fi
-  content_hash="$(printf '%s' "$content" | sha1sum | awk '{print $1}')"
+  key="$(checkin_lint_baseline_key "$rule" "$file" "$content")"
   duplicate_count=0
   if [[ -f "$file" ]]; then
     duplicate_count="$(grep -Fxc -- "$content" "$file" || true)"
   fi
   if [[ "$duplicate_count" -gt 1 ]]; then
-    printf '%s::%s::%s::%s\n' "$rule" "$file" "$content_hash" "$line" >> "$output"
+    printf '%s::%s\n' "$key" "$line" >> "$output"
   else
-    printf '%s::%s::%s\n' "$rule" "$file" "$content_hash" >> "$output"
+    printf '%s\n' "$key" >> "$output"
   fi
 done < "$baseline"
 
