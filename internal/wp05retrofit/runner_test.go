@@ -48,8 +48,8 @@ func (f *fakeClient) StoreBatch(ctx context.Context, project string, items []lon
 	return []string{"mem-1", "mem-2"}, nil
 }
 
-func (f *fakeClient) RecallFullResult(ctx context.Context, project, query string, topK int) (longmemeval.RecallResult, error) {
-	f.recallCalls = append(f.recallCalls, recallCall{query: query, topK: topK})
+func (f *fakeClient) RecallResultWithOpts(ctx context.Context, project, query string, topK int, opts longmemeval.RecallOpts) (longmemeval.RecallResult, error) {
+	f.recallCalls = append(f.recallCalls, recallCall{query: query, topK: topK, opts: opts})
 	if f.recallErr != nil {
 		return longmemeval.RecallResult{}, f.recallErr
 	}
