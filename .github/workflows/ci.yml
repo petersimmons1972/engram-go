@@ -33,11 +33,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Mint app token for Duramind contract checkout
+        id: duramind-app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.ENGRAM_FLEET_CI_APP_ID }}
+          private-key: ${{ secrets.ENGRAM_FLEET_CI_PRIVATE_KEY }}
+          repositories: duramind
+          permission-contents: read
+
       - name: Check out Duramind contract authority
         uses: actions/checkout@v4
         with:
           repository: petersimmons1972/duramind
           path: .contract/duramind
+          token: ${{ steps.duramind-app-token.outputs.token }}
           persist-credentials: false
 
       - uses: actions/setup-go@v5
