@@ -12,6 +12,8 @@ jobs:
   test:
     name: Test & Coverage
     runs-on: ubuntu-latest
+    env:
+      DURAMIND_REPO: ${{ github.workspace }}/.contract/duramind
 
     services:
       postgres:
@@ -30,6 +32,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out Duramind contract authority
+        uses: actions/checkout@v4
+        with:
+          repository: petersimmons1972/duramind
+          path: .contract/duramind
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:

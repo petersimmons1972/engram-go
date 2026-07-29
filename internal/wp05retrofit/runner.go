@@ -13,11 +13,11 @@
 // recall_exhaustive.go), and scores/serializes the result.
 //
 // Duramind compatibility target: Bundle, ItemResult, and Provenance are
-// hand-kept byte-for-byte JSON-compatible with duramind's
-// internal/wp05c.{Bundle,ItemResult,Provenance} (see field-level comments
-// below) so the two arms' output can be diffed and compared by duramind's
-// bake-off tooling without a translation layer. Any change to these types'
-// JSON shape must be mirrored in duramind or the comparison breaks silently.
+// kept byte-for-byte JSON-compatible with duramind's
+// internal/wp05c.{Bundle,ItemResult,Provenance} so the two arms' output can be
+// diffed and compared by duramind's bake-off tooling without a translation
+// layer. bundle_contract_test.go checks both repositories against the schema
+// golden in testdata, so a field or JSON-tag change fails CI.
 //
 // Lifetime: this package is bake-off scaffolding, not permanent
 // architecture. It is expected to be retired once WP-0.5 concludes and one
