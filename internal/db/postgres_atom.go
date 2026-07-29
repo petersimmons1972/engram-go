@@ -51,16 +51,19 @@ func insertAtom(ctx context.Context, execer atomExecer, a *atom.Atom) (bool, err
 		INSERT INTO atoms (
 			id, project, atom_type, subject, predicate, value,
 			statement, scope, valid_from, valid_to, confidence,
-			provenance_memory_id, provenance_span, supersedes, observed_at, created_at
+			provenance_memory_id, provenance_span, supersedes, observed_at, created_at,
+			polarity, entity, domain
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16
+			$12, $13, $14, $15, $16,
+			$17, $18, $19
 		) ON CONFLICT (id) DO NOTHING`,
 		a.ID, a.Project, a.Type, a.Subject, a.Predicate, a.Value,
 		a.Statement, a.Scope, a.ValidFrom, a.ValidTo, a.Confidence,
 		nullableString(a.ProvenanceMemoryID), nullableString(a.ProvenanceSpan),
 		nullableString(a.Supersedes), a.ObservedAt, a.CreatedAt,
+		nullableString(a.Polarity), nullableString(a.Entity), nullableString(a.Domain),
 	)
 	if err != nil {
 		return false, err
@@ -156,7 +159,8 @@ func buildChronoLedgerAtomsQuery(project string, limit int) (string, []interface
 	query := `
 		SELECT id, project, atom_type, subject, predicate, value,
 		       statement, scope, valid_from, valid_to, observed_at, confidence,
-		       provenance_memory_id, provenance_span, supersedes, created_at
+		       provenance_memory_id, provenance_span, supersedes, created_at,
+		       polarity, entity, domain
 		FROM (
 			SELECT DISTINCT ON (
 				valid_from::date,
@@ -168,7 +172,10 @@ func buildChronoLedgerAtomsQuery(project string, limit int) (string, []interface
 				COALESCE(provenance_memory_id, '') AS provenance_memory_id,
 				COALESCE(provenance_span, '') AS provenance_span,
 				COALESCE(supersedes, '') AS supersedes,
-				created_at
+				created_at,
+				COALESCE(polarity, '') AS polarity,
+				COALESCE(entity, '') AS entity,
+				COALESCE(domain, '') AS domain
 			FROM atoms
 			WHERE project = $1
 			  AND atom_type IN ('event', 'status_change')
@@ -215,7 +222,8 @@ func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interf
 		SELECT id, project, atom_type, subject, predicate, value,
 		       statement, scope, valid_from, valid_to, observed_at, confidence,
 		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-		       COALESCE(supersedes,''), created_at
+		       COALESCE(supersedes,''), created_at,
+		       COALESCE(polarity,''), COALESCE(entity,''), COALESCE(domain,'')
 		FROM atoms`
 	if opts.LatestOnly {
 		selectClause = `
@@ -223,7 +231,8 @@ func buildActiveAtomsQuery(project string, opts AtomQueryOpts) (string, []interf
 		       id, project, atom_type, subject, predicate, value,
 		       statement, scope, valid_from, valid_to, observed_at, confidence,
 		       COALESCE(provenance_memory_id,''), COALESCE(provenance_span,''),
-		       COALESCE(supersedes,''), created_at
+		       COALESCE(supersedes,''), created_at,
+		       COALESCE(polarity,''), COALESCE(entity,''), COALESCE(domain,'')
 		FROM atoms`
 	}
 
@@ -358,6 +367,7 @@ func scanAtomRows(rows interface{ Close() }) ([]atom.Atom, error) {
 			&a.Statement, &a.Scope, &a.ValidFrom, &a.ValidTo, &a.ObservedAt, &a.Confidence,
 			&a.ProvenanceMemoryID, &a.ProvenanceSpan,
 			&a.Supersedes, &a.CreatedAt,
+			&a.Polarity, &a.Entity, &a.Domain,
 		); err != nil {
 			return nil, err
 		}

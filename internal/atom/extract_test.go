@@ -398,6 +398,154 @@ func TestClaudeExtractor_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// ── preference-entity fields (#1181) ─────────────────────────────────────────
+
+const preferenceAtomWithEntityJSON = `[
+  {
+    "atom_type": "preference",
+    "subject": "the user",
+    "predicate": "prefers",
+    "value": "dark chocolate",
+    "statement": "The user prefers dark chocolate over milk chocolate.",
+    "scope": "global",
+    "confidence": 0.9,
+    "polarity": "like",
+    "entity": "dark chocolate",
+    "domain": "food",
+    "source_span": "I usually go with dark chocolate"
+  }
+]`
+
+const preferenceAtomDislikeJSON = `[
+  {
+    "atom_type": "preference",
+    "subject": "the user",
+    "predicate": "dislikes",
+    "value": "cilantro",
+    "statement": "The user dislikes cilantro.",
+    "scope": "global",
+    "confidence": 0.88,
+    "polarity": "dislike",
+    "entity": "cilantro",
+    "domain": "food",
+    "source_span": "I hate cilantro"
+  }
+]`
+
+// TestClaudeExtractor_MapsEntityFields verifies that polarity/entity/domain
+// returned by the model are carried through to the Atom struct.
+func TestClaudeExtractor_MapsEntityFields(t *testing.T) {
+	stub := &stubCompleter{response: preferenceAtomWithEntityJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "I usually go with dark chocolate.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+
+	a := atoms[0]
+	assert.Equal(t, "like", a.Polarity, "polarity must be mapped from response")
+	assert.Equal(t, "dark chocolate", a.Entity, "entity must be copied verbatim from response")
+	assert.Equal(t, "food", a.Domain, "domain must be mapped from response")
+}
+
+// TestClaudeExtractor_MapsDislikePolarity verifies dislike polarity round-trips.
+func TestClaudeExtractor_MapsDislikePolarity(t *testing.T) {
+	stub := &stubCompleter{response: preferenceAtomDislikeJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "I hate cilantro in my food.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+
+	a := atoms[0]
+	assert.Equal(t, "dislike", a.Polarity)
+	assert.Equal(t, "cilantro", a.Entity)
+	assert.Equal(t, "food", a.Domain)
+}
+
+// TestClaudeExtractor_EntityFieldsEmpty_BackCompat verifies that atoms from
+// responses without polarity/entity/domain (legacy/non-preference) have empty
+// fields and are still valid.
+func TestClaudeExtractor_EntityFieldsEmpty_BackCompat(t *testing.T) {
+	stub := &stubCompleter{response: factAtomJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "Alice works at Acme Corp.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+
+	a := atoms[0]
+	assert.Empty(t, a.Polarity, "non-preference atoms must have empty polarity")
+	assert.Empty(t, a.Entity, "non-preference atoms must have empty entity")
+	assert.Empty(t, a.Domain, "non-preference atoms must have empty domain")
+}
+
+// TestExtractionPrompt_ContainsEntityInstructions verifies the extraction
+// prompt now instructs the model to capture polarity, entity, and domain.
+func TestExtractionPrompt_ContainsEntityInstructions(t *testing.T) {
+	prompt := atom.ExtractionPrompt()
+	assert.Contains(t, prompt, "polarity", "prompt must request polarity field")
+	assert.Contains(t, prompt, "entity", "prompt must request entity field")
+	assert.Contains(t, prompt, "domain", "prompt must request domain field")
+	assert.Contains(t, prompt, "VERBATIM", "prompt must forbid inventing entities")
+}
+
+// TestClaudeExtractor_RejectsUnknownPolarity is adversarial: a model that emits
+// an out-of-set polarity ("love", "hate", "prefer") must not poison storage or
+// prompt tags. Unknown values normalize to empty rather than failing the atom.
+func TestClaudeExtractor_RejectsUnknownPolarity(t *testing.T) {
+	const badPolarityJSON = `[
+	  {
+	    "atom_type": "preference",
+	    "subject": "the user",
+	    "predicate": "prefers",
+	    "value": "oolong tea",
+	    "statement": "The user prefers oolong tea.",
+	    "scope": "global",
+	    "confidence": 0.9,
+	    "polarity": "LOVE",
+	    "entity": "oolong tea",
+	    "domain": "food"
+	  }
+	]`
+	stub := &stubCompleter{response: badPolarityJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "I love oolong tea.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Empty(t, atoms[0].Polarity, "unknown polarity must normalize to empty")
+	assert.Equal(t, "oolong tea", atoms[0].Entity, "entity must still be preserved")
+}
+
+// TestClaudeExtractor_TrimsEntityWhitespace ensures padded entity strings are
+// cleaned so prompt tags do not carry leading/trailing spaces.
+func TestClaudeExtractor_TrimsEntityWhitespace(t *testing.T) {
+	const paddedJSON = `[
+	  {
+	    "atom_type": "preference",
+	    "subject": "the user",
+	    "predicate": "prefers",
+	    "value": "dark chocolate",
+	    "statement": "The user prefers dark chocolate.",
+	    "scope": "global",
+	    "confidence": 0.9,
+	    "polarity": " Like ",
+	    "entity": "  dark chocolate  ",
+	    "domain": " food "
+	  }
+	]`
+	stub := &stubCompleter{response: paddedJSON}
+	ext := atom.NewClaudeExtractor(stub)
+
+	atoms, err := ext.Extract(context.Background(), "I prefer dark chocolate.")
+	require.NoError(t, err)
+	require.Len(t, atoms, 1)
+	assert.Equal(t, "like", atoms[0].Polarity)
+	assert.Equal(t, "dark chocolate", atoms[0].Entity)
+	assert.Equal(t, "food", atoms[0].Domain)
+}
+
 func TestClaudeExtractor_MarkdownFenceStripped(t *testing.T) {
 	fenced := "```json\n" + preferenceAtomJSON + "\n```"
 	stub := &stubCompleter{response: fenced}

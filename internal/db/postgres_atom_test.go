@@ -2,6 +2,8 @@ package db_test
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,4 +174,136 @@ func TestGetChronoLedgerAtoms_IncludesSupersededAndFiltersTimelineTypes(t *testi
 	require.NotNil(t, atoms[0].ValidTo, "superseded status row must be present")
 	require.Equal(t, "The deploy was done.", atoms[1].Statement)
 	require.Equal(t, "The user visited Boston.", atoms[2].Statement)
+}
+
+// ── preference-entity DB fields (#1181) ──────────────────────────────────────
+
+// TestPostgresAtom_InsertSQL_ContainsEntityFields verifies that postgres_atom.go
+// includes polarity/entity/domain in its INSERT statement. Structural source check
+// — no DB connection needed. Mirrors TestAtomMode_FlagRegistered pattern.
+func TestPostgresAtom_InsertSQL_ContainsEntityFields(t *testing.T) {
+	src, err := os.ReadFile("postgres_atom.go")
+	if err != nil {
+		t.Fatalf("read postgres_atom.go: %v", err)
+	}
+	text := string(src)
+	for _, field := range []string{"polarity", "entity", "domain"} {
+		if !strings.Contains(text, field) {
+			t.Errorf("postgres_atom.go missing %q — preference-entity fields not added to DB layer (#1181)", field)
+		}
+	}
+}
+
+// TestPostgresAtom_ScanAtomRows_ContainsEntityFields verifies the scan order
+// includes the three new columns (structural, no DB).
+func TestPostgresAtom_ScanAtomRows_ContainsEntityFields(t *testing.T) {
+	src, err := os.ReadFile("postgres_atom.go")
+	if err != nil {
+		t.Fatalf("read postgres_atom.go: %v", err)
+	}
+	text := string(src)
+	// Must reference the Atom struct fields from scanAtomRows.
+	for _, field := range []string{"a.Polarity", "a.Entity", "a.Domain"} {
+		if !strings.Contains(text, field) {
+			t.Errorf("postgres_atom.go scanAtomRows missing %q — scan will not populate field (#1181)", field)
+		}
+	}
+}
+
+// TestInsertAtom_PreferenceEntityFieldsRoundTrip is an integration + adversarial
+// test: polarity/entity/domain must survive InsertAtom → GetActiveAtoms, and
+// empty optional fields must not break legacy fact atoms in the same project.
+func TestInsertAtom_PreferenceEntityFieldsRoundTrip(t *testing.T) {
+	proj := uniqueProject("atoms-pref-entity")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project:    proj,
+		Type:       atom.TypePreference,
+		Subject:    "the user",
+		Predicate:  "prefers",
+		Value:      "dark chocolate",
+		Statement:  "The user prefers dark chocolate.",
+		Scope:      atom.ScopeGlobal,
+		Confidence: 0.91,
+		Polarity:   "like",
+		Entity:     "dark chocolate",
+		Domain:     "food",
+	}))
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project:    proj,
+		Type:       atom.TypePreference,
+		Subject:    "the user",
+		Predicate:  "dislikes",
+		Value:      "cilantro",
+		Statement:  "The user dislikes cilantro.",
+		Scope:      atom.ScopeGlobal,
+		Confidence: 0.88,
+		Polarity:   "dislike",
+		Entity:     "cilantro",
+		Domain:     "food",
+	}))
+	// Legacy atom without entity fields — empty must round-trip as empty.
+	require.NoError(t, backend.InsertAtom(ctx, &atom.Atom{
+		Project:    proj,
+		Type:       atom.TypeFact,
+		Subject:    "Alice",
+		Predicate:  "works at",
+		Value:      "Acme",
+		Statement:  "Alice works at Acme.",
+		Scope:      atom.ScopeGlobal,
+		Confidence: 1.0,
+	}))
+
+	prefs, err := backend.GetActiveAtoms(ctx, proj, atom.TypePreference)
+	require.NoError(t, err)
+	require.Len(t, prefs, 2)
+
+	byEntity := map[string]atom.Atom{}
+	for _, a := range prefs {
+		byEntity[a.Entity] = a
+	}
+	like := byEntity["dark chocolate"]
+	require.Equal(t, "like", like.Polarity)
+	require.Equal(t, "food", like.Domain)
+	dislike := byEntity["cilantro"]
+	require.Equal(t, "dislike", dislike.Polarity)
+	require.Equal(t, "food", dislike.Domain)
+
+	facts, err := backend.GetActiveAtoms(ctx, proj, atom.TypeFact)
+	require.NoError(t, err)
+	require.Len(t, facts, 1)
+	require.Empty(t, facts[0].Polarity)
+	require.Empty(t, facts[0].Entity)
+	require.Empty(t, facts[0].Domain)
+}
+
+// TestInsertAtom_InvalidPolarityFailsLoudly is adversarial: the DB CHECK must
+// reject out-of-set polarity values rather than silently accepting them.
+func TestInsertAtom_InvalidPolarityFailsLoudly(t *testing.T) {
+	proj := uniqueProject("atoms-pref-bad-polarity")
+	ctx := context.Background()
+
+	backend, err := db.NewPostgresBackend(ctx, proj, testDSN(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { backend.Close() })
+
+	err = backend.InsertAtom(ctx, &atom.Atom{
+		Project:    proj,
+		Type:       atom.TypePreference,
+		Subject:    "the user",
+		Predicate:  "prefers",
+		Value:      "matcha",
+		Statement:  "The user prefers matcha.",
+		Scope:      atom.ScopeGlobal,
+		Confidence: 0.9,
+		Polarity:   "love", // not in {like,dislike,""}
+		Entity:     "matcha",
+		Domain:     "food",
+	})
+	require.Error(t, err, "invalid polarity must fail the INSERT (CHECK constraint)")
 }
