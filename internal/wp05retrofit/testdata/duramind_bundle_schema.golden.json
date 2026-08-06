@@ -1,0 +1,154 @@
+{
+  "types": [
+    {
+      "name": "Bundle",
+      "fields": [
+        {
+          "name": "System",
+          "go_type": "string",
+          "json_tag": "system"
+        },
+        {
+          "name": "Substrate",
+          "go_type": "string",
+          "json_tag": "substrate"
+        },
+        {
+          "name": "SubstrateAssessment",
+          "go_type": "string",
+          "json_tag": "substrate_assessment"
+        },
+        {
+          "name": "Items",
+          "go_type": "[]ItemResult",
+          "json_tag": "items"
+        }
+      ]
+    },
+    {
+      "name": "ItemResult",
+      "fields": [
+        {
+          "name": "QuestionID",
+          "go_type": "string",
+          "json_tag": "question_id"
+        },
+        {
+          "name": "QuestionType",
+          "go_type": "string",
+          "json_tag": "question_type"
+        },
+        {
+          "name": "Split",
+          "go_type": "string",
+          "json_tag": "split"
+        },
+        {
+          "name": "Variant",
+          "go_type": "string",
+          "json_tag": "variant"
+        },
+        {
+          "name": "AggregationExpected",
+          "go_type": "bool",
+          "json_tag": "aggregation_expected"
+        },
+        {
+          "name": "SolvedType",
+          "go_type": "bool",
+          "json_tag": "solved_type"
+        },
+        {
+          "name": "Fired",
+          "go_type": "bool",
+          "json_tag": "fired"
+        },
+        {
+          "name": "MeasuredPath",
+          "go_type": "string",
+          "json_tag": "measured_path"
+        },
+        {
+          "name": "Confounds",
+          "go_type": "[]string",
+          "json_tag": "confounds,omitempty"
+        },
+        {
+          "name": "ConstituentRecall",
+          "go_type": "float64",
+          "json_tag": "constituent_recall"
+        },
+        {
+          "name": "ConstituentPrecision",
+          "go_type": "float64",
+          "json_tag": "constituent_precision"
+        },
+        {
+          "name": "DedupAccuracy",
+          "go_type": "float64",
+          "json_tag": "dedup_accuracy"
+        },
+        {
+          "name": "ScopeAccuracy",
+          "go_type": "float64",
+          "json_tag": "scope_accuracy"
+        },
+        {
+          "name": "ArithmeticCorrect",
+          "go_type": "float64",
+          "json_tag": "arithmetic_correctness"
+        },
+        {
+          "name": "Notes",
+          "go_type": "[]string",
+          "json_tag": "notes,omitempty"
+        },
+        {
+          "name": "Provenance",
+          "go_type": "Provenance",
+          "json_tag": "provenance"
+        }
+      ]
+    },
+    {
+      "name": "Provenance",
+      "fields": [
+        {
+          "name": "GoldVersion",
+          "go_type": "string",
+          "json_tag": "gold_version"
+        },
+        {
+          "name": "ScorerVersion",
+          "go_type": "string",
+          "json_tag": "scorer_version"
+        },
+        {
+          "name": "FeatureFlags",
+          "go_type": "[]string",
+          "json_tag": "feature_flags"
+        },
+        {
+          "name": "System",
+          "go_type": "string",
+          "json_tag": "system"
+        },
+        {
+          "name": "ItemSet",
+          "go_type": "string",
+          "json_tag": "item_set"
+        },
+        {
+          "name": "RunID",
+          "go_type": "string",
+          "json_tag": "run_id"
+        },
+        {
+          "name": "HarnessSHA",
+          "go_type": "string",
+          "json_tag": "harness_sha"
+        }
+      ]
+    }
+  ]
+}

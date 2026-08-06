@@ -36,6 +36,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Mint app token for Duramind contract checkout
+        id: duramind-app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.ENGRAM_FLEET_CI_APP_ID }}
+          private-key: ${{ secrets.ENGRAM_FLEET_CI_PRIVATE_KEY }}
+          repositories: duramind
+          permission-contents: read
+
+      - name: Check out Duramind contract authority
+        id: duramind-checkout
+        if: ${{ steps.duramind-app-token.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: petersimmons1972/duramind
+          path: .contract/duramind
+          token: ${{ steps.duramind-app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Configure Duramind contract authority
+        if: ${{ !cancelled() }}
+        env:
+          DURAMIND_CHECKOUT_OUTCOME: ${{ steps.duramind-checkout.outcome }}
+        shell: bash
+        run: |
+          duramind_repo="${GITHUB_WORKSPACE}/.contract/duramind"
+          duramind_source_dir="${duramind_repo}/internal/wp05c"
+          duramind_source="${duramind_source_dir}/compare.go"
+
+          if [[ "${DURAMIND_CHECKOUT_OUTCOME}" == "success" ]] &&
+             [[ -d "${duramind_source_dir}" ]] &&
+             [[ -f "${duramind_source}" ]]; then
+            echo "DURAMIND_REPO=${duramind_repo}" >> "${GITHUB_ENV}"
+          elif [[ "${DURAMIND_CHECKOUT_OUTCOME}" != "success" ]]; then
+            echo "::warning::Duramind provider-side contract check did not run: authority checkout outcome was ${DURAMIND_CHECKOUT_OUTCOME}."
+          else
+            echo "::warning::Duramind provider-side contract check did not run: checkout succeeded but ${duramind_source} is missing."
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
