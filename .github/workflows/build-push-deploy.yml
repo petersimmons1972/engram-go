@@ -1,5 +1,12 @@
 name: build-push-deploy
 
+# This is the ONE engram-go workflow allowed to use runs-on: homelab-arc (a
+# self-hosted ARC runner with cluster network access) despite this being a
+# public repo — see kubernetes/arc/README.md "engram-go exception". That
+# exception is safe ONLY because this workflow never triggers on
+# pull_request/pull_request_target. Do NOT add either trigger here, and do
+# NOT copy `runs-on: homelab-arc` into any other workflow in this repo
+# without re-reading that doc first.
 on:
   push:
     branches: [main]
@@ -32,7 +39,7 @@ env:
 
 jobs:
   test:
-    runs-on: [self-hosted, linux, homelab]
+    runs-on: homelab-arc
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -46,7 +53,7 @@ jobs:
 
   build-push-deploy:
     needs: test
-    runs-on: [self-hosted, linux, homelab]
+    runs-on: homelab-arc
     permissions:
       contents: write
     steps:

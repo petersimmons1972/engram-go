@@ -1,6 +1,6 @@
 # Stage 1: build engram + starter
-# Pinned 2026-06-26: re-pin when Go minor version changes (crane digest cgr.dev/chainguard/go:latest)
-FROM cgr.dev/chainguard/go:latest@sha256:faf3f70ddc6b4780f0506724bdd813f91511b253b76c4a2c6e94a01f99130219 AS build
+# Pinned 2026-07-17: Go 1.26.5 (crane digest cgr.dev/chainguard/go:latest)
+FROM cgr.dev/chainguard/go:latest@sha256:0dfefd80cb9ce8db4be95d20d324c56005f40116524cdc8b8410f46ecd4732cb AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

@@ -64,6 +64,22 @@ bash scripts/check-secrets.test.sh
 
 If the guard blocks a commit you believe is safe, override with `git commit --no-verify` — but verify by hand first. This guard exists because issue #657 surfaced live credentials in the working tree.
 
+### Check-in Lint Baseline
+
+`bin/checkin-lint.sh` scans staged added, copied, and modified files by default; pass `--tracked` to audit the full tracked tree. Its baseline entries use:
+
+```text
+<rule>::<repo-relative-file>::<sha1-of-matched-line-content>[::<line>]
+```
+
+The optional line suffix is informational. Matching uses the `rule::file::sha1` prefix as a multiset: N identical baseline entries suppress at most N identical findings, so adding another copy still produces a live finding. `bin/checkin-lint-baseline.sh` is the single source for key generation in both the linter and migration script. Baseline allowance consumption is protected by `flock`, so concurrent `finding()` calls cannot spend the same entry twice; Bash, `sha1sum`, and `flock` are runtime requirements.
+
+To migrate a legacy line-keyed baseline from the repository root:
+
+```bash
+bash bin/migrate-checkin-lint-baseline.sh
+```
+
 ### Rust (Re-embedder)
 
 The `reembed-rs/` directory contains the high-throughput re-embedding worker in Rust. It shares the same PostgreSQL backend but runs in its own container to isolate re-embedding concurrency from MCP request handling.

@@ -393,7 +393,14 @@ func runServer(args []string) error {
 	// project backends, entity workers, audit/weight workers, and the retention
 	// worker share this pool rather than each owning a private 25-connection pool.
 	// This prevents connection exhaustion when many projects are active (#363).
-	pgxPool, err := db.NewSharedPool(ctx, dsn)
+	//
+	// Transient Postgres unavailability (e.g. TrueNAS/DB reboot) is retried with
+	// capped exponential backoff for ENGRAM_STARTUP_DEPENDENCY_WAIT (default 5m)
+	// so the process self-heals inside the k8s startupProbe window instead of
+	// CrashLoopBackOff (#1423). Permanent config errors (invalid DSN, default
+	// password) still fail immediately.
+	startupRetry := defaultStartupRetryConfig()
+	pgxPool, err := openSharedPoolWithRetry(ctx, dsn, startupRetry)
 	if err != nil {
 		return fmt.Errorf("shared pool: %w", err)
 	}
@@ -414,7 +421,8 @@ func runServer(args []string) error {
 	var embedGateway *embedgateway.EmbedGateway
 
 	if envBool("ENGRAM_EMBED_GW_ENABLED", false) {
-		gatewayPool, err := db.NewGatewayPool(ctx, dsn)
+		// Same wait-for-dependency policy as the shared pool (#1423).
+		gatewayPool, err := openGatewayPoolWithRetry(ctx, dsn, startupRetry)
 		if err != nil {
 			return fmt.Errorf("embed gateway pool: %w", err)
 		}

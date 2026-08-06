@@ -76,6 +76,13 @@ func TestRecallItem_BaselineUsesSingleRecall(t *testing.T) {
 	if client.recallCalls[0].topK != 200 {
 		t.Fatalf("topK = %d, want 200", client.recallCalls[0].topK)
 	}
+	// Seam must request full mode via RecallOpts, not a dedicated full-only method.
+	if client.recallCalls[0].opts.Mode != "full" {
+		t.Fatalf("opts.Mode = %q, want full", client.recallCalls[0].opts.Mode)
+	}
+	if client.recallCalls[0].opts.ExactFactBoost {
+		t.Fatal("ExactFactBoost = true, want false for baseline retrofit recall")
+	}
 	if len(client.listCalls) != 0 {
 		t.Fatalf("listCalls = %d, want 0", len(client.listCalls))
 	}
@@ -113,6 +120,11 @@ func TestRecallItem_ExhaustiveAggregationUnionsPasses(t *testing.T) {
 	}
 	if client.recallCalls[0].topK != 500 || client.recallCalls[1].topK != 500 {
 		t.Fatalf("recall topK = [%d %d], want [500 500]", client.recallCalls[0].topK, client.recallCalls[1].topK)
+	}
+	for i, call := range client.recallCalls {
+		if call.opts.Mode != "full" {
+			t.Fatalf("recallCalls[%d].opts.Mode = %q, want full", i, call.opts.Mode)
+		}
 	}
 	if len(client.listCalls) != 1 || client.listCalls[0] != projectSweepLimit {
 		t.Fatalf("listCalls = %v, want [%d]", client.listCalls, projectSweepLimit)
