@@ -129,6 +129,40 @@ func TestValidityWindowFilter_SupersededFactDeranked(t *testing.T) {
 	}
 	require.NoError(t, engine.Store(ctx, mOld))
 	require.NoError(t, engine.Store(ctx, mNew))
+	// Store deliberately persists chunks without embeddings and lets the
+	// re-embed worker backfill them asynchronously. This test exercises recall
+	// scoring, so seed both fixture chunks with the same non-zero fake embedding
+	// instead of racing the worker. Get all chunks rather than only pending ones:
+	// the worker may backfill either chunk between Store and this setup.
+	oldChunks, err := engine.Backend().GetChunksForMemory(ctx, mOld.ID)
+	require.NoError(t, err)
+	newChunks, err := engine.Backend().GetChunksForMemory(ctx, mNew.ID)
+	require.NoError(t, err)
+	fixtureChunks := append(oldChunks, newChunks...)
+	require.Len(t, fixtureChunks, 2, "fixture must contain one chunk per fact")
+	for _, chunk := range fixtureChunks {
+		updated, err := engine.Backend().UpdateChunkEmbedding(ctx, chunk.ID, fakeEmbedding(1024))
+		require.NoError(t, err)
+		if updated == 0 {
+			// UpdateChunkEmbedding intentionally updates only NULL embeddings. The
+			// worker may have won the race after GetChunksForMemory; because it uses
+			// the same fake client, its completed vector is the valid fixture state.
+			chunks, err := engine.Backend().GetChunksForMemory(ctx, chunk.MemoryID)
+			require.NoError(t, err)
+			var found *types.Chunk
+			for _, candidate := range chunks {
+				if candidate.ID == chunk.ID {
+					found = candidate
+					break
+				}
+			}
+			require.NotNil(t, found, "fixture chunk must still exist")
+			require.Equal(t, fakeEmbedding(1024), found.Embedding,
+				"worker-filled fixture chunk must use the deterministic fake embedding")
+			continue
+		}
+		require.Equal(t, 1, updated, "fixture chunk must be embedded exactly once")
+	}
 
 	results, err := engine.Recall(ctx, "Where does John currently live?", 10, "full")
 	require.NoError(t, err)

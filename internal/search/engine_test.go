@@ -25,11 +25,7 @@ func testDSN(t *testing.T) string      { return testutil.DSN(t) }
 type fakeClient struct{ dims int }
 
 func (f *fakeClient) Embed(_ context.Context, text string) ([]float32, error) {
-	vec := make([]float32, f.dims)
-	for i := range vec {
-		vec[i] = float32(i) / float32(f.dims)
-	}
-	return vec, nil
+	return fakeEmbedding(f.dims), nil
 }
 func (f *fakeClient) EmbedWithModel(ctx context.Context, text string) ([]float32, string, error) {
 	vec, err := f.Embed(ctx, text)
@@ -40,6 +36,17 @@ func (f *fakeClient) Dimensions() int { return f.dims }
 
 // compile-time check that fakeClient satisfies embed.Client.
 var _ embed.Client = (*fakeClient)(nil)
+
+// fakeEmbedding returns the stable, non-zero vector used by fakeClient. Tests
+// that seed a Postgres-backed recall fixture use it to model the result of the
+// asynchronous re-embed worker without racing that worker.
+func fakeEmbedding(dims int) []float32 {
+	vec := make([]float32, dims)
+	for i := range vec {
+		vec[i] = float32(i) / float32(dims)
+	}
+	return vec
+}
 
 func newTestEngine(t *testing.T, project string) *search.SearchEngine {
 	t.Helper()
