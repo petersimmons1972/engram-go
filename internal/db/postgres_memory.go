@@ -777,7 +777,24 @@ func (b *PostgresBackend) ClearSummaries(ctx context.Context, project string) (i
 
 // DeleteProject hard-deletes all memories, chunks, relationships, episodes,
 // and metadata for a project. Irreversible. Used for eval isolation project cleanup.
+//
+// FM-21 (hindsight catalog / GitHub #112): the authorization gate for this
+// method (ENGRAM_ALLOW_PROJECT_DELETE + confirm-string match) lives entirely
+// in the MCP handler (internal/mcp/tools_consolidate.go), not here. That gate
+// stays caller-side deliberately — it depends on server-level deployment
+// config the DB layer can't see, and duplicating it here would wrongly block
+// the many legitimate direct callers (test teardown, eval isolation cleanup)
+// that call this primitive without going through the MCP tool at all. What
+// this method CAN and must enforce on its own, regardless of caller: it must
+// never run against an unscoped ("") project. An empty project string is
+// never a valid target and a caller that passes one — by bug, by a forgotten
+// guard, or by a future caller that never knew about the MCP-layer gate —
+// must be refused here, not silently no-op past the nil-pool short-circuit
+// below with zero feedback.
 func (b *PostgresBackend) DeleteProject(ctx context.Context, project string) error {
+	if project == "" {
+		return fmt.Errorf("DeleteProject refused: project must not be empty")
+	}
 	if b.pool == nil {
 		return nil
 	}

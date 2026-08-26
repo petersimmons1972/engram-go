@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -11,10 +12,83 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// minPruneAgeHours is the smallest maxAgeHours accepted by pruneGuard. It is
+// chosen so that maxAgeHours*float64(time.Hour) converts to a time.Duration
+// of at least one full second — comfortably above the point where float64
+// rounding or truncation to an int64 nanosecond count could collapse the
+// value to zero (round 1's finding: a value as small as 1/(2*time.Hour)
+// converts to a sub-nanosecond, i.e. zero, time.Duration, silently turning
+// the cutoff into time.Now()).
+const minPruneAgeHours = 1.0 / 3600.0 // 1 second, expressed in hours
+
+// maxPruneAgeHours caps maxAgeHours so that maxAgeHours*float64(time.Hour)
+// stays well inside the range time.Duration (int64 nanoseconds) can
+// represent without overflowing or losing precision at the top end.
+const maxPruneAgeHours = float64(math.MaxInt64) / float64(time.Hour) / 2
+
+// highestImportanceLevel and lowestImportanceLevel mirror the 0-4 importance
+// scale enforced elsewhere (see internal/mcp/tools_store.go): 0 = Critical
+// (highest retention priority), 4 = Low (lowest retention priority). Redefined
+// here (rather than imported) because internal/db must not depend on
+// internal/mcp; keep both definitions of the domain in sync.
+const highestImportanceLevel = 0
+const lowestImportanceLevel = 4
+
+// pruneGuard is the FM-21 (hindsight #112) self-guard shared by the prune
+// methods below. Historically neither method checked its own inputs at all —
+// "no confirm gate at all" per the issue's scoping receipt — relying entirely
+// on the one production caller (internal/search/engine.go's consolidation
+// scheduler) to pass sane values. A future caller that forgot to scope by
+// project, passed a non-positive/NaN/Inf maxAgeHours (cutoff collapses to
+// now-or-later, matching nearly every non-immutable row immediately), or
+// passed an out-of-range maxImportance (widening the destructive DELETE
+// predicate to include critical, importance=0, memories) got no refusal.
+// This does not duplicate a policy decision the caller owns (what age counts
+// as "stale", or what importance floor to prune at, are scheduling choices);
+// it refuses only the inputs no legitimate caller ever intends.
+//
+// Round-1 review findings this closes (PR #1442):
+//   - A positive but sub-second maxAgeHours (e.g. 1/(2*time.Hour)) passed the
+//     old `<= 0` check but converted to a zero (or near-zero) time.Duration,
+//     collapsing the cutoff to time.Now() and pruning almost everything.
+//   - math.NaN() and math.Inf(1) also passed `<= 0` (both compare false
+//     against 0) and produced an undefined/degenerate cutoff.
+//   - maxImportance was never validated at all: a caller passing -1 broadens
+//     `importance >= maxImportance` to include importance=0 (critical) rows,
+//     which this guard exists specifically to protect.
+func pruneGuard(project string, maxAgeHours float64, maxImportance int) error {
+	if project == "" {
+		return fmt.Errorf("prune refused: project must not be empty")
+	}
+	if math.IsNaN(maxAgeHours) || math.IsInf(maxAgeHours, 0) {
+		return fmt.Errorf("prune refused: maxAgeHours must be a finite number (got %v)", maxAgeHours)
+	}
+	if maxAgeHours < minPruneAgeHours {
+		return fmt.Errorf("prune refused: maxAgeHours must be >= %v (got %v); a smaller value either "+
+			"is non-positive (cutoff=now-or-later, pruning nearly every non-immutable row immediately) "+
+			"or converts to a sub-second time.Duration after float64->int64 nanosecond conversion, which "+
+			"can round down to zero and produce the same effect", minPruneAgeHours, maxAgeHours)
+	}
+	if maxAgeHours > maxPruneAgeHours {
+		return fmt.Errorf("prune refused: maxAgeHours must be <= %v (got %v); larger values risk "+
+			"overflowing the time.Duration used to compute the cutoff", maxPruneAgeHours, maxAgeHours)
+	}
+	if maxImportance < highestImportanceLevel || maxImportance > lowestImportanceLevel {
+		return fmt.Errorf("prune refused: maxImportance must be within the valid importance range %d-%d "+
+			"(got %d); an out-of-range value (e.g. negative) broadens the destructive DELETE predicate "+
+			"'importance >= maxImportance' to include critical (importance=%d) memories",
+			highestImportanceLevel, lowestImportanceLevel, maxImportance, highestImportanceLevel)
+	}
+	return nil
+}
+
 // PruneStaleMemories deletes old low-importance and expired memories.
 // Uses RETURNING to emit an audit log line per deleted row (#107) so operators
 // can reconstruct what was pruned from structured logs.
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
+	if err := pruneGuard(project, maxAgeHours, maxImportance); err != nil {
+		return 0, err
+	}
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -64,6 +138,9 @@ func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string
 }
 
 func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
+	if err := pruneGuard(project, maxAgeHours, maxImportance); err != nil {
+		return 0, err
+	}
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
