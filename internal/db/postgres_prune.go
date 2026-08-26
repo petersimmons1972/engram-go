@@ -11,10 +11,34 @@ import (
 	"github.com/petersimmons1972/engram/internal/types"
 )
 
+// pruneGuard is the FM-21 (hindsight #112) self-guard shared by the prune
+// methods below. Historically neither method checked its own inputs at all —
+// "no confirm gate at all" per the issue's scoping receipt — relying entirely
+// on the one production caller (internal/search/engine.go's consolidation
+// scheduler) to pass sane values. A future caller that forgot to scope by
+// project, or passed a non-positive maxAgeHours (cutoff=now or later, which
+// matches nearly every non-immutable row immediately), got no refusal. This
+// does not duplicate a policy decision the caller owns (what age counts as
+// "stale" is a scheduling choice); it refuses only the inputs no caller ever
+// intends.
+func pruneGuard(project string, maxAgeHours float64) error {
+	if project == "" {
+		return fmt.Errorf("prune refused: project must not be empty")
+	}
+	if maxAgeHours <= 0 {
+		return fmt.Errorf("prune refused: maxAgeHours must be positive (got %v); a non-positive "+
+			"value sets cutoff to now-or-later, which prunes nearly every non-immutable row immediately", maxAgeHours)
+	}
+	return nil
+}
+
 // PruneStaleMemories deletes old low-importance and expired memories.
 // Uses RETURNING to emit an audit log line per deleted row (#107) so operators
 // can reconstruct what was pruned from structured logs.
 func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
+	if err := pruneGuard(project, maxAgeHours); err != nil {
+		return 0, err
+	}
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -64,6 +88,9 @@ func (b *PostgresBackend) PruneStaleMemories(ctx context.Context, project string
 }
 
 func (b *PostgresBackend) PruneColdDocuments(ctx context.Context, project string, maxAgeHours float64, maxImportance int) (int, error) {
+	if err := pruneGuard(project, maxAgeHours); err != nil {
+		return 0, err
+	}
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeHours * float64(time.Hour)))
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {

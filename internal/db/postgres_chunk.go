@@ -186,7 +186,18 @@ func (b *PostgresBackend) DeleteChunksByIDs(ctx context.Context, chunkIDs []stri
 	return int(tag.RowsAffected()), err
 }
 
+// NullAllEmbeddings clears every chunk embedding for a project. FM-21
+// (hindsight #112): the migrate confirm-threshold guard lives only in
+// internal/search/engine.go, never here — a future caller of this primitive
+// directly gets no refusal at all. The project-level policy decision (how
+// large a corpus needs an explicit confirm) belongs to the caller, which is
+// the only place that knows the threshold; but this method can and must
+// refuse the one input no caller ever intends: an unscoped ("") project,
+// which would otherwise match embeddings across the entire table.
 func (b *PostgresBackend) NullAllEmbeddings(ctx context.Context, project string) (int, error) {
+	if project == "" {
+		return 0, fmt.Errorf("NullAllEmbeddings refused: project must not be empty")
+	}
 	tag, err := b.pool.Exec(ctx,
 		"UPDATE chunks SET embedding=NULL WHERE memory_id IN (SELECT id FROM memories WHERE project=$1)",
 		project,
@@ -195,6 +206,9 @@ func (b *PostgresBackend) NullAllEmbeddings(ctx context.Context, project string)
 }
 
 func (b *PostgresBackend) NullAllEmbeddingsTx(ctx context.Context, tx Tx, project string) (int, error) {
+	if project == "" {
+		return 0, fmt.Errorf("NullAllEmbeddingsTx refused: project must not be empty")
+	}
 	raw, err := unwrapTx(tx)
 	if err != nil {
 		return 0, err
