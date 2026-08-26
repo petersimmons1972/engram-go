@@ -85,7 +85,12 @@ jobs:
       - name: Test with coverage
         env:
           TEST_DATABASE_URL: postgres://engram:${{ secrets.CI_POSTGRES_PASSWORD || 'ci-only-not-production' }}@localhost:5432/engram_test?sslmode=disable
-        run: go test -coverprofile=coverage.out ./...
+        # DB-backed packages all run migrations against this job's one ephemeral
+        # service database. Serialize package processes so they cannot queue on
+        # the intentional database-global migration lock and exhaust their
+        # individual test deadlines (#1435). This keeps the lock (which guards
+        # shared schema DDL) and preserves one combined coverage profile.
+        run: go test -p 1 -coverprofile=coverage.out ./...
 
       - name: Coverage gate (60% minimum)
         # #429 (the four t.Skip'd integration tests blocking this gate) is closed
