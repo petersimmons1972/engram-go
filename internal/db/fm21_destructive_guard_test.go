@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -108,5 +109,133 @@ func TestPruneColdDocuments_RefusesNonPositiveMaxAge_MethodItself(t *testing.T) 
 	_, err := b.PruneColdDocuments(context.Background(), "real-project", 0, 3)
 	if err == nil {
 		t.Fatal("PruneColdDocuments(ctx, project, maxAgeHours=0, ...) must be refused")
+	}
+}
+
+// ---- Round-1 review blockers (PR #1442): degenerate maxAgeHours ---------
+//
+// Round 1 found that a positive-but-sub-duration maxAgeHours (e.g.
+// 1/(2*time.Hour)) passed the old `<= 0` check but converted to a zero
+// time.Duration, collapsing the cutoff to time.Now() and pruning nearly
+// everything; math.NaN() and math.Inf(1) also passed `<= 0` unrejected.
+// These tests construct exactly those bypasses against both prune methods.
+
+func TestPruneStaleMemories_RefusesSubNanosecondPositiveMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	// 1 / (2 * time.Hour) is positive but converts to well under 1 nanosecond
+	// once multiplied by float64(time.Hour) and truncated to a time.Duration.
+	tinyAge := 1.0 / (2 * float64(3600*1e9)) // hours equivalent of 0.5ns
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", tinyAge, 3)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with a positive sub-nanosecond-duration maxAgeHours must be " +
+			"refused: it would collapse the cutoff to time.Now(), pruning nearly every " +
+			"non-immutable row immediately (round 1 blocker)")
+	}
+}
+
+func TestPruneStaleMemories_RefusesNaNMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", math.NaN(), 3)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with maxAgeHours=NaN must be refused (NaN <= 0 is false, so the " +
+			"old guard let it through; round 1 blocker)")
+	}
+}
+
+func TestPruneStaleMemories_RefusesInfMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", math.Inf(1), 3)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with maxAgeHours=+Inf must be refused (round 1 blocker)")
+	}
+
+	_, err = b.PruneStaleMemories(context.Background(), "real-project", math.Inf(-1), 3)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with maxAgeHours=-Inf must be refused")
+	}
+}
+
+func TestPruneColdDocuments_RefusesSubNanosecondPositiveMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	tinyAge := 1.0 / (2 * float64(3600*1e9))
+	_, err := b.PruneColdDocuments(context.Background(), "real-project", tinyAge, 3)
+	if err == nil {
+		t.Fatal("PruneColdDocuments with a positive sub-nanosecond-duration maxAgeHours must be " +
+			"refused (round 1 blocker)")
+	}
+}
+
+func TestPruneColdDocuments_RefusesNaNAndInfMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	if _, err := b.PruneColdDocuments(context.Background(), "real-project", math.NaN(), 3); err == nil {
+		t.Fatal("PruneColdDocuments with maxAgeHours=NaN must be refused (round 1 blocker)")
+	}
+	if _, err := b.PruneColdDocuments(context.Background(), "real-project", math.Inf(1), 3); err == nil {
+		t.Fatal("PruneColdDocuments with maxAgeHours=+Inf must be refused (round 1 blocker)")
+	}
+}
+
+func TestPruneStaleMemories_RefusesExcessiveMaxAge_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	// A maxAgeHours large enough that maxAgeHours*float64(time.Hour) risks
+	// overflowing the int64-nanosecond time.Duration must also be refused.
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", math.MaxFloat64, 3)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with an overflow-risking maxAgeHours must be refused")
+	}
+}
+
+// ---- Round-1 review blockers (PR #1442): unchecked maxImportance --------
+//
+// Round 1 found maxImportance was never validated: both DELETE predicates
+// use `importance >= maxImportance`, so a caller passing -1 (or any value
+// below the valid 0-4 importance domain) broadens the predicate to include
+// critical (importance=0) memories — precisely what the guard exists to
+// protect. These tests construct that exact bypass against both methods.
+
+func TestPruneStaleMemories_RefusesNegativeMaxImportance_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", 24, -1)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with maxImportance=-1 must be refused: 'importance >= -1' " +
+			"matches every importance level including critical (importance=0) memories " +
+			"(round 1 blocker)")
+	}
+}
+
+func TestPruneStaleMemories_RefusesOutOfRangeMaxImportance_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneStaleMemories(context.Background(), "real-project", 24, 5)
+	if err == nil {
+		t.Fatal("PruneStaleMemories with maxImportance=5 (above the valid 0-4 domain) must be refused")
+	}
+}
+
+func TestPruneColdDocuments_RefusesNegativeMaxImportance_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneColdDocuments(context.Background(), "real-project", 24, -1)
+	if err == nil {
+		t.Fatal("PruneColdDocuments with maxImportance=-1 must be refused: it would broaden the " +
+			"destructive DELETE predicate to include critical (importance=0) memories " +
+			"(round 1 blocker)")
+	}
+}
+
+func TestPruneColdDocuments_RefusesOutOfRangeMaxImportance_MethodItself(t *testing.T) {
+	b := &PostgresBackend{}
+	_, err := b.PruneColdDocuments(context.Background(), "real-project", 24, 5)
+	if err == nil {
+		t.Fatal("PruneColdDocuments with maxImportance=5 (above the valid 0-4 domain) must be refused")
+	}
+}
+
+// TestPruneGuard_GuardedCallWithValidImportanceProceeds is the positive case:
+// a properly-scoped, in-range call must not be blocked by the new
+// maxImportance check.
+func TestPruneGuard_GuardedCallWithValidImportanceProceeds(t *testing.T) {
+	for _, imp := range []int{0, 1, 2, 3, 4} {
+		if err := pruneGuard("real-project", 24, imp); err != nil {
+			t.Fatalf("pruneGuard with in-range maxImportance=%d must not be refused, got: %v", imp, err)
+		}
 	}
 }
