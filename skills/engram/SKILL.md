@@ -1,5 +1,6 @@
 ---
-description: Hidden Engram ops: bulk ingest from files/exports, memory consolidation/sleep/summarize, and episode lifecycle (start/end/list/recall).
+name: engram
+description: Hidden Engram operations (bulk ingest from files and exports, memory consolidation, sleep, summarize, and episode lifecycle start, end, list, recall).
 ---
 
 # engram
