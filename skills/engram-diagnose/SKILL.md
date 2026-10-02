@@ -1,4 +1,5 @@
 ---
+name: engram-diagnose
 description: Inspect a memory for conflicts and evidence, aggregate memory counts by category, or force-summarize a memory
 ---
 
